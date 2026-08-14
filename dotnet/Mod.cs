@@ -1,0 +1,45 @@
+using Colossal.IO.AssetDatabase;
+using Colossal.Logging;
+using Game;
+using Game.Modding;
+using Game.SceneFlow;
+
+namespace StationSuitabilityOverlay
+{
+    public class Mod : IMod
+    {
+        public static readonly ILog Log = LogManager.GetLogger($"{nameof(StationSuitabilityOverlay)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
+        public static Setting Settings { get; private set; }
+
+        public void OnLoad(UpdateSystem updateSystem)
+        {
+            Log.Info(nameof(OnLoad));
+
+            if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
+            {
+                Log.Info($"Current mod asset at {asset.path}");
+            }
+
+            Settings = new Setting(this);
+            Settings.RegisterInOptionsUI();
+            GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(Settings));
+
+            AssetDatabase.global.LoadSettings(nameof(StationSuitabilityOverlay), Settings, new Setting(this));
+            Settings.ClampAll();
+
+            updateSystem.UpdateAt<StationSuitabilityOverlaySystem>(SystemUpdatePhase.Rendering);
+            updateSystem.UpdateAt<StationSuitabilityUISystem>(SystemUpdatePhase.UIUpdate);
+        }
+
+        public void OnDispose()
+        {
+            Log.Info(nameof(OnDispose));
+
+            if (Settings != null)
+            {
+                Settings.UnregisterInOptionsUI();
+                Settings = null;
+            }
+        }
+    }
+}

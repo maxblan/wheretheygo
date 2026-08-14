@@ -1,0 +1,16 @@
+﻿bin/
+obj/
+Temp/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.log
+
+node_modules/
+dist/
+build/
+.cache/
+.env
+*.log
+dotnet/Library/*.pid
