@@ -171,7 +171,10 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.W4)), "How strongly nearby road network density raises the score." },
 
                 { "StationSuitabilityOverlay.Infomode", "Station Suitability" },
-                { "infoviews.StationSuitabilityOverlay", "Station Suitability" },
+                { "Infoviews.INFOVIEW[StationSuitabilityOverlay]", "Station Suitability" },
+                { "Infoviews.INFOVIEW_TOOLTIP[StationSuitabilityOverlay]", "Shows how suitable each location is for a new transit stop." },
+                { "Infoviews.INFOMODE[StationSuitabilityOverlay]", "Station Suitability" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityOverlay]", "Green–yellow–red heatmap of station placement quality; the top 5% of tiles are fully opaque." },
 
                 { "StationSuitabilityOverlay.UI.PanelTitle", "Station Suitability" },
                 { "StationSuitabilityOverlay.UI.EnableOverlay", "Enable overlay" },

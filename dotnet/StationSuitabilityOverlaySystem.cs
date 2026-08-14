@@ -180,11 +180,13 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            bool infomodeActive = m_InfomodePrefab != null && m_ToolSystem.IsInfomodeActive(m_InfomodePrefab);
+            // The infoview menu drives ToolSystem.activeInfoview, not SetInfomodeActive,
+            // so activeInfoview is the reliable signal for "user opened our infoview".
+            bool infoviewActive = m_InfoviewPrefab != null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
             bool enabledChanged = settings.Enabled != m_LastEnabled;
-            if (!enabledChanged && infomodeActive != settings.Enabled)
+            if (!enabledChanged && infoviewActive != settings.Enabled)
             {
-                settings.Enabled = infomodeActive;
+                settings.Enabled = infoviewActive;
                 enabledChanged = true;
             }
             bool modeChanged = settings.Mode != m_LastMode;
@@ -192,10 +194,10 @@ namespace StationSuitabilityOverlay
 
             if (enabledChanged)
             {
-                if (m_InfomodePrefab != null && settings.Enabled != infomodeActive)
+                if (m_InfoviewPrefab != null && settings.Enabled != infoviewActive)
                 {
-                    m_ToolSystem.SetInfomodeActive(m_InfomodePrefab, settings.Enabled, InfomodePriority);
-                    infomodeActive = settings.Enabled;
+                    m_ToolSystem.infoview = settings.Enabled ? m_InfoviewPrefab : null;
+                    infoviewActive = settings.Enabled;
                 }
 
                 if (settings.Enabled)
@@ -252,7 +254,7 @@ namespace StationSuitabilityOverlay
             m_LastW3 = settings.W3;
             m_LastW4 = settings.W4;
 
-            ApplyOverlayState(settings.Enabled && infomodeActive);
+            ApplyOverlayState(settings.Enabled && infoviewActive);
         }
 
         public void RequestRecompute()
@@ -312,8 +314,10 @@ namespace StationSuitabilityOverlay
             SetField(m_InfoviewPrefab, "m_IconPath", "Media/Game/Icons/AdvisorInfoView.svg");
             SetField(m_InfoviewPrefab, "m_Priority", 900);
             SetField(m_InfoviewPrefab, "m_Group", 0);
-            SetField(m_InfoviewPrefab, "m_DefaultColor", LowColor);
-            SetField(m_InfoviewPrefab, "m_SecondaryColor", HighColor);
+            // Neutral colors: these are applied by vanilla systems to the whole world
+            // while the infoview is active; the heatmap itself comes from our texture.
+            SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
+            SetField(m_InfoviewPrefab, "m_SecondaryColor", new Color(0.5f, 0.5f, 0.55f, 1f));
             SetField(m_InfoviewPrefab, "m_Editor", false);
             SetField(m_InfoviewPrefab, "<isValid>k__BackingField", true);
 
@@ -324,6 +328,7 @@ namespace StationSuitabilityOverlay
 
             m_ToolSystem.EventInfomodesChanged?.Invoke();
             m_PrefabsAdded = true;
+            Mod.Log.Info("Suitability infomode and infoview prefabs registered.");
         }
 
         private void ApplyOverlayState(bool active)
@@ -384,23 +389,36 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            float2 worldMin = m_TerrainSystem.worldOffset;
-            float2 worldSize = m_TerrainSystem.worldSize;
+            // Scores are computed over the playable area only (the population and
+            // availability cell maps cover exactly that region, centered at the origin).
             float2 mapSize = popData.m_CellSize * new float2(popData.m_TextureSize.x, popData.m_TextureSize.y);
-            if (mapSize.x > 0f && mapSize.y > 0f)
-            {
-                worldMin = -mapSize * 0.5f;
-                worldSize = mapSize;
-            }
-
-            int width = math.max(1, (int)math.ceil(worldSize.x / TileSize));
-            int height = math.max(1, (int)math.ceil(worldSize.y / TileSize));
-            int2 gridSize = new int2(width, height);
-            int totalCells = width * height;
-            if (totalCells == 0)
+            if (mapSize.x <= 0f || mapSize.y <= 0f)
             {
                 return false;
             }
+
+            float2 worldMin = -mapSize * 0.5f;
+            int width = math.max(1, (int)math.ceil(mapSize.x / TileSize));
+            int height = math.max(1, (int)math.ceil(mapSize.y / TileSize));
+            int2 gridSize = new int2(width, height);
+            int totalCells = width * height;
+
+            // The override overlay map is bound as the terrain material's base color map,
+            // so it is sampled across the FULL terrain (4x the playable map). The texture
+            // must span the terrain, with the score block placed at the playable region.
+            float2 terrainMin = m_TerrainSystem.worldOffset;
+            float2 terrainSize = m_TerrainSystem.worldSize;
+            if (terrainSize.x <= 0f || terrainSize.y <= 0f)
+            {
+                terrainMin = worldMin;
+                terrainSize = mapSize;
+            }
+
+            int texWidth = math.max(1, (int)math.ceil(terrainSize.x / TileSize));
+            int texHeight = math.max(1, (int)math.ceil(terrainSize.y / TileSize));
+            int2 blockOffset = new int2(
+                (int)math.round((worldMin.x - terrainMin.x) / TileSize),
+                (int)math.round((worldMin.y - terrainMin.y) / TileSize));
 
             List<float2> stopPositions = CollectStopPositions(Mod.Settings.Mode);
             CollectRoadNetwork(out List<float2> nodePositions, out List<float2> edgePositions);
@@ -470,36 +488,54 @@ namespace StationSuitabilityOverlay
             }
             float percentile95 = sorted.Length > 0 ? sorted[percentileIndex] : 0f;
 
-            Color32[] pixels = new Color32[scores.Length];
+            Color32[] pixels = new Color32[texWidth * texHeight];
             float range = max - min;
             bool hasSignal = range > 1e-5f;
-            for (int i = 0; i < scores.Length; i++)
+            // In sparse cities most tiles share the minimum score, which drags the 95th
+            // percentile down to it; highlighting is only meaningful above the floor.
+            bool highlightTop = hasSignal && percentile95 > min;
+            if (hasSignal)
             {
-                if (!hasSignal)
+                for (int y = 0; y < height; y++)
                 {
-                    pixels[i] = new Color32(0, 0, 0, 0);
-                    continue;
-                }
+                    int ty = blockOffset.y + y;
+                    if (ty < 0 || ty >= texHeight)
+                    {
+                        continue;
+                    }
 
-                float normalized = math.saturate((scores[i] - min) / range);
-                Color color = GradientColor(normalized);
-                float alpha = math.pow(normalized, 1.1f) * 0.65f;
-                if (scores[i] >= percentile95)
-                {
-                    alpha = math.max(alpha, 0.9f);
+                    for (int x = 0; x < width; x++)
+                    {
+                        int tx = blockOffset.x + x;
+                        if (tx < 0 || tx >= texWidth)
+                        {
+                            continue;
+                        }
+
+                        float score = scores[x + y * width];
+                        float normalized = math.saturate((score - min) / range);
+                        Color color = GradientColor(normalized);
+                        float alpha = normalized <= 0.001f
+                            ? 0f
+                            : 0.2f + math.pow(normalized, 1.1f) * 0.5f;
+                        if (highlightTop && score >= percentile95)
+                        {
+                            alpha = math.max(alpha, 0.9f);
+                        }
+                        color.a = math.saturate(alpha);
+                        pixels[tx + ty * texWidth] = color;
+                    }
                 }
-                color.a = math.saturate(alpha);
-                pixels[i] = color;
             }
 
-            if (m_OverlayTexture == null || m_OverlaySize.x != width || m_OverlaySize.y != height)
+            if (m_OverlayTexture == null || m_OverlaySize.x != texWidth || m_OverlaySize.y != texHeight)
             {
                 if (m_OverlayTexture != null)
                 {
                     UnityEngine.Object.Destroy(m_OverlayTexture);
                 }
 
-                m_OverlayTexture = new Texture2D(width, height, TextureFormat.RGBA32, false, true)
+                m_OverlayTexture = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false, true)
                 {
                     wrapMode = TextureWrapMode.Clamp,
                     filterMode = FilterMode.Bilinear,
@@ -508,7 +544,8 @@ namespace StationSuitabilityOverlay
 
             m_OverlayTexture.SetPixels32(pixels);
             m_OverlayTexture.Apply(false, false);
-            m_OverlaySize = gridSize;
+            m_OverlaySize = new int2(texWidth, texHeight);
+            Mod.Log.Info($"Overlay computed: score grid {width}x{height} in texture {texWidth}x{texHeight} at offset {blockOffset}, stops={stopPositions.Count}, roads(nodes/edges)={nodePositions.Count}/{edgePositions.Count}, score range [{min:F1}, {max:F1}], p95={percentile95:F1}");
             return true;
         }
 
