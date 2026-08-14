@@ -73,4 +73,8 @@
 		<None Include="$(ModTargetsFile)" Link="Properties\Mod.targets" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Include="Icons\**" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 </Project>

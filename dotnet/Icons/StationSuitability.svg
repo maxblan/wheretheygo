@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Map pin with a ring cutout: "the optimal spot" -->
+  <path fill="#FFFFFF" fill-rule="evenodd" d="M32 3 C18.2 3 7 14.2 7 28 c0 8.4 4.9 16 10.3 21.9 C22.7 55.8 28.5 60 32 61.5 c3.5 -1.5 9.3 -5.7 14.7 -11.6 C52.1 44 57 36.4 57 28 C57 14.2 45.8 3 32 3 Z M32 42 a14 14 0 1 1 0 -28 a14 14 0 1 1 0 28 Z"/>
+  <circle fill="#FFFFFF" cx="32" cy="28" r="7"/>
+</svg>

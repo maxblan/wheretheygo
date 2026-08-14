@@ -53,8 +53,16 @@ namespace StationSuitabilityOverlay
         private SuitabilityInfomodePrefab m_InfomodePrefab;
         private InfoviewPrefab m_InfoviewPrefab;
 
-        private Texture2D m_OverlayTexture;
-        private int2 m_OverlaySize;
+        private OverlayInfomodeSystem m_OverlayInfomodeSystem;
+        // Intensities (0..255) from the last compute, expanded to RGBA bytes for the
+        // channel currently assigned to our infomode.
+        private byte[] m_Intensities;
+        private byte[] m_ExpandedCache;
+        private int m_ExpandedChannel = -1;
+        private int2 m_IntensityGrid;
+
+        private static MethodInfo s_GetTerrainTextureData;
+        private static FieldInfo s_TerrainTextureField;
 
         private bool m_LastActive;
         private int m_LastChannel = -1;
@@ -80,6 +88,7 @@ namespace StationSuitabilityOverlay
             m_AvailabilitySystem = World.GetOrCreateSystemManaged<AvailabilityInfoToGridSystem>();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             m_ToolSystem = World.GetOrCreateSystemManaged<ToolSystem>();
+            m_OverlayInfomodeSystem = World.GetOrCreateSystemManaged<OverlayInfomodeSystem>();
 
             m_StopQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -162,17 +171,8 @@ namespace StationSuitabilityOverlay
         protected override void OnDestroy()
         {
             base.OnDestroy();
-
-            if (m_OverlayTexture != null)
-            {
-                if (m_TerrainRenderSystem != null && m_TerrainRenderSystem.overrideOverlaymap == m_OverlayTexture)
-                {
-                    m_TerrainRenderSystem.overrideOverlaymap = null;
-                }
-
-                UnityEngine.Object.Destroy(m_OverlayTexture);
-                m_OverlayTexture = null;
-            }
+            m_Intensities = null;
+            m_ExpandedCache = null;
         }
 
         protected override void OnUpdate()
@@ -188,7 +188,6 @@ namespace StationSuitabilityOverlay
             if (GameManager.instance == null || !GameManager.instance.gameMode.IsGame())
             {
                 m_RecomputeRequested = false;
-                ClearOverlay();
                 return;
             }
 
@@ -243,7 +242,7 @@ namespace StationSuitabilityOverlay
             }
 
             int2 currentSize = GetGridSize();
-            if (active && (m_OverlayTexture == null || m_OverlaySize.x != currentSize.x || m_OverlaySize.y != currentSize.y))
+            if (active && (m_Intensities == null || m_IntensityGrid.x != currentSize.x || m_IntensityGrid.y != currentSize.y))
             {
                 ScheduleRecompute(0f);
             }
@@ -262,7 +261,7 @@ namespace StationSuitabilityOverlay
             m_LastW3 = settings.W3;
             m_LastW4 = settings.W4;
 
-            ApplyOverlayState(active);
+            ApplyOverlayState(active, channel);
         }
 
         public void RequestRecompute()
@@ -319,7 +318,7 @@ namespace StationSuitabilityOverlay
 
             m_InfoviewPrefab = PrefabBase.Create<InfoviewPrefab>("StationSuitabilityOverlay");
             SetField(m_InfoviewPrefab, "m_Infomodes", new[] { info });
-            SetField(m_InfoviewPrefab, "m_IconPath", "Media/Game/Icons/AdvisorInfoView.svg");
+            SetField(m_InfoviewPrefab, "m_IconPath", "coui://stationsuitabilityoverlay/StationSuitability.svg");
             SetField(m_InfoviewPrefab, "m_Priority", 900);
             SetField(m_InfoviewPrefab, "m_Group", 0);
             SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
@@ -415,43 +414,85 @@ namespace StationSuitabilityOverlay
             return channel;
         }
 
-        private void ApplyOverlayState(bool active)
+        // Feed our intensities through OverlayInfomodeSystem's own terrain texture —
+        // the exact path the vanilla heatmaps use. GetTerrainTextureData (private)
+        // resizes the texture, assigns it to TerrainRenderSystem.overrideOverlaymap
+        // and schedules a clear job; ApplyOverlay completes that job, then we copy
+        // our data in and re-upload. Runs every frame while active because the
+        // vanilla system clears the override at the start of each frame.
+        private void ApplyOverlayState(bool active, int channel)
         {
-            if (m_TerrainRenderSystem == null)
-            {
-                return;
-            }
-
             bool applied = false;
-            if (active && m_OverlayTexture != null)
+            if (active && m_Intensities != null && m_OverlayInfomodeSystem != null)
             {
-                Texture current = m_TerrainRenderSystem.overrideOverlaymap;
-                if (current == null || current == m_OverlayTexture)
-                {
-                    // OverlayInfomodeSystem clears this every frame, so reassign each
-                    // frame; if a vanilla heatmap owns it we leave it alone.
-                    m_TerrainRenderSystem.overrideOverlaymap = m_OverlayTexture;
-                    applied = true;
-                }
-            }
-            else if (m_TerrainRenderSystem.overrideOverlaymap == m_OverlayTexture)
-            {
-                m_TerrainRenderSystem.overrideOverlaymap = null;
+                ExpandIntensities(channel);
+                applied = InjectOverlay();
             }
 
             if (applied != m_LastOverlayApplied)
             {
-                Mod.Log.Info($"Overlay map {(applied ? "attached" : "detached")} (active={active}, texture={(m_OverlayTexture != null ? "yes" : "no")})");
+                Mod.Log.Info($"Overlay map {(applied ? "attached" : "detached")} (active={active}, data={(m_Intensities != null ? "yes" : "no")})");
                 m_LastOverlayApplied = applied;
             }
         }
 
-        private void ClearOverlay()
+        private bool InjectOverlay()
         {
-            if (m_TerrainRenderSystem != null && m_OverlayTexture != null && m_TerrainRenderSystem.overrideOverlaymap == m_OverlayTexture)
+            if (s_GetTerrainTextureData == null)
             {
-                m_TerrainRenderSystem.overrideOverlaymap = null;
+                s_GetTerrainTextureData = typeof(OverlayInfomodeSystem).GetMethod(
+                    "GetTerrainTextureData",
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(int2) },
+                    null);
+                s_TerrainTextureField = typeof(OverlayInfomodeSystem).GetField(
+                    "m_TerrainTexture",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+
+                if (s_GetTerrainTextureData == null || s_TerrainTextureField == null)
+                {
+                    Mod.Log.Warn("OverlayInfomodeSystem internals not found; overlay cannot render.");
+                    return false;
+                }
             }
+
+            var data = (NativeArray<byte>)s_GetTerrainTextureData.Invoke(m_OverlayInfomodeSystem, new object[] { m_IntensityGrid });
+            m_OverlayInfomodeSystem.ApplyOverlay();
+
+            int expected = m_IntensityGrid.x * m_IntensityGrid.y * 4;
+            if (data.Length != expected || m_ExpandedCache == null || m_ExpandedCache.Length != expected)
+            {
+                return false;
+            }
+
+            data.CopyFrom(m_ExpandedCache);
+            var texture = (Texture2D)s_TerrainTextureField.GetValue(m_OverlayInfomodeSystem);
+            texture.Apply(false, false);
+            return true;
+        }
+
+        private void ExpandIntensities(int channel)
+        {
+            int cells = m_IntensityGrid.x * m_IntensityGrid.y;
+            if (m_ExpandedCache == null || m_ExpandedCache.Length != cells * 4)
+            {
+                m_ExpandedCache = new byte[cells * 4];
+                m_ExpandedChannel = -1;
+            }
+
+            if (m_ExpandedChannel == channel)
+            {
+                return;
+            }
+
+            Array.Clear(m_ExpandedCache, 0, m_ExpandedCache.Length);
+            for (int i = 0; i < cells; i++)
+            {
+                m_ExpandedCache[i * 4 + channel] = m_Intensities[i];
+            }
+
+            m_ExpandedChannel = channel;
         }
 
         private int2 GetGridSize()
@@ -568,10 +609,17 @@ namespace StationSuitabilityOverlay
             }
             float percentile95 = sorted.Length > 0 ? sorted[percentileIndex] : 0f;
 
-            // The overlay texture holds per-infomode INTENSITY channels, not colors:
-            // the terrain shader colors channel (InfomodeActive.m_Index - 1) with our
-            // infomode's gradient, exactly like the vanilla heatmaps.
-            Color32[] pixels = new Color32[totalCells];
+            // Intensities only: the vanilla terrain shader colors the overlay channel
+            // assigned to our infomode with its gradient (see ApplyOverlayState).
+            if (m_Intensities == null || m_Intensities.Length != totalCells)
+            {
+                m_Intensities = new byte[totalCells];
+            }
+            else
+            {
+                Array.Clear(m_Intensities, 0, m_Intensities.Length);
+            }
+
             float range = max - min;
             bool hasSignal = range > 1e-5f;
             // In sparse cities most tiles share the minimum score, which drags the 95th
@@ -589,35 +637,12 @@ namespace StationSuitabilityOverlay
                         intensity = 255;
                     }
 
-                    Color32 pixel = default;
-                    switch (channel)
-                    {
-                        case 0: pixel.r = intensity; break;
-                        case 1: pixel.g = intensity; break;
-                        case 2: pixel.b = intensity; break;
-                        default: pixel.a = intensity; break;
-                    }
-                    pixels[i] = pixel;
+                    m_Intensities[i] = intensity;
                 }
             }
 
-            if (m_OverlayTexture == null || m_OverlaySize.x != width || m_OverlaySize.y != height)
-            {
-                if (m_OverlayTexture != null)
-                {
-                    UnityEngine.Object.Destroy(m_OverlayTexture);
-                }
-
-                m_OverlayTexture = new Texture2D(width, height, TextureFormat.RGBA32, false, true)
-                {
-                    wrapMode = TextureWrapMode.Clamp,
-                    filterMode = FilterMode.Bilinear,
-                };
-            }
-
-            m_OverlayTexture.SetPixels32(pixels);
-            m_OverlayTexture.Apply(false, false);
-            m_OverlaySize = gridSize;
+            m_IntensityGrid = gridSize;
+            m_ExpandedChannel = -1;
             Mod.Log.Info($"Overlay computed: grid {width}x{height}, channel={channel}, stops={stopPositions.Count}, roads(nodes/edges)={nodePositions.Count}/{edgePositions.Count}, score range [{min:F1}, {max:F1}], p95={percentile95:F1}");
             return true;
         }

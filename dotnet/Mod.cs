@@ -1,5 +1,7 @@
+using System.IO;
 using Colossal.IO.AssetDatabase;
 using Colossal.Logging;
+using Colossal.UI;
 using Game;
 using Game.Modding;
 using Game.SceneFlow;
@@ -18,6 +20,10 @@ namespace StationSuitabilityOverlay
             if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
             {
                 Log.Info($"Current mod asset at {asset.path}");
+
+                // Serve the mod's icons at coui://stationsuitabilityoverlay/.
+                string iconsPath = Path.Combine(Path.GetDirectoryName(asset.path), "Icons");
+                UIManager.defaultUISystem.AddHostLocation("stationsuitabilityoverlay", iconsPath, shouldWatch: false);
             }
 
             Settings = new Setting(this);
