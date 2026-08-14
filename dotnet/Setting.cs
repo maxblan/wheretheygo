@@ -22,7 +22,6 @@ namespace StationSuitabilityOverlay
             Metro = 1,
         }
 
-        private bool m_Enabled;
         private ModePreset m_Mode;
         private float m_W1;
         private float m_W2;
@@ -32,14 +31,6 @@ namespace StationSuitabilityOverlay
         public Setting(IMod mod) : base(mod)
         {
             SetDefaults();
-        }
-
-        // Controlled from the in-game panel, not the options screen.
-        [SettingsUIHidden]
-        public bool Enabled
-        {
-            get => m_Enabled;
-            set => m_Enabled = value;
         }
 
         [SettingsUISection(kSection, kPresetGroup)]
@@ -90,7 +81,6 @@ namespace StationSuitabilityOverlay
 
         public override void SetDefaults()
         {
-            m_Enabled = false;
             m_Mode = ModePreset.Bus;
             ApplyPreset(m_Mode);
         }
@@ -115,11 +105,9 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // Called once after settings are loaded from disk: sanitizes persisted values
-        // and makes sure the overlay always starts disabled.
+        // Called once after settings are loaded from disk to sanitize persisted values.
         public void ClampAll()
         {
-            m_Enabled = false;
             m_Mode = m_Mode == ModePreset.Metro ? ModePreset.Metro : ModePreset.Bus;
             m_W1 = ClampWeight(m_W1);
             m_W2 = ClampWeight(m_W2);
@@ -176,20 +164,11 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.INFOMODE[StationSuitabilityOverlay]", "Station Suitability" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityOverlay]", "Green–yellow–red heatmap of station placement quality; the top 5% of tiles are fully opaque." },
 
-                { "StationSuitabilityOverlay.UI.PanelTitle", "Station Suitability" },
-                { "StationSuitabilityOverlay.UI.EnableOverlay", "Enable overlay" },
-                { "StationSuitabilityOverlay.UI.ModePreset", "Mode preset" },
-                { "StationSuitabilityOverlay.UI.Mode.Bus", "Bus" },
-                { "StationSuitabilityOverlay.UI.Mode.Metro", "Metro" },
-                { "StationSuitabilityOverlay.UI.WeightDemand", "Demand" },
-                { "StationSuitabilityOverlay.UI.WeightJobs", "Jobs" },
-                { "StationSuitabilityOverlay.UI.WeightCoverage", "Coverage penalty" },
-                { "StationSuitabilityOverlay.UI.WeightAccessibility", "Accessibility" },
-                { "StationSuitabilityOverlay.UI.Recalculate", "Recalculate" },
-
-                { "StationSuitabilityOverlay.Legend.Low", "Low" },
-                { "StationSuitabilityOverlay.Legend.Medium", "Medium" },
-                { "StationSuitabilityOverlay.Legend.High", "High" },
+                // The infoview panel composes gradient legend label keys as
+                // Infoviews.LABEL[<labelId>].
+                { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Low]", "Low" },
+                { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Medium]", "Medium" },
+                { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.High]", "High" },
             };
         }
 

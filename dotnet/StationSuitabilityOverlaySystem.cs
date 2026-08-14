@@ -18,7 +18,12 @@ using Transform = Game.Objects.Transform;
 
 namespace StationSuitabilityOverlay
 {
+    // The vanilla heatmap pipeline: OverlayInfomodeSystem clears the terrain
+    // override overlay each frame and active heatmap infomodes rewrite it, then
+    // TerrainRenderSystem consumes it into the terrain material. All three run in
+    // PreCulling, so this system must be ordered between the two vanilla ones.
     [UpdateAfter(typeof(OverlayInfomodeSystem))]
+    [UpdateBefore(typeof(TerrainRenderSystem))]
     public sealed partial class StationSuitabilityOverlaySystem : GameSystemBase
     {
         private const float TileSize = 64f;
@@ -42,6 +47,7 @@ namespace StationSuitabilityOverlay
         private EntityQuery m_StopChangedQuery;
         private EntityQuery m_NodeQuery;
         private EntityQuery m_RoadEdgeQuery;
+        private EntityQuery m_ActiveInfomodeQuery;
         private int m_LastStopCount;
 
         private SuitabilityInfomodePrefab m_InfomodePrefab;
@@ -50,7 +56,8 @@ namespace StationSuitabilityOverlay
         private Texture2D m_OverlayTexture;
         private int2 m_OverlaySize;
 
-        private bool m_LastEnabled;
+        private bool m_LastActive;
+        private int m_LastChannel = -1;
         private Setting.ModePreset m_LastMode;
         private float m_LastW1;
         private float m_LastW2;
@@ -60,6 +67,8 @@ namespace StationSuitabilityOverlay
         private bool m_RecomputeRequested;
         private float m_RecomputeAt;
         private bool m_PrefabsAdded;
+        private bool m_InfoviewLinkChecked;
+        private bool m_LastOverlayApplied;
 
         protected override void OnCreate()
         {
@@ -133,12 +142,15 @@ namespace StationSuitabilityOverlay
                 },
             });
 
+            m_ActiveInfomodeQuery = GetEntityQuery(
+                ComponentType.ReadOnly<SuitabilityInfomodeData>(),
+                ComponentType.ReadOnly<InfomodeActive>());
+
             m_LastStopCount = m_StopQuery.CalculateEntityCount();
 
             var settings = Mod.Settings;
             if (settings != null)
             {
-                m_LastEnabled = settings.Enabled;
                 m_LastMode = settings.Mode;
                 m_LastW1 = settings.W1;
                 m_LastW2 = settings.W2;
@@ -180,81 +192,77 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            // The infoview menu drives ToolSystem.activeInfoview, not SetInfomodeActive,
-            // so activeInfoview is the reliable signal for "user opened our infoview".
-            bool infoviewActive = m_InfoviewPrefab != null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
-            bool enabledChanged = settings.Enabled != m_LastEnabled;
-            if (!enabledChanged && infoviewActive != settings.Enabled)
-            {
-                settings.Enabled = infoviewActive;
-                enabledChanged = true;
-            }
-            bool modeChanged = settings.Mode != m_LastMode;
-            bool weightsChanged = settings.W1 != m_LastW1 || settings.W2 != m_LastW2 || settings.W3 != m_LastW3 || settings.W4 != m_LastW4;
+            EnsureInfoviewLinked();
 
-            if (enabledChanged)
-            {
-                if (m_InfoviewPrefab != null && settings.Enabled != infoviewActive)
-                {
-                    m_ToolSystem.infoview = settings.Enabled ? m_InfoviewPrefab : null;
-                    infoviewActive = settings.Enabled;
-                }
+            // The overlay is driven entirely by the vanilla infoview menu: when the
+            // player activates our infoview, the game adds InfomodeActive to our
+            // infomode entity, and its index selects the texture channel the terrain
+            // shader colors with our gradient.
+            int channel = GetActiveChannel();
+            bool active = channel >= 0;
 
-                if (settings.Enabled)
+            if (active != m_LastActive)
+            {
+                if (active)
                 {
                     ScheduleRecompute(0f);
                 }
                 else
                 {
                     m_RecomputeRequested = false;
-                    ClearOverlay();
                 }
+
+                m_LastActive = active;
             }
 
-            if (modeChanged || weightsChanged)
+            if (active && channel != m_LastChannel)
             {
-                if (settings.Enabled)
-                {
-                    ScheduleRecompute(DebounceSeconds);
-                }
+                ScheduleRecompute(0f);
+            }
+            m_LastChannel = channel;
+
+            bool modeChanged = settings.Mode != m_LastMode;
+            bool weightsChanged = settings.W1 != m_LastW1 || settings.W2 != m_LastW2 || settings.W3 != m_LastW3 || settings.W4 != m_LastW4;
+            if (active && (modeChanged || weightsChanged))
+            {
+                ScheduleRecompute(DebounceSeconds);
             }
 
             int stopCount = m_StopQuery.CalculateEntityCount();
             if (stopCount != m_LastStopCount)
             {
                 m_LastStopCount = stopCount;
-                if (settings.Enabled)
+                if (active)
                 {
                     ScheduleRecompute(DebounceSeconds);
                 }
             }
-            else if (settings.Enabled && !m_StopChangedQuery.IsEmptyIgnoreFilter)
+            else if (active && !m_StopChangedQuery.IsEmptyIgnoreFilter)
             {
                 ScheduleRecompute(DebounceSeconds);
             }
 
             int2 currentSize = GetGridSize();
-            if (settings.Enabled && (m_OverlayTexture == null || m_OverlaySize.x != currentSize.x || m_OverlaySize.y != currentSize.y))
+            if (active && (m_OverlayTexture == null || m_OverlaySize.x != currentSize.x || m_OverlaySize.y != currentSize.y))
             {
                 ScheduleRecompute(0f);
             }
 
-            if (settings.Enabled && m_RecomputeRequested && UnityEngine.Time.realtimeSinceStartup >= m_RecomputeAt)
+            if (active && m_RecomputeRequested && UnityEngine.Time.realtimeSinceStartup >= m_RecomputeAt)
             {
-                if (ComputeOverlay())
+                if (ComputeOverlay(channel))
                 {
                     m_RecomputeRequested = false;
                 }
             }
 
-            m_LastEnabled = settings.Enabled;
             m_LastMode = settings.Mode;
             m_LastW1 = settings.W1;
             m_LastW2 = settings.W2;
             m_LastW3 = settings.W3;
             m_LastW4 = settings.W4;
 
-            ApplyOverlayState(settings.Enabled && infoviewActive);
+            ApplyOverlayState(active);
         }
 
         public void RequestRecompute()
@@ -314,8 +322,6 @@ namespace StationSuitabilityOverlay
             SetField(m_InfoviewPrefab, "m_IconPath", "Media/Game/Icons/AdvisorInfoView.svg");
             SetField(m_InfoviewPrefab, "m_Priority", 900);
             SetField(m_InfoviewPrefab, "m_Group", 0);
-            // Neutral colors: these are applied by vanilla systems to the whole world
-            // while the infoview is active; the heatmap itself comes from our texture.
             SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
             SetField(m_InfoviewPrefab, "m_SecondaryColor", new Color(0.5f, 0.5f, 0.55f, 1f));
             SetField(m_InfoviewPrefab, "m_Editor", false);
@@ -331,6 +337,79 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info("Suitability infomode and infoview prefabs registered.");
         }
 
+        // ToolSystem.GetInfomodes reads the infoview ENTITY's InfoviewMode buffer, not
+        // the managed prefab. For runtime-registered prefabs that buffer can end up
+        // missing or empty, which leaves the infoview panel without rows and prevents
+        // infomode activation entirely — so verify it and repair it if needed.
+        private void EnsureInfoviewLinked()
+        {
+            if (m_InfoviewLinkChecked || m_InfoviewPrefab == null || m_InfomodePrefab == null)
+            {
+                return;
+            }
+
+            if (!m_PrefabSystem.TryGetEntity(m_InfoviewPrefab, out Entity infoviewEntity) ||
+                !m_PrefabSystem.TryGetEntity(m_InfomodePrefab, out Entity infomodeEntity))
+            {
+                Mod.Log.Warn("Infoview or infomode prefab entity not found yet.");
+                m_InfoviewLinkChecked = true;
+                return;
+            }
+
+            bool hadBuffer = EntityManager.HasComponent<InfoviewMode>(infoviewEntity);
+            DynamicBuffer<InfoviewMode> buffer = hadBuffer
+                ? EntityManager.GetBuffer<InfoviewMode>(infoviewEntity)
+                : EntityManager.AddBuffer<InfoviewMode>(infoviewEntity);
+
+            bool linked = false;
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                if (buffer[i].m_Mode == infomodeEntity)
+                {
+                    linked = true;
+                    break;
+                }
+            }
+
+            if (!linked)
+            {
+                buffer.Add(new InfoviewMode(infomodeEntity, InfomodePriority, supplemental: false, optional: false));
+                m_ToolSystem.EventInfomodesChanged?.Invoke();
+            }
+
+            Mod.Log.Info($"Infoview link check: buffer existed={hadBuffer}, was linked={linked}, entries now={buffer.Length}");
+            m_InfoviewLinkChecked = true;
+        }
+
+        private int m_LastLoggedIndex = int.MinValue;
+
+        private int GetActiveChannel()
+        {
+            if (m_ActiveInfomodeQuery.IsEmptyIgnoreFilter)
+            {
+                return -1;
+            }
+
+            using var actives = m_ActiveInfomodeQuery.ToComponentDataArray<InfomodeActive>(Allocator.Temp);
+            if (actives.Length == 0)
+            {
+                return -1;
+            }
+
+            InfomodeActive active = actives[0];
+            if (active.m_Index != m_LastLoggedIndex)
+            {
+                Mod.Log.Info($"Infomode active: index={active.m_Index}, secondaryIndex={active.m_SecondaryIndex}, priority={active.m_Priority}");
+                m_LastLoggedIndex = active.m_Index;
+            }
+
+            // The terrain overlay has four channels; vanilla heatmap jobs write to
+            // (m_Index - 1). Indices are allocated in color groups of four, so map
+            // any group back into the 0..3 channel range.
+            int channel = (active.m_Index - 1) & 3;
+            return channel;
+        }
+
         private void ApplyOverlayState(bool active)
         {
             if (m_TerrainRenderSystem == null)
@@ -338,16 +417,27 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
+            bool applied = false;
             if (active && m_OverlayTexture != null)
             {
-                if (m_TerrainRenderSystem.overrideOverlaymap != m_OverlayTexture)
+                Texture current = m_TerrainRenderSystem.overrideOverlaymap;
+                if (current == null || current == m_OverlayTexture)
                 {
+                    // OverlayInfomodeSystem clears this every frame, so reassign each
+                    // frame; if a vanilla heatmap owns it we leave it alone.
                     m_TerrainRenderSystem.overrideOverlaymap = m_OverlayTexture;
+                    applied = true;
                 }
             }
             else if (m_TerrainRenderSystem.overrideOverlaymap == m_OverlayTexture)
             {
                 m_TerrainRenderSystem.overrideOverlaymap = null;
+            }
+
+            if (applied != m_LastOverlayApplied)
+            {
+                Mod.Log.Info($"Overlay map {(applied ? "attached" : "detached")} (active={active}, texture={(m_OverlayTexture != null ? "yes" : "no")})");
+                m_LastOverlayApplied = applied;
             }
         }
 
@@ -361,13 +451,15 @@ namespace StationSuitabilityOverlay
 
         private int2 GetGridSize()
         {
-            float2 worldSize = m_TerrainSystem != null ? m_TerrainSystem.worldSize : new float2(0f, 0f);
-            int width = math.max(1, (int)math.ceil(worldSize.x / TileSize));
-            int height = math.max(1, (int)math.ceil(worldSize.y / TileSize));
+            // Must match the grid ComputeOverlay derives from the cell maps: both
+            // span the playable area, not the full terrain.
+            float2 playable = m_TerrainSystem != null ? m_TerrainSystem.playableArea : new float2(0f, 0f);
+            int width = math.max(1, (int)math.ceil(playable.x / TileSize));
+            int height = math.max(1, (int)math.ceil(playable.y / TileSize));
             return new int2(width, height);
         }
 
-        private bool ComputeOverlay()
+        private bool ComputeOverlay(int channel)
         {
             if (m_PopulationSystem == null || m_AvailabilitySystem == null || m_TerrainSystem == null)
             {
@@ -389,8 +481,8 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            // Scores are computed over the playable area only (the population and
-            // availability cell maps cover exactly that region, centered at the origin).
+            // The score grid and texture both span the playable area, matching the
+            // extents the vanilla heatmap cell maps use for this overlay channel.
             float2 mapSize = popData.m_CellSize * new float2(popData.m_TextureSize.x, popData.m_TextureSize.y);
             if (mapSize.x <= 0f || mapSize.y <= 0f)
             {
@@ -402,23 +494,6 @@ namespace StationSuitabilityOverlay
             int height = math.max(1, (int)math.ceil(mapSize.y / TileSize));
             int2 gridSize = new int2(width, height);
             int totalCells = width * height;
-
-            // The override overlay map is bound as the terrain material's base color map,
-            // so it is sampled across the FULL terrain (4x the playable map). The texture
-            // must span the terrain, with the score block placed at the playable region.
-            float2 terrainMin = m_TerrainSystem.worldOffset;
-            float2 terrainSize = m_TerrainSystem.worldSize;
-            if (terrainSize.x <= 0f || terrainSize.y <= 0f)
-            {
-                terrainMin = worldMin;
-                terrainSize = mapSize;
-            }
-
-            int texWidth = math.max(1, (int)math.ceil(terrainSize.x / TileSize));
-            int texHeight = math.max(1, (int)math.ceil(terrainSize.y / TileSize));
-            int2 blockOffset = new int2(
-                (int)math.round((worldMin.x - terrainMin.x) / TileSize),
-                (int)math.round((worldMin.y - terrainMin.y) / TileSize));
 
             List<float2> stopPositions = CollectStopPositions(Mod.Settings.Mode);
             CollectRoadNetwork(out List<float2> nodePositions, out List<float2> edgePositions);
@@ -488,7 +563,10 @@ namespace StationSuitabilityOverlay
             }
             float percentile95 = sorted.Length > 0 ? sorted[percentileIndex] : 0f;
 
-            Color32[] pixels = new Color32[texWidth * texHeight];
+            // The overlay texture holds per-infomode INTENSITY channels, not colors:
+            // the terrain shader colors channel (InfomodeActive.m_Index - 1) with our
+            // infomode's gradient, exactly like the vanilla heatmaps.
+            Color32[] pixels = new Color32[totalCells];
             float range = max - min;
             bool hasSignal = range > 1e-5f;
             // In sparse cities most tiles share the minimum score, which drags the 95th
@@ -496,46 +574,36 @@ namespace StationSuitabilityOverlay
             bool highlightTop = hasSignal && percentile95 > min;
             if (hasSignal)
             {
-                for (int y = 0; y < height; y++)
+                for (int i = 0; i < scores.Length; i++)
                 {
-                    int ty = blockOffset.y + y;
-                    if (ty < 0 || ty >= texHeight)
+                    float score = scores[i];
+                    float normalized = math.saturate((score - min) / range);
+                    byte intensity = (byte)math.round(normalized * 255f);
+                    if (highlightTop && score >= percentile95)
                     {
-                        continue;
+                        intensity = 255;
                     }
 
-                    for (int x = 0; x < width; x++)
+                    Color32 pixel = default;
+                    switch (channel)
                     {
-                        int tx = blockOffset.x + x;
-                        if (tx < 0 || tx >= texWidth)
-                        {
-                            continue;
-                        }
-
-                        float score = scores[x + y * width];
-                        float normalized = math.saturate((score - min) / range);
-                        Color color = GradientColor(normalized);
-                        float alpha = normalized <= 0.001f
-                            ? 0f
-                            : 0.2f + math.pow(normalized, 1.1f) * 0.5f;
-                        if (highlightTop && score >= percentile95)
-                        {
-                            alpha = math.max(alpha, 0.9f);
-                        }
-                        color.a = math.saturate(alpha);
-                        pixels[tx + ty * texWidth] = color;
+                        case 0: pixel.r = intensity; break;
+                        case 1: pixel.g = intensity; break;
+                        case 2: pixel.b = intensity; break;
+                        default: pixel.a = intensity; break;
                     }
+                    pixels[i] = pixel;
                 }
             }
 
-            if (m_OverlayTexture == null || m_OverlaySize.x != texWidth || m_OverlaySize.y != texHeight)
+            if (m_OverlayTexture == null || m_OverlaySize.x != width || m_OverlaySize.y != height)
             {
                 if (m_OverlayTexture != null)
                 {
                     UnityEngine.Object.Destroy(m_OverlayTexture);
                 }
 
-                m_OverlayTexture = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false, true)
+                m_OverlayTexture = new Texture2D(width, height, TextureFormat.RGBA32, false, true)
                 {
                     wrapMode = TextureWrapMode.Clamp,
                     filterMode = FilterMode.Bilinear,
@@ -544,8 +612,8 @@ namespace StationSuitabilityOverlay
 
             m_OverlayTexture.SetPixels32(pixels);
             m_OverlayTexture.Apply(false, false);
-            m_OverlaySize = new int2(texWidth, texHeight);
-            Mod.Log.Info($"Overlay computed: score grid {width}x{height} in texture {texWidth}x{texHeight} at offset {blockOffset}, stops={stopPositions.Count}, roads(nodes/edges)={nodePositions.Count}/{edgePositions.Count}, score range [{min:F1}, {max:F1}], p95={percentile95:F1}");
+            m_OverlaySize = gridSize;
+            Mod.Log.Info($"Overlay computed: grid {width}x{height}, channel={channel}, stops={stopPositions.Count}, roads(nodes/edges)={nodePositions.Count}/{edgePositions.Count}, score range [{min:F1}, {max:F1}], p95={percentile95:F1}");
             return true;
         }
 
@@ -688,16 +756,6 @@ namespace StationSuitabilityOverlay
             cell.x = math.clamp(cell.x, 0, gridSize.x - 1);
             cell.y = math.clamp(cell.y, 0, gridSize.y - 1);
             return cell;
-        }
-
-        private static Color GradientColor(float t)
-        {
-            if (t <= 0.5f)
-            {
-                return Color.Lerp(LowColor, MediumColor, t * 2f);
-            }
-
-            return Color.Lerp(MediumColor, HighColor, (t - 0.5f) * 2f);
         }
 
         private static void SetField(object target, string name, object value)

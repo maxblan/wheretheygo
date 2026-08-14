@@ -27,8 +27,10 @@ namespace StationSuitabilityOverlay
             AssetDatabase.global.LoadSettings(nameof(StationSuitabilityOverlay), Settings, new Setting(this));
             Settings.ClampAll();
 
-            updateSystem.UpdateAt<StationSuitabilityOverlaySystem>(SystemUpdatePhase.Rendering);
-            updateSystem.UpdateAt<StationSuitabilityUISystem>(SystemUpdatePhase.UIUpdate);
+            // Must run in PreCulling between OverlayInfomodeSystem (which clears the
+            // terrain override overlay every frame) and TerrainRenderSystem (which
+            // consumes it into the terrain material).
+            updateSystem.UpdateAt<StationSuitabilityOverlaySystem>(SystemUpdatePhase.PreCulling);
         }
 
         public void OnDispose()
