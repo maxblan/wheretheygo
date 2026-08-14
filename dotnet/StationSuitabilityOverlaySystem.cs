@@ -404,9 +404,14 @@ namespace StationSuitabilityOverlay
             }
 
             // The terrain overlay has four channels; vanilla heatmap jobs write to
-            // (m_Index - 1). Indices are allocated in color groups of four, so map
-            // any group back into the 0..3 channel range.
-            int channel = (active.m_Index - 1) & 3;
+            // (m_Index - 1). Our prefab uses color group 0, so the index is 1..4.
+            int channel = active.m_Index - 1;
+            if (channel < 0 || channel > 3)
+            {
+                Mod.Log.Warn($"Unexpected infomode index {active.m_Index}; overlay disabled this frame.");
+                return -1;
+            }
+
             return channel;
         }
 
