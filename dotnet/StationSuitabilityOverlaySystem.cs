@@ -9,6 +9,7 @@ using Game.Rendering;
 using Game.SceneFlow;
 using Game.Simulation;
 using Game.Tools;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -26,19 +27,23 @@ namespace StationSuitabilityOverlay
     [UpdateBefore(typeof(TerrainRenderSystem))]
     public sealed partial class StationSuitabilityOverlaySystem : GameSystemBase
     {
-        private const float TileSize = 64f;
-        private const float CatchmentRadius = 400f;
-        private const float AccessRadius = 120f;
+        private const float TileSize = 32f;
+        private const float BucketSize = 128f;
         private const float DebounceSeconds = 0.3f;
         private const float MaxPenalty = 1.5f;
         private const int InfomodePriority = 200;
+        // Gamma < 1 lifts the mid-range of the normalized scores for readability.
+        private const float IntensityGamma = 0.85f;
 
-        private static readonly Color LowColor = new Color(0.12f, 0.46f, 0.18f, 1f);
-        private static readonly Color MediumColor = new Color(0.94f, 0.84f, 0.25f, 1f);
-        private static readonly Color HighColor = new Color(0.85f, 0.22f, 0.12f, 1f);
+        // Alpha shapes the overlay's opacity ramp: low scores barely tint the map,
+        // hotspots are nearly opaque. These same fields feed the infoview panel's
+        // gradient legend — if the legend ever renders its low end too faint,
+        // raise LowColor's alpha rather than restructuring the ramp.
+        private static readonly Color LowColor = new Color(0.12f, 0.46f, 0.18f, 0.2f);
+        private static readonly Color MediumColor = new Color(0.94f, 0.84f, 0.25f, 0.65f);
+        private static readonly Color HighColor = new Color(0.85f, 0.22f, 0.12f, 0.95f);
 
         private TerrainSystem m_TerrainSystem;
-        private TerrainRenderSystem m_TerrainRenderSystem;
         private PopulationToGridSystem m_PopulationSystem;
         private AvailabilityInfoToGridSystem m_AvailabilitySystem;
         private PrefabSystem m_PrefabSystem;
@@ -66,24 +71,76 @@ namespace StationSuitabilityOverlay
 
         private bool m_LastActive;
         private int m_LastChannel = -1;
-        private Setting.ModePreset m_LastMode;
-        private float m_LastW1;
-        private float m_LastW2;
-        private float m_LastW3;
-        private float m_LastW4;
+        private int m_LastLoggedIndex = int.MinValue;
+        private SettingsSnapshot m_LastComputeSettings;
+        private int m_LastHighlightShare;
 
         private bool m_RecomputeRequested;
         private float m_RecomputeAt;
         private bool m_PrefabsAdded;
         private bool m_InfoviewLinkChecked;
+        private bool m_InfoviewLinkWaitLogged;
         private bool m_LastOverlayApplied;
+
+        // In-flight suitability job; resolved in FinishComputeIfReady so a large
+        // recompute never blocks the frame it was scheduled on.
+        private bool m_JobPending;
+        private JobHandle m_PendingHandle;
+        private NativeArray<float> m_PendingScores;
+        private int2 m_PendingGrid;
+        private int m_PendingStopCount;
+        private int m_PendingNodeCount;
+        private int m_PendingEdgeCount;
+        // Playable-area grid observed when the last compute was scheduled. The
+        // resize trigger compares against this snapshot (not m_IntensityGrid, which
+        // is derived from the cell-map extents) so a mismatch between the two
+        // derivations cannot cause a recompute-every-frame loop.
+        private int2 m_GridAtCompute;
+        // Raw scores from the last compute; HighlightShare changes re-run only the
+        // normalization over these instead of the whole job.
+        private float[] m_RawScores;
+        private float[] m_ScoreScratch;
+
+        // Settings that change the computed scores. HighlightShare is tracked
+        // separately because it only affects the post-job normalization pass.
+        private struct SettingsSnapshot : IEquatable<SettingsSnapshot>
+        {
+            public Setting.ModePreset Mode;
+            public float W1;
+            public float W2;
+            public float W3;
+            public float W4;
+            public int CatchmentRadius;
+            public int AccessRadius;
+
+            public static SettingsSnapshot Capture(Setting settings)
+            {
+                return new SettingsSnapshot
+                {
+                    Mode = settings.Mode,
+                    W1 = settings.W1,
+                    W2 = settings.W2,
+                    W3 = settings.W3,
+                    W4 = settings.W4,
+                    CatchmentRadius = settings.CatchmentRadius,
+                    AccessRadius = settings.AccessRadius,
+                };
+            }
+
+            public bool Equals(SettingsSnapshot other)
+            {
+                return Mode == other.Mode
+                    && W1 == other.W1 && W2 == other.W2 && W3 == other.W3 && W4 == other.W4
+                    && CatchmentRadius == other.CatchmentRadius
+                    && AccessRadius == other.AccessRadius;
+            }
+        }
 
         protected override void OnCreate()
         {
             base.OnCreate();
 
             m_TerrainSystem = World.GetOrCreateSystemManaged<TerrainSystem>();
-            m_TerrainRenderSystem = World.GetOrCreateSystemManaged<TerrainRenderSystem>();
             m_PopulationSystem = World.GetOrCreateSystemManaged<PopulationToGridSystem>();
             m_AvailabilitySystem = World.GetOrCreateSystemManaged<AvailabilityInfoToGridSystem>();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
@@ -160,19 +217,19 @@ namespace StationSuitabilityOverlay
             var settings = Mod.Settings;
             if (settings != null)
             {
-                m_LastMode = settings.Mode;
-                m_LastW1 = settings.W1;
-                m_LastW2 = settings.W2;
-                m_LastW3 = settings.W3;
-                m_LastW4 = settings.W4;
+                m_LastComputeSettings = SettingsSnapshot.Capture(settings);
+                m_LastHighlightShare = settings.HighlightShare;
             }
         }
 
         protected override void OnDestroy()
         {
-            base.OnDestroy();
+            DiscardPendingCompute();
             m_Intensities = null;
             m_ExpandedCache = null;
+            m_RawScores = null;
+            m_ScoreScratch = null;
+            base.OnDestroy();
         }
 
         protected override void OnUpdate()
@@ -187,11 +244,13 @@ namespace StationSuitabilityOverlay
 
             if (GameManager.instance == null || !GameManager.instance.gameMode.IsGame())
             {
+                DiscardPendingCompute();
                 m_RecomputeRequested = false;
                 return;
             }
 
             EnsureInfoviewLinked();
+            FinishComputeIfReady();
 
             // The overlay is driven entirely by the vanilla infoview menu: when the
             // player activates our infoview, the game adds InfomodeActive to our
@@ -220,12 +279,21 @@ namespace StationSuitabilityOverlay
             }
             m_LastChannel = channel;
 
-            bool modeChanged = settings.Mode != m_LastMode;
-            bool weightsChanged = settings.W1 != m_LastW1 || settings.W2 != m_LastW2 || settings.W3 != m_LastW3 || settings.W4 != m_LastW4;
-            if (active && (modeChanged || weightsChanged))
+            var currentSettings = SettingsSnapshot.Capture(settings);
+            bool computeSettingsChanged = !currentSettings.Equals(m_LastComputeSettings);
+            bool highlightChanged = settings.HighlightShare != m_LastHighlightShare;
+            if (active && computeSettingsChanged)
             {
                 ScheduleRecompute(DebounceSeconds);
             }
+            else if (active && highlightChanged && m_RawScores != null)
+            {
+                // Highlight share only affects the normalization pass, so the
+                // cached raw scores can be re-normalized without re-running the job.
+                NormalizeIntensities();
+            }
+            m_LastComputeSettings = currentSettings;
+            m_LastHighlightShare = settings.HighlightShare;
 
             int stopCount = m_StopQuery.CalculateEntityCount();
             if (stopCount != m_LastStopCount)
@@ -242,24 +310,19 @@ namespace StationSuitabilityOverlay
             }
 
             int2 currentSize = GetGridSize();
-            if (active && (m_Intensities == null || m_IntensityGrid.x != currentSize.x || m_IntensityGrid.y != currentSize.y))
+            if (active && !m_JobPending && (m_Intensities == null || !m_GridAtCompute.Equals(currentSize)))
             {
                 ScheduleRecompute(0f);
             }
 
-            if (active && m_RecomputeRequested && UnityEngine.Time.realtimeSinceStartup >= m_RecomputeAt)
+            if (active && m_RecomputeRequested && !m_JobPending
+                && UnityEngine.Time.realtimeSinceStartup >= m_RecomputeAt)
             {
-                if (ComputeOverlay(channel))
+                if (StartCompute())
                 {
                     m_RecomputeRequested = false;
                 }
             }
-
-            m_LastMode = settings.Mode;
-            m_LastW1 = settings.W1;
-            m_LastW2 = settings.W2;
-            m_LastW3 = settings.W3;
-            m_LastW4 = settings.W4;
 
             ApplyOverlayState(active, channel);
         }
@@ -299,7 +362,7 @@ namespace StationSuitabilityOverlay
             SetField(m_InfomodePrefab, "m_Low", LowColor);
             SetField(m_InfomodePrefab, "m_Medium", MediumColor);
             SetField(m_InfomodePrefab, "m_High", HighColor);
-            SetField(m_InfomodePrefab, "m_Steps", 12);
+            SetField(m_InfomodePrefab, "m_Steps", 16);
             SetField(m_InfomodePrefab, "m_LegendType", GradientLegendType.Gradient);
             SetField(m_InfomodePrefab, "m_LowLabelId", "StationSuitabilityOverlay.Legend.Low");
             SetField(m_InfomodePrefab, "m_MediumLabelId", "StationSuitabilityOverlay.Legend.Medium");
@@ -350,8 +413,13 @@ namespace StationSuitabilityOverlay
             if (!m_PrefabSystem.TryGetEntity(m_InfoviewPrefab, out Entity infoviewEntity) ||
                 !m_PrefabSystem.TryGetEntity(m_InfomodePrefab, out Entity infomodeEntity))
             {
-                Mod.Log.Warn("Infoview or infomode prefab entity not found yet.");
-                m_InfoviewLinkChecked = true;
+                // Prefab entities can materialize a frame after AddPrefab; retry
+                // next update instead of latching the checked flag.
+                if (!m_InfoviewLinkWaitLogged)
+                {
+                    Mod.Log.Info("Infoview or infomode prefab entity not found yet; retrying.");
+                    m_InfoviewLinkWaitLogged = true;
+                }
                 return;
             }
 
@@ -379,8 +447,6 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info($"Infoview link check: buffer existed={hadBuffer}, was linked={linked}, entries now={buffer.Length}");
             m_InfoviewLinkChecked = true;
         }
-
-        private int m_LastLoggedIndex = int.MinValue;
 
         private int GetActiveChannel()
         {
@@ -497,27 +563,34 @@ namespace StationSuitabilityOverlay
 
         private int2 GetGridSize()
         {
-            // Must match the grid ComputeOverlay derives from the cell maps: both
-            // span the playable area, not the full terrain.
+            // Change-detection only: the compute grid itself is derived from the
+            // cell-map extents in StartCompute (see m_GridAtCompute).
             float2 playable = m_TerrainSystem != null ? m_TerrainSystem.playableArea : new float2(0f, 0f);
-            int width = math.max(1, (int)math.ceil(playable.x / TileSize));
-            int height = math.max(1, (int)math.ceil(playable.y / TileSize));
-            return new int2(width, height);
+            return GridDims(playable, TileSize);
         }
 
-        private bool ComputeOverlay(int channel)
+        private static int2 GridDims(float2 size, float cellSize)
         {
-            if (m_PopulationSystem == null || m_AvailabilitySystem == null || m_TerrainSystem == null)
+            return new int2(
+                math.max(1, (int)math.ceil(size.x / cellSize)),
+                math.max(1, (int)math.ceil(size.y / cellSize)));
+        }
+
+        // Schedules the suitability job without blocking; FinishComputeIfReady
+        // consumes the result on a later frame. Input arrays are released
+        // automatically once the job has run.
+        private bool StartCompute()
+        {
+            if (m_JobPending || m_PopulationSystem == null || m_AvailabilitySystem == null || m_TerrainSystem == null)
             {
                 return false;
             }
 
+            var settings = Mod.Settings;
             Dependency.Complete();
 
-            JobHandle popDeps = default;
-            JobHandle availDeps = default;
-            CellMapData<PopulationCell> popData = m_PopulationSystem.GetData(true, out popDeps);
-            CellMapData<AvailabilityInfoCell> availData = m_AvailabilitySystem.GetData(true, out availDeps);
+            CellMapData<PopulationCell> popData = m_PopulationSystem.GetData(true, out JobHandle popDeps);
+            CellMapData<AvailabilityInfoCell> availData = m_AvailabilitySystem.GetData(true, out JobHandle availDeps);
 
             if (popData.m_CellSize.x <= 0f || popData.m_CellSize.y <= 0f ||
                 availData.m_CellSize.x <= 0f || availData.m_CellSize.y <= 0f ||
@@ -536,36 +609,32 @@ namespace StationSuitabilityOverlay
             }
 
             float2 worldMin = -mapSize * 0.5f;
-            int width = math.max(1, (int)math.ceil(mapSize.x / TileSize));
-            int height = math.max(1, (int)math.ceil(mapSize.y / TileSize));
-            int2 gridSize = new int2(width, height);
-            int totalCells = width * height;
+            int2 gridSize = GridDims(mapSize, TileSize);
+            int totalCells = gridSize.x * gridSize.y;
 
-            List<float2> stopPositions = CollectStopPositions(Mod.Settings.Mode);
+            List<float2> stopPositions = CollectStopPositions(settings.Mode);
             CollectRoadNetwork(out List<float2> nodePositions, out List<float2> edgePositions);
 
-            using var stopPositionsNative = BuildBuckets(stopPositions, gridSize, worldMin, TileSize, out var stopOffsets, out var stopCounts);
-            using var stopOffsetsNative = stopOffsets;
-            using var stopCountsNative = stopCounts;
-            using var nodePositionsNative = BuildBuckets(nodePositions, gridSize, worldMin, TileSize, out var nodeOffsets, out var nodeCounts);
-            using var nodeOffsetsNative = nodeOffsets;
-            using var nodeCountsNative = nodeCounts;
-            using var edgePositionsNative = BuildBuckets(edgePositions, gridSize, worldMin, TileSize, out var edgeOffsets, out var edgeCounts);
-            using var edgeOffsetsNative = edgeOffsets;
-            using var edgeCountsNative = edgeCounts;
-            using var scores = new NativeArray<float>(totalCells, Allocator.TempJob, NativeArrayOptions.ClearMemory);
+            int2 bucketGrid = GridDims(mapSize, BucketSize);
+
+            NativeArray<float2> stopPositionsNative = BuildBuckets(stopPositions, bucketGrid, worldMin, BucketSize, out NativeArray<int> stopOffsets, out NativeArray<int> stopCounts);
+            NativeArray<float2> nodePositionsNative = BuildBuckets(nodePositions, bucketGrid, worldMin, BucketSize, out NativeArray<int> nodeOffsets, out NativeArray<int> nodeCounts);
+            NativeArray<float2> edgePositionsNative = BuildBuckets(edgePositions, bucketGrid, worldMin, BucketSize, out NativeArray<int> edgeOffsets, out NativeArray<int> edgeCounts);
+            var scores = new NativeArray<float>(totalCells, Allocator.Persistent, NativeArrayOptions.ClearMemory);
 
             var job = new SuitabilityJob
             {
                 GridSize = gridSize,
+                BucketGridSize = bucketGrid,
                 WorldMin = worldMin,
                 TileSize = TileSize,
-                CatchmentRadius = CatchmentRadius,
-                AccessRadius = AccessRadius,
-                W1 = Mod.Settings.W1,
-                W2 = Mod.Settings.W2,
-                W3 = Mod.Settings.W3,
-                W4 = Mod.Settings.W4,
+                BucketSize = BucketSize,
+                CatchmentRadius = settings.CatchmentRadius,
+                AccessRadius = settings.AccessRadius,
+                DemandWeight = settings.W1,
+                JobsWeight = settings.W2,
+                CoverageWeight = settings.W3,
+                AccessWeight = settings.W4,
                 PopulationMap = popData.m_Buffer,
                 PopulationCellSize = popData.m_CellSize,
                 PopulationTextureSize = popData.m_TextureSize,
@@ -573,14 +642,14 @@ namespace StationSuitabilityOverlay
                 AvailabilityCellSize = availData.m_CellSize,
                 AvailabilityTextureSize = availData.m_TextureSize,
                 StopPositions = stopPositionsNative,
-                StopBucketOffsets = stopOffsetsNative,
-                StopBucketCounts = stopCountsNative,
+                StopBucketOffsets = stopOffsets,
+                StopBucketCounts = stopCounts,
                 NodePositions = nodePositionsNative,
-                NodeBucketOffsets = nodeOffsetsNative,
-                NodeBucketCounts = nodeCountsNative,
+                NodeBucketOffsets = nodeOffsets,
+                NodeBucketCounts = nodeCounts,
                 EdgePositions = edgePositionsNative,
-                EdgeBucketOffsets = edgeOffsetsNative,
-                EdgeBucketCounts = edgeCountsNative,
+                EdgeBucketOffsets = edgeOffsets,
+                EdgeBucketCounts = edgeCounts,
                 Scores = scores,
             };
 
@@ -588,63 +657,157 @@ namespace StationSuitabilityOverlay
             JobHandle handle = job.Schedule(totalCells, 64, deps);
             m_PopulationSystem.AddReader(handle);
             m_AvailabilitySystem.AddReader(handle);
-            handle.Complete();
 
-            float min = float.MaxValue;
-            float max = float.MinValue;
-            for (int i = 0; i < scores.Length; i++)
+            stopPositionsNative.Dispose(handle);
+            stopOffsets.Dispose(handle);
+            stopCounts.Dispose(handle);
+            nodePositionsNative.Dispose(handle);
+            nodeOffsets.Dispose(handle);
+            nodeCounts.Dispose(handle);
+            edgePositionsNative.Dispose(handle);
+            edgeOffsets.Dispose(handle);
+            edgeCounts.Dispose(handle);
+
+            m_PendingHandle = handle;
+            m_PendingScores = scores;
+            m_PendingGrid = gridSize;
+            m_PendingStopCount = stopPositions.Count;
+            m_PendingNodeCount = nodePositions.Count;
+            m_PendingEdgeCount = edgePositions.Count;
+            m_JobPending = true;
+            m_GridAtCompute = GetGridSize();
+            return true;
+        }
+
+        private void FinishComputeIfReady()
+        {
+            if (!m_JobPending || !m_PendingHandle.IsCompleted)
             {
-                float v = scores[i];
-                if (v < min) min = v;
-                if (v > max) max = v;
+                return;
             }
 
-            float[] sorted = new float[scores.Length];
-            scores.CopyTo(sorted);
-            Array.Sort(sorted);
-            int percentileIndex = sorted.Length > 0 ? (int)math.floor(sorted.Length * 0.95f) : 0;
-            if (sorted.Length > 0 && percentileIndex >= sorted.Length)
-            {
-                percentileIndex = sorted.Length - 1;
-            }
-            float percentile95 = sorted.Length > 0 ? sorted[percentileIndex] : 0f;
+            m_PendingHandle.Complete();
+            m_JobPending = false;
 
-            // Intensities only: the vanilla terrain shader colors the overlay channel
-            // assigned to our infomode with its gradient (see ApplyOverlayState).
+            int totalCells = m_PendingScores.Length;
+            if (m_RawScores == null || m_RawScores.Length != totalCells)
+            {
+                m_RawScores = new float[totalCells];
+            }
+            m_PendingScores.CopyTo(m_RawScores);
+            m_PendingScores.Dispose();
+
+            m_IntensityGrid = m_PendingGrid;
+            NormalizeIntensities();
+            Mod.Log.Info($"Overlay computed: grid {m_PendingGrid.x}x{m_PendingGrid.y}, stops={m_PendingStopCount}, roads(nodes/edges)={m_PendingNodeCount}/{m_PendingEdgeCount}");
+        }
+
+        private void DiscardPendingCompute()
+        {
+            if (!m_JobPending)
+            {
+                return;
+            }
+
+            m_PendingHandle.Complete();
+            m_PendingScores.Dispose();
+            m_JobPending = false;
+        }
+
+        // Turns the cached raw scores into 0..255 intensities. Runs after every
+        // compute and again when only HighlightShare changes. The vanilla terrain
+        // shader colors the overlay channel assigned to our infomode with its
+        // gradient (see ApplyOverlayState).
+        private void NormalizeIntensities()
+        {
+            int totalCells = m_RawScores.Length;
             if (m_Intensities == null || m_Intensities.Length != totalCells)
             {
                 m_Intensities = new byte[totalCells];
             }
-            else
+
+            m_ExpandedChannel = -1;
+
+            float min = float.MaxValue;
+            float max = float.MinValue;
+            for (int i = 0; i < totalCells; i++)
             {
-                Array.Clear(m_Intensities, 0, m_Intensities.Length);
+                float v = m_RawScores[i];
+                if (v < min) min = v;
+                if (v > max) max = v;
             }
 
-            float range = max - min;
-            bool hasSignal = range > 1e-5f;
-            // In sparse cities most tiles share the minimum score, which drags the 95th
-            // percentile down to it; highlighting is only meaningful above the floor.
-            bool highlightTop = hasSignal && percentile95 > min;
-            if (hasSignal)
+            if (max - min <= 1e-5f)
             {
-                for (int i = 0; i < scores.Length; i++)
-                {
-                    float score = scores[i];
-                    float normalized = math.saturate((score - min) / range);
-                    byte intensity = (byte)math.round(normalized * 255f);
-                    if (highlightTop && score >= percentile95)
-                    {
-                        intensity = 255;
-                    }
+                Array.Clear(m_Intensities, 0, totalCells);
+                return;
+            }
 
-                    m_Intensities[i] = intensity;
+            if (m_ScoreScratch == null || m_ScoreScratch.Length != totalCells)
+            {
+                m_ScoreScratch = new float[totalCells];
+            }
+            Array.Copy(m_RawScores, m_ScoreScratch, totalCells);
+
+            // HighlightShare >= 1% keeps capIndex < totalCells.
+            float highlightShare = Mod.Settings.HighlightShare / 100f;
+            int capIndex = (int)math.floor(totalCells * (1f - highlightShare));
+            float capScore = SelectKth(m_ScoreScratch, totalCells, capIndex);
+
+            // In sparse cities most tiles share the minimum score, which drags the
+            // cap percentile down to it; capping is only meaningful above the floor.
+            // Normalizing against the cap keeps a few outlier tiles from compressing
+            // everything else into the low bands.
+            float cap = capScore > min ? capScore : max;
+            float invRange = 1f / math.max(cap - min, 1e-5f);
+            for (int i = 0; i < totalCells; i++)
+            {
+                float t = math.saturate((m_RawScores[i] - min) * invRange);
+                m_Intensities[i] = (byte)math.round(math.pow(t, IntensityGamma) * 255f);
+            }
+        }
+
+        // Hoare-partition quickselect: returns the k-th smallest element. O(n)
+        // average instead of the O(n log n) full sort a percentile doesn't need.
+        // Reorders the array in place.
+        private static float SelectKth(float[] values, int length, int k)
+        {
+            int lo = 0;
+            int hi = length - 1;
+            while (lo < hi)
+            {
+                float pivot = values[(lo + hi) >> 1];
+                int i = lo;
+                int j = hi;
+                while (i <= j)
+                {
+                    while (values[i] < pivot) i++;
+                    while (values[j] > pivot) j--;
+                    if (i <= j)
+                    {
+                        float tmp = values[i];
+                        values[i] = values[j];
+                        values[j] = tmp;
+                        i++;
+                        j--;
+                    }
+                }
+
+                if (k <= j)
+                {
+                    hi = j;
+                }
+                else if (k >= i)
+                {
+                    lo = i;
+                }
+                else
+                {
+                    return values[k];
                 }
             }
 
-            m_IntensityGrid = gridSize;
-            m_ExpandedChannel = -1;
-            Mod.Log.Info($"Overlay computed: grid {width}x{height}, channel={channel}, stops={stopPositions.Count}, roads(nodes/edges)={nodePositions.Count}/{edgePositions.Count}, score range [{min:F1}, {max:F1}], p95={percentile95:F1}");
-            return true;
+            return values[k];
         }
 
         private List<float2> CollectStopPositions(Setting.ModePreset mode)
@@ -746,7 +909,7 @@ namespace StationSuitabilityOverlay
             out NativeArray<int> counts)
         {
             int bucketCount = gridSize.x * gridSize.y;
-            counts = new NativeArray<int>(bucketCount, Allocator.TempJob, NativeArrayOptions.ClearMemory);
+            counts = new NativeArray<int>(bucketCount, Allocator.Persistent, NativeArrayOptions.ClearMemory);
 
             for (int i = 0; i < positions.Count; i++)
             {
@@ -755,7 +918,7 @@ namespace StationSuitabilityOverlay
                 counts[index] += 1;
             }
 
-            offsets = new NativeArray<int>(bucketCount, Allocator.TempJob, NativeArrayOptions.ClearMemory);
+            offsets = new NativeArray<int>(bucketCount, Allocator.Persistent, NativeArrayOptions.ClearMemory);
             int running = 0;
             for (int i = 0; i < bucketCount; i++)
             {
@@ -763,8 +926,8 @@ namespace StationSuitabilityOverlay
                 running += counts[i];
             }
 
-            var result = new NativeArray<float2>(positions.Count, Allocator.TempJob, NativeArrayOptions.ClearMemory);
-            var write = new NativeArray<int>(bucketCount, Allocator.TempJob, NativeArrayOptions.ClearMemory);
+            var result = new NativeArray<float2>(positions.Count, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+            var write = new NativeArray<int>(bucketCount, Allocator.Temp);
             NativeArray<int>.Copy(offsets, write);
 
             for (int i = 0; i < positions.Count; i++)
@@ -805,17 +968,34 @@ namespace StationSuitabilityOverlay
             field.SetValue(target, value);
         }
 
+        [BurstCompile]
         private struct SuitabilityJob : IJobParallelFor
         {
+            // The disc mean of the triangular kernel is 1/3, so demand/jobs sums are
+            // scaled back to the magnitude a flat kernel would produce; this keeps
+            // the weights comparable to the (inherently triangular) coverage penalty.
+            private const float KernelNormalization = 3f;
+            // Per-feature access contributions, already including the 3x kernel
+            // normalization (flat-kernel equivalents: 0.02 per edge, 0.05 per node).
+            private const float EdgeAccessCoefficient = 0.06f;
+            private const float NodeAccessCoefficient = 0.15f;
+            // Radius the access coefficients were tuned at. Scaling by
+            // (reference/actual)^2 keeps the saturation density constant, so the
+            // configurable radius changes which roads count, not how quickly the
+            // score maxes out.
+            private const float ReferenceAccessRadius = 120f;
+
             public int2 GridSize;
+            public int2 BucketGridSize;
             public float2 WorldMin;
             public float TileSize;
+            public float BucketSize;
             public float CatchmentRadius;
             public float AccessRadius;
-            public float W1;
-            public float W2;
-            public float W3;
-            public float W4;
+            public float DemandWeight;
+            public float JobsWeight;
+            public float CoverageWeight;
+            public float AccessWeight;
 
             [ReadOnly] public NativeArray<PopulationCell> PopulationMap;
             public float2 PopulationCellSize;
@@ -845,22 +1025,20 @@ namespace StationSuitabilityOverlay
                 int y = index / GridSize.x;
                 float2 center = WorldMin + new float2((x + 0.5f) * TileSize, (y + 0.5f) * TileSize);
 
-                float demand = SumPopulation(center);
-                float jobs = SumJobs(center);
+                float demand = SumPopulationCells(center, CatchmentRadius);
+                float jobs = SumJobCells(center, CatchmentRadius);
                 float penalty = ComputePenalty(center);
                 float access = ComputeAccessibility(center);
 
-                Scores[index] = (W1 * demand) + (W2 * jobs) - (W3 * penalty) + (W4 * access);
+                Scores[index] = (DemandWeight * demand) + (JobsWeight * jobs) - (CoverageWeight * penalty) + (AccessWeight * access);
             }
 
-            private float SumPopulation(float2 center)
+            // Triangular kernel: contributions fade linearly with distance, so the
+            // coarse source cells cannot imprint rectangular plateaus. Callers must
+            // ensure dist <= radius.
+            private static float TriangularWeight(float dist, float radius)
             {
-                return SumPopulationCells(center, CatchmentRadius);
-            }
-
-            private float SumJobs(float2 center)
-            {
-                return SumJobCells(center, CatchmentRadius);
+                return 1f - dist / radius;
             }
 
             private float SumPopulationCells(float2 center, float radius)
@@ -879,14 +1057,15 @@ namespace StationSuitabilityOverlay
                     {
                         int idx = cx + cy * PopulationTextureSize.x;
                         float2 cellCenter = mapMin + new float2((cx + 0.5f) * PopulationCellSize.x, (cy + 0.5f) * PopulationCellSize.y);
-                        if (math.distance(cellCenter, center) <= radius)
+                        float dist = math.distance(cellCenter, center);
+                        if (dist <= radius)
                         {
-                            sum += PopulationMap[idx].m_Population;
+                            sum += PopulationMap[idx].m_Population * TriangularWeight(dist, radius);
                         }
                     }
                 }
 
-                return sum;
+                return sum * KernelNormalization;
             }
 
             private float SumJobCells(float2 center, float radius)
@@ -905,26 +1084,27 @@ namespace StationSuitabilityOverlay
                     {
                         int idx = cx + cy * AvailabilityTextureSize.x;
                         float2 cellCenter = mapMin + new float2((cx + 0.5f) * AvailabilityCellSize.x, (cy + 0.5f) * AvailabilityCellSize.y);
-                        if (math.distance(cellCenter, center) <= radius)
+                        float dist = math.distance(cellCenter, center);
+                        if (dist <= radius)
                         {
-                            sum += AvailabilityMap[idx].m_AvailabilityInfo.z;
+                            sum += AvailabilityMap[idx].m_AvailabilityInfo.z * TriangularWeight(dist, radius);
                         }
                     }
                 }
 
-                return sum;
+                return sum * KernelNormalization;
             }
 
             private float ComputePenalty(float2 center)
             {
-                int radiusTiles = (int)math.ceil(CatchmentRadius / TileSize);
-                int2 baseCell = WorldToCell(center, WorldMin, TileSize, GridSize);
+                int radiusTiles = (int)math.ceil(CatchmentRadius / BucketSize);
+                int2 baseCell = WorldToCell(center, WorldMin, BucketSize, BucketGridSize);
                 float penalty = 0f;
 
                 for (int dy = -radiusTiles; dy <= radiusTiles; dy++)
                 {
                     int cy = baseCell.y + dy;
-                    if (cy < 0 || cy >= GridSize.y)
+                    if (cy < 0 || cy >= BucketGridSize.y)
                     {
                         continue;
                     }
@@ -932,12 +1112,12 @@ namespace StationSuitabilityOverlay
                     for (int dx = -radiusTiles; dx <= radiusTiles; dx++)
                     {
                         int cx = baseCell.x + dx;
-                        if (cx < 0 || cx >= GridSize.x)
+                        if (cx < 0 || cx >= BucketGridSize.x)
                         {
                             continue;
                         }
 
-                        int bucket = cx + cy * GridSize.x;
+                        int bucket = cx + cy * BucketGridSize.x;
                         int count = StopBucketCounts[bucket];
                         int start = StopBucketOffsets[bucket];
 
@@ -950,7 +1130,7 @@ namespace StationSuitabilityOverlay
                                 continue;
                             }
 
-                            penalty += 1f - (dist / CatchmentRadius);
+                            penalty += TriangularWeight(dist, CatchmentRadius);
                         }
                     }
                 }
@@ -960,15 +1140,15 @@ namespace StationSuitabilityOverlay
 
             private float ComputeAccessibility(float2 center)
             {
-                int radiusTiles = (int)math.ceil(AccessRadius / TileSize);
-                int2 baseCell = WorldToCell(center, WorldMin, TileSize, GridSize);
-                int nodes = 0;
-                int edges = 0;
+                int radiusTiles = (int)math.ceil(AccessRadius / BucketSize);
+                int2 baseCell = WorldToCell(center, WorldMin, BucketSize, BucketGridSize);
+                float nodeWeight = 0f;
+                float edgeWeight = 0f;
 
                 for (int dy = -radiusTiles; dy <= radiusTiles; dy++)
                 {
                     int cy = baseCell.y + dy;
-                    if (cy < 0 || cy >= GridSize.y)
+                    if (cy < 0 || cy >= BucketGridSize.y)
                     {
                         continue;
                     }
@@ -976,20 +1156,21 @@ namespace StationSuitabilityOverlay
                     for (int dx = -radiusTiles; dx <= radiusTiles; dx++)
                     {
                         int cx = baseCell.x + dx;
-                        if (cx < 0 || cx >= GridSize.x)
+                        if (cx < 0 || cx >= BucketGridSize.x)
                         {
                             continue;
                         }
 
-                        int bucket = cx + cy * GridSize.x;
+                        int bucket = cx + cy * BucketGridSize.x;
                         int nodeCount = NodeBucketCounts[bucket];
                         int nodeStart = NodeBucketOffsets[bucket];
                         for (int i = 0; i < nodeCount; i++)
                         {
                             float2 pos = NodePositions[nodeStart + i];
-                            if (math.distance(pos, center) <= AccessRadius)
+                            float nodeDist = math.distance(pos, center);
+                            if (nodeDist <= AccessRadius)
                             {
-                                nodes += 1;
+                                nodeWeight += TriangularWeight(nodeDist, AccessRadius);
                             }
                         }
 
@@ -998,15 +1179,17 @@ namespace StationSuitabilityOverlay
                         for (int i = 0; i < edgeCount; i++)
                         {
                             float2 pos = EdgePositions[edgeStart + i];
-                            if (math.distance(pos, center) <= AccessRadius)
+                            float edgeDist = math.distance(pos, center);
+                            if (edgeDist <= AccessRadius)
                             {
-                                edges += 1;
+                                edgeWeight += TriangularWeight(edgeDist, AccessRadius);
                             }
                         }
                     }
                 }
 
-                float access = (edges * 0.02f) + (nodes * 0.05f);
+                float radiusScale = (ReferenceAccessRadius * ReferenceAccessRadius) / (AccessRadius * AccessRadius);
+                float access = ((edgeWeight * EdgeAccessCoefficient) + (nodeWeight * NodeAccessCoefficient)) * radiusScale;
                 return math.saturate(access);
             }
 

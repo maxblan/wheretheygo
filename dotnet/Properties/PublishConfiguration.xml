@@ -10,22 +10,22 @@
 	<LongDescription>
 # Station Suitability Overlay
 
-Renders a heatmap over the terrain that scores every 64 m tile for transit station placement, so you can see at a glance where a new bus stop or metro station would serve the most people.
+Renders a vanilla-style infoview heatmap that scores every 32 m tile for transit station placement, so you can see at a glance where a new bus stop or metro station would serve the most people.
 
 ## Scoring
 
-Each tile is scored with a weighted multi-criteria formula over a 400 m catchment:
+Each tile is scored with a weighted multi-criteria formula over a configurable catchment (350 m bus / 600 m metro by default):
 
 - **Demand** — residents within the catchment
 - **Jobs** — workplaces within the catchment
 - **Coverage penalty** — existing stops of the selected mode reduce the score nearby, avoiding redundant stations
 - **Accessibility** — road network density around the tile
 
-The top 5% of tiles are highlighted at full opacity. Bus and Metro presets ship with sensible default weights, and all four weights are adjustable live.
+The best tiles reach the top of the green-yellow-red gradient; how large that top share is (1-20%, default 5%) is configurable. Bus and Metro presets ship with sensible defaults, and all weights and radii are adjustable in Options.
 
 ## Usage
 
-Open the **Station Suitability** panel in the top-right corner of the screen, enable the overlay, pick a mode, and tune the weights. The overlay recalculates automatically when stops change, or on demand via the Recalculate button.
+Open the infoview menu and select **Station Suitability**. The brightest red tiles are the best locations for a new stop. Tune mode preset, weights and radii under Options > Station Suitability Overlay; the overlay recalculates automatically when stops change or settings move.
 	</LongDescription>
 	<!--Thumbnail-->
 	<Thumbnail Value="Properties/Thumbnail.png" />
