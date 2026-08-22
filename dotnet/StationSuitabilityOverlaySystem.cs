@@ -132,7 +132,9 @@ namespace StationSuitabilityOverlay
         private float m_LastMaskRefresh;
         private float m_LastRidershipSample;
         private float m_LastRidershipSave;
-        private long m_LastLoggedSiteHash;
+        private int[] m_LoggedSiteIndices;
+        private float[] m_LoggedSiteScores;
+        private int m_LoggedSiteCount = -1;
         private bool m_PrefabsAdded;
         private bool m_InfoviewLinkChecked;
         private bool m_InfoviewLinkWaitLogged;
@@ -1583,25 +1585,58 @@ namespace StationSuitabilityOverlay
             values[b] = tmp;
         }
 
+        // A site set differs if it picked different tiles, or if any score moved by
+        // more than this fraction of its previous value.
+        private const float SiteScoreLogThreshold = 0.05f;
+
+        private bool SitesChangedMeaningfully()
+        {
+            if (m_LoggedSiteCount != m_SiteCount || m_LoggedSiteIndices == null)
+            {
+                return true;
+            }
+
+            for (int s = 0; s < m_SiteCount; s++)
+            {
+                if (m_LoggedSiteIndices[s] != m_SiteIndices[s])
+                {
+                    return true;
+                }
+
+                float previous = m_LoggedSiteScores[s];
+                float delta = math.abs(m_SiteScores[s] - previous);
+                if (delta > math.max(1f, math.abs(previous) * SiteScoreLogThreshold))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void LogSites()
         {
             // The overlay recomputes every ten seconds; only say something when the
             // recommendation actually changed.
-            // Scores are folded in, not just positions: if a site's score drifts
-            // while the city is unchanged, that is a bug and the log has to show it.
-            long hash = m_SiteCount;
-            for (int s = 0; s < m_SiteCount; s++)
-            {
-                hash = hash * 31 + m_SiteIndices[s];
-                hash = hash * 31 + (long)math.round(m_SiteScores[s]);
-            }
-
-            if (hash == m_LastLoggedSiteHash)
+            // Log when the recommendation actually changes. Scores count as changed
+            // only past a relative threshold: a growing city nudges them by a
+            // fraction of a percent every recompute, which is real but not worth
+            // reporting, whereas the double-counting bug this guards against moved
+            // them by multiples.
+            if (!SitesChangedMeaningfully())
             {
                 return;
             }
 
-            m_LastLoggedSiteHash = hash;
+            if (m_LoggedSiteIndices == null || m_LoggedSiteIndices.Length != m_SiteIndices.Length)
+            {
+                m_LoggedSiteIndices = new int[m_SiteIndices.Length];
+                m_LoggedSiteScores = new float[m_SiteScores.Length];
+            }
+
+            m_LoggedSiteCount = m_SiteCount;
+            Array.Copy(m_SiteIndices, m_LoggedSiteIndices, m_SiteCount);
+            Array.Copy(m_SiteScores, m_LoggedSiteScores, m_SiteCount);
 
             var builder = new StringBuilder();
             builder.Append("Recommended sites (walk-distance ranked): ");
