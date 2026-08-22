@@ -224,11 +224,19 @@ namespace StationSuitabilityOverlay
             return sum;
         }
 
-        // Other modes cut both ways from the same set of stops, split purely by
-        // distance: within walking-transfer range a stop of another mode makes this
-        // location MORE valuable (a rider can change vehicles here, so the new stop
-        // feeds an existing trunk); beyond that range it is competing service that
-        // already absorbs some of the same demand.
+        // Other modes cut both ways from the same set of stops.
+        //
+        // Interchange rises as a stop of another mode comes within walking-transfer
+        // range: a rider can change vehicles here, so the new stop feeds an existing
+        // trunk line.
+        //
+        // Overlap runs across the WHOLE catchment, faded out by how transferable
+        // that stop is. Service you can walk to and change onto is not competing
+        // service, so the penalty vanishes at zero distance and reaches full
+        // strength once the stop is too far to transfer to. An earlier version
+        // instead applied the penalty only OUTSIDE the transfer radius, which left a
+        // dead band whenever the catchment was no larger than the transfer radius —
+        // at a 150 m catchment the overlap term could never be anything but zero.
         //
         // Neither is component-gated. A transfer needs a walkable connection, but
         // the stops of both modes sit on the road network by construction, and
@@ -263,16 +271,21 @@ namespace StationSuitabilityOverlay
                     for (int i = 0; i < count; i++)
                     {
                         float dist = math.distance(OtherStopPositions[start + i], center);
+                        if (dist > CatchmentRadius)
+                        {
+                            continue;
+                        }
+
                         float weight = OtherStopWeights[start + i];
 
-                        if (dist <= InterchangeRadius)
-                        {
-                            interchange += weight * TriangularWeight(dist, InterchangeRadius);
-                        }
-                        else if (dist <= CatchmentRadius)
-                        {
-                            crossCoverage += weight * TriangularWeight(dist, CatchmentRadius);
-                        }
+                        // How readily a rider could transfer here: 1 on top of the
+                        // other stop, 0 once it is beyond walking range.
+                        float transferable = dist <= InterchangeRadius
+                            ? TriangularWeight(dist, InterchangeRadius)
+                            : 0f;
+
+                        interchange += weight * transferable;
+                        crossCoverage += weight * TriangularWeight(dist, CatchmentRadius) * (1f - transferable);
                     }
                 }
             }

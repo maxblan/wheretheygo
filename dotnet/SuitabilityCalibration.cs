@@ -235,41 +235,38 @@ namespace StationSuitabilityOverlay
             return true;
         }
 
+        // One line, because the options page renders this as a single read-only
+        // field. The full breakdown is logged instead.
         public string BuildSummary()
         {
             var builder = new StringBuilder();
-            int ready = ReadyStops;
 
             if (m_HasFit)
             {
-                builder.Append("Model fit R² = ");
-                builder.Append(m_RSquared.ToString("F3", CultureInfo.InvariantCulture));
+                builder.Append("R² ");
+                builder.Append(m_RSquared.ToString("F2", CultureInfo.InvariantCulture));
                 builder.Append(" over ");
                 builder.Append(m_FittedStops);
-                builder.AppendLine(" stops.");
-                builder.Append("Suggested weights — demand ");
+                builder.Append(" stops — suggested: demand ");
                 builder.Append(m_Fitted[0].ToString("F2", CultureInfo.InvariantCulture));
                 builder.Append(", jobs ");
                 builder.Append(m_Fitted[1].ToString("F2", CultureInfo.InvariantCulture));
-                builder.Append(", accessibility ");
+                builder.Append(", access ");
                 builder.Append(m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
                 builder.Append(", future ");
                 builder.Append(m_Fitted[3].ToString("F2", CultureInfo.InvariantCulture));
-                builder.AppendLine(".");
-                builder.Append("Use the button below to apply them.");
                 return builder.ToString();
             }
 
-            builder.Append("Collecting ridership samples: ");
-            builder.Append(ready);
+            builder.Append("Collecting while unpaused: ");
+            builder.Append(ReadyStops);
             builder.Append(" of ");
             builder.Append(MinStops);
-            builder.Append(" stops ready (need ");
-            builder.Append(MinSamplesPerStop);
-            builder.AppendLine(" samples each).");
+            builder.Append(" stops ready, ");
             builder.Append(m_Records.Count);
-            builder.AppendLine(" stops tracked so far.");
-            builder.Append("Samples are taken while the game is unpaused; leave the city running.");
+            builder.Append(" tracked (need ");
+            builder.Append(MinSamplesPerStop);
+            builder.Append(" samples each)");
             return builder.ToString();
         }
 

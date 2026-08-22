@@ -180,10 +180,14 @@ namespace StationSuitabilityOverlay
             set => m_SiteCount = ClampInt(value, kSiteCountMin, kSiteCountMax);
         }
 
-        // A get-only string property renders as read-only text in the options page
-        // and is re-evaluated every frame the page is open, so the readout needs no
-        // refresh plumbing of its own.
-        [SettingsUIMultilineText]
+        // A get-only string property renders as a read-only field in the options
+        // page and is re-evaluated every frame the page is open, so the readout
+        // needs no refresh plumbing of its own.
+        //
+        // Deliberately NOT [SettingsUIMultilineText]: that widget takes its body
+        // from the display-name action rather than the property value, so a getter
+        // like this one renders an empty box under the label. The full breakdown
+        // goes to the log; this stays a single line.
         [SettingsUISection(kSection, kCalibrationGroup)]
         public string CalibrationStatus => StationSuitabilityOverlaySystem.CalibrationStatusText;
 

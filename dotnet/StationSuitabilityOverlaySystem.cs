@@ -1587,10 +1587,13 @@ namespace StationSuitabilityOverlay
         {
             // The overlay recomputes every ten seconds; only say something when the
             // recommendation actually changed.
+            // Scores are folded in, not just positions: if a site's score drifts
+            // while the city is unchanged, that is a bug and the log has to show it.
             long hash = m_SiteCount;
             for (int s = 0; s < m_SiteCount; s++)
             {
                 hash = hash * 31 + m_SiteIndices[s];
+                hash = hash * 31 + (long)math.round(m_SiteScores[s]);
             }
 
             if (hash == m_LastLoggedSiteHash)
