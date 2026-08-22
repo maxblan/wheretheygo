@@ -1,0 +1,181 @@
+/* Control panel styling.
+ *
+ * cohtml notes that shaped this file: CSS `gap` is not supported, so spacing uses
+ * margins; 1rem is about one design pixel, so sizes are written in rem to scale
+ * with the game's UI scale setting the same way vanilla panels do. */
+
+.sso-panel {
+    position: absolute;
+    top: 60rem;
+    left: 10rem;
+    width: 280rem;
+    padding: 8rem;
+    background-color: rgba(12, 18, 26, 0.92);
+    border: 1rem solid rgba(120, 170, 220, 0.35);
+    border-radius: 4rem;
+    color: #dfe8f2;
+    font-size: 12rem;
+    pointer-events: auto;
+    z-index: 20;
+}
+
+.sso-panel-collapsed {
+    width: 160rem;
+}
+
+.sso-header {
+    display: block;
+    width: 100%;
+    padding: 5rem 6rem;
+    margin-bottom: 6rem;
+    background-color: rgba(40, 70, 100, 0.75);
+    border: none;
+    border-radius: 3rem;
+    color: #eaf2fb;
+    font-size: 13rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sso-header:hover {
+    background-color: rgba(60, 100, 140, 0.85);
+}
+
+.sso-section {
+    margin-top: 8rem;
+    margin-bottom: 4rem;
+    padding-bottom: 2rem;
+    border-bottom: 1rem solid rgba(140, 170, 200, 0.25);
+    color: #9fb6cc;
+    font-size: 11rem;
+    text-transform: uppercase;
+}
+
+.sso-row {
+    margin-bottom: 5rem;
+}
+
+.sso-label {
+    margin-bottom: 2rem;
+    color: #a8bccf;
+    font-size: 11rem;
+}
+
+/* Button strip standing in for a dropdown. */
+.sso-choice {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.sso-chip {
+    margin-right: 3rem;
+    margin-bottom: 3rem;
+    padding: 3rem 7rem;
+    background-color: rgba(45, 60, 78, 0.9);
+    border: 1rem solid rgba(120, 150, 180, 0.3);
+    border-radius: 3rem;
+    color: #c8d6e4;
+    font-size: 11rem;
+    cursor: pointer;
+}
+
+.sso-chip:hover {
+    background-color: rgba(70, 95, 125, 0.95);
+}
+
+.sso-chip-on {
+    background-color: rgba(70, 140, 210, 0.95);
+    border-color: rgba(160, 210, 255, 0.8);
+    color: #ffffff;
+}
+
+/* Stepper standing in for a range input. */
+.sso-stepper {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.sso-step {
+    width: 22rem;
+    height: 20rem;
+    background-color: rgba(45, 60, 78, 0.9);
+    border: 1rem solid rgba(120, 150, 180, 0.3);
+    border-radius: 3rem;
+    color: #dfe8f2;
+    font-size: 14rem;
+    text-align: center;
+    cursor: pointer;
+}
+
+.sso-step:hover {
+    background-color: rgba(70, 95, 125, 0.95);
+}
+
+.sso-readout {
+    flex-grow: 1;
+    margin-left: 5rem;
+    margin-right: 5rem;
+}
+
+.sso-bar {
+    height: 4rem;
+    background-color: rgba(30, 42, 56, 0.9);
+    border-radius: 2rem;
+    overflow: hidden;
+}
+
+.sso-bar-fill {
+    height: 4rem;
+    background-color: rgba(90, 165, 235, 0.95);
+}
+
+.sso-value {
+    margin-top: 1rem;
+    color: #e6eef7;
+    font-size: 11rem;
+    text-align: center;
+}
+
+.sso-toggle {
+    width: 60rem;
+    padding: 3rem 0;
+    background-color: rgba(45, 60, 78, 0.9);
+    border: 1rem solid rgba(120, 150, 180, 0.3);
+    border-radius: 3rem;
+    color: #c8d6e4;
+    font-size: 11rem;
+    cursor: pointer;
+}
+
+.sso-toggle-on {
+    background-color: rgba(70, 160, 110, 0.95);
+    border-color: rgba(150, 230, 190, 0.8);
+    color: #ffffff;
+}
+
+.sso-preset {
+    display: block;
+    width: 100%;
+    padding: 4rem;
+    margin-top: 2rem;
+    background-color: rgba(45, 60, 78, 0.9);
+    border: 1rem solid rgba(120, 150, 180, 0.3);
+    border-radius: 3rem;
+    color: #c8d6e4;
+    font-size: 11rem;
+    cursor: pointer;
+}
+
+.sso-preset:hover {
+    background-color: rgba(70, 95, 125, 0.95);
+}
+
+.sso-summary {
+    margin-top: 8rem;
+    padding-top: 5rem;
+    border-top: 1rem solid rgba(140, 170, 200, 0.25);
+    color: #b9cbdc;
+    font-size: 10rem;
+}

@@ -80,4 +80,11 @@
 		<None Include="Icons\**" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
+	<!--The game loads <AssemblyName>.mjs and .css from the mod root, so these are
+	    flattened out of UI/ on copy.-->
+	<ItemGroup>
+		<None Include="UI\StationSuitabilityOverlay.mjs" Link="StationSuitabilityOverlay.mjs" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="UI\StationSuitabilityOverlay.css" Link="StationSuitabilityOverlay.css" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 </Project>

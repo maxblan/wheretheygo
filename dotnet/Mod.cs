@@ -47,6 +47,11 @@ namespace StationSuitabilityOverlay
             // PreCulling, so drawing from the overlay system above would always be a
             // frame late. Hence a second system in the right phase.
             updateSystem.UpdateAt<SuitabilityRouteRenderer>(SystemUpdatePhase.Rendering);
+
+            // Bindings for the in-game control panel. The panel's own code ships as
+            // StationSuitabilityOverlay.mjs beside the DLL, which the game loads by
+            // matching the assembly name.
+            updateSystem.UpdateAt<SuitabilityPanelUISystem>(SystemUpdatePhase.UIUpdate);
         }
 
         public void OnDispose()
