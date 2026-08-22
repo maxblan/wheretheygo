@@ -25,17 +25,21 @@ namespace StationSuitabilityOverlay
         private const float StopDiameter = 26f;
         private const float TerrainOffset = 4f;
 
-        // One colour per suggested route, cycled. Chosen to stay legible against the
-        // green-to-red terrain heatmap the mod also draws.
-        private static readonly Color[] s_RouteColors =
+        // Coloured by MODE, not by rank: rank is already visible in the ordered
+        // options readout and the log, whereas which vehicle a line is for cannot be
+        // read off the map any other way. Roughly follows transit-map convention.
+        private static Color ColorFor(Setting.ModePreset mode)
         {
-            new Color(0.15f, 0.55f, 1f, 0.9f),
-            new Color(1f, 0.45f, 0.1f, 0.9f),
-            new Color(0.6f, 0.25f, 0.95f, 0.9f),
-            new Color(0.1f, 0.85f, 0.65f, 0.9f),
-            new Color(1f, 0.85f, 0.2f, 0.9f),
-            new Color(0.95f, 0.3f, 0.6f, 0.9f),
-        };
+            switch (mode)
+            {
+                case Setting.ModePreset.Bus: return new Color(0.15f, 0.55f, 1f, 0.9f);
+                case Setting.ModePreset.Tram: return new Color(1f, 0.45f, 0.1f, 0.9f);
+                case Setting.ModePreset.Metro: return new Color(0.6f, 0.25f, 0.95f, 0.9f);
+                case Setting.ModePreset.Train: return new Color(0.1f, 0.75f, 0.35f, 0.9f);
+                case Setting.ModePreset.Ferry: return new Color(0.1f, 0.85f, 0.95f, 0.9f);
+                default: return new Color(0.9f, 0.9f, 0.9f, 0.9f);
+            }
+        }
 
         private OverlayRenderSystem m_OverlayRenderSystem;
         private RenderingSystem m_RenderingSystem;
@@ -86,15 +90,24 @@ namespace StationSuitabilityOverlay
             for (int r = 0; r < routes.Count; r++)
             {
                 SuggestedRoute route = routes[r];
-                Color color = s_RouteColors[r % s_RouteColors.Length];
+                Color color = ColorFor(route.Mode);
 
                 for (int i = 1; i < route.Path.Count; i++)
                 {
                     float3 from = ToGround(route.Path[i - 1], ref heightData);
                     float3 to = ToGround(route.Path[i], ref heightData);
-                    // DrawLine builds the straight curve internally, so there is no
-                    // need to construct a Bezier here.
-                    buffer.DrawLine(color, new Line3.Segment(from, to), LineWidth);
+                    // Rail and water routes do not follow streets, so they are dashed
+                    // to read as their own alignment rather than as a road overlay.
+                    if (route.Mode == Setting.ModePreset.Bus || route.Mode == Setting.ModePreset.Tram)
+                    {
+                        // DrawLine builds the straight curve internally, so there is
+                        // no need to construct a Bezier here.
+                        buffer.DrawLine(color, new Line3.Segment(from, to), LineWidth);
+                    }
+                    else
+                    {
+                        buffer.DrawDashedLine(color, new Line3.Segment(from, to), LineWidth, 40f, 24f);
+                    }
                 }
 
                 for (int s = 0; s < route.Stops.Count; s++)

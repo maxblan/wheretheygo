@@ -292,6 +292,10 @@ namespace StationSuitabilityOverlay
     {
         public readonly List<int> Edges = new List<int>();
         public readonly List<int> Nodes = new List<int>();
+        // Length-weighted mean flow along the corridor: "how many trips does this
+        // carry". Deliberately NOT a sum over edges — summing counts a trip once per
+        // edge it traverses, so long corridors reported flow far above the city's
+        // entire demand and every suggestion was classified as a metro.
         public float CapturedFlow;
         public float Length;
 
@@ -402,7 +406,9 @@ namespace StationSuitabilityOverlay
             float noveltyWeight,
             float flowFloor,
             float maxLength,
-            Corridor result)
+            Corridor result,
+            float[] nodeDemand = null,
+            float demandFloor = 0f)
         {
             result.Clear();
             if (graph == null || edgeFlow == null || edgeUsed == null || graph.EdgeCount == 0)
@@ -440,7 +446,7 @@ namespace StationSuitabilityOverlay
             visited.Add(headNode);
             visited.Add(tailNode);
             float length = graph.EdgeCost[seed];
-            float captured = edgeFlow[seed];
+            float weightedFlow = edgeFlow[seed] * graph.EdgeCost[seed];
 
             while (length < maxLength)
             {
@@ -450,16 +456,18 @@ namespace StationSuitabilityOverlay
                 bool bestAtHead = true;
 
                 FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
-                    headNode, length, maxLength, ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, true);
+                    headNode, length, maxLength, nodeDemand, demandFloor,
+                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, true);
                 FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
-                    tailNode, length, maxLength, ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, false);
+                    tailNode, length, maxLength, nodeDemand, demandFloor,
+                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, false);
 
                 if (bestEdge < 0)
                 {
                     break;
                 }
 
-                captured += edgeFlow[bestEdge];
+                weightedFlow += edgeFlow[bestEdge] * graph.EdgeCost[bestEdge];
                 length += graph.EdgeCost[bestEdge];
                 visited.Add(bestNext);
 
@@ -488,7 +496,7 @@ namespace StationSuitabilityOverlay
 
             BuildNodeSequence(graph, result, headNode);
 
-            result.CapturedFlow = captured;
+            result.CapturedFlow = length > 0f ? weightedFlow / length : 0f;
             result.Length = length;
             return true;
         }
@@ -504,6 +512,8 @@ namespace StationSuitabilityOverlay
             int fromNode,
             float length,
             float maxLength,
+            float[] nodeDemand,
+            float demandFloor,
             ref int bestEdge,
             ref int bestNext,
             ref float bestScore,
@@ -527,6 +537,14 @@ namespace StationSuitabilityOverlay
                 }
 
                 if (length + graph.EdgeCost[edge] > maxLength)
+                {
+                    continue;
+                }
+
+                // Flow alone is not enough to justify extending: a rural through-road
+                // legitimately carries assigned trips while serving nobody along it.
+                // Without this the corridor happily loops out into empty land.
+                if (nodeDemand != null && next < nodeDemand.Length && nodeDemand[next] < demandFloor)
                 {
                     continue;
                 }

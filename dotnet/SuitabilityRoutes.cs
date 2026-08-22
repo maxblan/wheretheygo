@@ -35,36 +35,33 @@ namespace StationSuitabilityOverlay
         // Mode thresholds. Flow is in trips per aggregation window, so these are
         // relative rather than absolute passenger counts — calibrated against the
         // mean corridor flow so they hold on a town and a metropolis alike.
-        private const float TrunkFlowMultiple = 3f;
         private const float MediumFlowMultiple = 1.5f;
-        private const float TrunkLengthMetres = 4000f;
-        // A road route this much longer than the straight line between its ends is
-        // detouring around something; if that straight line crosses water, a boat
-        // would short-circuit it.
-        private const float FerryDetourRatio = 2.5f;
 
-        // Grows up to `maxRoutes` corridors, peeling demand between each so the
-        // suggestions complement rather than duplicate one another.
-        public static void Build(
-            SuitabilityRoadGraph roads,
+        // Grows corridors on ONE network and appends them as candidates. Each
+        // network carries its own mode family, because the alignment a mode can use
+        // is what decides where its routes may run: buses and trams are stuck with
+        // streets, metro tunnels and trains lay their own, ferries need water.
+        public static void BuildForNetwork(
+            SuitabilityRoadGraph network,
             RouteObjective objective,
             int maxRoutes,
             float minFlowFraction,
             float maxRouteLength,
-            List<SuggestedRoute> routes,
-            System.Func<float2, float2> snapStop,
-            System.Func<float2, float2, bool> crossesWater)
+            float[] nodeDemand,
+            float demandFloor,
+            Setting.ModePreset? forcedMode,
+            List<SuggestedRoute> output,
+            System.Func<float2, float2> snapStop)
         {
-            routes.Clear();
-            if (roads?.Graph == null || roads.EdgeFlow == null || roads.EdgeCount == 0)
+            if (network?.Graph == null || network.EdgeFlow == null || network.EdgeCount == 0)
             {
                 return;
             }
 
-            CompactGraph graph = roads.Graph;
+            CompactGraph graph = network.Graph;
             // Work on a copy: peeling is destructive and the assigned flow is reused
             // by the demand layer.
-            var flow = (float[])roads.EdgeFlow.Clone();
+            var flow = (float[])network.EdgeFlow.Clone();
             var used = new bool[graph.EdgeCount];
             var novelty = new float[graph.NodeCount];
             for (int n = 0; n < graph.NodeCount; n++)
@@ -84,7 +81,8 @@ namespace StationSuitabilityOverlay
 
             for (int r = 0; r < maxRoutes; r++)
             {
-                if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight, flowFloor, maxRouteLength, corridor))
+                if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight,
+                        flowFloor, maxRouteLength, corridor, nodeDemand, demandFloor))
                 {
                     break;
                 }
@@ -105,59 +103,46 @@ namespace StationSuitabilityOverlay
                 for (int i = 0; i < corridor.Nodes.Count; i++)
                 {
                     int node = corridor.Nodes[i];
-                    route.Path.Add(new float2(roads.NodePositionsX[node], roads.NodePositionsZ[node]));
+                    route.Path.Add(new float2(network.NodePositionsX[node], network.NodePositionsZ[node]));
                 }
 
-                route.Mode = ClassifyMode(corridor.CapturedFlow, corridor.Length, meanFlow, route.Path, crossesWater);
-                PlaceStops(route, StopSpacingFor(route.Mode), snapStop);
-                routes.Add(route);
+                route.Mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
+
+                // Rail and water suggestions are only worth making at a scale that
+                // justifies the infrastructure; a 900 m metro line is nonsense.
+                if (route.Length >= MinLengthFor(route.Mode))
+                {
+                    PlaceStops(route, StopSpacingFor(route.Mode), snapStop);
+                    if (route.Stops.Count >= 2)
+                    {
+                        output.Add(route);
+                    }
+                }
 
                 SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, CaptureFraction);
                 SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, NoveltyHops, NoveltyFactor);
             }
-
-            routes.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
         }
 
-        // Flow volume and length decide the mode: a long, heavily loaded corridor
-        // wants rail, a light or short one wants a bus.
-        private static Setting.ModePreset ClassifyMode(
-            float capturedFlow,
-            float length,
-            float meanFlow,
-            List<float2> path,
-            System.Func<float2, float2, bool> crossesWater)
+        // On the street network the only choice is how heavy the corridor is.
+        private static Setting.ModePreset ClassifyStreetMode(float corridorFlow, float meanFlow)
         {
-            // Water UNDER the route is a bridge, not a reason to suggest a ferry —
-            // the corridor follows roads by construction. What does suggest a ferry
-            // is the route taking a long way round water that a direct crossing
-            // would cut out.
-            if (crossesWater != null && path.Count >= 2)
+            return corridorFlow >= meanFlow * MediumFlowMultiple
+                ? Setting.ModePreset.Tram
+                : Setting.ModePreset.Bus;
+        }
+
+        // Below these lengths the mode is not worth building, whatever the demand.
+        public static float MinLengthFor(Setting.ModePreset mode)
+        {
+            switch (mode)
             {
-                float direct = math.distance(path[0], path[path.Count - 1]);
-                if (direct > 1f
-                    && length / direct >= FerryDetourRatio
-                    && crossesWater(path[0], path[path.Count - 1]))
-                {
-                    return Setting.ModePreset.Ferry;
-                }
+                case Setting.ModePreset.Tram: return 1500f;
+                case Setting.ModePreset.Metro: return 2500f;
+                case Setting.ModePreset.Train: return 5000f;
+                case Setting.ModePreset.Ferry: return 800f;
+                default: return 800f;
             }
-
-            float intensity = length > 0f ? capturedFlow / math.max(1f, length / 1000f) : capturedFlow;
-            float trunk = meanFlow * TrunkFlowMultiple;
-            float medium = meanFlow * MediumFlowMultiple;
-
-            if (intensity >= trunk)
-            {
-                return length >= TrunkLengthMetres ? Setting.ModePreset.Train : Setting.ModePreset.Metro;
-            }
-
-            if (intensity >= medium)
-            {
-                return Setting.ModePreset.Tram;
-            }
-
-            return Setting.ModePreset.Bus;
         }
 
         public static float StopSpacingFor(Setting.ModePreset mode)

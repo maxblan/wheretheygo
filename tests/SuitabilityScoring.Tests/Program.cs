@@ -41,6 +41,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("Corridor grows along the strongest flow", CorridorFollowsFlow);
             Run("Corridor is a connected polyline", CorridorIsConnected);
             Run("Corridor respects the length limit", CorridorRespectsMaxLength);
+            Run("Corridor flow is a mean, not a sum", CorridorFlowIsMean);
+            Run("Demand gate keeps corridors out of empty land", DemandGateBlocksEmptyLand);
             Run("Peeling reduces flow and blocks reuse", PeelingReducesFlow);
             Run("Coverage objective diverts from the busiest corridor", ObjectiveChangesRoutes);
             Run("Desire lines deposit once per cell crossed", RasterizeDepositsPerCell);
@@ -644,7 +646,12 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(corridor.Edges.Contains(2), "must include the strongest edge");
             AssertTrue(corridor.Edges.Contains(1), "must include the second strongest");
             AssertTrue(!corridor.Edges.Contains(5), "must not take the near-empty spur");
-            AssertTrue(corridor.CapturedFlow > 100f, $"captured flow {corridor.CapturedFlow} should exceed 100");
+            // CapturedFlow is a length-weighted MEAN, so it must sit inside the range
+            // of the edge flows it covers — never their sum. Summing counted a trip
+            // once per edge it traversed, which inflated long corridors past the
+            // city's entire demand and made everything look like a metro.
+            AssertTrue(corridor.CapturedFlow > 20f && corridor.CapturedFlow < 61f,
+                $"mean flow {corridor.CapturedFlow} must lie within the per-edge range, not be a sum");
         }
 
         private static void CorridorIsConnected()
@@ -687,6 +694,50 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertTrue(corridor.Length <= 250f, $"length {corridor.Length} must respect the limit");
             AssertTrue(corridor.Edges.Count <= 2, $"only 2 edges of 100 fit under 250, got {corridor.Edges.Count}");
+        }
+
+        // A corridor of N identical edges must report the flow of ONE edge, not N
+        // times it. With the old sum this scaled with length without bound.
+        private static void CorridorFlowIsMean()
+        {
+            var a = new[] { 0, 1, 2, 3 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var flow = new[] { 40f, 40f, 40f, 40f };
+
+            var corridor = new Corridor();
+            SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor);
+
+            AssertTrue(corridor.Edges.Count >= 3, $"should grow along the chain, got {corridor.Edges.Count} edges");
+            AssertEqual(40f, corridor.CapturedFlow, 1e-3f, "uniform flow means the mean equals that flow");
+            AssertTrue(corridor.Length >= 300f, "length still accumulates");
+        }
+
+        // The bug this guards: a rural through-road carries real assigned flow while
+        // serving nobody, so flow alone let corridors loop out into empty land.
+        private static void DemandGateBlocksEmptyLand()
+        {
+            // Chain 0-1-2 through populated nodes, then 2-3-4 out into emptiness.
+            var a = new[] { 0, 1, 2, 3 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var flow = new[] { 50f, 50f, 50f, 50f };
+            // Nodes 3 and 4 have nobody living or working near them.
+            var demand = new[] { 1f, 1f, 1f, 0f, 0f };
+
+            var ungated = new Corridor();
+            SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, ungated);
+            AssertTrue(ungated.Edges.Count == 4, "without the gate it runs the whole chain including empty land");
+
+            var gated = new Corridor();
+            SuitabilityGraphMath.GrowCorridor(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), 0f, 1f, 10000f,
+                gated, demand, 0.5f);
+
+            AssertTrue(gated.Nodes.Contains(0) && gated.Nodes.Contains(2), "populated stretch is kept");
+            AssertTrue(!gated.Nodes.Contains(3) && !gated.Nodes.Contains(4), "empty nodes must be refused");
+            AssertTrue(gated.Length < ungated.Length, "the gated corridor must be shorter");
         }
 
         private static void PeelingReducesFlow()

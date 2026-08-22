@@ -9,7 +9,9 @@ using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
 {
-    // Builds a routable graph of the road network and loads travel demand onto it.
+    // A routable network with travel demand loaded onto it. Built either from the
+    // real road entities (buses, trams) or adopted from a free-form lattice (metro
+    // and train alignment, ferry water crossings).
     //
     // The game's own pathfinder is not usable here: it is agent-shaped (origins and
     // destinations are entities, not coordinates), asynchronous and frame-spread for
@@ -33,6 +35,71 @@ namespace StationSuitabilityOverlay
         private readonly List<int> m_EdgeB = new List<int>();
         private readonly List<float> m_EdgeCost = new List<float>();
         private DijkstraWorkspace m_Workspace;
+
+        // Takes ownership of a graph built elsewhere — used for the lattice networks,
+        // which are not derived from road entities at all.
+        public void Adopt(CompactGraph graph, float[] nodeX, float[] nodeZ)
+        {
+            Graph = graph;
+            NodePositionsX = nodeX;
+            NodePositionsZ = nodeZ;
+            EdgeFlow = new float[graph.EdgeCount];
+            m_Workspace = new DijkstraWorkspace(graph.NodeCount);
+        }
+
+        // Collects the endpoints of every track edge, so the rail lattice can tell
+        // where alignment already exists.
+        public static void CollectTrackSegments(
+            EntityManager entityManager,
+            EntityQuery trackEdgeQuery,
+            ComponentLookup<Node> nodeLookup,
+            List<float2> starts,
+            List<float2> ends)
+        {
+            starts.Clear();
+            ends.Clear();
+
+            using var entities = trackEdgeQuery.ToEntityArray(Allocator.Temp);
+            using var edges = trackEdgeQuery.ToComponentDataArray<Edge>(Allocator.Temp);
+            for (int i = 0; i < edges.Length; i++)
+            {
+                // The query covers every net edge, so filter to the ones carrying a
+                // track lane — that is what "rail already exists here" means.
+                if (!HasTrackLane(entityManager, entities[i]))
+                {
+                    continue;
+                }
+
+                Edge edge = edges[i];
+                if (!nodeLookup.HasComponent(edge.m_Start) || !nodeLookup.HasComponent(edge.m_End))
+                {
+                    continue;
+                }
+
+                float3 a = nodeLookup[edge.m_Start].m_Position;
+                float3 b = nodeLookup[edge.m_End].m_Position;
+                starts.Add(new float2(a.x, a.z));
+                ends.Add(new float2(b.x, b.z));
+            }
+        }
+
+        private static bool HasTrackLane(EntityManager entityManager, Entity edge)
+        {
+            if (!entityManager.TryGetBuffer(edge, true, out DynamicBuffer<Game.Net.SubLane> lanes))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < lanes.Length; i++)
+            {
+                if ((lanes[i].m_PathMethods & PathMethod.Track) != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         public int NodeCount => Graph?.NodeCount ?? 0;
         public int EdgeCount => Graph?.EdgeCount ?? 0;

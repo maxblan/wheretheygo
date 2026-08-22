@@ -221,6 +221,18 @@ namespace StationSuitabilityOverlay
         private ComponentLookup<PrefabRef> m_PrefabRefLookup;
         private ComponentLookup<RoadData> m_RoadDataLookup;
         private readonly SuitabilityRoadGraph m_RoadGraph = new SuitabilityRoadGraph();
+        // Rail and water get their own free-form networks: a metro tunnel or a ferry
+        // crossing cannot be expressed on the street graph at all. Train and metro
+        // share the lattice shape but not its costs — train reuses existing track
+        // wherever it can, metro prefers fresh alignment.
+        private readonly SuitabilityRoadGraph m_TrainNetwork = new SuitabilityRoadGraph();
+        private readonly SuitabilityRoadGraph m_MetroNetwork = new SuitabilityRoadGraph();
+        private readonly SuitabilityRoadGraph m_WaterNetwork = new SuitabilityRoadGraph();
+        private EntityQuery m_AllEdgeQuery;
+        private byte[] m_TrackMask;
+        private readonly List<float2> m_TrackStarts = new List<float2>();
+        private readonly List<float2> m_TrackEnds = new List<float2>();
+        private readonly List<SuggestedRoute> m_RouteCandidates = new List<SuggestedRoute>();
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
         private int[] m_ZoneNodes;
@@ -354,6 +366,12 @@ namespace StationSuitabilityOverlay
             m_BlockQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[] { ComponentType.ReadOnly<Block>(), ComponentType.ReadOnly<Cell>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
+            });
+
+            m_AllEdgeQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<Edge>(), ComponentType.ReadOnly<Curve>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
@@ -1799,15 +1817,7 @@ namespace StationSuitabilityOverlay
 
             if (m_GraphDirty || m_RoadGraph.Graph == null)
             {
-                m_NodeLookup.Update(this);
-                m_CurveLookup.Update(this);
-                m_PrefabRefLookup.Update(this);
-                m_RoadDataLookup.Update(this);
-                m_RoadGraph.Build(EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
-                    m_PrefabRefLookup, m_RoadDataLookup, useTravelTime: false);
-                m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
-                m_GraphDirty = false;
-                Mod.Log.Info($"Road graph built: {m_RoadGraph.NodeCount} nodes, {m_RoadGraph.EdgeCount} edges.");
+                BuildNetworks(gridSize, worldMin);
             }
 
             int assignedPairs = 0;
@@ -1817,6 +1827,9 @@ namespace StationSuitabilityOverlay
                 // Generous cost ceiling: a trip longer than this is not a candidate
                 // for a single transit line anyway.
                 assignedPairs = m_RoadGraph.AssignFlow(m_ZoneFlows, m_ZoneNodes, 20000f, out assignedWeight);
+                AssignLatticeFlow(m_TrainNetwork, worldMin);
+                AssignLatticeFlow(m_MetroNetwork, worldMin);
+                AssignLatticeFlow(m_WaterNetwork, worldMin);
                 BuildRoutes(settings, gridSize, worldMin);
             }
 
@@ -1889,20 +1902,136 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // Builds all four networks. The rail lattices differ only in how much they
+        // discount running along track that already exists.
+        private void BuildNetworks(int2 gridSize, float2 worldMin)
+        {
+            m_NodeLookup.Update(this);
+            m_CurveLookup.Update(this);
+            m_PrefabRefLookup.Update(this);
+            m_RoadDataLookup.Update(this);
+
+            m_RoadGraph.Build(EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
+                m_PrefabRefLookup, m_RoadDataLookup, useTravelTime: false);
+            m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
+
+            int cells = gridSize.x * gridSize.y;
+            if (m_TrackMask == null || m_TrackMask.Length != cells)
+            {
+                m_TrackMask = new byte[cells];
+            }
+
+            SuitabilityRoadGraph.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds);
+            SuitabilityLattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, gridSize, worldMin, TileSize, m_TrackMask);
+
+            bool LandTile(int tile) => m_Land != null && tile < m_Land.Length && m_Land[tile] != 0;
+            bool WaterTile(int tile) => m_Land != null && tile < m_Land.Length && m_Land[tile] == 0;
+            bool OnTrack(int tile) => m_TrackMask != null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
+
+            CompactGraph trainGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
+                tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Train, OnTrack(tile)),
+                out float[] trainX, out float[] trainZ);
+            m_TrainNetwork.Adopt(trainGraph, trainX, trainZ);
+
+            CompactGraph metroGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
+                tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Metro, OnTrack(tile)),
+                out float[] metroX, out float[] metroZ);
+            m_MetroNetwork.Adopt(metroGraph, metroX, metroZ);
+
+            CompactGraph waterGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, WaterTile,
+                null, out float[] waterX, out float[] waterZ);
+            m_WaterNetwork.Adopt(waterGraph, waterX, waterZ);
+
+            m_GraphDirty = false;
+            Mod.Log.Info(
+                $"Networks built: road {m_RoadGraph.NodeCount}/{m_RoadGraph.EdgeCount}, " +
+                $"rail {m_TrainNetwork.NodeCount}/{m_TrainNetwork.EdgeCount}, " +
+                $"water {m_WaterNetwork.NodeCount}/{m_WaterNetwork.EdgeCount}, " +
+                $"trackSegments={m_TrackStarts.Count}");
+        }
+
+        private void AssignLatticeFlow(SuitabilityRoadGraph network, float2 worldMin)
+        {
+            if (network.Graph == null || network.NodeCount == 0)
+            {
+                return;
+            }
+
+            int[] zoneNodes = network.MapZonesToNodes(m_ZoneGrid, worldMin);
+            network.AssignFlow(m_ZoneFlows, zoneNodes, 30000f, out float _);
+        }
+
+        // Each network contributes candidates for the modes it can carry; the merged
+        // set is ranked by trips carried and the best kept. Auto-assignment therefore
+        // falls out of which network won, rather than being guessed after the fact.
         private void BuildRoutes(Setting settings, int2 gridSize, float2 worldMin)
         {
             var objective = (RouteObjective)settings.Objective;
-            SuitabilityRoutes.Build(
-                m_RoadGraph,
-                objective,
-                settings.RouteCount,
-                // Ignore corridors carrying less than a fifth of the average, which
-                // keeps suggestions off residential side streets.
-                0.2f,
-                12000f,
-                m_Routes,
-                point => SnapStopToBestTile(point, gridSize),
-                (a, b) => SegmentCrossesWater(a, b, gridSize));
+            m_RouteCandidates.Clear();
+
+            float[] roadDemand = BuildNodeDemand(m_RoadGraph, gridSize);
+            float[] trainDemand = BuildNodeDemand(m_TrainNetwork, gridSize);
+            float[] metroDemand = BuildNodeDemand(m_MetroNetwork, gridSize);
+
+            // Corridors must serve somebody along their length, not merely carry
+            // through-traffic — that is what stopped routes looping into empty land.
+            float demandFloor = 0.02f;
+
+            SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
+                0.2f, 12000f, roadDemand, demandFloor, null, m_RouteCandidates,
+                point => SnapStopToBestTile(point, gridSize));
+
+            SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
+                0.6f, 20000f, trainDemand, demandFloor, Setting.ModePreset.Train, m_RouteCandidates,
+                point => SnapStopToBestTile(point, gridSize));
+
+            SuitabilityRoutes.BuildForNetwork(m_MetroNetwork, objective, settings.RouteCount,
+                0.4f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
+                point => SnapStopToBestTile(point, gridSize));
+
+            // Water has no demand along it by definition, so no gate applies.
+            SuitabilityRoutes.BuildForNetwork(m_WaterNetwork, objective, settings.RouteCount,
+                0.5f, 20000f, null, 0f, Setting.ModePreset.Ferry, m_RouteCandidates,
+                point => point);
+
+            m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
+
+            m_Routes.Clear();
+            for (int i = 0; i < m_RouteCandidates.Count && m_Routes.Count < settings.RouteCount; i++)
+            {
+                m_Routes.Add(m_RouteCandidates[i]);
+            }
+        }
+
+        // Demand near each network node, so corridor growth can tell a street with
+        // people on it from a rural through-road carrying only passing trips.
+        private float[] BuildNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
+        {
+            if (network.Graph == null || m_RawTerms == null || network.NodeCount == 0)
+            {
+                return null;
+            }
+
+            var demand = new float[network.NodeCount];
+            float invDemand = m_DemandCap > 0f ? 1f / m_DemandCap : 0f;
+            float invJobs = m_JobsCap > 0f ? 1f / m_JobsCap : 0f;
+
+            for (int n = 0; n < network.NodeCount; n++)
+            {
+                var position = new float2(network.NodePositionsX[n], network.NodePositionsZ[n]);
+                int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
+                int index = cell.x + cell.y * gridSize.x;
+                if (index < 0 || index >= m_RawTerms.Length)
+                {
+                    continue;
+                }
+
+                SuitabilityCell terms = m_RawTerms[index];
+                demand[n] = SuitabilityScoring.Saturate(terms.m_Demand * invDemand)
+                    + SuitabilityScoring.Saturate(terms.m_Jobs * invJobs);
+            }
+
+            return demand;
         }
 
         // Nudges a stop from the road centreline onto the best-scoring tile nearby,
