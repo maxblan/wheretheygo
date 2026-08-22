@@ -5,7 +5,7 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
 ## Features
 
 - **Station Suitability infoview** in the game's infoview menu, with standard gradient legends
-- **Seven toggleable map layers** — the combined score, the recommended sites, and one layer per scoring term (demand, jobs, existing coverage, accessibility, future demand) so you can see *why* a tile scores the way it does. The terrain overlay has four channels, so up to four layers can be shown at once; a fifth is skipped with a note in the log.
+- **Nine toggleable map layers** — the combined score, the recommended sites, and one layer per scoring term (demand, jobs, existing coverage, accessibility, future demand, interchange potential, cross-mode overlap) so you can see *why* a tile scores the way it does. The terrain overlay has four channels, so up to four layers can be shown at once; a fifth is skipped with a note in the log.
 - **Ranked site recommendations** — instead of only a gradient, the best distinct locations are marked as discrete spots, spaced at least one catchment apart and re-scored by true walking distance
 - **Catchment-based scoring** over five criteria, each normalized to a comparable 0–1 scale before weighting:
   - Demand — residents within the catchment (weight W1)
@@ -13,6 +13,8 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
   - Existing coverage — stops of the selected mode penalize nearby tiles (W3). Stops that no line serves are ignored, since they provide no service.
   - Accessibility — road network density within the access radius (W4); tiles with no road access are suppressed entirely
   - Future demand — land that is zoned but not yet built on (W5), so you can place stops ahead of a district filling in
+  - Interchange potential — a served stop of a *different* mode within transfer distance (W6), which is what makes a bus stop at a metro station rate highly
+  - Cross-mode overlap — another mode's service close enough to carry the same riders but too far to transfer to (W7), which discourages running parallel to an existing line
 - **Terrain awareness** — tiles too steep to build on or under water score nothing, and a catchment never draws population across water or a cliff it has no route around
 - **Bus / Tram / Metro / Train / Ferry presets** with per-mode weights and radii, all adjustable in Options → Station Suitability Overlay. Ferry mode restricts candidates to the shoreline.
 - **Ridership calibration** — the mod samples your served stops while the city runs, then fits the demand, jobs, accessibility and future weights to the observed data and reports how well the model explains it (R²). Fitted values are only suggestions until you press **Apply fitted weights**.
@@ -32,6 +34,19 @@ Two different distance models are used deliberately, and it is worth knowing whi
 - **The recommended sites** are then re-scored with a true walking-distance expansion (Dijkstra over the walkable terrain), which is only affordable because there is a handful of them. This is why a site's reported score differs from the raw heatmap value under it.
 
 Neither model accounts for pedestrians being unable to cross a road mid-block; barriers are terrain and water.
+
+### How the modes interact
+
+The modes are not scored in isolation. Every *other* mode's served stops feed two terms drawn from the same set of stops and separated purely by distance:
+
+- **Within transfer distance** (250 m, or the catchment if that is shorter) another mode's stop makes the location *more* valuable, because a rider can change vehicles there and the new stop feeds an existing trunk line.
+- **Beyond that, out to the catchment**, the same stop counts *against* the location, because it already carries some of the same riders without offering a transfer.
+
+Both are weighted by how much capacity the other mode represents (train and metro count for far more than another bus) and expressed relative to the mode being placed. That asymmetry is deliberate: a bus gains a great deal from sitting at a metro station, while a metro gains comparatively little from sitting at a bus stop — the smaller mode should come to the trunk, not the other way around.
+
+Only stops that a line actually calls at count for either term. That also means no line-identity check is needed for a transfer: two served stops of different modes necessarily run different lines, so a genuine transfer is always possible.
+
+What this does *not* model is parallel duplication along a corridor — a bus route running alongside a metro rather than feeding it. Detecting that needs line geometry rather than stop positions.
 
 ### Calibration
 

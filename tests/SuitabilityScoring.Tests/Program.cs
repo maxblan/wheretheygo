@@ -23,6 +23,10 @@ namespace StationSuitabilityOverlay.Tests
             Run("FindTopSites respects separation and count", TopSitesRespectSeparationAndCount);
             Run("FindTopSites returns descending scores", TopSitesDescending);
             Run("FindTopSites ignores non-positive fields", TopSitesIgnoresEmptyField);
+            Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
+            Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
+            Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
+            Run("Walk distance is blocked by water", WalkDistanceBlockedByWater);
             Run("FitNonNegativeLeastSquares recovers known weights", FitRecoversKnownWeights);
             Run("FitNonNegativeLeastSquares clamps negative coefficients", FitClampsNegativeWeights);
             Run("FitNonNegativeLeastSquares rejects underdetermined input", FitRejectsUnderdetermined);
@@ -257,6 +261,146 @@ namespace StationSuitabilityOverlay.Tests
                 scores[i] = -1f;
             }
             AssertEqual(0, SuitabilityScoring.FindTopSites(scores, 10, 10, 2, 4, indices, siteScores, out _), 0, "all-negative field");
+        }
+
+        // The regression test for the double-counting bug: an open grid gives every
+        // tile many shortest-path predecessors, so each tile enters the frontier
+        // repeatedly. Without settling a tile once, its density is added once per
+        // pop and the total inflates unpredictably — observed in game as the same
+        // site scoring 344 and then 2936 on consecutive recomputes.
+        private static void WalkDistanceCountsOnce()
+        {
+            const int width = 21;
+            const int height = 21;
+            int cells = width * height;
+            var land = new byte[cells];
+            var demand = new float[cells];
+            var jobs = new float[cells];
+            for (int i = 0; i < cells; i++)
+            {
+                land[i] = 1;
+                demand[i] = 1f;
+            }
+
+            int site = 10 + 10 * width;
+            // A radius of exactly one tile step reaches the site plus its eight
+            // neighbours, and the neighbours sit at weight 0 (orthogonal) or are out
+            // of range (diagonal), so only the centre contributes: 1 * 1.0.
+            float total = SuitabilityScoring.AccumulateWalkDistance(
+                site, width, height, 1f, 1f, land, demand, jobs, 1f, 0f,
+                new float[cells], new byte[cells], out float reachedDemand, out _);
+
+            AssertEqual(1f, reachedDemand, 1e-4f, "only the centre tile is fully weighted");
+            AssertEqual(1f, total, 1e-4f, "weighted total");
+
+            // With a wider radius the sum must still be bounded by the number of
+            // tiles in range, which double counting would blow past.
+            float wide = SuitabilityScoring.AccumulateWalkDistance(
+                site, width, height, 1f, 5f, land, demand, jobs, 1f, 0f,
+                new float[cells], new byte[cells], out float wideDemand, out _);
+
+            // 11x11 tiles are within 5 units of Chebyshev reach at most; every tile
+            // contributes strictly less than 1, so the sum cannot reach that count.
+            AssertTrue(wideDemand < 121f, $"reached demand {wideDemand} must be under the tile count in range");
+            AssertTrue(wideDemand > 20f, $"reached demand {wideDemand} should still cover a real neighbourhood");
+            AssertEqual(wide, wideDemand, 1e-4f, "jobs weight zero leaves the demand total");
+        }
+
+        private static void WalkDistanceIsDeterministic()
+        {
+            const int width = 25;
+            const int height = 25;
+            int cells = width * height;
+            var land = new byte[cells];
+            var demand = new float[cells];
+            var jobs = new float[cells];
+            var random = new Random(7);
+            for (int i = 0; i < cells; i++)
+            {
+                land[i] = (byte)(random.NextDouble() < 0.85 ? 1 : 0);
+                demand[i] = (float)random.NextDouble() * 100f;
+                jobs[i] = (float)random.NextDouble() * 50f;
+            }
+
+            int site = 12 + 12 * width;
+            land[site] = 1;
+
+            var distance = new float[cells];
+            var visited = new byte[cells];
+            float first = SuitabilityScoring.AccumulateWalkDistance(
+                site, width, height, 32f, 300f, land, demand, jobs, 1f, 0.5f, distance, visited, out _, out _);
+
+            // Reusing the same scratch buffers must not change the answer, which is
+            // exactly the condition the in-game repeats violated.
+            for (int repeat = 0; repeat < 5; repeat++)
+            {
+                float again = SuitabilityScoring.AccumulateWalkDistance(
+                    site, width, height, 32f, 300f, land, demand, jobs, 1f, 0.5f, distance, visited, out _, out _);
+                AssertEqual(first, again, 1e-3f, $"repeat {repeat} must match the first result");
+            }
+        }
+
+        private static void WalkDistanceRespectsRadius()
+        {
+            const int width = 31;
+            int height = 31;
+            int cells = width * height;
+            var land = new byte[cells];
+            var demand = new float[cells];
+            var jobs = new float[cells];
+            for (int i = 0; i < cells; i++)
+            {
+                land[i] = 1;
+            }
+
+            int site = 15 + 15 * width;
+            // Demand far outside the radius must not be reached at all.
+            demand[0] = 1000f;
+
+            SuitabilityScoring.AccumulateWalkDistance(
+                site, width, height, 10f, 30f, land, demand, jobs, 1f, 0f,
+                new float[cells], new byte[cells], out float reached, out _);
+
+            AssertEqual(0f, reached, 1e-4f, "demand beyond the radius must not be counted");
+        }
+
+        private static void WalkDistanceBlockedByWater()
+        {
+            const int width = 21;
+            const int height = 9;
+            int cells = width * height;
+            var land = new byte[cells];
+            var demand = new float[cells];
+            var jobs = new float[cells];
+            for (int i = 0; i < cells; i++)
+            {
+                land[i] = 1;
+            }
+
+            // A full-height water column splits the grid in two.
+            int barrierX = 10;
+            for (int y = 0; y < height; y++)
+            {
+                land[barrierX + y * width] = 0;
+            }
+
+            // Demand sits just across the barrier, well within straight-line range.
+            demand[(barrierX + 1) + 4 * width] = 500f;
+
+            int site = (barrierX - 1) + 4 * width;
+            SuitabilityScoring.AccumulateWalkDistance(
+                site, width, height, 10f, 60f, land, demand, jobs, 1f, 0f,
+                new float[cells], new byte[cells], out float reached, out _);
+
+            AssertEqual(0f, reached, 1e-4f, "demand across an impassable barrier must not be reached");
+
+            // Opening a gap in the barrier must let it through again.
+            land[barrierX + 4 * width] = 1;
+            SuitabilityScoring.AccumulateWalkDistance(
+                site, width, height, 10f, 60f, land, demand, jobs, 1f, 0f,
+                new float[cells], new byte[cells], out float throughGap, out _);
+
+            AssertTrue(throughGap > 0f, "a gap in the barrier must make the demand reachable");
         }
 
         private static void FitRecoversKnownWeights()

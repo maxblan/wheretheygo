@@ -34,6 +34,9 @@ namespace StationSuitabilityOverlay
         public float BucketSize;
         public float CatchmentRadius;
         public float AccessRadius;
+        // How far a rider will walk to change vehicles. Other-mode stops inside this
+        // are a transfer opportunity; beyond it they are competing coverage.
+        public float InterchangeRadius;
 
         [ReadOnly] public NativeArray<PopulationCell> PopulationMap;
         public float2 PopulationCellSize;
@@ -63,6 +66,11 @@ namespace StationSuitabilityOverlay
         [ReadOnly] public NativeArray<float> FutureHomeWeights;
         [ReadOnly] public NativeArray<int> FutureHomeOffsets;
         [ReadOnly] public NativeArray<int> FutureHomeCounts;
+
+        [ReadOnly] public NativeArray<float2> OtherStopPositions;
+        [ReadOnly] public NativeArray<float> OtherStopWeights;
+        [ReadOnly] public NativeArray<int> OtherStopOffsets;
+        [ReadOnly] public NativeArray<int> OtherStopCounts;
 
         [ReadOnly] public NativeArray<float2> FutureJobPositions;
         [ReadOnly] public NativeArray<float> FutureJobWeights;
@@ -99,6 +107,7 @@ namespace StationSuitabilityOverlay
                     + SumPoints(FutureJobPositions, FutureJobWeights, FutureJobOffsets, FutureJobCounts, center, CatchmentRadius, component),
             };
 
+            SumOtherModes(center, out cell.m_Interchange, out cell.m_CrossCoverage);
             Terms[index] = cell;
         }
 
@@ -213,6 +222,60 @@ namespace StationSuitabilityOverlay
             }
 
             return sum;
+        }
+
+        // Other modes cut both ways from the same set of stops, split purely by
+        // distance: within walking-transfer range a stop of another mode makes this
+        // location MORE valuable (a rider can change vehicles here, so the new stop
+        // feeds an existing trunk); beyond that range it is competing service that
+        // already absorbs some of the same demand.
+        //
+        // Neither is component-gated. A transfer needs a walkable connection, but
+        // the stops of both modes sit on the road network by construction, and
+        // competing service reaches riders by vehicle rather than on foot.
+        private void SumOtherModes(float2 center, out float interchange, out float crossCoverage)
+        {
+            interchange = 0f;
+            crossCoverage = 0f;
+
+            int radiusTiles = (int)math.ceil(CatchmentRadius / BucketSize);
+            int2 baseCell = SuitabilityInputs.WorldToCell(center, WorldMin, BucketSize, BucketGridSize);
+
+            for (int dy = -radiusTiles; dy <= radiusTiles; dy++)
+            {
+                int cy = baseCell.y + dy;
+                if (cy < 0 || cy >= BucketGridSize.y)
+                {
+                    continue;
+                }
+
+                for (int dx = -radiusTiles; dx <= radiusTiles; dx++)
+                {
+                    int cx = baseCell.x + dx;
+                    if (cx < 0 || cx >= BucketGridSize.x)
+                    {
+                        continue;
+                    }
+
+                    int bucket = cx + cy * BucketGridSize.x;
+                    int count = OtherStopCounts[bucket];
+                    int start = OtherStopOffsets[bucket];
+                    for (int i = 0; i < count; i++)
+                    {
+                        float dist = math.distance(OtherStopPositions[start + i], center);
+                        float weight = OtherStopWeights[start + i];
+
+                        if (dist <= InterchangeRadius)
+                        {
+                            interchange += weight * TriangularWeight(dist, InterchangeRadius);
+                        }
+                        else if (dist <= CatchmentRadius)
+                        {
+                            crossCoverage += weight * TriangularWeight(dist, CatchmentRadius);
+                        }
+                    }
+                }
+            }
         }
 
         // Existing coverage is deliberately NOT component-gated: a stop across a

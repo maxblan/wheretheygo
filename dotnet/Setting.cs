@@ -53,6 +53,8 @@ namespace StationSuitabilityOverlay
         private float m_W3;
         private float m_W4;
         private float m_W5;
+        private float m_W6;
+        private float m_W7;
         private int m_CatchmentRadius;
         private int m_AccessRadius;
         private int m_HighlightShare;
@@ -120,6 +122,22 @@ namespace StationSuitabilityOverlay
         {
             get => m_W5;
             set => m_W5 = ClampWeight(value);
+        }
+
+        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISection(kSection, kWeightsGroup)]
+        public float W6
+        {
+            get => m_W6;
+            set => m_W6 = ClampWeight(value);
+        }
+
+        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISection(kSection, kWeightsGroup)]
+        public float W7
+        {
+            get => m_W7;
+            set => m_W7 = ClampWeight(value);
         }
 
         [SettingsUISlider(min = kCatchmentMin, max = kCatchmentMax, step = 25, scalarMultiplier = 1, unit = Unit.kLength)]
@@ -211,23 +229,23 @@ namespace StationSuitabilityOverlay
             switch (mode)
             {
                 case ModePreset.Bus:
-                    m_W1 = 1.0f; m_W2 = 0.8f; m_W3 = 1.2f; m_W4 = 0.6f; m_W5 = 0.3f;
+                    m_W1 = 1.0f; m_W2 = 0.8f; m_W3 = 1.2f; m_W4 = 0.6f; m_W5 = 0.3f; m_W6 = 0.9f; m_W7 = 0.4f;
                     break;
                 case ModePreset.Tram:
-                    m_W1 = 1.0f; m_W2 = 0.9f; m_W3 = 1.3f; m_W4 = 0.7f; m_W5 = 0.35f;
+                    m_W1 = 1.0f; m_W2 = 0.9f; m_W3 = 1.3f; m_W4 = 0.7f; m_W5 = 0.35f; m_W6 = 0.8f; m_W7 = 0.45f;
                     break;
                 case ModePreset.Metro:
-                    m_W1 = 0.9f; m_W2 = 1.0f; m_W3 = 1.4f; m_W4 = 0.8f; m_W5 = 0.4f;
+                    m_W1 = 0.9f; m_W2 = 1.0f; m_W3 = 1.4f; m_W4 = 0.8f; m_W5 = 0.4f; m_W6 = 0.6f; m_W7 = 0.5f;
                     break;
                 case ModePreset.Train:
                     // Regional scale: jobs and long-range coverage dominate, and
                     // local street density matters less than for street modes.
-                    m_W1 = 0.8f; m_W2 = 1.1f; m_W3 = 1.5f; m_W4 = 0.5f; m_W5 = 0.5f;
+                    m_W1 = 0.8f; m_W2 = 1.1f; m_W3 = 1.5f; m_W4 = 0.5f; m_W5 = 0.5f; m_W6 = 0.5f; m_W7 = 0.6f;
                     break;
                 case ModePreset.Ferry:
                     // Shoreline-constrained, so accessibility is mostly decided by
                     // the geography rather than by road density.
-                    m_W1 = 1.0f; m_W2 = 0.7f; m_W3 = 1.2f; m_W4 = 0.4f; m_W5 = 0.25f;
+                    m_W1 = 1.0f; m_W2 = 0.7f; m_W3 = 1.2f; m_W4 = 0.4f; m_W5 = 0.25f; m_W6 = 0.7f; m_W7 = 0.3f;
                     break;
             }
         }
@@ -254,9 +272,11 @@ namespace StationSuitabilityOverlay
             m_HighlightShare = 0;
             m_MaxSlope = 0;
             m_SiteCount = 0;
-            // Negative marks "absent" for the future-demand weight, since zero is a
+            // Negative marks "absent" for weights added after 1.1, since zero is a
             // legitimate value a user may have chosen.
             m_W5 = -1f;
+            m_W6 = -1f;
+            m_W7 = -1f;
         }
 
         // Called once after settings are loaded from disk to sanitize persisted
@@ -275,19 +295,46 @@ namespace StationSuitabilityOverlay
             m_HighlightShare = m_HighlightShare == 0 ? kHighlightDefault : ClampInt(m_HighlightShare, kHighlightMin, kHighlightMax);
             m_MaxSlope = m_MaxSlope == 0 ? kSlopeDefault : ClampInt(m_MaxSlope, kSlopeMin, kSlopeMax);
             m_SiteCount = m_SiteCount == 0 ? kSiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
-            m_W5 = m_W5 < 0f ? PresetFutureWeight(m_Mode) : ClampWeight(m_W5);
+            m_W5 = m_W5 < 0f ? PresetWeight(m_Mode, 5) : ClampWeight(m_W5);
+            m_W6 = m_W6 < 0f ? PresetWeight(m_Mode, 6) : ClampWeight(m_W6);
+            m_W7 = m_W7 < 0f ? PresetWeight(m_Mode, 7) : ClampWeight(m_W7);
             m_RidershipData ??= string.Empty;
         }
 
-        private static float PresetFutureWeight(ModePreset mode)
+        // Default for a weight that was absent from an older settings file. Kept in
+        // step with ApplyPreset by hand — ModSetting has no parameterless base
+        // constructor, so a throwaway instance cannot be used to read the presets.
+        private static float PresetWeight(ModePreset mode, int index)
         {
-            switch (mode)
+            switch (index)
             {
-                case ModePreset.Tram: return 0.35f;
-                case ModePreset.Metro: return 0.4f;
-                case ModePreset.Train: return 0.5f;
-                case ModePreset.Ferry: return 0.25f;
-                default: return 0.3f;
+                case 5:
+                    switch (mode)
+                    {
+                        case ModePreset.Tram: return 0.35f;
+                        case ModePreset.Metro: return 0.4f;
+                        case ModePreset.Train: return 0.5f;
+                        case ModePreset.Ferry: return 0.25f;
+                        default: return 0.3f;
+                    }
+                case 6:
+                    switch (mode)
+                    {
+                        case ModePreset.Tram: return 0.8f;
+                        case ModePreset.Metro: return 0.6f;
+                        case ModePreset.Train: return 0.5f;
+                        case ModePreset.Ferry: return 0.7f;
+                        default: return 0.9f;
+                    }
+                default:
+                    switch (mode)
+                    {
+                        case ModePreset.Tram: return 0.45f;
+                        case ModePreset.Metro: return 0.5f;
+                        case ModePreset.Train: return 0.6f;
+                        case ModePreset.Ferry: return 0.3f;
+                        default: return 0.4f;
+                    }
             }
         }
 
@@ -360,6 +407,11 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W5)), "Future demand weight" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.W5)), "How strongly land that is zoned but not yet built on raises the score. Lets you place stops ahead of a district filling in." },
 
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W6)), "Interchange bonus" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.W6)), "How strongly a nearby stop of a DIFFERENT mode raises the score. This is what makes a bus stop at a metro station rate highly: the new stop feeds an existing trunk line. Scaled by how much capacity the other mode carries, so a metro or train counts for far more than another bus." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W7)), "Cross-mode overlap penalty" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.W7)), "How strongly another mode's service lowers the score when it is close enough to already carry the same riders, but too far to transfer to. Discourages running a new line parallel to an existing one." },
+
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CatchmentRadius)), "Catchment radius" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CatchmentRadius)), "Walking distance a stop serves. Residents, jobs and existing stops within this radius affect the score. Typical: 300-400 m for bus, 600-800 m for metro." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AccessRadius)), "Road access radius" },
@@ -396,6 +448,10 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityAccess]", "Road network density near each tile." },
                 { "Infoviews.INFOMODE[StationSuitabilityFuture]", "Future demand (zoned)" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityFuture]", "Land that is zoned but not yet built on." },
+                { "Infoviews.INFOMODE[StationSuitabilityInterchange]", "Interchange potential" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityInterchange]", "Where a stop of this mode would sit within transfer distance of another mode's service, weighted by how much capacity that mode carries." },
+                { "Infoviews.INFOMODE[StationSuitabilityCrossCoverage]", "Cross-mode overlap" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityCrossCoverage]", "Where another mode already serves the same riders but is too far away to transfer to." },
 
                 // The infoview panel composes gradient legend label keys as
                 // Infoviews.LABEL[<labelId>].

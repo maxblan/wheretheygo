@@ -15,11 +15,13 @@ namespace StationSuitabilityOverlay
         Coverage = 4,
         Access = 5,
         Future = 6,
+        Interchange = 7,
+        CrossCoverage = 8,
     }
 
     internal static class SuitabilityLayers
     {
-        public const int Count = 7;
+        public const int Count = 9;
 
         // The terrain override overlay is a single RGBA texture, so only four
         // layers can be drawn at once. ToolSystem.Activate does NOT enforce this —
@@ -38,6 +40,8 @@ namespace StationSuitabilityOverlay
                 SuitabilityLayer.Coverage,
                 SuitabilityLayer.Access,
                 SuitabilityLayer.Future,
+                SuitabilityLayer.Interchange,
+                SuitabilityLayer.CrossCoverage,
             };
 
         public static string NameOf(SuitabilityLayer layer)
@@ -50,6 +54,8 @@ namespace StationSuitabilityOverlay
                 case SuitabilityLayer.Coverage: return "StationSuitabilityCoverage";
                 case SuitabilityLayer.Access: return "StationSuitabilityAccess";
                 case SuitabilityLayer.Future: return "StationSuitabilityFuture";
+                case SuitabilityLayer.Interchange: return "StationSuitabilityInterchange";
+                case SuitabilityLayer.CrossCoverage: return "StationSuitabilityCrossCoverage";
                 default: return "StationSuitabilityOverlay";
             }
         }
@@ -93,6 +99,18 @@ namespace StationSuitabilityOverlay
                     low = new Color(0.20f, 0.40f, 0.20f, 0.12f);
                     medium = new Color(0.55f, 0.85f, 0.35f, 0.55f);
                     high = new Color(0.90f, 1f, 0.60f, 0.90f);
+                    break;
+                case SuitabilityLayer.Interchange:
+                    // Transfer opportunity reads as a positive, high-value signal.
+                    low = new Color(0.35f, 0.30f, 0.10f, 0.12f);
+                    medium = new Color(0.85f, 0.70f, 0.20f, 0.60f);
+                    high = new Color(1f, 0.95f, 0.55f, 0.95f);
+                    break;
+                case SuitabilityLayer.CrossCoverage:
+                    // Duplication of another mode's reach: a muted warning ramp.
+                    low = new Color(0.25f, 0.20f, 0.28f, 0.12f);
+                    medium = new Color(0.55f, 0.40f, 0.60f, 0.55f);
+                    high = new Color(0.80f, 0.60f, 0.85f, 0.90f);
                     break;
                 default:
                     // The combined score keeps the original green/yellow/red ramp.

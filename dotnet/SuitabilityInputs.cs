@@ -44,6 +44,12 @@ namespace StationSuitabilityOverlay
         public float m_Coverage;
         public float m_Access;
         public float m_Future;
+        // Served stops of OTHER modes close enough to transfer to, weighted by how
+        // much trunk capacity they represent.
+        public float m_Interchange;
+        // Served stops of other modes near enough to already absorb this tile's
+        // demand, but too far to transfer to.
+        public float m_CrossCoverage;
     }
 
     internal static class SuitabilityInputs
@@ -108,23 +114,31 @@ namespace StationSuitabilityOverlay
             return result;
         }
 
-        // Transit stops of the selected mode. Stops that no line actually serves are
-        // skipped: an orphan stop provides no service, so penalizing its
-        // surroundings as "already covered" is simply wrong.
+        // Every passenger stop, split into the selected mode (which drives the
+        // coverage penalty) and all other modes (which drive the interchange bonus
+        // and the cross-mode redundancy penalty).
         //
-        // ConnectedRoute lives on the stop entity (each element points at a per-line
-        // waypoint) and may be absent entirely, so it must be probed with
-        // TryGetBuffer — every vanilla consumer does the same.
+        // Unserved stops are excluded from both: a stop no line calls at provides
+        // neither service to duplicate nor a transfer to make. That also means a
+        // co-located pair of served stops of different modes always represents a
+        // genuine transfer opportunity, since different modes necessarily run
+        // different lines — so no line-identity comparison is needed.
         public static void CollectStops(
             EntityManager entityManager,
             PrefabSystem prefabSystem,
             EntityQuery stopQuery,
             Setting.ModePreset mode,
-            List<float2> positions,
+            List<float2> samePositions,
+            List<float2> otherPositions,
+            List<float> otherWeights,
             out int orphansSkipped)
         {
-            positions.Clear();
+            samePositions.Clear();
+            otherPositions.Clear();
+            otherWeights.Clear();
             orphansSkipped = 0;
+
+            TransportType selected = TransportTypeOf(mode);
 
             using var entities = stopQuery.ToEntityArray(Allocator.Temp);
             using var transforms = stopQuery.ToComponentDataArray<Transform>(Allocator.Temp);
@@ -132,30 +146,65 @@ namespace StationSuitabilityOverlay
 
             for (int i = 0; i < entities.Length; i++)
             {
-                if (!IsStopOfMode(prefabSystem, prefabs[i].m_Prefab, mode))
+                if (!TryGetStopType(prefabSystem, prefabs[i].m_Prefab, out TransportType type))
                 {
+                    continue;
+                }
+
+                bool sameMode = type == selected;
+                float otherWeight = sameMode ? 0f : ModeWeight(type);
+                if (!sameMode && otherWeight <= 0f)
+                {
+                    // Not a mode anyone would transfer between (taxi, cargo, ...).
                     continue;
                 }
 
                 if (!IsServedByLine(entityManager, entities[i]))
                 {
-                    orphansSkipped++;
+                    if (sameMode)
+                    {
+                        orphansSkipped++;
+                    }
+
                     continue;
                 }
 
                 float3 pos = transforms[i].m_Position;
-                positions.Add(new float2(pos.x, pos.z));
+                var flat = new float2(pos.x, pos.z);
+                if (sameMode)
+                {
+                    samePositions.Add(flat);
+                }
+                else
+                {
+                    otherPositions.Add(flat);
+                    otherWeights.Add(otherWeight);
+                }
             }
         }
 
-        public static bool IsServedByLine(EntityManager entityManager, Entity stop)
+        // Roughly how much trunk capacity each mode represents. Used to scale the
+        // interchange bonus, so feeding a metro station counts for more than
+        // standing next to another bus stop. Zero means "never a transfer partner".
+        public static float ModeWeight(TransportType type)
         {
-            return entityManager.TryGetBuffer(stop, true, out DynamicBuffer<ConnectedRoute> routes)
-                && routes.Length > 0;
+            switch (type)
+            {
+                case TransportType.Bus: return 1f;
+                case TransportType.Helicopter: return 1f;
+                case TransportType.Ferry: return 1.2f;
+                case TransportType.Tram: return 1.5f;
+                case TransportType.Ship: return 1.5f;
+                case TransportType.Subway: return 2.5f;
+                case TransportType.Train: return 3f;
+                case TransportType.Airplane: return 3f;
+                default: return 0f;
+            }
         }
 
-        public static bool IsStopOfMode(PrefabSystem prefabSystem, Entity prefab, Setting.ModePreset mode)
+        private static bool TryGetStopType(PrefabSystem prefabSystem, Entity prefab, out TransportType type)
         {
+            type = TransportType.None;
             PrefabBase prefabBase = prefabSystem.GetPrefab<PrefabBase>(prefab);
             if (prefabBase == null || !prefabSystem.TryGetComponentData(prefabBase, out TransportStopData stopData))
             {
@@ -167,7 +216,19 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            return stopData.m_TransportType == TransportTypeOf(mode);
+            type = stopData.m_TransportType;
+            return true;
+        }
+
+        public static bool IsServedByLine(EntityManager entityManager, Entity stop)
+        {
+            return entityManager.TryGetBuffer(stop, true, out DynamicBuffer<ConnectedRoute> routes)
+                && routes.Length > 0;
+        }
+
+        public static bool IsStopOfMode(PrefabSystem prefabSystem, Entity prefab, Setting.ModePreset mode)
+        {
+            return TryGetStopType(prefabSystem, prefab, out TransportType type) && type == TransportTypeOf(mode);
         }
 
         public static TransportType TransportTypeOf(Setting.ModePreset mode)

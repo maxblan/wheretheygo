@@ -47,6 +47,11 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W5)), "Gewichtung künftige Nachfrage" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.W5)), "Wie stark ausgewiesenes, aber noch unbebautes Land die Bewertung erhöht. So lassen sich Haltestellen setzen, bevor ein Viertel sich füllt." },
 
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W6)), "Umsteige-Bonus" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.W6)), "Wie stark eine nahe Haltestelle eines ANDEREN Verkehrsmittels die Bewertung erhöht. Dadurch wird eine Bushaltestelle an einer U-Bahn-Station hoch bewertet: sie speist eine bestehende Hauptlinie. Skaliert mit der Kapazität des anderen Verkehrsmittels, sodass U-Bahn oder Zug deutlich mehr zählen als ein weiterer Bus." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W7)), "Abzug Parallelverkehr" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.W7)), "Wie stark das Angebot eines anderen Verkehrsmittels die Bewertung senkt, wenn es dieselben Fahrgäste bereits bedient, aber zu weit für einen Umstieg entfernt ist. Verhindert Linien parallel zu bestehenden." },
+
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CatchmentRadius)), "Einzugsradius" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CatchmentRadius)), "Fußweg, den eine Haltestelle bedient. Einwohner, Arbeitsplätze und bestehende Haltestellen in diesem Radius beeinflussen die Bewertung. Typisch: 300-400 m für Bus, 600-800 m für U-Bahn." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AccessRadius)), "Radius Straßenanbindung" },
@@ -83,6 +88,10 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityAccess]", "Dichte des Straßennetzes in der Nähe jedes Feldes." },
                 { "Infoviews.INFOMODE[StationSuitabilityFuture]", "Künftige Nachfrage (ausgewiesen)" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityFuture]", "Land, das ausgewiesen, aber noch nicht bebaut ist." },
+                { "Infoviews.INFOMODE[StationSuitabilityInterchange]", "Umsteige-Potenzial" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityInterchange]", "Wo eine Haltestelle dieses Verkehrsmittels in Umsteige-Entfernung zum Angebot eines anderen Verkehrsmittels läge, gewichtet nach dessen Kapazität." },
+                { "Infoviews.INFOMODE[StationSuitabilityCrossCoverage]", "Überlappung anderer Verkehrsmittel" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityCrossCoverage]", "Wo ein anderes Verkehrsmittel dieselben Fahrgäste bereits bedient, aber zu weit für einen Umstieg entfernt ist." },
 
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Low]", "Niedrig" },
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Medium]", "Mittel" },

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay
 {
@@ -313,6 +314,158 @@ namespace StationSuitabilityOverlay
             }
 
             return true;
+        }
+
+        // Walk-distance catchment for one candidate site: Dijkstra over walkable
+        // tiles (8-connected, diagonal costing sqrt(2) steps) out to `radius` metres
+        // of NETWORK distance, summing the demand and jobs densities it can actually
+        // reach, each weighted down linearly with distance.
+        //
+        // `distanceScratch` and `visitedScratch` must both be at least width*height
+        // long; only the window the radius can reach is touched, so they do not need
+        // clearing between calls.
+        //
+        // The visited check is load-bearing, not defensive: a tile is reachable by
+        // many paths and therefore enters the frontier many times, so without
+        // settling it once its density is added once per pop and the total silently
+        // depends on pop order. That produced an 8x swing between identical
+        // recomputes of the same site.
+        public static float AccumulateWalkDistance(
+            int siteIndex,
+            int width,
+            int height,
+            float tileSize,
+            float radius,
+            byte[] land,
+            float[] tileDemand,
+            float[] tileJobs,
+            float demandWeight,
+            float jobsWeight,
+            float[] distanceScratch,
+            byte[] visitedScratch,
+            out float reachedDemand,
+            out float reachedJobs)
+        {
+            reachedDemand = 0f;
+            reachedJobs = 0f;
+
+            int cells = width * height;
+            if (land == null || tileDemand == null || tileJobs == null
+                || distanceScratch == null || visitedScratch == null
+                || width <= 0 || height <= 0 || radius <= 0f || tileSize <= 0f
+                || siteIndex < 0 || siteIndex >= cells
+                || distanceScratch.Length < cells || visitedScratch.Length < cells
+                || land.Length < cells || tileDemand.Length < cells || tileJobs.Length < cells)
+            {
+                return 0f;
+            }
+
+            if (land[siteIndex] == 0)
+            {
+                return 0f;
+            }
+
+            int span = (int)Math.Ceiling(radius / tileSize) + 1;
+            int sx = siteIndex % width;
+            int sy = siteIndex / width;
+            int minX = Math.Max(0, sx - span);
+            int maxX = Math.Min(width - 1, sx + span);
+            int minY = Math.Max(0, sy - span);
+            int maxY = Math.Min(height - 1, sy + span);
+
+            for (int y = minY; y <= maxY; y++)
+            {
+                int row = y * width;
+                for (int x = minX; x <= maxX; x++)
+                {
+                    distanceScratch[row + x] = float.MaxValue;
+                    visitedScratch[row + x] = 0;
+                }
+            }
+
+            var frontier = new List<int>(128);
+            distanceScratch[siteIndex] = 0f;
+            frontier.Add(siteIndex);
+
+            float diagonal = (float)Math.Sqrt(2.0) * tileSize;
+
+            while (frontier.Count > 0)
+            {
+                int bestSlot = 0;
+                float bestDistance = distanceScratch[frontier[0]];
+                for (int i = 1; i < frontier.Count; i++)
+                {
+                    float candidate = distanceScratch[frontier[i]];
+                    if (candidate < bestDistance)
+                    {
+                        bestDistance = candidate;
+                        bestSlot = i;
+                    }
+                }
+
+                int current = frontier[bestSlot];
+                frontier.RemoveAt(bestSlot);
+
+                // Stale duplicate of an already-settled tile.
+                if (visitedScratch[current] != 0)
+                {
+                    continue;
+                }
+
+                visitedScratch[current] = 1;
+
+                if (bestDistance > radius)
+                {
+                    continue;
+                }
+
+                float weight = 1f - bestDistance / radius;
+                reachedDemand += tileDemand[current] * weight;
+                reachedJobs += tileJobs[current] * weight;
+
+                int cx = current % width;
+                int cy = current / width;
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    int ny = cy + dy;
+                    if (ny < minY || ny > maxY)
+                    {
+                        continue;
+                    }
+
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (dx == 0 && dy == 0)
+                        {
+                            continue;
+                        }
+
+                        int nx = cx + dx;
+                        if (nx < minX || nx > maxX)
+                        {
+                            continue;
+                        }
+
+                        int neighbour = nx + ny * width;
+                        if (land[neighbour] == 0 || visitedScratch[neighbour] != 0)
+                        {
+                            continue;
+                        }
+
+                        float step = (dx != 0 && dy != 0) ? diagonal : tileSize;
+                        float candidate = bestDistance + step;
+                        if (candidate > radius || candidate >= distanceScratch[neighbour])
+                        {
+                            continue;
+                        }
+
+                        distanceScratch[neighbour] = candidate;
+                        frontier.Add(neighbour);
+                    }
+                }
+            }
+
+            return (reachedDemand * demandWeight) + (reachedJobs * jobsWeight);
         }
 
         // Least-squares fit of `target` against `features` with all coefficients

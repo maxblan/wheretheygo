@@ -35,12 +35,12 @@ namespace StationSuitabilityOverlay
             float tileSize,
             NativeArray<byte> buildable,
             NativeArray<int> components,
-            NativeArray<byte> land,
+            byte[] land,
             out int componentCount)
         {
             componentCount = 0;
             int cells = gridSize.x * gridSize.y;
-            if (cells <= 0 || !buildable.IsCreated || !components.IsCreated || !land.IsCreated)
+            if (cells <= 0 || !buildable.IsCreated || !components.IsCreated || land == null || land.Length < cells)
             {
                 return;
             }
@@ -99,7 +99,7 @@ namespace StationSuitabilityOverlay
 
         // A ferry stop is only sensible where land meets water, so drop any tile
         // that has no water neighbour.
-        private static void RestrictToShoreline(int2 gridSize, NativeArray<byte> land, NativeArray<byte> buildable)
+        private static void RestrictToShoreline(int2 gridSize, byte[] land, NativeArray<byte> buildable)
         {
             for (int y = 0; y < gridSize.y; y++)
             {
@@ -138,7 +138,7 @@ namespace StationSuitabilityOverlay
 
         // Iterative flood fill with an explicit stack — recursion would blow the
         // stack on a 448x448 landmass.
-        private static void LabelComponents(int2 gridSize, NativeArray<byte> land, NativeArray<int> components, out int componentCount)
+        private static void LabelComponents(int2 gridSize, byte[] land, NativeArray<int> components, out int componentCount)
         {
             int cells = gridSize.x * gridSize.y;
             for (int i = 0; i < cells; i++)
@@ -178,7 +178,7 @@ namespace StationSuitabilityOverlay
 
         private static void PushNeighbour(
             Stack<int> stack,
-            NativeArray<byte> land,
+            byte[] land,
             NativeArray<int> components,
             int2 gridSize,
             int x,
@@ -200,124 +200,5 @@ namespace StationSuitabilityOverlay
             stack.Push(index);
         }
 
-        // Walk-distance refinement for a single candidate site: Dijkstra over the
-        // walkable tiles (8-connected, diagonal cost sqrt(2)) out to `radius`
-        // metres of NETWORK distance, summing the per-tile demand and jobs
-        // densities it can actually reach.
-        //
-        // This is the honest version of the catchment: the heatmap uses Euclidean
-        // distance gated by landmass, which is cheap enough for every tile, whereas
-        // this is only affordable for the handful of reported sites.
-        public static float RefineSite(
-            int siteIndex,
-            int2 gridSize,
-            float tileSize,
-            float radius,
-            NativeArray<byte> land,
-            float[] tileDemand,
-            float[] tileJobs,
-            float demandWeight,
-            float jobsWeight,
-            float[] distanceScratch,
-            out float reachedDemand,
-            out float reachedJobs)
-        {
-            reachedDemand = 0f;
-            reachedJobs = 0f;
-
-            int cells = gridSize.x * gridSize.y;
-            if (siteIndex < 0 || siteIndex >= cells || distanceScratch == null || distanceScratch.Length < cells)
-            {
-                return 0f;
-            }
-
-            int span = (int)math.ceil(radius / tileSize) + 1;
-            int sx = siteIndex % gridSize.x;
-            int sy = siteIndex / gridSize.x;
-
-            // Only the window the radius can reach is touched, so the scratch does
-            // not need clearing globally between sites.
-            int minX = math.max(0, sx - span);
-            int maxX = math.min(gridSize.x - 1, sx + span);
-            int minY = math.max(0, sy - span);
-            int maxY = math.min(gridSize.y - 1, sy + span);
-            for (int y = minY; y <= maxY; y++)
-            {
-                for (int x = minX; x <= maxX; x++)
-                {
-                    distanceScratch[x + y * gridSize.x] = float.MaxValue;
-                }
-            }
-
-            // Simple binary-heap-free Dijkstra: the frontier stays small because the
-            // radius is bounded, so a linear scan of a pending list is fine.
-            var frontier = new List<int>(64);
-            distanceScratch[siteIndex] = 0f;
-            frontier.Add(siteIndex);
-
-            float diagonal = math.sqrt(2f) * tileSize;
-
-            while (frontier.Count > 0)
-            {
-                // Pop the nearest pending tile.
-                int bestSlot = 0;
-                float bestDistance = distanceScratch[frontier[0]];
-                for (int i = 1; i < frontier.Count; i++)
-                {
-                    float candidate = distanceScratch[frontier[i]];
-                    if (candidate < bestDistance)
-                    {
-                        bestDistance = candidate;
-                        bestSlot = i;
-                    }
-                }
-
-                int current = frontier[bestSlot];
-                frontier.RemoveAt(bestSlot);
-
-                if (bestDistance > radius)
-                {
-                    continue;
-                }
-
-                float weight = 1f - bestDistance / radius;
-                reachedDemand += tileDemand[current] * weight;
-                reachedJobs += tileJobs[current] * weight;
-
-                int cx = current % gridSize.x;
-                int cy = current / gridSize.x;
-
-                for (int dy = -1; dy <= 1; dy++)
-                {
-                    int ny = cy + dy;
-                    if (ny < minY || ny > maxY) continue;
-
-                    for (int dx = -1; dx <= 1; dx++)
-                    {
-                        if (dx == 0 && dy == 0) continue;
-                        int nx = cx + dx;
-                        if (nx < minX || nx > maxX) continue;
-
-                        int neighbour = nx + ny * gridSize.x;
-                        if (land[neighbour] == 0)
-                        {
-                            continue;
-                        }
-
-                        float step = (dx != 0 && dy != 0) ? diagonal : tileSize;
-                        float candidate = bestDistance + step;
-                        if (candidate > radius || candidate >= distanceScratch[neighbour])
-                        {
-                            continue;
-                        }
-
-                        distanceScratch[neighbour] = candidate;
-                        frontier.Add(neighbour);
-                    }
-                }
-            }
-
-            return (reachedDemand * demandWeight) + (reachedJobs * jobsWeight);
-        }
     }
 }

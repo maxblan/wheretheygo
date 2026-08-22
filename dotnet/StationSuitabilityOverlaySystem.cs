@@ -54,6 +54,9 @@ namespace StationSuitabilityOverlay
         // Tiles with no road access are not viable sites; the gate fades the score
         // in over the low end of the access term.
         private const float RoadGateScale = 2f;
+        // How far a rider will walk to change vehicles. Capped by the catchment so a
+        // very short catchment cannot make everything an "interchange".
+        private const float MaxInterchangeRadius = 250f;
         private const float IntensityGamma = 0.6f;
 
         // Static bridge for the options page. The settings object is constructed
@@ -149,6 +152,7 @@ namespace StationSuitabilityOverlay
         private int m_PendingOrphanCount;
         private int m_PendingJobSiteCount;
         private int m_PendingZonedCount;
+        private int m_PendingOtherStopCount;
         private int2 m_GridAtCompute;
 
         // Cached raw terms from the last compute, plus everything derived from them.
@@ -166,7 +170,9 @@ namespace StationSuitabilityOverlay
 
         // Terrain-derived masks, rebuilt rarely.
         private NativeArray<byte> m_Buildable;
-        private NativeArray<byte> m_Land;
+        // Managed because only the main thread reads it (mask build + site
+        // refinement); the job takes Buildable and Components.
+        private byte[] m_Land;
         private NativeArray<int> m_Components;
         private int2 m_MaskGrid;
         private bool m_MaskDirty = true;
@@ -175,6 +181,8 @@ namespace StationSuitabilityOverlay
 
         // Cached input collections.
         private readonly List<float2> m_StopPositions = new List<float2>();
+        private readonly List<float2> m_OtherStopPositions = new List<float2>();
+        private readonly List<float> m_OtherStopWeights = new List<float>();
         private readonly List<float2> m_NodePositions = new List<float2>();
         private readonly List<float2> m_EdgePositions = new List<float2>();
         private readonly List<float2> m_JobPositions = new List<float2>();
@@ -192,6 +200,7 @@ namespace StationSuitabilityOverlay
         private float[] m_TileDemand;
         private float[] m_TileJobs;
         private float[] m_DistanceScratch;
+        private byte[] m_VisitedScratch;
 
         private readonly int[] m_SiteIndices = new int[Setting.kSiteCountMax];
         private readonly float[] m_SiteScores = new float[Setting.kSiteCountMax];
@@ -372,6 +381,8 @@ namespace StationSuitabilityOverlay
             m_TileDemand = null;
             m_TileJobs = null;
             m_DistanceScratch = null;
+            m_VisitedScratch = null;
+            m_Land = null;
             m_ExpandedCache = null;
             m_VanillaPlaceableInfoviews = null;
             base.OnDestroy();
@@ -380,7 +391,6 @@ namespace StationSuitabilityOverlay
         private void DisposeMasks()
         {
             if (m_Buildable.IsCreated) m_Buildable.Dispose();
-            if (m_Land.IsCreated) m_Land.Dispose();
             if (m_Components.IsCreated) m_Components.Dispose();
         }
 
@@ -1055,6 +1065,7 @@ namespace StationSuitabilityOverlay
             PointBuckets jobs = SuitabilityInputs.BuildBuckets(m_JobPositions, m_JobWorkers, bucketGrid, worldMin, BucketSize);
             PointBuckets futureHomes = SuitabilityInputs.BuildBuckets(m_FutureHomePositions, m_FutureHomeWeights, bucketGrid, worldMin, BucketSize);
             PointBuckets futureJobs = SuitabilityInputs.BuildBuckets(m_FutureJobPositions, m_FutureJobWeights, bucketGrid, worldMin, BucketSize);
+            PointBuckets otherStops = SuitabilityInputs.BuildBuckets(m_OtherStopPositions, m_OtherStopWeights, bucketGrid, worldMin, BucketSize);
 
             var terms = new NativeArray<SuitabilityCell>(totalCells, Allocator.Persistent, NativeArrayOptions.ClearMemory);
 
@@ -1067,6 +1078,7 @@ namespace StationSuitabilityOverlay
                 BucketSize = BucketSize,
                 CatchmentRadius = settings.CatchmentRadius,
                 AccessRadius = settings.AccessRadius,
+                InterchangeRadius = math.min(MaxInterchangeRadius, settings.CatchmentRadius),
                 PopulationMap = popData.m_Buffer,
                 PopulationCellSize = popData.m_CellSize,
                 PopulationTextureSize = popData.m_TextureSize,
@@ -1094,6 +1106,10 @@ namespace StationSuitabilityOverlay
                 FutureJobWeights = futureJobs.m_Weights,
                 FutureJobOffsets = futureJobs.m_Offsets,
                 FutureJobCounts = futureJobs.m_Counts,
+                OtherStopPositions = otherStops.m_Positions,
+                OtherStopWeights = otherStops.m_Weights,
+                OtherStopOffsets = otherStops.m_Offsets,
+                OtherStopCounts = otherStops.m_Counts,
                 Components = m_Components,
                 Buildable = m_Buildable,
                 Terms = terms,
@@ -1108,6 +1124,7 @@ namespace StationSuitabilityOverlay
             jobs.Dispose(handle);
             futureHomes.Dispose(handle);
             futureJobs.Dispose(handle);
+            otherStops.Dispose(handle);
 
             m_PendingHandle = handle;
             m_PendingTerms = terms;
@@ -1117,6 +1134,7 @@ namespace StationSuitabilityOverlay
             m_PendingOrphanCount = m_LastOrphanCount;
             m_PendingJobSiteCount = m_JobPositions.Count;
             m_PendingZonedCount = m_FutureHomePositions.Count + m_FutureJobPositions.Count;
+            m_PendingOtherStopCount = m_OtherStopPositions.Count;
             m_JobPending = true;
             m_GridAtCompute = GetGridSize();
             return true;
@@ -1147,7 +1165,8 @@ namespace StationSuitabilityOverlay
 
             Mod.Log.Info(
                 $"Overlay computed: grid {m_PendingGrid.x}x{m_PendingGrid.y}, stops={m_PendingStopCount} " +
-                $"(orphans ignored={m_PendingOrphanCount}), jobSites={m_PendingJobSiteCount}, zonedCells={m_PendingZonedCount}, sites={m_SiteCount}");
+                $"(orphans ignored={m_PendingOrphanCount}), otherModeStops={m_PendingOtherStopCount}, " +
+                $"jobSites={m_PendingJobSiteCount}, zonedCells={m_PendingZonedCount}, sites={m_SiteCount}");
         }
 
         private void DiscardPendingCompute()
@@ -1175,8 +1194,8 @@ namespace StationSuitabilityOverlay
             {
                 DisposeMasks();
                 m_Buildable = new NativeArray<byte>(cells, Allocator.Persistent);
-                m_Land = new NativeArray<byte>(cells, Allocator.Persistent);
                 m_Components = new NativeArray<int>(cells, Allocator.Persistent);
+                m_Land = new byte[cells];
                 m_MaskGrid = gridSize;
             }
 
@@ -1255,6 +1274,8 @@ namespace StationSuitabilityOverlay
                 m_StopQuery,
                 settings.Mode,
                 m_StopPositions,
+                m_OtherStopPositions,
+                m_OtherStopWeights,
                 out m_LastOrphanCount);
 
             if (rebuilt)
@@ -1274,6 +1295,7 @@ namespace StationSuitabilityOverlay
                 m_TileDemand = new float[cells];
                 m_TileJobs = new float[cells];
                 m_DistanceScratch = new float[cells];
+                m_VisitedScratch = new byte[cells];
             }
 
             Array.Clear(m_TileDemand, 0, cells);
@@ -1331,6 +1353,15 @@ namespace StationSuitabilityOverlay
             byte[] coverageLayer = m_LayerIntensities[(int)SuitabilityLayer.Coverage];
             byte[] accessLayer = m_LayerIntensities[(int)SuitabilityLayer.Access];
             byte[] futureLayer = m_LayerIntensities[(int)SuitabilityLayer.Future];
+            byte[] interchangeLayer = m_LayerIntensities[(int)SuitabilityLayer.Interchange];
+            byte[] crossLayer = m_LayerIntensities[(int)SuitabilityLayer.CrossCoverage];
+
+            // Both cross-mode terms are expressed RELATIVE to the mode being placed,
+            // so a bus gains a lot from sitting at a metro station while a metro
+            // gains comparatively little from sitting at a bus stop. That asymmetry
+            // is the feeder relationship: the smaller mode should come to the trunk.
+            float selfWeight = math.max(0.1f, SuitabilityInputs.ModeWeight(SuitabilityInputs.TransportTypeOf(settings.Mode)));
+            float invSelf = 1f / selfWeight;
 
             for (int i = 0; i < totalCells; i++)
             {
@@ -1340,12 +1371,16 @@ namespace StationSuitabilityOverlay
                 float future = SuitabilityScoring.Saturate(cell.m_Future * invFuture);
                 float coverage = cell.m_Coverage / SuitabilityJob.MaxPenalty;
                 float access = cell.m_Access;
+                float interchange = SuitabilityScoring.Saturate(cell.m_Interchange * invSelf);
+                float crossCoverage = SuitabilityScoring.Saturate(cell.m_CrossCoverage * invSelf);
 
                 float score = (settings.W1 * demand)
                     + (settings.W2 * jobs)
                     + (settings.W4 * access)
                     + (settings.W5 * future)
-                    - (settings.W3 * coverage);
+                    + (settings.W6 * interchange)
+                    - (settings.W3 * coverage)
+                    - (settings.W7 * crossCoverage);
 
                 m_Scores[i] = score * SuitabilityScoring.Saturate(access * RoadGateScale);
 
@@ -1356,6 +1391,8 @@ namespace StationSuitabilityOverlay
                 coverageLayer[i] = ToByte(coverage);
                 accessLayer[i] = ToByte(access);
                 futureLayer[i] = ToByte(future);
+                interchangeLayer[i] = ToByte(interchange);
+                crossLayer[i] = ToByte(crossCoverage);
             }
 
             SuitabilityScoring.NormalizeIntensities(
@@ -1453,6 +1490,10 @@ namespace StationSuitabilityOverlay
             }
 
             RefineAndRankSites(settings);
+            if (m_SiteCount == 0)
+            {
+                return;
+            }
 
             // Paint each site as a small disc, brightest for the best rank, so the
             // layer reads as discrete markers rather than a gradient.
@@ -1483,7 +1524,7 @@ namespace StationSuitabilityOverlay
 
         private void RefineAndRankSites(Setting settings)
         {
-            if (!m_Land.IsCreated || m_TileDemand == null || m_DistanceScratch == null)
+            if (m_Land == null || m_TileDemand == null || m_DistanceScratch == null || m_VisitedScratch == null)
             {
                 return;
             }
@@ -1491,9 +1532,10 @@ namespace StationSuitabilityOverlay
             var refined = new float[m_SiteCount];
             for (int s = 0; s < m_SiteCount; s++)
             {
-                refined[s] = SuitabilityMasks.RefineSite(
+                refined[s] = SuitabilityScoring.AccumulateWalkDistance(
                     m_SiteIndices[s],
-                    m_IntensityGrid,
+                    m_IntensityGrid.x,
+                    m_IntensityGrid.y,
                     TileSize,
                     settings.CatchmentRadius,
                     m_Land,
@@ -1502,6 +1544,7 @@ namespace StationSuitabilityOverlay
                     settings.W1,
                     settings.W2,
                     m_DistanceScratch,
+                    m_VisitedScratch,
                     out float _,
                     out float _);
             }
@@ -1522,6 +1565,14 @@ namespace StationSuitabilityOverlay
             for (int s = 0; s < m_SiteCount; s++)
             {
                 m_SiteScores[s] = refined[s];
+            }
+
+            // A site the walk-distance pass finds serves nobody is not a
+            // recommendation. These are remote specks the Euclidean pass scored on a
+            // stray road, and reporting them alongside real candidates is misleading.
+            while (m_SiteCount > 0 && m_SiteScores[m_SiteCount - 1] <= 0f)
+            {
+                m_SiteCount--;
             }
         }
 
