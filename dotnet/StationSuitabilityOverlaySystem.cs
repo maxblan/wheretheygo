@@ -253,6 +253,26 @@ namespace StationSuitabilityOverlay
         internal List<SuggestedRoute> SuggestedRoutes => m_Routes;
 
         // The renderer draws only while our infoview is the one on screen.
+        // Opens or closes our infoview on behalf of the toolbar button. Activation
+        // still goes through ToolSystem.infoview, which is what assigns the terrain
+        // overlay channel our heat map is drawn into.
+        public void SetInfoviewActive(bool active)
+        {
+            if (m_ToolSystem == null || m_InfoviewPrefab == null)
+            {
+                return;
+            }
+
+            if (active)
+            {
+                m_ToolSystem.infoview = m_InfoviewPrefab;
+            }
+            else if (m_ToolSystem.activeInfoview == m_InfoviewPrefab)
+            {
+                m_ToolSystem.infoview = null;
+            }
+        }
+
         public bool IsInfoviewActive =>
             m_InfoviewPrefab != null && m_ToolSystem != null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
 
@@ -2077,28 +2097,48 @@ namespace StationSuitabilityOverlay
 
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
                 0.2f, 12000f, roadDemand, demandFloor, null, m_RouteCandidates,
-                point => SnapStopToBestTile(point, gridSize));
+                point => ScoreAtWorld(point, gridSize));
 
             SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
                 0.6f, 20000f, trainDemand, demandFloor, Setting.ModePreset.Train, m_RouteCandidates,
-                point => SnapStopToBestTile(point, gridSize));
+                point => ScoreAtWorld(point, gridSize));
 
             SuitabilityRoutes.BuildForNetwork(m_MetroNetwork, objective, settings.RouteCount,
                 0.4f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
-                point => SnapStopToBestTile(point, gridSize));
+                point => ScoreAtWorld(point, gridSize));
 
             // Water is gated on the demand of the land beside it, so a ferry cannot
             // wander down an empty coast.
             SuitabilityRoutes.BuildForNetwork(m_WaterNetwork, objective, settings.RouteCount,
                 0.5f, 20000f, BuildWaterNodeDemand(m_WaterNetwork, gridSize), demandFloor,
-                Setting.ModePreset.Ferry, m_RouteCandidates, point => point);
+                Setting.ModePreset.Ferry, m_RouteCandidates, point => ShorelineScoreAt(point, gridSize));
 
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
+            // Each network hands out its own mode, but the mode is only justified if
+            // the corridor carries enough to warrant that infrastructure. Judged
+            // against the ROAD network's mean flow so every mode is measured on one
+            // city-wide scale rather than its own network's average.
+            float reference = SuitabilityGraphMath.MeanPositiveFlow(m_RoadGraph.EdgeFlow, m_RoadGraph.EdgeCount);
+
             m_Routes.Clear();
+            int rejected = 0;
             for (int i = 0; i < m_RouteCandidates.Count && m_Routes.Count < settings.RouteCount; i++)
             {
-                m_Routes.Add(m_RouteCandidates[i]);
+                SuggestedRoute candidate = m_RouteCandidates[i];
+                float floor = reference * SuitabilityRoutes.MinFlowMultipleFor(candidate.Mode);
+                if (reference > 0f && candidate.CapturedFlow < floor)
+                {
+                    rejected++;
+                    continue;
+                }
+
+                m_Routes.Add(candidate);
+            }
+
+            if (rejected > 0)
+            {
+                Mod.Log.Info($"Route suggestions: {rejected} candidate(s) rejected as too light for their mode (reference flow {reference:F0}).");
             }
         }
 
@@ -2133,20 +2173,41 @@ namespace StationSuitabilityOverlay
             return demand;
         }
 
-        // Nudges a stop from the road centreline onto the best-scoring tile nearby,
-        // so the flow decides where the line runs while the suitability score
-        // already computed decides exactly where each stop sits.
-        private float2 SnapStopToBestTile(float2 point, int2 gridSize)
+        // Suitability score at a world position, used to choose where along a route
+        // each stop sits. Previously this MOVED the stop to the best nearby tile,
+        // which is why markers ended up sitting beside their own line instead of on
+        // it; the route builder now only asks how good a point is.
+        private float ScoreAtWorld(float2 point, int2 gridSize)
         {
             if (m_Scores == null)
             {
-                return point;
+                return 0f;
+            }
+
+            int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+            int index = cell.x + cell.y * gridSize.x;
+            if (index < 0 || index >= m_Scores.Length)
+            {
+                return 0f;
+            }
+
+            return m_Scores[index];
+        }
+
+        // A ferry pier belongs where the water meets the land it serves. Scoring open
+        // water at zero keeps stops off mid-crossing positions; the score of the
+        // nearby land then decides which stretch of coast gets the pier.
+        private float ShorelineScoreAt(float2 point, int2 gridSize)
+        {
+            if (m_Land == null)
+            {
+                return 0f;
             }
 
             int2 centre = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
-            int span = 3;
-            float best = float.MinValue;
-            float2 result = point;
+            int span = 2;
+            bool touchesLand = false;
+            float best = 0f;
 
             for (int dy = -span; dy <= span; dy++)
             {
@@ -2158,23 +2219,20 @@ namespace StationSuitabilityOverlay
                     if (x < 0 || x >= gridSize.x) continue;
 
                     int index = x + y * gridSize.x;
-                    if (m_Buildable.IsCreated && m_Buildable[index] == 0)
+                    if (index >= m_Land.Length || m_Land[index] == 0)
                     {
                         continue;
                     }
 
-                    float score = m_Scores[index];
-                    if (score <= best)
+                    touchesLand = true;
+                    if (m_Scores != null && index < m_Scores.Length && m_Scores[index] > best)
                     {
-                        continue;
+                        best = m_Scores[index];
                     }
-
-                    best = score;
-                    result = m_ScoreWorldMin + new float2((x + 0.5f) * TileSize, (y + 0.5f) * TileSize);
                 }
             }
 
-            return result;
+            return touchesLand ? best + 1f : 0f;
         }
 
         private bool SegmentCrossesWater(float2 a, float2 b, int2 gridSize)

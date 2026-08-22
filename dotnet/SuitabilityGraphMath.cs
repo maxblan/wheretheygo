@@ -3,6 +3,20 @@ using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay
 {
+    // Minimal 2D point so the geometry helpers stay free of Unity types and remain
+    // unit testable; the mod converts to and from float2 at the boundary.
+    internal struct float2Like
+    {
+        public float x;
+        public float y;
+
+        public float2Like(float x, float y)
+        {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
     // How a suggested corridor is scored while it grows.
     internal enum RouteObjective
     {
@@ -673,6 +687,86 @@ namespace StationSuitabilityOverlay
                 // Further hops are dampened less, so the penalty fades with distance.
                 scale = 1f - (1f - scale) * 0.5f;
             }
+        }
+
+        // Ramer-Douglas-Peucker simplification of a polyline, in place.
+        //
+        // A lattice corridor is an 8-connected staircase, so drawn raw it zig-zags
+        // even when the underlying route is essentially straight. Metro tunnels and
+        // ferry crossings really are straight-ish, so collapsing near-collinear runs
+        // is both prettier and more honest about the alignment.
+        public static void SimplifyPolyline(List<float2Like> points, float tolerance)
+        {
+            if (points == null || points.Count < 3 || tolerance <= 0f)
+            {
+                return;
+            }
+
+            var keep = new bool[points.Count];
+            keep[0] = true;
+            keep[points.Count - 1] = true;
+            SimplifyRange(points, 0, points.Count - 1, tolerance, keep);
+
+            int write = 0;
+            for (int i = 0; i < points.Count; i++)
+            {
+                if (keep[i])
+                {
+                    points[write++] = points[i];
+                }
+            }
+
+            points.RemoveRange(write, points.Count - write);
+        }
+
+        private static void SimplifyRange(List<float2Like> points, int first, int last, float tolerance, bool[] keep)
+        {
+            if (last <= first + 1)
+            {
+                return;
+            }
+
+            float worst = -1f;
+            int worstIndex = -1;
+            for (int i = first + 1; i < last; i++)
+            {
+                float distance = PerpendicularDistance(points[i], points[first], points[last]);
+                if (distance > worst)
+                {
+                    worst = distance;
+                    worstIndex = i;
+                }
+            }
+
+            if (worst <= tolerance || worstIndex < 0)
+            {
+                return;
+            }
+
+            keep[worstIndex] = true;
+            SimplifyRange(points, first, worstIndex, tolerance, keep);
+            SimplifyRange(points, worstIndex, last, tolerance, keep);
+        }
+
+        private static float PerpendicularDistance(float2Like point, float2Like a, float2Like b)
+        {
+            float dx = b.x - a.x;
+            float dy = b.y - a.y;
+            float lengthSq = dx * dx + dy * dy;
+            if (lengthSq <= 1e-6f)
+            {
+                float ax = point.x - a.x;
+                float ay = point.y - a.y;
+                return (float)Math.Sqrt(ax * ax + ay * ay);
+            }
+
+            float t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq;
+            t = t < 0f ? 0f : (t > 1f ? 1f : t);
+            float projX = a.x + t * dx;
+            float projY = a.y + t * dy;
+            float ox = point.x - projX;
+            float oy = point.y - projY;
+            return (float)Math.Sqrt(ox * ox + oy * oy);
         }
 
         // Accumulates a straight desire line into a raster, depositing `weight` per

@@ -215,3 +215,46 @@
     color: #b9cbdc;
     font-size: 10rem;
 }
+
+/* The mod's own legend, replacing the vanilla infoview panel on the left. Stops
+   match LowColor / MediumColor / HighColor in SuitabilityInfomodePrefab.cs. */
+.sso-legend {
+    height: 8rem;
+    margin-bottom: 2rem;
+    border-radius: 2rem;
+    background-image: linear-gradient(to right,
+        rgb(31, 117, 46),
+        rgb(240, 214, 64),
+        rgb(217, 56, 31));
+}
+
+.sso-legend-end {
+    color: #9fb6cc;
+    font-size: 10rem;
+}
+
+/* Hiding the vanilla legend while our panel is up, so the mod has one home rather
+   than a panel on each side of the screen. */
+.sso-hide-vanilla-infoview .active-infoview-panel_HkP,
+.sso-hide-vanilla-infoview [class*="active-infoview-panel"] {
+    display: none;
+}
+
+/* Toolbar toggle, sitting alongside the vanilla top-left buttons. */
+.sso-toolbar-button {
+    width: 36rem;
+    height: 36rem;
+    margin-left: 4rem;
+    background-color: rgba(24, 38, 54, 0.9);
+    border: 1rem solid rgba(120, 170, 220, 0.4);
+    border-radius: 4rem;
+    color: #cfe2f5;
+    font-size: 18rem;
+    text-align: center;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.sso-toolbar-button:hover {
+    background-color: rgba(50, 85, 125, 0.95);
+}

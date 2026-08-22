@@ -14,16 +14,29 @@ namespace StationSuitabilityOverlay
         private const string Group = "stationSuitability";
 
         private StationSuitabilityOverlaySystem m_OverlaySystem;
+        private bool m_Open;
 
         protected override void OnCreate()
         {
             base.OnCreate();
             m_OverlaySystem = World.GetOrCreateSystemManaged<StationSuitabilityOverlaySystem>();
 
-            // The panel only shows itself when our infoview is open, so it never
-            // covers the screen during normal play.
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "visible", () =>
-                Settings != null && m_OverlaySystem != null && m_OverlaySystem.IsInfoviewActive));
+            // Visibility is driven by the mod's own toolbar button rather than by the
+            // infoview menu, so the panel is the single entry point.
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "visible", () => m_Open));
+
+            // Lets the panel hide the vanilla infoview legend, which would otherwise
+            // duplicate this panel's own legend on the opposite side of the screen.
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "ownsInfoview", () =>
+                m_OverlaySystem != null && m_OverlaySystem.IsInfoviewActive));
+
+            AddBinding(new TriggerBinding(Group, "toggle", () =>
+            {
+                m_Open = !m_Open;
+                // Opening the panel turns the overlay on and closing turns it off, so
+                // the button behaves like the other mods' toolbar toggles.
+                m_OverlaySystem?.SetInfoviewActive(m_Open);
+            }));
 
             AddUpdateBinding(new GetterValueBinding<int>(Group, "mode", () => Read(s => (int)s.Mode)));
             AddUpdateBinding(new GetterValueBinding<int>(Group, "objective", () => Read(s => (int)s.Objective)));

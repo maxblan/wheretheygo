@@ -31,19 +31,14 @@ namespace StationSuitabilityOverlay
         // of our channels. The overlay system skips those itself.
         public const int MaxActiveLayers = 4;
 
+        // Only the combined score is registered as an infomode. The per-term layers
+        // below are still computed and normalised — they are just not offered in the
+        // infoview menu, because ten rows of legend crowded the screen and the mod
+        // now presents itself through its own panel. Re-adding one is a single line.
         public static SuitabilityLayer[] All =>
             new[]
             {
                 SuitabilityLayer.Score,
-                SuitabilityLayer.Sites,
-                SuitabilityLayer.Demand,
-                SuitabilityLayer.Jobs,
-                SuitabilityLayer.Coverage,
-                SuitabilityLayer.Access,
-                SuitabilityLayer.Future,
-                SuitabilityLayer.Interchange,
-                SuitabilityLayer.CrossCoverage,
-                SuitabilityLayer.TravelDemand,
             };
 
         public static string NameOf(SuitabilityLayer layer)

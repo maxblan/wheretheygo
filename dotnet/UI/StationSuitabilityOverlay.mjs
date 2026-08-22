@@ -102,6 +102,18 @@ function Toggle({ label, value, onToggle }) {
         }, value ? "On" : "Off"));
 }
 
+// The suitability gradient, moved off the vanilla left-hand legend panel so the
+// mod presents itself in one place. Colours mirror LowColor/MediumColor/HighColor
+// in SuitabilityInfomodePrefab.cs.
+function Legend() {
+    return h("div", { className: "sso-row" },
+        h("div", { className: "sso-label" }, "Station suitability"),
+        h("div", { className: "sso-legend" }),
+        h("div", { className: "sso-labelrow" },
+            h("div", { className: "sso-legend-end" }, "Low"),
+            h("div", { className: "sso-legend-end" }, "High")));
+}
+
 function RouteList({ raw }) {
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
     if (!rows.length) {
@@ -130,6 +142,22 @@ function Panel() {
     const objective = useBound("objective", 1);
     const showRoutes = useBound("showRoutes", true);
     const routeList = useBound("routeList", "");
+    const ownsInfoview = useBound("ownsInfoview", false);
+
+    // Suppress the vanilla infoview legend while ours is showing; a class on the
+    // document root is the only hook a plain CSS file can key off.
+    React.useEffect(() => {
+        const root = document.documentElement;
+        if (!root) {
+            return;
+        }
+
+        if (visible && ownsInfoview) {
+            root.classList.add("sso-hide-vanilla-infoview");
+        } else {
+            root.classList.remove("sso-hide-vanilla-infoview");
+        }
+    }, [visible, ownsInfoview]);
 
     // Hooks must run unconditionally, so the slider values are read before the
     // visibility check rather than inside it.
@@ -165,6 +193,8 @@ function Panel() {
             onClick: () => trigger("applyPreset"),
         }, "Apply preset weights for this mode"),
 
+        h(Legend, {}),
+
         h("div", { className: "sso-section" }, "Route planning"),
 
         h(Choice, {
@@ -197,6 +227,14 @@ function Panel() {
         h(RouteList, { raw: routeList }));
 }
 
+function ToolbarButton() {
+    return h("button", {
+        className: "sso-toolbar-button",
+        title: "Station Suitability",
+        onClick: () => trigger("toggle"),
+    }, "◎");
+}
+
 const register = (moduleRegistry) => {
     if (!React || !Api || !moduleRegistry || !moduleRegistry.append) {
         console.error("[StationSuitability] UI module could not register.");
@@ -204,6 +242,7 @@ const register = (moduleRegistry) => {
     }
 
     moduleRegistry.append("Game", Panel);
+    moduleRegistry.append("GameTopLeft", ToolbarButton);
     console.info("[StationSuitability] Control panel registered.");
 };
 

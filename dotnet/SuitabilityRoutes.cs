@@ -36,6 +36,12 @@ namespace StationSuitabilityOverlay
         // relative rather than absolute passenger counts — calibrated against the
         // mean corridor flow so they hold on a town and a metropolis alike.
         private const float MediumFlowMultiple = 1.5f;
+        // Corners closer than this to the straight line between their neighbours are
+        // lattice artefacts rather than real alignment.
+        private const float SimplifyTolerance = 120f;
+        // How far along the line a stop may be nudged to find a better score,
+        // as a fraction of the spacing. It never leaves the line.
+        private const float StopSearchFraction = 0.35f;
 
         // Grows corridors on ONE network and appends them as candidates. Each
         // network carries its own mode family, because the alignment a mode can use
@@ -51,7 +57,7 @@ namespace StationSuitabilityOverlay
             float demandFloor,
             Setting.ModePreset? forcedMode,
             List<SuggestedRoute> output,
-            System.Func<float2, float2> snapStop)
+            System.Func<float2, float> scoreAt)
         {
             if (network?.Graph == null || network.EdgeFlow == null || network.EdgeCount == 0)
             {
@@ -108,11 +114,18 @@ namespace StationSuitabilityOverlay
 
                 route.Mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
 
+                // Lattice corridors are 8-connected staircases; straighten them
+                // before measuring or drawing so a tunnel does not zig-zag.
+                if (route.Mode != Setting.ModePreset.Bus && route.Mode != Setting.ModePreset.Tram)
+                {
+                    Simplify(route.Path, SimplifyTolerance);
+                }
+
                 // Rail and water suggestions are only worth making at a scale that
                 // justifies the infrastructure; a 900 m metro line is nonsense.
                 if (route.Length >= MinLengthFor(route.Mode))
                 {
-                    PlaceStops(route, StopSpacingFor(route.Mode), snapStop);
+                    PlaceStops(route, StopSpacingFor(route.Mode), scoreAt);
                     if (route.Stops.Count >= 2)
                     {
                         output.Add(route);
@@ -157,65 +170,131 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // Walks the polyline dropping a stop every `spacing` metres, then lets the
-        // caller nudge each one onto the best nearby tile. The flow decides where
-        // the line runs; the suitability score already computed decides exactly
-        // where each stop sits.
-        private static void PlaceStops(SuggestedRoute route, float spacing, System.Func<float2, float2> snapStop)
+        // Walks the polyline dropping a stop every `spacing` metres. At each one it
+        // searches a short way forwards and backwards ALONG the line for the
+        // best-scoring position — so the flow still decides where the line runs and
+        // the suitability score still decides exactly where a stop sits, but a stop
+        // can never end up beside its own route.
+        private static void PlaceStops(SuggestedRoute route, float spacing, System.Func<float2, float> scoreAt)
         {
             route.Stops.Clear();
-            if (route.Path.Count == 0)
+            if (route.Path.Count < 2)
             {
                 return;
             }
 
-            AddStop(route, route.Path[0], snapStop);
-
-            float travelled = 0f;
+            float total = 0f;
             for (int i = 1; i < route.Path.Count; i++)
             {
-                float2 from = route.Path[i - 1];
-                float2 to = route.Path[i];
-                float segment = math.distance(from, to);
+                total += math.distance(route.Path[i - 1], route.Path[i]);
+            }
+
+            if (total <= 0f)
+            {
+                return;
+            }
+
+            float search = spacing * StopSearchFraction;
+            for (float target = 0f; target <= total + 1f; target += spacing)
+            {
+                float at = math.min(target, total);
+                float best = at;
+
+                if (scoreAt != null && search > 0f)
+                {
+                    float bestScore = float.MinValue;
+                    // Sample a handful of positions in the window; more would not
+                    // change the outcome at 32 m tile resolution.
+                    for (int step = -3; step <= 3; step++)
+                    {
+                        float candidate = math.clamp(at + search * step / 3f, 0f, total);
+                        float score = scoreAt(PointAlong(route.Path, candidate));
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = candidate;
+                        }
+                    }
+                }
+
+                AddStop(route, PointAlong(route.Path, best));
+
+                if (at >= total)
+                {
+                    break;
+                }
+            }
+        }
+
+        // Position at `distance` along the polyline.
+        private static float2 PointAlong(List<float2> path, float distance)
+        {
+            float travelled = 0f;
+            for (int i = 1; i < path.Count; i++)
+            {
+                float segment = math.distance(path[i - 1], path[i]);
                 if (segment <= 0f)
                 {
                     continue;
                 }
 
-                float position = 0f;
-                while (travelled + (segment - position) >= spacing)
+                if (travelled + segment >= distance)
                 {
-                    position += spacing - travelled;
-                    travelled = 0f;
-                    float2 point = math.lerp(from, to, math.saturate(position / segment));
-                    AddStop(route, point, snapStop);
+                    float t = (distance - travelled) / segment;
+                    return math.lerp(path[i - 1], path[i], math.saturate(t));
                 }
 
-                travelled += segment - position;
+                travelled += segment;
             }
 
-            // The far terminus is a stop even if it falls short of a full spacing.
-            float2 last = route.Path[route.Path.Count - 1];
-            if (route.Stops.Count == 0 || math.distance(route.Stops[route.Stops.Count - 1], last) > spacing * 0.4f)
+            return path[path.Count - 1];
+        }
+
+        private static void Simplify(List<float2> path, float tolerance)
+        {
+            var points = new List<float2Like>(path.Count);
+            for (int i = 0; i < path.Count; i++)
             {
-                AddStop(route, last, snapStop);
+                points.Add(new float2Like(path[i].x, path[i].y));
+            }
+
+            SuitabilityGraphMath.SimplifyPolyline(points, tolerance);
+
+            path.Clear();
+            for (int i = 0; i < points.Count; i++)
+            {
+                path.Add(new float2(points[i].x, points[i].y));
             }
         }
 
-        private static void AddStop(SuggestedRoute route, float2 point, System.Func<float2, float2> snapStop)
+        private static void AddStop(SuggestedRoute route, float2 placed)
         {
-            float2 placed = snapStop != null ? snapStop(point) : point;
-
-            // Snapping can pull two stops onto the same tile; keep them distinct.
+            // The along-line search can land two stops on nearly the same spot.
             for (int i = 0; i < route.Stops.Count; i++)
             {
-                if (math.distancesq(route.Stops[i], placed) < 1f)
+                if (math.distancesq(route.Stops[i], placed) < 400f)
                 {
                     return;
                 }
             }
 
             route.Stops.Add(placed);
+        }
+
+        // Absolute capacity floors, expressed against a city-wide reference flow so
+        // they hold on any size of city. Each network hands out its own mode, but a
+        // corridor only justifies that mode if it actually carries enough: a metro
+        // built for 361 trips while a tram carries 1633 is the wrong way round.
+        public static float MinFlowMultipleFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 1.5f;
+                case Setting.ModePreset.Metro: return 5f;
+                case Setting.ModePreset.Train: return 8f;
+                case Setting.ModePreset.Ferry: return 1f;
+                default: return 0f;
+            }
         }
     }
 }
