@@ -7,6 +7,7 @@ using Game;
 using Game.Common;
 using Game.Companies;
 using Game.Net;
+using Game.Citizens;
 using Game.Prefabs;
 using Game.Rendering;
 using Game.SceneFlow;
@@ -45,6 +46,9 @@ namespace StationSuitabilityOverlay
         private const float MaskRefreshSeconds = 120f;
         private const float RidershipSampleSeconds = 60f;
         private const float RidershipSaveSeconds = 300f;
+        // Travel demand extraction walks every citizen and runs many shortest-path
+        // searches, so it is far slower than the per-tile scoring.
+        private const float DemandRefreshSeconds = 60f;
         private const int InfomodePriority = 200;
 
         // Demand, jobs and future demand are raw sums with unbounded scale; each is
@@ -64,11 +68,14 @@ namespace StationSuitabilityOverlay
         // text talk to the system through these.
         private static string s_CalibrationStatus = "Waiting for a city to load.";
         private static string s_PipelineStatus = string.Empty;
+        private static string s_RouteSummary = "No route suggestions yet.";
         private static bool s_ApplyFitRequested;
         private static bool s_ResetCalibrationRequested;
 
         public static string CalibrationStatusText =>
             string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
+
+        public static string RouteSummaryText => s_RouteSummary;
 
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 
@@ -204,6 +211,32 @@ namespace StationSuitabilityOverlay
         private float[] m_DistanceScratch;
         private byte[] m_VisitedScratch;
 
+        // Travel demand and route suggestions.
+        private EntityQuery m_CitizenQuery;
+        private ComponentLookup<Worker> m_WorkerLookup;
+        private ComponentLookup<Game.Citizens.Student> m_StudentLookup;
+        private ComponentLookup<TouristHousehold> m_TouristLookup;
+        private ComponentLookup<Node> m_NodeLookup;
+        private ComponentLookup<Curve> m_CurveLookup;
+        private ComponentLookup<PrefabRef> m_PrefabRefLookup;
+        private ComponentLookup<RoadData> m_RoadDataLookup;
+        private readonly SuitabilityRoadGraph m_RoadGraph = new SuitabilityRoadGraph();
+        private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
+        private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
+        private int[] m_ZoneNodes;
+        private float[] m_DemandRaster;
+        private int2 m_ZoneGrid;
+        private float m_LastDemandRefresh;
+        private bool m_GraphDirty = true;
+        private Setting.RouteGoal m_LastObjective;
+        private int m_LastRouteCount;
+
+        internal List<SuggestedRoute> SuggestedRoutes => m_Routes;
+
+        // The renderer draws only while our infoview is the one on screen.
+        public bool IsInfoviewActive =>
+            m_InfoviewPrefab != null && m_ToolSystem != null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
+
         private readonly int[] m_SiteIndices = new int[Setting.kSiteCountMax];
         private readonly float[] m_SiteScores = new float[Setting.kSiteCountMax];
         private int m_SiteCount;
@@ -333,6 +366,20 @@ namespace StationSuitabilityOverlay
             });
             m_WorkplaceChangedQuery = ChangedQuery(ComponentType.ReadOnly<WorkProvider>());
             m_BlockChangedQuery = ChangedQuery(ComponentType.ReadOnly<Block>());
+
+            m_CitizenQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<HouseholdMember>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
+            });
+
+            m_WorkerLookup = GetComponentLookup<Worker>(true);
+            m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(true);
+            m_TouristLookup = GetComponentLookup<TouristHousehold>(true);
+            m_NodeLookup = GetComponentLookup<Node>(true);
+            m_CurveLookup = GetComponentLookup<Curve>(true);
+            m_PrefabRefLookup = GetComponentLookup<PrefabRef>(true);
+            m_RoadDataLookup = GetComponentLookup<RoadData>(true);
 
             m_TransformLookup = GetComponentLookup<Transform>(true);
             m_PropertyRenterLookup = GetComponentLookup<Game.Buildings.PropertyRenter>(true);
@@ -497,6 +544,7 @@ namespace StationSuitabilityOverlay
                 }
             }
 
+            MaybeUpdateTravelDemand(settings, active, now);
             SampleRidership(settings, now);
             ApplyOverlayState(active, signature);
         }
@@ -506,6 +554,40 @@ namespace StationSuitabilityOverlay
             ScheduleRecompute(0f);
         }
 
+        // The demand pipeline needs the per-tile terms to exist (for the served
+        // discount and stop snapping), so it always runs after a compute has landed.
+        private void MaybeUpdateTravelDemand(Setting settings, bool active, float now)
+        {
+            if (!active || m_RawTerms == null || m_JobPending)
+            {
+                return;
+            }
+
+            bool objectiveChanged = settings.Objective != m_LastObjective || settings.RouteCount != m_LastRouteCount;
+            bool due = now - m_LastDemandRefresh >= DemandRefreshSeconds;
+            if (!objectiveChanged && !due && m_ZoneFlows.Count > 0)
+            {
+                return;
+            }
+
+            m_LastObjective = settings.Objective;
+            m_LastRouteCount = settings.RouteCount;
+
+            // Changing only the objective re-grows routes from the flow already
+            // assigned; no need to walk every citizen again.
+            if (objectiveChanged && !due && m_ZoneFlows.Count > 0 && m_RoadGraph.Graph != null)
+            {
+                BuildRoutes(settings, m_IntensityGrid, m_ScoreWorldMin);
+                UpdateRouteSummary(-1, -1);
+                LogRoutes();
+                return;
+            }
+
+            float2 mapSize = new float2(m_IntensityGrid.x, m_IntensityGrid.y) * TileSize;
+            UpdateTravelDemand(settings, m_IntensityGrid, m_ScoreWorldMin, mapSize);
+            LogRoutes();
+        }
+
         // Change tags live for a single frame, so the caches must be invalidated
         // from a per-frame check rather than sampled when a compute starts.
         private void TrackInputChanges()
@@ -513,6 +595,7 @@ namespace StationSuitabilityOverlay
             if (!m_NodeChangedQuery.IsEmptyIgnoreFilter || !m_EdgeChangedQuery.IsEmptyIgnoreFilter)
             {
                 m_RoadCacheDirty = true;
+                m_GraphDirty = true;
             }
 
             if (!m_WorkplaceChangedQuery.IsEmptyIgnoreFilter)
@@ -1350,7 +1433,7 @@ namespace StationSuitabilityOverlay
             float invJobs = m_JobsCap > 0f ? 1f / m_JobsCap : 0f;
             float invFuture = m_FutureCap > 0f ? 1f / m_FutureCap : 0f;
 
-            byte[] demandLayer = m_LayerIntensities[(int)SuitabilityLayer.Demand];
+            byte[] demandLayer = m_LayerIntensities[(int)SuitabilityLayer.TravelDemand];
             byte[] jobsLayer = m_LayerIntensities[(int)SuitabilityLayer.Jobs];
             byte[] coverageLayer = m_LayerIntensities[(int)SuitabilityLayer.Coverage];
             byte[] accessLayer = m_LayerIntensities[(int)SuitabilityLayer.Access];
@@ -1662,6 +1745,288 @@ namespace StationSuitabilityOverlay
             }
 
             Mod.Log.Info(builder.ToString());
+        }
+
+        // ---- travel demand and routes ---------------------------------------
+
+        // The whole demand pipeline: extract real journeys, aggregate them, load
+        // them onto the road network, and grow route suggestions from the result.
+        // Runs on its own slow cadence because it is far heavier than the per-tile
+        // scoring — it walks every citizen and runs a shortest-path search per
+        // origin zone.
+        private void UpdateTravelDemand(Setting settings, int2 gridSize, float2 worldMin, float2 mapSize)
+        {
+            m_ZoneGrid = SuitabilityInputs.GridDims(mapSize, SuitabilityTravelDemand.ZoneSize);
+
+            int tripCount;
+            float totalWeight;
+            var trips = new NativeQueue<Trip>(Allocator.TempJob);
+            try
+            {
+                m_WorkerLookup.Update(this);
+                m_StudentLookup.Update(this);
+                m_TouristLookup.Update(this);
+                m_PropertyRenterLookup.Update(this);
+                m_TransformLookup.Update(this);
+
+                var job = new ExtractTripsJob
+                {
+                    EntityType = GetEntityTypeHandle(),
+                    CitizenType = GetComponentTypeHandle<Citizen>(true),
+                    HouseholdMemberType = GetComponentTypeHandle<HouseholdMember>(true),
+                    WorkerLookup = m_WorkerLookup,
+                    StudentLookup = m_StudentLookup,
+                    PropertyRenterLookup = m_PropertyRenterLookup,
+                    TouristLookup = m_TouristLookup,
+                    TransformLookup = m_TransformLookup,
+                    WorkTripWeight = 1f,
+                    // School trips are real transit demand but shorter and less
+                    // peaked than commutes.
+                    SchoolTripWeight = 0.6f,
+                    Trips = trips.AsParallelWriter(),
+                };
+
+                job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
+                totalWeight = SuitabilityTravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount);
+            }
+            finally
+            {
+                trips.Dispose();
+            }
+
+            DiscountServedDemand(gridSize);
+            BuildDemandLayer(settings, gridSize, worldMin);
+
+            if (m_GraphDirty || m_RoadGraph.Graph == null)
+            {
+                m_NodeLookup.Update(this);
+                m_CurveLookup.Update(this);
+                m_PrefabRefLookup.Update(this);
+                m_RoadDataLookup.Update(this);
+                m_RoadGraph.Build(EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
+                    m_PrefabRefLookup, m_RoadDataLookup, useTravelTime: false);
+                m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
+                m_GraphDirty = false;
+                Mod.Log.Info($"Road graph built: {m_RoadGraph.NodeCount} nodes, {m_RoadGraph.EdgeCount} edges.");
+            }
+
+            int assignedPairs = 0;
+            float assignedWeight = 0f;
+            if (m_RoadGraph.Graph != null && m_ZoneNodes != null)
+            {
+                // Generous cost ceiling: a trip longer than this is not a candidate
+                // for a single transit line anyway.
+                assignedPairs = m_RoadGraph.AssignFlow(m_ZoneFlows, m_ZoneNodes, 20000f, out assignedWeight);
+                BuildRoutes(settings, gridSize, worldMin);
+            }
+
+            m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
+            UpdateRouteSummary(tripCount, assignedPairs);
+            Mod.Log.Info(
+                $"Travel demand: trips={tripCount}, weight={totalWeight:F0}, zonePairs={m_ZoneFlows.Count}, " +
+                $"assignedPairs={assignedPairs}, assignedWeight={assignedWeight:F0}, routes={m_Routes.Count}");
+        }
+
+        // Unserved demand: a journey whose ends are already well covered by served
+        // stops is mostly carried by the existing network, so it should not drive a
+        // new suggestion.
+        //
+        // This is an approximation. It judges coverage at the two endpoints rather
+        // than asking whether any single line actually connects them, so it
+        // under-discounts trips between two well-served places with no through
+        // service. Doing it properly means routing every trip over the transit
+        // network with transfers, which is a second pathfinding problem.
+        private void DiscountServedDemand(int2 gridSize)
+        {
+            if (m_RawTerms == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_ZoneFlows.Count; i++)
+            {
+                ZoneFlow flow = m_ZoneFlows[i];
+                float origin = CoverageAt(SuitabilityTravelDemand.ZoneCentre(flow.m_Origin, m_ScoreWorldMin, m_ZoneGrid), gridSize);
+                float destination = CoverageAt(SuitabilityTravelDemand.ZoneCentre(flow.m_Destination, m_ScoreWorldMin, m_ZoneGrid), gridSize);
+
+                // A trip needs BOTH ends served to be carried, so the weaker end
+                // governs — hence min rather than an average.
+                float served = math.min(origin, destination);
+                flow.m_Weight *= 1f - SuitabilityScoring.Saturate(served);
+                m_ZoneFlows[i] = flow;
+            }
+        }
+
+        private float CoverageAt(float2 position, int2 gridSize)
+        {
+            int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
+            int index = cell.x + cell.y * gridSize.x;
+            if (index < 0 || index >= m_RawTerms.Length)
+            {
+                return 0f;
+            }
+
+            return m_RawTerms[index].m_Coverage / SuitabilityJob.MaxPenalty;
+        }
+
+        private void BuildDemandLayer(Setting settings, int2 gridSize, float2 worldMin)
+        {
+            int cells = gridSize.x * gridSize.y;
+            if (m_DemandRaster == null || m_DemandRaster.Length != cells)
+            {
+                m_DemandRaster = new float[cells];
+            }
+
+            SuitabilityTravelDemand.RasterizeDesireLines(
+                m_ZoneFlows, worldMin, m_ZoneGrid, gridSize, TileSize, m_DemandRaster);
+
+            byte[] layer = m_LayerIntensities[(int)SuitabilityLayer.TravelDemand];
+            if (layer != null && layer.Length == cells && m_ScoreScratch != null && m_ScoreScratch.Length >= cells)
+            {
+                SuitabilityScoring.NormalizeIntensities(
+                    m_DemandRaster, cells, settings.HighlightShare / 100f, IntensityGamma, layer, m_ScoreScratch);
+                m_ExpandedSignature = -1;
+            }
+        }
+
+        private void BuildRoutes(Setting settings, int2 gridSize, float2 worldMin)
+        {
+            var objective = (RouteObjective)settings.Objective;
+            SuitabilityRoutes.Build(
+                m_RoadGraph,
+                objective,
+                settings.RouteCount,
+                // Ignore corridors carrying less than a fifth of the average, which
+                // keeps suggestions off residential side streets.
+                0.2f,
+                12000f,
+                m_Routes,
+                point => SnapStopToBestTile(point, gridSize),
+                (a, b) => SegmentCrossesWater(a, b, gridSize));
+        }
+
+        // Nudges a stop from the road centreline onto the best-scoring tile nearby,
+        // so the flow decides where the line runs while the suitability score
+        // already computed decides exactly where each stop sits.
+        private float2 SnapStopToBestTile(float2 point, int2 gridSize)
+        {
+            if (m_Scores == null)
+            {
+                return point;
+            }
+
+            int2 centre = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+            int span = 3;
+            float best = float.MinValue;
+            float2 result = point;
+
+            for (int dy = -span; dy <= span; dy++)
+            {
+                int y = centre.y + dy;
+                if (y < 0 || y >= gridSize.y) continue;
+                for (int dx = -span; dx <= span; dx++)
+                {
+                    int x = centre.x + dx;
+                    if (x < 0 || x >= gridSize.x) continue;
+
+                    int index = x + y * gridSize.x;
+                    if (m_Buildable.IsCreated && m_Buildable[index] == 0)
+                    {
+                        continue;
+                    }
+
+                    float score = m_Scores[index];
+                    if (score <= best)
+                    {
+                        continue;
+                    }
+
+                    best = score;
+                    result = m_ScoreWorldMin + new float2((x + 0.5f) * TileSize, (y + 0.5f) * TileSize);
+                }
+            }
+
+            return result;
+        }
+
+        private bool SegmentCrossesWater(float2 a, float2 b, int2 gridSize)
+        {
+            if (m_Land == null)
+            {
+                return false;
+            }
+
+            int steps = (int)math.ceil(math.distance(a, b) / TileSize);
+            for (int i = 0; i <= steps; i++)
+            {
+                float2 point = math.lerp(a, b, steps == 0 ? 0f : (float)i / steps);
+                int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+                int index = cell.x + cell.y * gridSize.x;
+                if (index >= 0 && index < m_Land.Length && m_Land[index] == 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void UpdateRouteSummary(int tripCount, int assignedPairs)
+        {
+            if (m_Routes.Count == 0)
+            {
+                if (tripCount < 0)
+                {
+                    s_RouteSummary = "No corridor was strong enough to suggest a line.";
+                }
+                else if (tripCount == 0)
+                {
+                    s_RouteSummary = "No journeys found yet — load a city and let it run.";
+                }
+                else
+                {
+                    s_RouteSummary = $"{tripCount} journeys, {assignedPairs} routed, but no corridor was strong enough to suggest.";
+                }
+
+                return;
+            }
+
+            var builder = new StringBuilder();
+            builder.Append(m_Routes.Count);
+            builder.Append(" suggested: ");
+            for (int i = 0; i < m_Routes.Count; i++)
+            {
+                if (i > 0)
+                {
+                    builder.Append("; ");
+                }
+
+                SuggestedRoute route = m_Routes[i];
+                builder.Append('#');
+                builder.Append(i + 1);
+                builder.Append(' ');
+                builder.Append(route.Mode);
+                builder.Append(' ');
+                builder.Append((route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
+                builder.Append("km, ");
+                builder.Append(route.Stops.Count);
+                builder.Append(" stops");
+            }
+
+            s_RouteSummary = builder.ToString();
+        }
+
+        private void LogRoutes()
+        {
+            for (int i = 0; i < m_Routes.Count; i++)
+            {
+                SuggestedRoute route = m_Routes[i];
+                float2 from = route.Stops.Count > 0 ? route.Stops[0] : float2.zero;
+                float2 to = route.Stops.Count > 0 ? route.Stops[route.Stops.Count - 1] : float2.zero;
+                Mod.Log.Info(
+                    $"Route #{i + 1}: {route.Mode}, {route.Length / 1000f:F2} km, {route.Stops.Count} stops, " +
+                    $"flow={route.CapturedFlow:F0}, ({(int)from.x},{(int)from.y}) -> ({(int)to.x},{(int)to.y})");
+            }
         }
 
         // ---- calibration ----------------------------------------------------

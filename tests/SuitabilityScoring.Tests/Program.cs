@@ -32,6 +32,19 @@ namespace StationSuitabilityOverlay.Tests
             Run("FitNonNegativeLeastSquares rejects underdetermined input", FitRejectsUnderdetermined);
             Run("RSquared is 1 for an exact fit and 0 for no variance", RSquaredBounds);
 
+            Run("Graph adjacency covers both directions", GraphAdjacencyBothDirections);
+            Run("Dijkstra finds the cheapest path, not the fewest hops", DijkstraPrefersCheapPath);
+            Run("Dijkstra respects the cost limit", DijkstraRespectsMaxCost);
+            Run("Dijkstra workspace reuse gives identical results", DijkstraWorkspaceReuse);
+            Run("Path accumulation loads flow onto the route taken", FlowFollowsShortestPath);
+            Run("Unreachable targets accumulate nothing", FlowIgnoresUnreachable);
+            Run("Corridor grows along the strongest flow", CorridorFollowsFlow);
+            Run("Corridor is a connected polyline", CorridorIsConnected);
+            Run("Corridor respects the length limit", CorridorRespectsMaxLength);
+            Run("Peeling reduces flow and blocks reuse", PeelingReducesFlow);
+            Run("Coverage objective diverts from the busiest corridor", ObjectiveChangesRoutes);
+            Run("Desire lines deposit once per cell crossed", RasterizeDepositsPerCell);
+
             Console.WriteLine();
             if (s_Failures == 0)
             {
@@ -502,6 +515,275 @@ namespace StationSuitabilityOverlay.Tests
                 flat[r] = 5f;
             }
             AssertEqual(0f, SuitabilityScoring.RSquared(features, flat, rows, 1, new float[] { 0f }), 0f, "no variance");
+        }
+
+        // ---- graph / routing tests ------------------------------------------
+
+        // A 6-node chain 0-1-2-3-4-5 plus a long shortcut edge 0-5.
+        private static CompactGraph BuildChain(out float[] flow)
+        {
+            var a = new[] { 0, 1, 2, 3, 4, 0 };
+            var b = new[] { 1, 2, 3, 4, 5, 5 };
+            var cost = new[] { 1f, 1f, 1f, 1f, 1f, 100f };
+            flow = new float[a.Length];
+            return CompactGraph.Build(6, a, b, cost, a.Length);
+        }
+
+        private static void GraphAdjacencyBothDirections()
+        {
+            CompactGraph graph = BuildChain(out _);
+
+            // Node 2 sits mid-chain, so it must see the edges on both sides.
+            int start = graph.NodeOffsets[2];
+            int end = graph.NodeOffsets[2 + 1];
+            AssertEqual(2, end - start, 0, "node 2 degree");
+
+            var seen = new List<int>();
+            for (int i = start; i < end; i++)
+            {
+                seen.Add(graph.AdjOther[i]);
+            }
+            AssertTrue(seen.Contains(1) && seen.Contains(3), "node 2 must reach both neighbours");
+
+            // Node 0 has the chain edge plus the shortcut.
+            AssertEqual(2, graph.NodeOffsets[1] - graph.NodeOffsets[0], 0, "node 0 degree");
+            AssertEqual(3, graph.OtherEnd(2, 2), 0, "OtherEnd resolves the far end");
+            AssertEqual(2, graph.OtherEnd(2, 3), 0, "OtherEnd is symmetric");
+        }
+
+        private static void DijkstraPrefersCheapPath()
+        {
+            CompactGraph graph = BuildChain(out _);
+            var ws = new DijkstraWorkspace(graph.NodeCount);
+            ws.Run(graph, 0, 1000f);
+
+            // Five hops of cost 1 beat one hop of cost 100.
+            AssertEqual(5f, ws.Dist[5], 1e-4f, "distance to node 5");
+            AssertEqual(2f, ws.Dist[2], 1e-4f, "distance to node 2");
+            AssertEqual(0f, ws.Dist[0], 0f, "source distance");
+        }
+
+        private static void DijkstraRespectsMaxCost()
+        {
+            CompactGraph graph = BuildChain(out _);
+            var ws = new DijkstraWorkspace(graph.NodeCount);
+            ws.Run(graph, 0, 2f);
+
+            AssertEqual(2f, ws.Dist[2], 1e-4f, "node 2 is within the limit");
+            AssertTrue(ws.Dist[4] == float.MaxValue, "node 4 is beyond the limit and must stay unreached");
+        }
+
+        private static void DijkstraWorkspaceReuse()
+        {
+            CompactGraph graph = BuildChain(out _);
+            var ws = new DijkstraWorkspace(graph.NodeCount);
+
+            ws.Run(graph, 0, 1000f);
+            float first = ws.Dist[5];
+
+            // A different source, then back again: stale state from the previous
+            // search must not leak into the result.
+            ws.Run(graph, 3, 1000f);
+            ws.Run(graph, 0, 1000f);
+            AssertEqual(first, ws.Dist[5], 0f, "repeat search must match");
+
+            ws.Run(graph, 5, 1000f);
+            AssertEqual(5f, ws.Dist[0], 1e-4f, "reverse direction is symmetric");
+        }
+
+        private static void FlowFollowsShortestPath()
+        {
+            CompactGraph graph = BuildChain(out float[] flow);
+            var ws = new DijkstraWorkspace(graph.NodeCount);
+            ws.Run(graph, 0, 1000f);
+
+            AssertTrue(SuitabilityGraphMath.AccumulatePath(graph, ws, 0, 5, 10f, flow), "path should be found");
+
+            // Chain edges 0..4 carry the flow; the expensive shortcut (edge 5) does not.
+            for (int e = 0; e < 5; e++)
+            {
+                AssertEqual(10f, flow[e], 1e-4f, $"chain edge {e}");
+            }
+            AssertEqual(0f, flow[5], 0f, "the expensive shortcut must carry nothing");
+        }
+
+        private static void FlowIgnoresUnreachable()
+        {
+            // Two disconnected components: 0-1 and 2-3.
+            var a = new[] { 0, 2 };
+            var b = new[] { 1, 3 };
+            var cost = new[] { 1f, 1f };
+            CompactGraph graph = CompactGraph.Build(4, a, b, cost, 2);
+            var flow = new float[2];
+            var ws = new DijkstraWorkspace(graph.NodeCount);
+            ws.Run(graph, 0, 1000f);
+
+            AssertTrue(!SuitabilityGraphMath.AccumulatePath(graph, ws, 0, 3, 5f, flow), "must report failure");
+            AssertEqual(0f, flow[0], 0f, "no flow on the reachable component");
+            AssertEqual(0f, flow[1], 0f, "no flow on the unreachable component");
+        }
+
+        private static void CorridorFollowsFlow()
+        {
+            // Chain 0-1-2-3-4-5 with heavy flow on the middle, plus a dead-end spur
+            // off node 2 carrying almost nothing.
+            var a = new[] { 0, 1, 2, 3, 4, 2 };
+            var b = new[] { 1, 2, 3, 4, 5, 6 };
+            var cost = new[] { 100f, 100f, 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(7, a, b, cost, a.Length);
+            var flow = new[] { 5f, 50f, 60f, 40f, 3f, 1f };
+            var used = new bool[a.Length];
+            var novelty = NewNovelty(7);
+
+            var corridor = new Corridor();
+            AssertTrue(SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, 0f, 2f, 1000f, corridor),
+                "corridor should grow");
+
+            // Seeded on edge 2 (the strongest) and extended over the other strong
+            // edges; the near-empty spur must be left out.
+            AssertTrue(corridor.Edges.Contains(2), "must include the strongest edge");
+            AssertTrue(corridor.Edges.Contains(1), "must include the second strongest");
+            AssertTrue(!corridor.Edges.Contains(5), "must not take the near-empty spur");
+            AssertTrue(corridor.CapturedFlow > 100f, $"captured flow {corridor.CapturedFlow} should exceed 100");
+        }
+
+        private static void CorridorIsConnected()
+        {
+            var a = new[] { 0, 1, 2, 3 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 10f, 10f, 10f, 10f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var flow = new[] { 8f, 9f, 7f, 6f };
+            var used = new bool[4];
+
+            var corridor = new Corridor();
+            AssertTrue(SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(5), 0f, 1f, 1000f, corridor),
+                "corridor should grow");
+
+            // Nodes must form an unbroken walk: each consecutive pair is joined by
+            // the corresponding edge, which is what makes it drawable as a polyline.
+            AssertEqual(corridor.Edges.Count + 1, corridor.Nodes.Count, 0, "node count must be edge count + 1");
+            for (int i = 0; i < corridor.Edges.Count; i++)
+            {
+                int edge = corridor.Edges[i];
+                int from = corridor.Nodes[i];
+                int to = corridor.Nodes[i + 1];
+                bool joins = (graph.EdgeA[edge] == from && graph.EdgeB[edge] == to)
+                    || (graph.EdgeB[edge] == from && graph.EdgeA[edge] == to);
+                AssertTrue(joins, $"edge {edge} must join nodes {from} and {to}");
+            }
+        }
+
+        private static void CorridorRespectsMaxLength()
+        {
+            var a = new[] { 0, 1, 2, 3, 4 };
+            var b = new[] { 1, 2, 3, 4, 5 };
+            var cost = new[] { 100f, 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(6, a, b, cost, 5);
+            var flow = new[] { 10f, 10f, 10f, 10f, 10f };
+
+            var corridor = new Corridor();
+            SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[5], NewNovelty(6), 0f, 1f, 250f, corridor);
+
+            AssertTrue(corridor.Length <= 250f, $"length {corridor.Length} must respect the limit");
+            AssertTrue(corridor.Edges.Count <= 2, $"only 2 edges of 100 fit under 250, got {corridor.Edges.Count}");
+        }
+
+        private static void PeelingReducesFlow()
+        {
+            var a = new[] { 0, 1, 2 };
+            var b = new[] { 1, 2, 3 };
+            var cost = new[] { 10f, 10f, 10f };
+            CompactGraph graph = CompactGraph.Build(4, a, b, cost, 3);
+            var flow = new[] { 100f, 100f, 100f };
+            var used = new bool[3];
+
+            var corridor = new Corridor();
+            SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(4), 0f, 1f, 1000f, corridor);
+            float before = 0f;
+            for (int e = 0; e < 3; e++) before += flow[e];
+
+            SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, 0.8f);
+
+            float after = 0f;
+            for (int e = 0; e < 3; e++) after += flow[e];
+            AssertTrue(after < before, $"peeling must reduce total flow ({after} vs {before})");
+
+            for (int i = 0; i < corridor.Edges.Count; i++)
+            {
+                AssertTrue(used[corridor.Edges[i]], "corridor edges must be marked used");
+            }
+
+            // A second growth must not re-select the same corridor.
+            var second = new Corridor();
+            bool grew = SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(4), 0f, 1f, 1000f, second);
+            if (grew)
+            {
+                for (int i = 0; i < second.Edges.Count; i++)
+                {
+                    AssertTrue(!corridor.Edges.Contains(second.Edges[i]), "must not reuse a peeled edge");
+                }
+            }
+        }
+
+        private static void ObjectiveChangesRoutes()
+        {
+            // A busy trunk 0-1-2 and a quiet branch off node 1 to fresh territory.
+            var a = new[] { 0, 1, 1 };
+            var b = new[] { 1, 2, 3 };
+            var cost = new[] { 10f, 10f, 10f };
+            CompactGraph graph = CompactGraph.Build(4, a, b, cost, 3);
+
+            var ridership = new Corridor();
+            var flowA = new[] { 100f, 90f, 20f };
+            SuitabilityGraphMath.GrowCorridor(graph, flowA, new bool[3], NewNovelty(4),
+                SuitabilityGraphMath.NoveltyWeight(RouteObjective.Ridership, 70f), 0f, 1000f, ridership);
+
+            var coverage = new Corridor();
+            var flowB = new[] { 100f, 90f, 20f };
+            // Node 3 is virgin territory; nodes 0-2 are already covered.
+            var novelty = new[] { 0.05f, 0.05f, 0.05f, 1f };
+            SuitabilityGraphMath.GrowCorridor(graph, flowB, new bool[3], novelty,
+                SuitabilityGraphMath.NoveltyWeight(RouteObjective.Coverage, 70f), 0f, 1000f, coverage);
+
+            AssertTrue(ridership.Edges.Contains(1), "ridership objective should take the busy trunk");
+            AssertTrue(!ridership.Edges.Contains(2), "ridership objective should skip the quiet branch");
+            AssertTrue(coverage.Edges.Contains(2), "coverage objective should reach the untouched branch");
+        }
+
+        private static void RasterizeDepositsPerCell()
+        {
+            const int width = 10;
+            const int height = 10;
+            var raster = new float[width * height];
+
+            // A horizontal line across row 5 from x=0.5 to x=9.5.
+            SuitabilityGraphMath.RasterizeSegment(raster, width, height, 0.5f, 5.5f, 9.5f, 5.5f, 2f);
+
+            for (int x = 0; x < width; x++)
+            {
+                AssertEqual(2f, raster[x + 5 * width], 1e-4f, $"cell ({x},5) gets the weight exactly once");
+            }
+            AssertEqual(0f, raster[0], 0f, "other rows untouched");
+
+            // Out-of-bounds endpoints must be clipped, not wrapped or crash.
+            var clipped = new float[width * height];
+            SuitabilityGraphMath.RasterizeSegment(clipped, width, height, -50f, 2.5f, 50f, 2.5f, 1f);
+            for (int x = 0; x < width; x++)
+            {
+                AssertEqual(1f, clipped[x + 2 * width], 1e-4f, $"clipped line still fills ({x},2)");
+            }
+        }
+
+        private static float[] NewNovelty(int nodes)
+        {
+            var novelty = new float[nodes];
+            for (int i = 0; i < nodes; i++)
+            {
+                novelty[i] = 1f;
+            }
+
+            return novelty;
         }
 
         // ---- harness --------------------------------------------------------

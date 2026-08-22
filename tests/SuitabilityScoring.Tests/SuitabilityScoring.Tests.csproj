@@ -17,6 +17,7 @@
     <!-- The mod's pure scoring math, shared rather than duplicated. It uses no
          Unity types precisely so it can be linked here. -->
     <Compile Include="../../dotnet/SuitabilityScoring.cs" Link="SuitabilityScoring.cs" />
+    <Compile Include="../../dotnet/SuitabilityGraphMath.cs" Link="SuitabilityGraphMath.cs" />
   </ItemGroup>
 
 </Project>

@@ -8,8 +8,8 @@ using System.Collections.Generic;
 namespace StationSuitabilityOverlay
 {
     [FileLocation(nameof(StationSuitabilityOverlay))]
-    [SettingsUIGroupOrder(kPresetGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
-    [SettingsUIShowGroupName(kPresetGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
+    [SettingsUIGroupOrder(kPresetGroup, kWeightsGroup, kTuningGroup, kRoutesGroup, kCalibrationGroup)]
+    [SettingsUIShowGroupName(kPresetGroup, kWeightsGroup, kTuningGroup, kRoutesGroup, kCalibrationGroup)]
     public class Setting : ModSetting
     {
         public const string kSection = "Main";
@@ -17,6 +17,7 @@ namespace StationSuitabilityOverlay
         public const string kWeightsGroup = "Weights";
         public const string kTuningGroup = "Tuning";
         public const string kCalibrationGroup = "Calibration";
+        public const string kRoutesGroup = "Routes";
 
         // Single source of truth for slider ranges: the UI attributes, the
         // property setters and ClampAll all reference these.
@@ -35,6 +36,17 @@ namespace StationSuitabilityOverlay
         public const int kSiteCountMin = 1;
         public const int kSiteCountMax = 20;
         public const int kSiteCountDefault = 8;
+        public const int kRouteCountMin = 1;
+        public const int kRouteCountMax = 12;
+        public const int kRouteCountDefault = 5;
+
+        // What a suggested route is grown to maximise.
+        public enum RouteGoal
+        {
+            Ridership = 0,
+            Balanced = 1,
+            Coverage = 2,
+        }
 
         public enum ModePreset
         {
@@ -61,6 +73,9 @@ namespace StationSuitabilityOverlay
         private int m_MaxSlope;
         private int m_SiteCount;
         private string m_RidershipData = string.Empty;
+        private RouteGoal m_Objective;
+        private int m_RouteCount;
+        private bool m_ShowRoutes = true;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -180,6 +195,31 @@ namespace StationSuitabilityOverlay
             set => m_SiteCount = ClampInt(value, kSiteCountMin, kSiteCountMax);
         }
 
+        [SettingsUISection(kSection, kRoutesGroup)]
+        public bool ShowRoutes
+        {
+            get => m_ShowRoutes;
+            set => m_ShowRoutes = value;
+        }
+
+        [SettingsUISection(kSection, kRoutesGroup)]
+        public RouteGoal Objective
+        {
+            get => m_Objective;
+            set => m_Objective = value;
+        }
+
+        [SettingsUISlider(min = kRouteCountMin, max = kRouteCountMax, step = 1, scalarMultiplier = 1, unit = Unit.kInteger)]
+        [SettingsUISection(kSection, kRoutesGroup)]
+        public int RouteCount
+        {
+            get => m_RouteCount;
+            set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
+        }
+
+        [SettingsUISection(kSection, kRoutesGroup)]
+        public string RouteSummary => StationSuitabilityOverlaySystem.RouteSummaryText;
+
         // A get-only string property renders as a read-only field in the options
         // page and is re-evaluated every frame the page is open, so the readout
         // needs no refresh plumbing of its own.
@@ -223,6 +263,9 @@ namespace StationSuitabilityOverlay
             m_MaxSlope = kSlopeDefault;
             m_SiteCount = kSiteCountDefault;
             m_RidershipData = string.Empty;
+            m_Objective = RouteGoal.Balanced;
+            m_RouteCount = kRouteCountDefault;
+            m_ShowRoutes = true;
             ApplyPreset(m_Mode);
         }
 
@@ -276,6 +319,7 @@ namespace StationSuitabilityOverlay
             m_HighlightShare = 0;
             m_MaxSlope = 0;
             m_SiteCount = 0;
+            m_RouteCount = 0;
             // Negative marks "absent" for weights added after 1.1, since zero is a
             // legitimate value a user may have chosen.
             m_W5 = -1f;
@@ -299,6 +343,8 @@ namespace StationSuitabilityOverlay
             m_HighlightShare = m_HighlightShare == 0 ? kHighlightDefault : ClampInt(m_HighlightShare, kHighlightMin, kHighlightMax);
             m_MaxSlope = m_MaxSlope == 0 ? kSlopeDefault : ClampInt(m_MaxSlope, kSlopeMin, kSlopeMax);
             m_SiteCount = m_SiteCount == 0 ? kSiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
+            m_RouteCount = m_RouteCount == 0 ? kRouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
+            m_Objective = ValidObjective(m_Objective);
             m_W5 = m_W5 < 0f ? PresetWeight(m_Mode, 5) : ClampWeight(m_W5);
             m_W6 = m_W6 < 0f ? PresetWeight(m_Mode, 6) : ClampWeight(m_W6);
             m_W7 = m_W7 < 0f ? PresetWeight(m_Mode, 7) : ClampWeight(m_W7);
@@ -339,6 +385,19 @@ namespace StationSuitabilityOverlay
                         case ModePreset.Ferry: return 0.3f;
                         default: return 0.4f;
                     }
+            }
+        }
+
+        private static RouteGoal ValidObjective(RouteGoal goal)
+        {
+            switch (goal)
+            {
+                case RouteGoal.Ridership:
+                case RouteGoal.Balanced:
+                case RouteGoal.Coverage:
+                    return goal;
+                default:
+                    return RouteGoal.Balanced;
             }
         }
 
@@ -427,6 +486,19 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.SiteCount)), "Recommended sites" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.SiteCount)), "How many discrete candidate sites the Recommended sites layer marks." },
 
+                { m_Setting.GetOptionGroupLocaleID(Setting.kRoutesGroup), "Route suggestions" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowRoutes)), "Show suggested routes" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowRoutes)), "Draw the suggested lines and their stops on the map while this infoview is open." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Objective)), "Route objective" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Objective)), "What a suggested line is grown to achieve. Maximum ridership follows the busiest journeys; maximum coverage spreads out to reach more districts even where demand is thin; balanced does both." },
+                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Ridership), "Maximum ridership" },
+                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Balanced), "Balanced" },
+                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Coverage), "Maximum coverage" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteSummary)), "Suggestions" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteSummary)), "The current suggestions, best first. The full detail is written to the mod log." },
+
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CalibrationStatus)), "Model quality" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CalibrationStatus)), "The mod samples ridership at your served stops while the game runs, then fits the weights to it." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyFittedWeights)), "Apply fitted weights" },
@@ -454,6 +526,8 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityFuture]", "Land that is zoned but not yet built on." },
                 { "Infoviews.INFOMODE[StationSuitabilityInterchange]", "Interchange potential" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityInterchange]", "Where a stop of this mode would sit within transfer distance of another mode's service, weighted by how much capacity that mode carries." },
+                { "Infoviews.INFOMODE[StationSuitabilityTravelDemand]", "Travel demand" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityTravelDemand]", "Where people actually want to travel, from real home-to-work and home-to-school journeys. Shows the demand your network does not already carry." },
                 { "Infoviews.INFOMODE[StationSuitabilityCrossCoverage]", "Cross-mode overlap" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityCrossCoverage]", "Where another mode already serves the same riders but is too far away to transfer to." },
 

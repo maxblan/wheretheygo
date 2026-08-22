@@ -17,11 +17,12 @@ namespace StationSuitabilityOverlay
         Future = 6,
         Interchange = 7,
         CrossCoverage = 8,
+        TravelDemand = 9,
     }
 
     internal static class SuitabilityLayers
     {
-        public const int Count = 9;
+        public const int Count = 10;
 
         // The terrain override overlay is a single RGBA texture, so only four
         // layers can be drawn at once. ToolSystem.Activate does NOT enforce this —
@@ -42,6 +43,7 @@ namespace StationSuitabilityOverlay
                 SuitabilityLayer.Future,
                 SuitabilityLayer.Interchange,
                 SuitabilityLayer.CrossCoverage,
+                SuitabilityLayer.TravelDemand,
             };
 
         public static string NameOf(SuitabilityLayer layer)
@@ -56,6 +58,7 @@ namespace StationSuitabilityOverlay
                 case SuitabilityLayer.Future: return "StationSuitabilityFuture";
                 case SuitabilityLayer.Interchange: return "StationSuitabilityInterchange";
                 case SuitabilityLayer.CrossCoverage: return "StationSuitabilityCrossCoverage";
+                case SuitabilityLayer.TravelDemand: return "StationSuitabilityTravelDemand";
                 default: return "StationSuitabilityOverlay";
             }
         }
@@ -111,6 +114,13 @@ namespace StationSuitabilityOverlay
                     low = new Color(0.25f, 0.20f, 0.28f, 0.12f);
                     medium = new Color(0.55f, 0.40f, 0.60f, 0.55f);
                     high = new Color(0.80f, 0.60f, 0.85f, 0.90f);
+                    break;
+                case SuitabilityLayer.TravelDemand:
+                    // Travel demand: where journeys want to happen, not where they
+                    // are served. Deliberately unlike every other layer's ramp.
+                    low = new Color(0.10f, 0.10f, 0.20f, 0.12f);
+                    medium = new Color(0.45f, 0.30f, 0.85f, 0.60f);
+                    high = new Color(1f, 1f, 1f, 0.95f);
                     break;
                 default:
                     // The combined score keeps the original green/yellow/red ramp.

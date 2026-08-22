@@ -5,7 +5,7 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
 ## Features
 
 - **Station Suitability infoview** in the game's infoview menu, with standard gradient legends
-- **Nine toggleable map layers** — the combined score, the recommended sites, and one layer per scoring term (demand, jobs, existing coverage, accessibility, future demand, interchange potential, cross-mode overlap) so you can see *why* a tile scores the way it does. The terrain overlay has four channels, so up to four layers can be shown at once; a fifth is skipped with a note in the log.
+- **Ten toggleable map layers** — the combined score, the recommended sites, travel demand, and one layer per scoring term (demand, jobs, existing coverage, accessibility, future demand, interchange potential, cross-mode overlap) so you can see *why* a tile scores the way it does. The terrain overlay has four channels, so up to four layers can be shown at once; a fifth is skipped with a note in the log.
 - **Ranked site recommendations** — instead of only a gradient, the best distinct locations are marked as discrete spots, spaced at least one catchment apart and re-scored by true walking distance
 - **Catchment-based scoring** over five criteria, each normalized to a comparable 0–1 scale before weighting:
   - Demand — residents within the catchment (weight W1)
@@ -20,6 +20,7 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
 - **Ridership calibration** — the mod samples your served stops while the city runs, then fits the demand, jobs, accessibility and future weights to the observed data and reports how well the model explains it (R²). Fitted values are only suggestions until you press **Apply fitted weights**.
 - **Auto-recalculation** (debounced, off the main thread) when stops are placed or removed or settings change, plus a periodic refresh so new roads, zones and residents appear on their own
 - **No surprise activation** — the game's automatic "related infoview" selection for build-menu assets has this mod's infoview stripped out and the vanilla choice restored, so the overlay only appears when you pick it
+- **Travel demand map and route suggestions** — real home-to-work and home-to-school journeys read from the save, shown as desire lines, and grown into ranked line suggestions with stops and a recommended mode
 - **English and German** localization
 
 ## How it works
@@ -47,6 +48,24 @@ Both are weighted by how much capacity the other mode represents (train and metr
 Only stops that a line actually calls at count for either term. That also means no line-identity check is needed for a transfer: two served stops of different modes necessarily run different lines, so a genuine transfer is always possible.
 
 What this does *not* model is parallel duplication along a corridor — a bus route running alongside a metro rather than feeding it. Detecting that needs line geometry rather than stop positions.
+
+### Travel demand and route suggestions
+
+The mod also answers the other half of the question: not just where a stop belongs, but where people are trying to go.
+
+**The demand is real, not modelled.** Cities: Skylines II stores each citizen's household and workplace or school as entity references, so the mod reads actual home-to-work and home-to-school journeys straight out of the save. There is no gravity model or estimation. Tourists, the homeless and outside commuters are excluded (they have no fixed home in the city). School trips count at a lower weight than commutes.
+
+Journeys are then aggregated into coarse zones, discounted by how well your existing network already serves both of their endpoints, and loaded onto the road network by shortest path. The **Travel demand** layer shows the result as desire lines: where movement wants to happen, weighted towards what you are *not* already carrying.
+
+**Route suggestions** are grown from that loaded network. The strongest corridor is grown outward along the heaviest remaining flow, stops are placed at mode-appropriate spacing and nudged onto the best-scoring nearby tile, and a mode is assigned from the corridor's flow intensity and length. The demand that line would carry is then removed from the pool before the next suggestion, so later lines complement earlier ones instead of stacking on the same street. Suggestions are drawn as coloured polylines with stop markers while the infoview is open.
+
+The **Route objective** setting changes what a line is grown for: maximum ridership follows the busiest journeys and may leave outlying districts unserved; maximum coverage spreads out to reach more districts even where demand is thin; balanced does both.
+
+Known limits, since these matter when reading the output:
+
+- "Already served" is judged from stop coverage at each end of a journey, not by routing the trip over your transit network. A trip between two well-served places that no single line connects is under-discounted.
+- Ferries are only suggested where a route detours a long way around water that a direct crossing would cut out. Ferry corridors are not searched over water, so a genuinely good ferry route across open water will not be found.
+- Corridor growth is greedy. Transit network design is NP-hard; these are suggestions, not optimal networks.
 
 ### Calibration
 

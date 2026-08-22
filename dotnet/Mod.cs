@@ -41,6 +41,12 @@ namespace StationSuitabilityOverlay
             // terrain override overlay every frame) and TerrainRenderSystem (which
             // consumes it into the terrain material).
             updateSystem.UpdateAt<StationSuitabilityOverlaySystem>(SystemUpdatePhase.PreCulling);
+
+            // Route polylines go through OverlayRenderSystem, which drains and
+            // clears its buffer during the Rendering phase — that runs BEFORE
+            // PreCulling, so drawing from the overlay system above would always be a
+            // frame late. Hence a second system in the right phase.
+            updateSystem.UpdateAt<SuitabilityRouteRenderer>(SystemUpdatePhase.Rendering);
         }
 
         public void OnDispose()

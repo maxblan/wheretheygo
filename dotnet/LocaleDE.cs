@@ -63,6 +63,19 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.SiteCount)), "Empfohlene Standorte" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.SiteCount)), "Wie viele einzelne Standorte die Ebene „Empfohlene Standorte“ markiert." },
 
+                { m_Setting.GetOptionGroupLocaleID(Setting.kRoutesGroup), "Linienvorschläge" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowRoutes)), "Vorgeschlagene Linien anzeigen" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowRoutes)), "Zeichnet die vorgeschlagenen Linien und ihre Haltestellen auf der Karte, solange diese Infoansicht offen ist." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Objective)), "Ziel der Linienplanung" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Objective)), "Worauf eine vorgeschlagene Linie optimiert wird. Maximale Fahrgastzahl folgt den stärksten Verkehrsströmen; maximale Abdeckung erschließt mehr Viertel, auch bei geringer Nachfrage; ausgewogen verbindet beides." },
+                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Ridership), "Maximale Fahrgastzahl" },
+                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Balanced), "Ausgewogen" },
+                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Coverage), "Maximale Abdeckung" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Anzahl Vorschläge" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "Wie viele Linien vorgeschlagen werden. Jede entnimmt dem Pool die Nachfrage, die sie bedienen würde, sodass spätere Vorschläge die früheren ergänzen." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteSummary)), "Vorschläge" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteSummary)), "Die aktuellen Vorschläge, beste zuerst. Alle Details stehen im Mod-Log." },
+
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CalibrationStatus)), "Modellgüte" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CalibrationStatus)), "Der Mod erfasst während des Spiels die Fahrgastzahlen an deinen bedienten Haltestellen und passt die Gewichtungen daran an." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyFittedWeights)), "Angepasste Gewichtungen übernehmen" },
@@ -90,6 +103,8 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityFuture]", "Land, das ausgewiesen, aber noch nicht bebaut ist." },
                 { "Infoviews.INFOMODE[StationSuitabilityInterchange]", "Umsteige-Potenzial" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityInterchange]", "Wo eine Haltestelle dieses Verkehrsmittels in Umsteige-Entfernung zum Angebot eines anderen Verkehrsmittels läge, gewichtet nach dessen Kapazität." },
+                { "Infoviews.INFOMODE[StationSuitabilityTravelDemand]", "Verkehrsnachfrage" },
+                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityTravelDemand]", "Wohin die Menschen tatsächlich wollen, aus echten Wegen von Zuhause zur Arbeit und zur Schule. Zeigt die Nachfrage, die dein Netz noch nicht bedient." },
                 { "Infoviews.INFOMODE[StationSuitabilityCrossCoverage]", "Überlappung anderer Verkehrsmittel" },
                 { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityCrossCoverage]", "Wo ein anderes Verkehrsmittel dieselben Fahrgäste bereits bedient, aber zu weit für einen Umstieg entfernt ist." },
 
