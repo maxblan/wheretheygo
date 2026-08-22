@@ -73,6 +73,8 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Coverage), "Maximale Abdeckung" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Anzahl Vorschläge" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "Wie viele Linien vorgeschlagen werden. Jede entnimmt dem Pool die Nachfrage, die sie bedienen würde, sodass spätere Vorschläge die früheren ergänzen." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.TransferPenalty)), "Abzug pro Umstieg" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.TransferPenalty)), "Wie stark eine Fahrt für jeden Fahrzeugwechsel abgewertet wird, wenn eine vorgeschlagene Linie bewertet wird. Null bewertet eine Fahrt mit drei Umstiegen so gut wie eine Direktfahrt; höhere Werte bevorzugen Direktverbindungen." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteSummary)), "Vorschläge" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteSummary)), "Die aktuellen Vorschläge, beste zuerst. Alle Details stehen im Mod-Log." },
 

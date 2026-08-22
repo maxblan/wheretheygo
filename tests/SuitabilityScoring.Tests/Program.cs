@@ -46,6 +46,14 @@ namespace StationSuitabilityOverlay.Tests
             Run("Peeling reduces flow and blocks reuse", PeelingReducesFlow);
             Run("Coverage objective diverts from the busiest corridor", ObjectiveChangesRoutes);
             Run("Desire lines deposit once per cell crossed", RasterizeDepositsPerCell);
+            Run("Polyline simplification removes staircase corners", SimplifyRemovesStaircase);
+
+            Run("Direct service beats an equal-time transfer", DirectBeatsTransfer);
+            Run("Each change of vehicle costs a boarding", TransfersCostBoardings);
+            Run("A feeder line is credited for journeys it only starts", FeederGetsCredit);
+            Run("Transfer discount reduces credit per change", TransferDiscountApplies);
+            Run("Walking links nearby stops into one interchange", WalkLinksStops);
+            Run("Vanilla wait model floors at zero", ExpectedWaitModel);
 
             Console.WriteLine();
             if (s_Failures == 0)
@@ -824,6 +832,172 @@ namespace StationSuitabilityOverlay.Tests
             {
                 AssertEqual(1f, clipped[x + 2 * width], 1e-4f, $"clipped line still fills ({x},2)");
             }
+        }
+
+        // ---- transit graph tests --------------------------------------------
+
+        // Two stops joined by a straight line of lattice-style corners.
+        private static void SimplifyRemovesStaircase()
+        {
+            var points = new List<float2Like>();
+            for (int i = 0; i <= 10; i++)
+            {
+                // A staircase that hugs the diagonal: every corner is within a metre
+                // of the straight line, so all of them are artefacts.
+                points.Add(new float2Like(i * 100f, i * 100f));
+                points.Add(new float2Like((i + 1) * 100f, i * 100f));
+            }
+
+            int before = points.Count;
+            SuitabilityGraphMath.SimplifyPolyline(points, 120f);
+
+            AssertTrue(points.Count < before, $"simplification must drop corners ({points.Count} vs {before})");
+            AssertTrue(points.Count >= 2, "endpoints must survive");
+            AssertEqual(0f, points[0].x, 0f, "first point kept");
+            AssertEqual(1100f, points[points.Count - 1].x, 1f, "last point kept");
+
+            // A genuine right-angle detour must NOT be flattened away.
+            var corner = new List<float2Like>
+            {
+                new float2Like(0f, 0f), new float2Like(0f, 1000f), new float2Like(1000f, 1000f),
+            };
+            SuitabilityGraphMath.SimplifyPolyline(corner, 120f);
+            AssertEqual(3, corner.Count, 0, "a real corner must be preserved");
+        }
+
+        // Stops 0..3 in a line, plus stop 4 off to the side.
+        private static TransitNetwork BuildTwoLineNetwork(float wait, out float[] xs, out float[] zs)
+        {
+            xs = new[] { 0f, 1000f, 2000f, 3000f, 1000f };
+            zs = new[] { 0f, 0f, 0f, 0f, 500f };
+
+            var lines = new List<TransitLine>
+            {
+                // Line 0: the trunk, all four stops in a row.
+                new TransitLine { m_Stops = new[] { 0, 1, 2, 3 }, m_ExpectedWait = wait, m_SpeedMetresPerSecond = 10f },
+                // Line 1: a feeder from the side stop into the trunk at stop 1.
+                new TransitLine { m_Stops = new[] { 4, 1 }, m_ExpectedWait = wait, m_SpeedMetresPerSecond = 10f },
+            };
+
+            return SuitabilityTransit.Build(xs, zs, 5, lines, 100f, SuitabilityTransit.DefaultBoardPenaltySeconds);
+        }
+
+        private static void DirectBeatsTransfer()
+        {
+            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+
+            // 0 -> 3 is a single ride on the trunk: one boarding.
+            ws.Run(net.Graph, 0, 100000f);
+            AssertTrue(SuitabilityTransit.Inspect(net, ws, 0, 3, -1, out int boardings, out _, out float direct),
+                "trunk journey should be routable");
+            AssertEqual(1, boardings, 0, "riding one line is one boarding");
+
+            // 4 -> 3 needs the feeder then the trunk: two boardings, and must cost
+            // more than the direct trip even though the ride distance is shorter.
+            ws.Run(net.Graph, 4, 100000f);
+            AssertTrue(SuitabilityTransit.Inspect(net, ws, 4, 3, -1, out int viaFeeder, out _, out float changed),
+                "feeder journey should be routable");
+            AssertEqual(2, viaFeeder, 0, "changing vehicle is a second boarding");
+            AssertTrue(changed > direct, $"a change must cost extra ({changed} vs {direct})");
+        }
+
+        private static void TransfersCostBoardings()
+        {
+            // With a big wait, the second boarding should dominate the cost.
+            TransitNetwork cheap = BuildTwoLineNetwork(10f, out _, out _);
+            TransitNetwork dear = BuildTwoLineNetwork(600f, out _, out _);
+
+            var wsCheap = new DijkstraWorkspace(cheap.Graph.NodeCount);
+            wsCheap.Run(cheap.Graph, 4, 100000f);
+            SuitabilityTransit.Inspect(cheap, wsCheap, 4, 3, -1, out _, out _, out float cheapTime);
+
+            var wsDear = new DijkstraWorkspace(dear.Graph.NodeCount);
+            wsDear.Run(dear.Graph, 4, 100000f);
+            SuitabilityTransit.Inspect(dear, wsDear, 4, 3, -1, out _, out _, out float dearTime);
+
+            // Two boardings, each paying the extra wait: the gap is about 2x.
+            AssertTrue(dearTime > cheapTime + 1000f, $"longer headways must cost more ({dearTime} vs {cheapTime})");
+        }
+
+        // The bug this exists for: a feeder's own corridor carries almost nobody, so
+        // scoring it by direct riders made it look worthless.
+        private static void FeederGetsCredit()
+        {
+            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+
+            // Everyone travels from the side stop to the far end of the trunk, so the
+            // feeder is only ever one leg of the journey and never the whole thing.
+            var origins = new[] { 4 };
+            var dests = new[] { 3 };
+            var weights = new[] { 1000f };
+
+            float feederCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1,
+                1, 1f, 100000f, out float served);
+
+            AssertEqual(1000f, served, 1f, "the journey is served");
+            AssertTrue(feederCredit > 0f, "the feeder must be credited for a journey it only starts");
+            AssertEqual(1000f, feederCredit, 1f, "with no discount it earns the full weight");
+
+            float trunkCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1,
+                0, 1f, 100000f, out _);
+            AssertTrue(trunkCredit > 0f, "the trunk is credited too — both legs enable the trip");
+        }
+
+        private static void TransferDiscountApplies()
+        {
+            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+
+            var origins = new[] { 4 };
+            var dests = new[] { 3 };
+            var weights = new[] { 1000f };
+
+            // One change, so one discount factor is applied.
+            float full = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1, 1, 1f, 100000f, out _);
+            float discounted = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1, 1, 0.6f, 100000f, out _);
+
+            AssertEqual(1000f, full, 1f, "no discount");
+            AssertEqual(600f, discounted, 1f, "one change costs one discount factor");
+
+            // A direct journey on the trunk keeps its full weight either way.
+            float direct = SuitabilityTransit.CreditLine(net, ws, new[] { 0 }, new[] { 3 }, weights, 1, 0, 0.6f, 100000f, out _);
+            AssertEqual(1000f, direct, 1f, "a direct journey is not discounted");
+        }
+
+        private static void WalkLinksStops()
+        {
+            // Two stops 80 m apart on different lines: within the walk radius they are
+            // one interchange, beyond it the journey cannot be made at all.
+            var xs = new[] { 0f, 1000f, 1080f, 2000f };
+            var zs = new[] { 0f, 0f, 0f, 0f };
+            var lines = new List<TransitLine>
+            {
+                new TransitLine { m_Stops = new[] { 0, 1 }, m_ExpectedWait = 30f, m_SpeedMetresPerSecond = 10f },
+                new TransitLine { m_Stops = new[] { 2, 3 }, m_ExpectedWait = 30f, m_SpeedMetresPerSecond = 10f },
+            };
+
+            TransitNetwork linked = SuitabilityTransit.Build(xs, zs, 4, lines, 200f, 5f);
+            var ws = new DijkstraWorkspace(linked.Graph.NodeCount);
+            ws.Run(linked.Graph, 0, 100000f);
+            AssertTrue(SuitabilityTransit.Inspect(linked, ws, 0, 3, -1, out int boardings, out _, out _),
+                "a short walk must join the two lines");
+            AssertEqual(2, boardings, 0, "one boarding per line");
+
+            TransitNetwork split = SuitabilityTransit.Build(xs, zs, 4, lines, 50f, 5f);
+            var ws2 = new DijkstraWorkspace(split.Graph.NodeCount);
+            ws2.Run(split.Graph, 0, 100000f);
+            AssertTrue(!SuitabilityTransit.Inspect(split, ws2, 0, 3, -1, out _, out _, out _),
+                "too far to walk means no itinerary");
+        }
+
+        private static void ExpectedWaitModel()
+        {
+            // max(interval/2, observed) - dwell, floored at zero.
+            AssertEqual(25f, SuitabilityTransit.ExpectedWait(60f, 0f, 5f), 1e-4f, "half the headway less dwell");
+            AssertEqual(85f, SuitabilityTransit.ExpectedWait(60f, 90f, 5f), 1e-4f, "observed wait dominates when longer");
+            AssertEqual(0f, SuitabilityTransit.ExpectedWait(10f, 0f, 100f), 0f, "never negative");
         }
 
         private static float[] NewNovelty(int nodes)

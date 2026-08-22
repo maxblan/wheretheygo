@@ -134,6 +134,38 @@ function RouteList({ raw }) {
         }));
 }
 
+const VERDICT_COLORS = {
+    AtModeCapacity: "rgb(230, 60, 50)",
+    Overcrowded: "rgb(240, 140, 40)",
+    LongWaits: "rgb(230, 200, 60)",
+    NearlyEmpty: "rgb(130, 140, 155)",
+    Healthy: "rgb(80, 190, 120)",
+};
+
+// Existing lines, worst first, with the numbers the verdict came from — a remedy
+// you cannot check is not worth much.
+function LineHealth({ raw }) {
+    const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
+    if (!rows.length) {
+        return null;
+    }
+
+    return h("div", { className: "sso-routes" },
+        h("div", { className: "sso-section" }, "Line health"),
+        rows.map((parts, i) => {
+            const verdict = parts[1] || "Healthy";
+            return h("div", { className: "sso-health", key: i },
+                h("div", { className: "sso-health-head" },
+                    h("div", {
+                        className: "sso-dot",
+                        style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
+                    }),
+                    h("div", { className: "sso-route-mode" }, parts[0] || "Bus"),
+                    h("div", { className: "sso-route-meta" }, parts[3] || "")),
+                h("div", { className: "sso-health-note" }, parts[2] || ""));
+        }));
+}
+
 function Panel() {
     const visible = useBound("visible", false);
     const [collapsed, setCollapsed] = React.useState(false);
@@ -144,6 +176,7 @@ function Panel() {
     const routeList = useBound("routeList", "");
     const ownsInfoview = useBound("ownsInfoview", false);
     const heatmap = useBound("heatmap", true);
+    const lineHealth = useBound("lineHealth", "");
 
     // Suppress the vanilla infoview legend while ours is showing; a class on the
     // document root is the only hook a plain CSS file can key off.
@@ -231,7 +264,9 @@ function Panel() {
                 onSet: (value) => trigger("set" + slider.key.charAt(0).toUpperCase() + slider.key.slice(1), value),
             })),
 
-        h(RouteList, { raw: routeList }));
+        h(RouteList, { raw: routeList }),
+
+        h(LineHealth, { raw: lineHealth }));
 }
 
 // Styled to match the vanilla floating toggles beside it: same size variable, same

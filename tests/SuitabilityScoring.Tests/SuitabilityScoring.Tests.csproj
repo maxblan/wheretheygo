@@ -18,6 +18,7 @@
          Unity types precisely so it can be linked here. -->
     <Compile Include="../../dotnet/SuitabilityScoring.cs" Link="SuitabilityScoring.cs" />
     <Compile Include="../../dotnet/SuitabilityGraphMath.cs" Link="SuitabilityGraphMath.cs" />
+    <Compile Include="../../dotnet/SuitabilityTransit.cs" Link="SuitabilityTransit.cs" />
   </ItemGroup>
 
 </Project>

@@ -70,6 +70,7 @@ namespace StationSuitabilityOverlay
         private static string s_PipelineStatus = string.Empty;
         private static string s_RouteSummary = "No route suggestions yet.";
         private static string s_RouteList = string.Empty;
+        private static string s_LineHealthList = string.Empty;
         private static bool s_ApplyFitRequested;
         private static bool s_ResetCalibrationRequested;
 
@@ -82,6 +83,9 @@ namespace StationSuitabilityOverlay
         // colour-keyed list. A compact string avoids hand-rolling a JSON writer for
         // what is at most a dozen rows.
         public static string RouteListText => s_RouteList;
+
+        // One line per existing route as "mode|verdict|detail", for the panel.
+        public static string LineHealthText => s_LineHealthList;
 
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 
@@ -240,6 +244,24 @@ namespace StationSuitabilityOverlay
         private readonly List<float2> m_TrackEnds = new List<float2>();
         private readonly List<SuggestedRoute> m_RouteCandidates = new List<SuggestedRoute>();
         private readonly List<ZoneFlow> m_CrossWaterFlows = new List<ZoneFlow>();
+
+        // Existing transit system: the lines themselves, the routable model of them,
+        // and their health.
+        private EntityQuery m_LineQuery;
+        private readonly List<ExistingLine> m_ExistingLines = new List<ExistingLine>();
+        private readonly List<float2> m_TransitStops = new List<float2>();
+        private readonly Dictionary<Entity, int> m_StopIndices = new Dictionary<Entity, int>();
+        private readonly List<LineHealth> m_LineHealth = new List<LineHealth>();
+        private TransitNetwork m_TransitNetwork;
+        private DijkstraWorkspace m_TransitWorkspace;
+        private int[] m_ZoneStops;
+        private int[] m_PairOrigins;
+        private int[] m_PairDests;
+        private float[] m_PairWeights;
+        private int m_PairCount;
+
+        internal List<ExistingLine> ExistingLines => m_ExistingLines;
+        internal List<LineHealth> LineHealthList => m_LineHealth;
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
         private int[] m_ZoneNodes;
@@ -393,6 +415,17 @@ namespace StationSuitabilityOverlay
             m_BlockQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[] { ComponentType.ReadOnly<Block>(), ComponentType.ReadOnly<Cell>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
+            });
+
+            m_LineQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<Game.Routes.Route>(),
+                    ComponentType.ReadOnly<Game.Routes.TransportLine>(),
+                    ComponentType.ReadOnly<PrefabRef>(),
+                },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
@@ -1839,6 +1872,7 @@ namespace StationSuitabilityOverlay
                 trips.Dispose();
             }
 
+            BuildTransitModel(gridSize);
             DiscountServedDemand(gridSize);
             BuildDemandLayer(settings, gridSize, worldMin);
 
@@ -1875,15 +1909,129 @@ namespace StationSuitabilityOverlay
                 $"crossWaterPairs={m_CrossWaterFlows.Count}, candidates={m_RouteCandidates.Count}, routes={m_Routes.Count}");
         }
 
-        // Unserved demand: a journey whose ends are already well covered by served
-        // stops is mostly carried by the existing network, so it should not drive a
-        // new suggestion.
+        // Reads the existing transit system and turns it into a routable model, so a
+        // journey can be tested against the network that actually exists rather than
+        // against how close its ends happen to be to some stop.
+        private void BuildTransitModel(int2 gridSize)
+        {
+            SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem,
+                m_ExistingLines, m_TransitStops, m_StopIndices);
+            SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
+            UpdateLineHealthText();
+
+            if (m_TransitStops.Count == 0)
+            {
+                m_TransitNetwork = null;
+                return;
+            }
+
+            var xs = new float[m_TransitStops.Count];
+            var zs = new float[m_TransitStops.Count];
+            for (int i = 0; i < m_TransitStops.Count; i++)
+            {
+                xs[i] = m_TransitStops[i].x;
+                zs[i] = m_TransitStops[i].y;
+            }
+
+            List<TransitLine> transitLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
+            m_TransitNetwork = SuitabilityTransit.Build(xs, zs, m_TransitStops.Count, transitLines,
+                TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
+            m_TransitWorkspace = new DijkstraWorkspace(m_TransitNetwork.Graph.NodeCount);
+
+            MapZonesToStops(xs, zs);
+            BuildPairArrays();
+
+            int problems = 0;
+            for (int i = 0; i < m_LineHealth.Count; i++)
+            {
+                if (m_LineHealth[i].Severity > 0) problems++;
+            }
+
+            Mod.Log.Info(
+                $"Transit model: lines={m_ExistingLines.Count}, stops={m_TransitStops.Count}, " +
+                $"graphNodes={m_TransitNetwork.Graph.NodeCount}, routablePairs={m_PairCount}, " +
+                $"linesNeedingAttention={problems}");
+
+            for (int i = 0; i < m_LineHealth.Count && i < 12; i++)
+            {
+                LineHealth entry = m_LineHealth[i];
+                Mod.Log.Info(
+                    $"Line {entry.m_Index} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
+                    $"{entry.m_Passengers}/{entry.m_Capacity} aboard ({entry.m_Usage * 100f:F0}%), " +
+                    $"{entry.m_Vehicles}/{entry.m_TargetVehicles} vehicles, wait {entry.m_AverageWait:F0}, " +
+                    $"{entry.m_Stops} stops, {entry.m_LengthKm:F1} km");
+            }
+        }
+
+        // Nearest stop to each zone centre, within walking distance. A zone with no
+        // stop nearby simply cannot use the network.
+        private void MapZonesToStops(float[] xs, float[] zs)
+        {
+            int zoneCount = m_ZoneGrid.x * m_ZoneGrid.y;
+            if (m_ZoneStops == null || m_ZoneStops.Length != zoneCount)
+            {
+                m_ZoneStops = new int[zoneCount];
+            }
+
+            float radiusSq = TransferWalkRadius * TransferWalkRadius * 4f;
+            for (int zone = 0; zone < zoneCount; zone++)
+            {
+                float2 centre = SuitabilityTravelDemand.ZoneCentre(zone, m_ScoreWorldMin, m_ZoneGrid);
+                int best = -1;
+                float bestSq = radiusSq;
+                for (int i = 0; i < xs.Length; i++)
+                {
+                    float dx = xs[i] - centre.x;
+                    float dz = zs[i] - centre.y;
+                    float distSq = dx * dx + dz * dz;
+                    if (distSq < bestSq)
+                    {
+                        bestSq = distSq;
+                        best = i;
+                    }
+                }
+
+                m_ZoneStops[zone] = best;
+            }
+        }
+
+        // Flattens the zone flows into the stop-indexed arrays the transit router
+        // takes, keeping them grouped by origin so one search serves a run of pairs.
+        private void BuildPairArrays()
+        {
+            int count = m_ZoneFlows.Count;
+            if (m_PairOrigins == null || m_PairOrigins.Length < count)
+            {
+                m_PairOrigins = new int[count];
+                m_PairDests = new int[count];
+                m_PairWeights = new float[count];
+            }
+
+            m_PairCount = 0;
+            for (int i = 0; i < count; i++)
+            {
+                ZoneFlow flow = m_ZoneFlows[i];
+                int origin = m_ZoneStops[flow.m_Origin];
+                int destination = m_ZoneStops[flow.m_Destination];
+                if (origin < 0 || destination < 0 || origin == destination)
+                {
+                    continue;
+                }
+
+                m_PairOrigins[m_PairCount] = origin;
+                m_PairDests[m_PairCount] = destination;
+                m_PairWeights[m_PairCount] = flow.m_Weight;
+                m_PairCount++;
+            }
+        }
+
+        // Unserved demand, decided by ROUTING each journey over the existing network
+        // rather than by how close its ends are to a stop. A journey the network can
+        // already carry within a reasonable time is discounted; one it cannot is left
+        // at full weight to drive a suggestion.
         //
-        // This is an approximation. It judges coverage at the two endpoints rather
-        // than asking whether any single line actually connects them, so it
-        // under-discounts trips between two well-served places with no through
-        // service. Doing it properly means routing every trip over the transit
-        // network with transfers, which is a second pathfinding problem.
+        // This replaces an endpoint-coverage approximation that under-discounted trips
+        // between two well-served places that no single service connects.
         private void DiscountServedDemand(int2 gridSize)
         {
             if (m_RawTerms == null)
@@ -1891,19 +2039,182 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            for (int i = 0; i < m_ZoneFlows.Count; i++)
+            if (m_TransitNetwork?.Graph == null || m_ZoneStops == null)
+            {
+                return;
+            }
+
+            int currentOrigin = -1;
+            int pair = 0;
+            for (int i = 0; i < m_ZoneFlows.Count && pair < m_PairCount; i++)
             {
                 ZoneFlow flow = m_ZoneFlows[i];
-                float origin = CoverageAt(SuitabilityTravelDemand.ZoneCentre(flow.m_Origin, m_ScoreWorldMin, m_ZoneGrid), gridSize);
-                float destination = CoverageAt(SuitabilityTravelDemand.ZoneCentre(flow.m_Destination, m_ScoreWorldMin, m_ZoneGrid), gridSize);
+                int origin = m_ZoneStops[flow.m_Origin];
+                int destination = m_ZoneStops[flow.m_Destination];
+                if (origin < 0 || destination < 0 || origin == destination)
+                {
+                    continue;
+                }
 
-                // A trip needs BOTH ends served to be carried, so the weaker end
-                // governs — hence min rather than an average.
-                float served = math.min(origin, destination);
-                flow.m_Weight *= 1f - SuitabilityScoring.Saturate(served);
+                pair++;
+                if (origin != currentOrigin)
+                {
+                    currentOrigin = origin;
+                    m_TransitWorkspace.Run(m_TransitNetwork.Graph, origin, MaxJourneySeconds);
+                }
+
+                if (!SuitabilityTransit.Inspect(m_TransitNetwork, m_TransitWorkspace, origin, destination,
+                        -1, out int boardings, out bool _, out float travelTime))
+                {
+                    continue;
+                }
+
+                if (boardings <= 0 || travelTime > MaxJourneySeconds)
+                {
+                    continue;
+                }
+
+                // Fully served journeys drop out; a slow, transfer-heavy itinerary is
+                // only partly served and still deserves a better option.
+                float quality = 1f - SuitabilityScoring.Saturate(travelTime / MaxJourneySeconds);
+                flow.m_Weight *= 1f - SuitabilityScoring.Saturate(quality);
                 m_ZoneFlows[i] = flow;
             }
         }
+
+        // Re-scores candidates by the demand they would ENABLE once riders are allowed
+        // to change vehicles, not just the demand along their own corridor.
+        //
+        // This is what makes a feeder worth building: a short line whose own corridor
+        // carries almost nobody can still be the leg that unlocks hundreds of journeys
+        // onto a trunk service. Each change of vehicle discounts the journey, so a
+        // direct service still outranks a three-leg itinerary carrying the same people.
+        private void ScoreCandidatesWithTransfers(Setting settings)
+        {
+            if (m_TransitNetwork?.Graph == null || m_PairCount == 0 || m_RouteCandidates.Count == 0)
+            {
+                return;
+            }
+
+            // Only the strongest candidates are worth this: each one needs its own
+            // routing pass over the whole matrix.
+            int evaluate = math.min(m_RouteCandidates.Count, settings.RouteCount * 2);
+            float discount = settings.TransferDiscount;
+
+            var baseLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
+            int baseStops = m_TransitStops.Count;
+
+            for (int c = 0; c < evaluate; c++)
+            {
+                SuggestedRoute candidate = m_RouteCandidates[c];
+                if (candidate.Stops.Count < 2)
+                {
+                    continue;
+                }
+
+                // The candidate's stops join the existing stop set; walk edges then
+                // connect them to whatever is already nearby, which is exactly how a
+                // new line becomes an interchange.
+                int total = baseStops + candidate.Stops.Count;
+                var xs = new float[total];
+                var zs = new float[total];
+                for (int i = 0; i < baseStops; i++)
+                {
+                    xs[i] = m_TransitStops[i].x;
+                    zs[i] = m_TransitStops[i].y;
+                }
+
+                var stops = new int[candidate.Stops.Count];
+                for (int i = 0; i < candidate.Stops.Count; i++)
+                {
+                    int index = baseStops + i;
+                    xs[index] = candidate.Stops[i].x;
+                    zs[index] = candidate.Stops[i].y;
+                    stops[i] = index;
+                }
+
+                var lines = new List<TransitLine>(baseLines)
+                {
+                    new TransitLine
+                    {
+                        m_Stops = stops,
+                        m_ExpectedWait = SuggestedWaitFor(candidate.Mode),
+                        m_SpeedMetresPerSecond = SuggestedSpeedFor(candidate.Mode),
+                    },
+                };
+
+                TransitNetwork withCandidate = SuitabilityTransit.Build(
+                    xs, zs, total, lines, TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
+                var workspace = new DijkstraWorkspace(withCandidate.Graph.NodeCount);
+
+                float enabled = SuitabilityTransit.CreditLine(
+                    withCandidate, workspace, m_PairOrigins, m_PairDests, m_PairWeights, m_PairCount,
+                    lines.Count - 1, discount, MaxJourneySeconds, out float _);
+
+                // Corridor flow stays as the floor so a candidate on a busy street is
+                // not thrown away just because the transit model cannot reach it yet.
+                candidate.CapturedFlow = math.max(candidate.CapturedFlow, enabled);
+            }
+        }
+
+        // A proposed line has no fleet yet, so its service level is assumed from its
+        // mode rather than measured.
+        private static float SuggestedWaitFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Metro: return 150f;
+                case Setting.ModePreset.Train: return 300f;
+                case Setting.ModePreset.Tram: return 180f;
+                case Setting.ModePreset.Ferry: return 400f;
+                default: return 200f;
+            }
+        }
+
+        private static float SuggestedSpeedFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Metro: return 18f;
+                case Setting.ModePreset.Train: return 28f;
+                case Setting.ModePreset.Tram: return 12f;
+                case Setting.ModePreset.Ferry: return 10f;
+                default: return 9f;
+            }
+        }
+
+        private void UpdateLineHealthText()
+        {
+            var builder = new StringBuilder();
+            for (int i = 0; i < m_LineHealth.Count; i++)
+            {
+                LineHealth health = m_LineHealth[i];
+                if (i > 0)
+                {
+                    builder.Append('\n');
+                }
+
+                builder.Append(health.m_Mode);
+                builder.Append('|');
+                builder.Append(health.m_Verdict);
+                builder.Append('|');
+                builder.Append(SuitabilityLineHealth.Describe(health));
+                builder.Append('|');
+                builder.Append((health.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                builder.Append("% full, ");
+                builder.Append(health.m_Vehicles);
+                builder.Append(" veh, ");
+                builder.Append(health.m_Stops);
+                builder.Append(" stops");
+            }
+
+            s_LineHealthList = builder.ToString();
+        }
+
+        // How far a rider will walk to reach or change service.
+        private const float TransferWalkRadius = 250f;
+        // Journeys longer than this are not realistically made by transit.
+        private const float MaxJourneySeconds = 3600f;
 
         private float CoverageAt(float2 position, int2 gridSize)
         {
@@ -2120,6 +2431,8 @@ namespace StationSuitabilityOverlay
             grownTotal = g1 + g2 + g3 + g4;
             shortTotal = s1 + s2 + s3 + s4;
 
+            m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
+            ScoreCandidatesWithTransfers(settings);
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
             // Each network hands out its own mode, but the mode is only justified if

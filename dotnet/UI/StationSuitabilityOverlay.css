@@ -284,3 +284,26 @@
 .sso-hide-vanilla-infoview [class*="infoview-menu"] {
     display: none;
 }
+
+.sso-health {
+    margin-bottom: 5rem;
+}
+
+.sso-health-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.sso-dot {
+    width: 8rem;
+    height: 8rem;
+    margin-right: 6rem;
+    border-radius: 50%;
+}
+
+.sso-health-note {
+    margin-left: 14rem;
+    color: #9fb6cc;
+    font-size: 10rem;
+}

@@ -76,6 +76,7 @@ namespace StationSuitabilityOverlay
         private RouteGoal m_Objective;
         private int m_RouteCount;
         private bool m_ShowRoutes = true;
+        private int m_TransferPenalty = 40;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -216,6 +217,17 @@ namespace StationSuitabilityOverlay
             get => m_RouteCount;
             set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
         }
+
+        [SettingsUISlider(min = 0, max = 80, step = 5, scalarMultiplier = 1, unit = Unit.kPercentage)]
+        [SettingsUISection(kSection, kRoutesGroup)]
+        public int TransferPenalty
+        {
+            get => m_TransferPenalty;
+            set => m_TransferPenalty = ClampInt(value, 0, 80);
+        }
+
+        // Multiplier applied per change of vehicle when crediting a suggested line.
+        public float TransferDiscount => 1f - (m_TransferPenalty / 100f);
 
         [SettingsUISection(kSection, kRoutesGroup)]
         public string RouteSummary => StationSuitabilityOverlaySystem.RouteSummaryText;
@@ -496,6 +508,8 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Coverage), "Maximum coverage" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.TransferPenalty)), "Transfer penalty" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.TransferPenalty)), "How much a journey is discounted for each change of vehicle when crediting a suggested line. Zero treats a three-leg trip as good as a direct one; higher values favour direct service." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteSummary)), "Suggestions" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteSummary)), "The current suggestions, best first. The full detail is written to the mod log." },
 

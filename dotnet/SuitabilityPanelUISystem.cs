@@ -57,6 +57,7 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "showRoutes", () => Settings != null && Settings.ShowRoutes));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeSummary", () => StationSuitabilityOverlaySystem.RouteSummaryText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", () => StationSuitabilityOverlaySystem.RouteListText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", () => StationSuitabilityOverlaySystem.LineHealthText));
 
             AddBinding(new TriggerBinding<int>(Group, "setMode", value =>
             {
