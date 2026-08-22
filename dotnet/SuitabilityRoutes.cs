@@ -140,7 +140,7 @@ namespace StationSuitabilityOverlay
                 case Setting.ModePreset.Tram: return 1500f;
                 case Setting.ModePreset.Metro: return 2500f;
                 case Setting.ModePreset.Train: return 5000f;
-                case Setting.ModePreset.Ferry: return 800f;
+                case Setting.ModePreset.Ferry: return 1500f;
                 default: return 800f;
             }
         }

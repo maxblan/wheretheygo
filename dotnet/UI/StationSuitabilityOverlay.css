@@ -5,10 +5,12 @@
  * with the game's UI scale setting the same way vanilla panels do. */
 
 .sso-panel {
+    /* Right-hand side on purpose: the vanilla infoview legend occupies the top-left
+       and grew tall enough with ten layers to sit underneath this panel. */
     position: absolute;
     top: 60rem;
-    left: 10rem;
-    width: 280rem;
+    right: 60rem;
+    width: 300rem;
     padding: 8rem;
     background-color: rgba(12, 18, 26, 0.92);
     border: 1rem solid rgba(120, 170, 220, 0.35);
@@ -20,7 +22,15 @@
 }
 
 .sso-panel-collapsed {
-    width: 160rem;
+    width: 180rem;
+}
+
+.sso-labelrow {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 3rem;
 }
 
 .sso-header {
@@ -52,7 +62,7 @@
 }
 
 .sso-row {
-    margin-bottom: 5rem;
+    margin-bottom: 8rem;
 }
 
 .sso-label {
@@ -113,29 +123,55 @@
     background-color: rgba(70, 95, 125, 0.95);
 }
 
-.sso-readout {
-    flex-grow: 1;
-    margin-left: 5rem;
-    margin-right: 5rem;
-}
-
 .sso-bar {
-    height: 4rem;
+    flex-grow: 1;
+    margin-left: 6rem;
+    margin-right: 6rem;
+    height: 6rem;
     background-color: rgba(30, 42, 56, 0.9);
     border-radius: 2rem;
     overflow: hidden;
 }
 
 .sso-bar-fill {
-    height: 4rem;
+    height: 6rem;
     background-color: rgba(90, 165, 235, 0.95);
 }
 
 .sso-value {
-    margin-top: 1rem;
-    color: #e6eef7;
+    color: #ffffff;
     font-size: 11rem;
-    text-align: center;
+}
+
+.sso-routes {
+    margin-top: 4rem;
+}
+
+.sso-route {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 3rem;
+}
+
+.sso-swatch {
+    width: 14rem;
+    height: 6rem;
+    margin-right: 6rem;
+    border-radius: 2rem;
+}
+
+.sso-route-mode {
+    width: 52rem;
+    color: #eaf2fb;
+    font-size: 11rem;
+}
+
+.sso-route-meta {
+    flex-grow: 1;
+    color: #9fb6cc;
+    font-size: 10rem;
+    text-align: right;
 }
 
 .sso-toggle {

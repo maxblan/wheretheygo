@@ -21,8 +21,32 @@ namespace StationSuitabilityOverlay
     // the overlay is redrawn every frame regardless.
     public sealed partial class SuitabilityRouteRenderer : GameSystemBase
     {
-        private const float LineWidth = 12f;
-        private const float StopDiameter = 26f;
+        // Width, dash and marker size all vary by mode: colour alone is not enough
+        // to tell a bus line from a metro at a glance, especially against a
+        // multi-coloured heatmap.
+        private static float LineWidthFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 14f;
+                case Setting.ModePreset.Metro: return 16f;
+                case Setting.ModePreset.Train: return 20f;
+                case Setting.ModePreset.Ferry: return 10f;
+                default: return 10f;
+            }
+        }
+
+        private static float StopDiameterFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 26f;
+                case Setting.ModePreset.Metro: return 34f;
+                case Setting.ModePreset.Train: return 42f;
+                case Setting.ModePreset.Ferry: return 30f;
+                default: return 20f;
+            }
+        }
         private const float TerrainOffset = 4f;
 
         // Coloured by MODE, not by rank: rank is already visible in the ordered
@@ -98,22 +122,31 @@ namespace StationSuitabilityOverlay
                     float3 to = ToGround(route.Path[i], ref heightData);
                     // Rail and water routes do not follow streets, so they are dashed
                     // to read as their own alignment rather than as a road overlay.
-                    if (route.Mode == Setting.ModePreset.Bus || route.Mode == Setting.ModePreset.Tram)
+                    float width = LineWidthFor(route.Mode);
+                    switch (route.Mode)
                     {
-                        // DrawLine builds the straight curve internally, so there is
-                        // no need to construct a Bezier here.
-                        buffer.DrawLine(color, new Line3.Segment(from, to), LineWidth);
-                    }
-                    else
-                    {
-                        buffer.DrawDashedLine(color, new Line3.Segment(from, to), LineWidth, 40f, 24f);
+                        case Setting.ModePreset.Bus:
+                        case Setting.ModePreset.Tram:
+                            // DrawLine builds the straight curve internally, so there
+                            // is no need to construct a Bezier here.
+                            buffer.DrawLine(color, new Line3.Segment(from, to), width);
+                            break;
+                        case Setting.ModePreset.Metro:
+                            buffer.DrawDashedLine(color, new Line3.Segment(from, to), width, 70f, 30f);
+                            break;
+                        case Setting.ModePreset.Train:
+                            buffer.DrawDashedLine(color, new Line3.Segment(from, to), width, 140f, 60f);
+                            break;
+                        default:
+                            buffer.DrawDashedLine(color, new Line3.Segment(from, to), width, 30f, 45f);
+                            break;
                     }
                 }
 
                 for (int s = 0; s < route.Stops.Count; s++)
                 {
                     float3 stop = ToGround(route.Stops[s], ref heightData);
-                    buffer.DrawCircle(color, stop, StopDiameter);
+                    buffer.DrawCircle(color, stop, StopDiameterFor(route.Mode));
                 }
             }
 

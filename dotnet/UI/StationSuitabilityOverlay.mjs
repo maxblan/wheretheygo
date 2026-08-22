@@ -13,6 +13,16 @@ const Api = window["cs2/api"];
 const GROUP = "stationSuitability";
 
 const MODES = ["Bus", "Tram", "Metro", "Train", "Ferry"];
+
+// Must match ColorFor() in SuitabilityRouteRenderer.cs — this is the key that lets
+// you read a line's mode off the map.
+const MODE_COLORS = {
+    Bus: "rgb(38, 140, 255)",
+    Tram: "rgb(255, 115, 26)",
+    Metro: "rgb(153, 64, 242)",
+    Train: "rgb(26, 191, 89)",
+    Ferry: "rgb(26, 217, 242)",
+};
 const OBJECTIVES = ["Ridership", "Balanced", "Coverage"];
 
 // Matches Setting.cs; the panel must not offer values the C# side would clamp.
@@ -67,16 +77,16 @@ function Stepper({ label, value, min, max, step, unit, onSet }) {
     const fraction = max > min ? (value - min) / (max - min) : 0;
 
     return h("div", { className: "sso-row" },
-        h("div", { className: "sso-label" }, label),
+        h("div", { className: "sso-labelrow" },
+            h("div", { className: "sso-label" }, label),
+            h("div", { className: "sso-value" }, value + unit)),
         h("div", { className: "sso-stepper" },
             h("button", {
                 className: "sso-step",
                 onClick: () => onSet(clamp(value - step)),
             }, "−"),
-            h("div", { className: "sso-readout" },
-                h("div", { className: "sso-bar" },
-                    h("div", { className: "sso-bar-fill", style: { width: (fraction * 100) + "%" } })),
-                h("div", { className: "sso-value" }, value + unit)),
+            h("div", { className: "sso-bar" },
+                h("div", { className: "sso-bar-fill", style: { width: (fraction * 100) + "%" } })),
             h("button", {
                 className: "sso-step",
                 onClick: () => onSet(clamp(value + step)),
@@ -92,6 +102,26 @@ function Toggle({ label, value, onToggle }) {
         }, value ? "On" : "Off"));
 }
 
+function RouteList({ raw }) {
+    const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
+    if (!rows.length) {
+        return null;
+    }
+
+    return h("div", { className: "sso-routes" },
+        h("div", { className: "sso-section" }, "Suggested lines"),
+        rows.map((parts, i) => {
+            const mode = parts[0] || "Bus";
+            return h("div", { className: "sso-route", key: i },
+                h("div", {
+                    className: "sso-swatch",
+                    style: { backgroundColor: MODE_COLORS[mode] || "rgb(200,200,200)" },
+                }),
+                h("div", { className: "sso-route-mode" }, mode),
+                h("div", { className: "sso-route-meta" }, (parts[1] || "?") + " km · " + (parts[2] || "?") + " stops"));
+        }));
+}
+
 function Panel() {
     const visible = useBound("visible", false);
     const [collapsed, setCollapsed] = React.useState(false);
@@ -99,7 +129,7 @@ function Panel() {
     const mode = useBound("mode", 0);
     const objective = useBound("objective", 1);
     const showRoutes = useBound("showRoutes", true);
-    const routeSummary = useBound("routeSummary", "");
+    const routeList = useBound("routeList", "");
 
     // Hooks must run unconditionally, so the slider values are read before the
     // visibility check rather than inside it.
@@ -164,7 +194,7 @@ function Panel() {
                 onSet: (value) => trigger("set" + slider.key.charAt(0).toUpperCase() + slider.key.slice(1), value),
             })),
 
-        routeSummary ? h("div", { className: "sso-summary" }, routeSummary) : null);
+        h(RouteList, { raw: routeList }));
 }
 
 const register = (moduleRegistry) => {

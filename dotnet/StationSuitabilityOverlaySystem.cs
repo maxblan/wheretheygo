@@ -69,6 +69,7 @@ namespace StationSuitabilityOverlay
         private static string s_CalibrationStatus = "Waiting for a city to load.";
         private static string s_PipelineStatus = string.Empty;
         private static string s_RouteSummary = "No route suggestions yet.";
+        private static string s_RouteList = string.Empty;
         private static bool s_ApplyFitRequested;
         private static bool s_ResetCalibrationRequested;
 
@@ -76,6 +77,11 @@ namespace StationSuitabilityOverlay
             string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
 
         public static string RouteSummaryText => s_RouteSummary;
+
+        // One route per line as "mode|km|stops", for the panel to render as a
+        // colour-keyed list. A compact string avoids hand-rolling a JSON writer for
+        // what is at most a dozen rows.
+        public static string RouteListText => s_RouteList;
 
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 
@@ -233,6 +239,7 @@ namespace StationSuitabilityOverlay
         private readonly List<float2> m_TrackStarts = new List<float2>();
         private readonly List<float2> m_TrackEnds = new List<float2>();
         private readonly List<SuggestedRoute> m_RouteCandidates = new List<SuggestedRoute>();
+        private readonly List<ZoneFlow> m_CrossWaterFlows = new List<ZoneFlow>();
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
         private int[] m_ZoneNodes;
@@ -1827,9 +1834,16 @@ namespace StationSuitabilityOverlay
                 // Generous cost ceiling: a trip longer than this is not a candidate
                 // for a single transit line anyway.
                 assignedPairs = m_RoadGraph.AssignFlow(m_ZoneFlows, m_ZoneNodes, 20000f, out assignedWeight);
-                AssignLatticeFlow(m_TrainNetwork, worldMin);
-                AssignLatticeFlow(m_MetroNetwork, worldMin);
-                AssignLatticeFlow(m_WaterNetwork, worldMin);
+                AssignLatticeFlow(m_TrainNetwork, worldMin, m_ZoneFlows);
+                AssignLatticeFlow(m_MetroNetwork, worldMin, m_ZoneFlows);
+
+                // Ferries only ever serve journeys that actually cross water. Feeding
+                // the water network every trip put flow along the whole shoreline —
+                // any zone within snapping distance of the coast had its ordinary
+                // land trips routed out to sea — which is why coastal crawls were
+                // being suggested as ferry lines.
+                BuildCrossWaterFlows(gridSize);
+                AssignLatticeFlow(m_WaterNetwork, worldMin, m_CrossWaterFlows);
                 BuildRoutes(settings, gridSize, worldMin);
             }
 
@@ -1837,7 +1851,8 @@ namespace StationSuitabilityOverlay
             UpdateRouteSummary(tripCount, assignedPairs);
             Mod.Log.Info(
                 $"Travel demand: trips={tripCount}, weight={totalWeight:F0}, zonePairs={m_ZoneFlows.Count}, " +
-                $"assignedPairs={assignedPairs}, assignedWeight={assignedWeight:F0}, routes={m_Routes.Count}");
+                $"assignedPairs={assignedPairs}, assignedWeight={assignedWeight:F0}, " +
+                $"crossWaterPairs={m_CrossWaterFlows.Count}, candidates={m_RouteCandidates.Count}, routes={m_Routes.Count}");
         }
 
         // Unserved demand: a journey whose ends are already well covered by served
@@ -1950,15 +1965,98 @@ namespace StationSuitabilityOverlay
                 $"trackSegments={m_TrackStarts.Count}");
         }
 
-        private void AssignLatticeFlow(SuitabilityRoadGraph network, float2 worldMin)
+        private void AssignLatticeFlow(SuitabilityRoadGraph network, float2 worldMin, List<ZoneFlow> flows)
         {
-            if (network.Graph == null || network.NodeCount == 0)
+            if (network.Graph == null || network.NodeCount == 0 || flows.Count == 0)
             {
                 return;
             }
 
             int[] zoneNodes = network.MapZonesToNodes(m_ZoneGrid, worldMin);
-            network.AssignFlow(m_ZoneFlows, zoneNodes, 30000f, out float _);
+            network.AssignFlow(flows, zoneNodes, 30000f, out float _);
+        }
+
+        // Keeps only journeys whose two ends sit on different landmasses — the one
+        // case a boat is the right answer. Same-island trips are left to the road,
+        // rail and metro networks.
+        private void BuildCrossWaterFlows(int2 gridSize)
+        {
+            m_CrossWaterFlows.Clear();
+            if (!m_Components.IsCreated)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_ZoneFlows.Count; i++)
+            {
+                ZoneFlow flow = m_ZoneFlows[i];
+                int originLand = LandComponentAt(SuitabilityTravelDemand.ZoneCentre(flow.m_Origin, m_ScoreWorldMin, m_ZoneGrid), gridSize);
+                int destLand = LandComponentAt(SuitabilityTravelDemand.ZoneCentre(flow.m_Destination, m_ScoreWorldMin, m_ZoneGrid), gridSize);
+
+                if (originLand <= 0 || destLand <= 0 || originLand == destLand)
+                {
+                    continue;
+                }
+
+                m_CrossWaterFlows.Add(flow);
+            }
+        }
+
+        private int LandComponentAt(float2 position, int2 gridSize)
+        {
+            int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
+            int index = cell.x + cell.y * gridSize.x;
+            return index >= 0 && index < m_Components.Length ? m_Components[index] : 0;
+        }
+
+        // Demand reachable from a water node, sampled from the land around it. Open
+        // ocean scores nothing, which is what stops a ferry corridor crawling along
+        // an empty coastline.
+        private float[] BuildWaterNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
+        {
+            if (network.Graph == null || m_RawTerms == null || network.NodeCount == 0)
+            {
+                return null;
+            }
+
+            var demand = new float[network.NodeCount];
+            float invDemand = m_DemandCap > 0f ? 1f / m_DemandCap : 0f;
+            float invJobs = m_JobsCap > 0f ? 1f / m_JobsCap : 0f;
+            // A ferry pier serves the land within walking distance of it.
+            int span = math.max(2, (int)math.round(400f / TileSize));
+
+            for (int n = 0; n < network.NodeCount; n++)
+            {
+                var position = new float2(network.NodePositionsX[n], network.NodePositionsZ[n]);
+                int2 centre = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
+                float best = 0f;
+
+                for (int dy = -span; dy <= span; dy += 2)
+                {
+                    int y = centre.y + dy;
+                    if (y < 0 || y >= gridSize.y) continue;
+                    for (int dx = -span; dx <= span; dx += 2)
+                    {
+                        int x = centre.x + dx;
+                        if (x < 0 || x >= gridSize.x) continue;
+
+                        int index = x + y * gridSize.x;
+                        if (index >= m_RawTerms.Length) continue;
+
+                        SuitabilityCell terms = m_RawTerms[index];
+                        float local = SuitabilityScoring.Saturate(terms.m_Demand * invDemand)
+                            + SuitabilityScoring.Saturate(terms.m_Jobs * invJobs);
+                        if (local > best)
+                        {
+                            best = local;
+                        }
+                    }
+                }
+
+                demand[n] = best;
+            }
+
+            return demand;
         }
 
         // Each network contributes candidates for the modes it can carry; the merged
@@ -1989,10 +2087,11 @@ namespace StationSuitabilityOverlay
                 0.4f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
                 point => SnapStopToBestTile(point, gridSize));
 
-            // Water has no demand along it by definition, so no gate applies.
+            // Water is gated on the demand of the land beside it, so a ferry cannot
+            // wander down an empty coast.
             SuitabilityRoutes.BuildForNetwork(m_WaterNetwork, objective, settings.RouteCount,
-                0.5f, 20000f, null, 0f, Setting.ModePreset.Ferry, m_RouteCandidates,
-                point => point);
+                0.5f, 20000f, BuildWaterNodeDemand(m_WaterNetwork, gridSize), demandFloor,
+                Setting.ModePreset.Ferry, m_RouteCandidates, point => point);
 
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
@@ -2104,6 +2203,7 @@ namespace StationSuitabilityOverlay
         {
             if (m_Routes.Count == 0)
             {
+                s_RouteList = string.Empty;
                 if (tripCount < 0)
                 {
                     s_RouteSummary = "No corridor was strong enough to suggest a line.";
@@ -2119,6 +2219,23 @@ namespace StationSuitabilityOverlay
 
                 return;
             }
+
+            var list = new StringBuilder();
+            for (int i = 0; i < m_Routes.Count; i++)
+            {
+                SuggestedRoute r = m_Routes[i];
+                if (i > 0)
+                {
+                    list.Append('\n');
+                }
+
+                list.Append(r.Mode);
+                list.Append('|');
+                list.Append((r.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
+                list.Append('|');
+                list.Append(r.Stops.Count);
+            }
+            s_RouteList = list.ToString();
 
             var builder = new StringBuilder();
             builder.Append(m_Routes.Count);
