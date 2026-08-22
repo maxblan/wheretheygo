@@ -35,6 +35,14 @@ namespace StationSuitabilityOverlay
         // refresh at this cadence keeps the overlay tracking city growth without
         // needing change-detection on every building and road entity.
         private const float PeriodicRefreshSeconds = 10f;
+        // Road and workplace collections are cached and rebuilt from change
+        // detection; this is the backstop for input changes that carry no
+        // Created/Updated tag (e.g. a company's worker capacity being retuned).
+        private const float CollectionRefreshSeconds = 60f;
+        // The vanilla infoview initializer can refill PlaceableInfoviewItem
+        // buffers, so the auto-activation strip is re-verified on this cadence in
+        // addition to reacting to Created/Updated.
+        private const float PlaceableReverifySeconds = 60f;
         private const float MaxPenalty = 1.5f;
         private const int InfomodePriority = 200;
         // Demand and jobs are raw sums with unbounded scale; each is normalized
@@ -68,10 +76,30 @@ namespace StationSuitabilityOverlay
         private EntityQuery m_NodeQuery;
         private EntityQuery m_RoadEdgeQuery;
         private EntityQuery m_WorkplaceQuery;
+        private EntityQuery m_NodeChangedQuery;
+        private EntityQuery m_EdgeChangedQuery;
+        private EntityQuery m_WorkplaceChangedQuery;
         private EntityQuery m_ActiveInfomodeQuery;
         private EntityQuery m_PlaceableInfoviewQuery;
         private EntityQuery m_PlaceableInfoviewChangedQuery;
         private int m_LastStopCount;
+
+        // Chunk-index lookups instead of per-entity EntityManager calls: the
+        // workplace collection touches every WorkProvider in the city, so the
+        // per-entity archetype resolution EntityManager does is worth avoiding.
+        private ComponentLookup<Transform> m_TransformLookup;
+        private ComponentLookup<Game.Buildings.PropertyRenter> m_PropertyRenterLookup;
+
+        // Collected inputs are reused across recomputes; the dirty flags are set
+        // from change detection every frame (the tags only live for one frame, so
+        // they cannot be sampled lazily at compute time).
+        private List<float2> m_CachedNodePositions;
+        private List<float2> m_CachedEdgePositions;
+        private List<float2> m_CachedJobPositions;
+        private List<float> m_CachedJobWorkers;
+        private bool m_RoadCacheDirty = true;
+        private bool m_WorkplaceCacheDirty = true;
+        private float m_LastCollectionRefresh;
 
         private SuitabilityInfomodePrefab m_InfomodePrefab;
         private InfoviewPrefab m_InfoviewPrefab;
@@ -95,11 +123,19 @@ namespace StationSuitabilityOverlay
 
         private bool m_RecomputeRequested;
         private float m_RecomputeAt;
-        private float m_LastComputeStart;
+        private float m_LastComputeFinish;
         private bool m_PrefabsAdded;
         private bool m_InfoviewLinkChecked;
         private bool m_InfoviewLinkWaitLogged;
         private bool m_PlaceableSweepDone;
+        private float m_LastPlaceableSweep;
+        private int m_LastPlaceableCount = -1;
+        // Each placeable prefab's PlaceableInfoviewItem buffer as it stood BEFORE
+        // this mod registered its infoview, so the vanilla auto-activation choice
+        // can be put back verbatim when our infoview displaces it. Vanilla's
+        // runner-up is never stored in the buffer itself, so it is unrecoverable
+        // any other way short of reimplementing the game's scoring pass.
+        private Dictionary<Entity, PlaceableInfoviewItem[]> m_VanillaPlaceableInfoviews;
         private bool m_LastOverlayApplied;
 
         // In-flight suitability job; resolved in FinishComputeIfReady so a large
@@ -264,6 +300,64 @@ namespace StationSuitabilityOverlay
                 },
             });
 
+            m_NodeChangedQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<Node>(),
+                },
+                Any = new[]
+                {
+                    ComponentType.ReadOnly<Created>(),
+                    ComponentType.ReadOnly<Updated>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Temp>(),
+                },
+            });
+
+            m_EdgeChangedQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<Edge>(),
+                    ComponentType.ReadOnly<Road>(),
+                },
+                Any = new[]
+                {
+                    ComponentType.ReadOnly<Created>(),
+                    ComponentType.ReadOnly<Updated>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Temp>(),
+                },
+            });
+
+            m_WorkplaceChangedQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<WorkProvider>(),
+                },
+                Any = new[]
+                {
+                    ComponentType.ReadOnly<Created>(),
+                    ComponentType.ReadOnly<Updated>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Temp>(),
+                },
+            });
+
+            m_TransformLookup = GetComponentLookup<Transform>(true);
+            m_PropertyRenterLookup = GetComponentLookup<Game.Buildings.PropertyRenter>(true);
+
             m_ActiveInfomodeQuery = GetEntityQuery(
                 ComponentType.ReadOnly<SuitabilityInfomodeData>(),
                 ComponentType.ReadOnly<InfomodeActive>());
@@ -302,6 +396,11 @@ namespace StationSuitabilityOverlay
             m_RawTerms = null;
             m_Scores = null;
             m_ScoreScratch = null;
+            m_CachedNodePositions = null;
+            m_CachedEdgePositions = null;
+            m_CachedJobPositions = null;
+            m_CachedJobWorkers = null;
+            m_VanillaPlaceableInfoviews = null;
             base.OnDestroy();
         }
 
@@ -324,6 +423,7 @@ namespace StationSuitabilityOverlay
 
             EnsureInfoviewLinked();
             SweepPlaceableInfoviews();
+            TrackInputChanges();
             FinishComputeIfReady();
 
             // The overlay is driven entirely by the vanilla infoview menu: when the
@@ -385,9 +485,11 @@ namespace StationSuitabilityOverlay
 
             // Periodic refresh so new roads, zones and residents show up without
             // needing an explicit trigger (the score inputs change as the city
-            // simulates, not only when stops or settings change).
-            if (active && !m_JobPending && m_RawTerms != null
-                && UnityEngine.Time.realtimeSinceStartup - m_LastComputeStart >= PeriodicRefreshSeconds)
+            // simulates, not only when stops or settings change). Skipped while a
+            // recompute is already queued so it cannot cancel a pending debounce
+            // and fire on a half-dragged slider value.
+            if (active && !m_JobPending && !m_RecomputeRequested && m_RawTerms != null
+                && UnityEngine.Time.realtimeSinceStartup - m_LastComputeFinish >= PeriodicRefreshSeconds)
             {
                 ScheduleRecompute(0f);
             }
@@ -415,6 +517,27 @@ namespace StationSuitabilityOverlay
             ScheduleRecompute(0f);
         }
 
+        // Change tags live for a single frame, so the caches must be invalidated
+        // from a per-frame check rather than sampled when a compute starts.
+        private void TrackInputChanges()
+        {
+            if (!m_NodeChangedQuery.IsEmptyIgnoreFilter || !m_EdgeChangedQuery.IsEmptyIgnoreFilter)
+            {
+                m_RoadCacheDirty = true;
+            }
+
+            if (!m_WorkplaceChangedQuery.IsEmptyIgnoreFilter)
+            {
+                m_WorkplaceCacheDirty = true;
+            }
+
+            if (UnityEngine.Time.realtimeSinceStartup - m_LastCollectionRefresh >= CollectionRefreshSeconds)
+            {
+                m_RoadCacheDirty = true;
+                m_WorkplaceCacheDirty = true;
+            }
+        }
+
         private void ScheduleRecompute(float delaySeconds)
         {
             bool wasRequested = m_RecomputeRequested;
@@ -438,6 +561,10 @@ namespace StationSuitabilityOverlay
             {
                 return;
             }
+
+            // Must happen before our infoview exists, or the snapshot already
+            // contains the auto-activation entries we are trying to undo.
+            SnapshotVanillaPlaceableInfoviews();
 
             m_InfomodePrefab = PrefabBase.Create<SuitabilityInfomodePrefab>("StationSuitabilityOverlay");
             SetField(m_InfomodePrefab, "m_Priority", InfomodePriority);
@@ -539,6 +666,30 @@ namespace StationSuitabilityOverlay
         // asset whose vanilla infomodes all score negative, making the overlay pop
         // up for seemingly random build-menu selections. Strip our entries so the
         // overlay is only ever activated deliberately through the infoview menu.
+        private void SnapshotVanillaPlaceableInfoviews()
+        {
+            m_VanillaPlaceableInfoviews = new Dictionary<Entity, PlaceableInfoviewItem[]>();
+            using var entities = m_PlaceableInfoviewQuery.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                DynamicBuffer<PlaceableInfoviewItem> buffer = EntityManager.GetBuffer<PlaceableInfoviewItem>(entities[i], true);
+                if (buffer.Length == 0)
+                {
+                    continue;
+                }
+
+                var items = new PlaceableInfoviewItem[buffer.Length];
+                for (int j = 0; j < buffer.Length; j++)
+                {
+                    items[j] = buffer[j];
+                }
+
+                m_VanillaPlaceableInfoviews[entities[i]] = items;
+            }
+
+            Mod.Log.Info($"Captured vanilla auto-activation for {m_VanillaPlaceableInfoviews.Count} placeable prefabs.");
+        }
+
         private void SweepPlaceableInfoviews()
         {
             if (!m_InfoviewLinkChecked)
@@ -546,7 +697,17 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            if (m_PlaceableSweepDone && m_PlaceableInfoviewChangedQuery.IsEmptyIgnoreFilter)
+            // A full re-verify also runs periodically and whenever the placeable
+            // set changes size: if the vanilla initializer ever refills these
+            // buffers outside a Created/Updated frame, reacting to those tags
+            // alone would let the auto-activation bug return unnoticed.
+            int placeableCount = m_PlaceableInfoviewQuery.CalculateEntityCount();
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            bool full = !m_PlaceableSweepDone
+                || placeableCount != m_LastPlaceableCount
+                || now - m_LastPlaceableSweep >= PlaceableReverifySeconds;
+
+            if (!full && m_PlaceableInfoviewChangedQuery.IsEmptyIgnoreFilter)
             {
                 return;
             }
@@ -557,38 +718,59 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            // Full sweep once, then only re-created/updated prefabs (the vanilla
-            // system rewrites their buffers, which could re-add our infoview).
-            EntityQuery query = m_PlaceableSweepDone ? m_PlaceableInfoviewChangedQuery : m_PlaceableInfoviewQuery;
-            int stripped = StripPlaceableInfoviewItems(query, infoviewEntity, infomodeEntity);
-            if (!m_PlaceableSweepDone || stripped > 0)
+            EntityQuery query = full ? m_PlaceableInfoviewQuery : m_PlaceableInfoviewChangedQuery;
+            int restored = StripPlaceableInfoviewItems(query, infoviewEntity, infomodeEntity, out int cleared);
+            if (!m_PlaceableSweepDone || restored > 0 || cleared > 0)
             {
-                Mod.Log.Info($"Placeable infoview sweep ({(m_PlaceableSweepDone ? "incremental" : "full")}): removed auto-activation from {stripped} prefabs.");
+                Mod.Log.Info($"Placeable infoview sweep ({(full ? "full" : "incremental")}): restored vanilla auto-activation on {restored} prefabs, disabled it on {cleared}.");
+            }
+
+            m_LastPlaceableCount = placeableCount;
+            if (full)
+            {
+                m_LastPlaceableSweep = now;
             }
 
             m_PlaceableSweepDone = true;
         }
 
-        private int StripPlaceableInfoviewItems(EntityQuery query, Entity infoviewEntity, Entity infomodeEntity)
+        private int StripPlaceableInfoviewItems(EntityQuery query, Entity infoviewEntity, Entity infomodeEntity, out int cleared)
         {
-            int stripped = 0;
+            int restored = 0;
+            cleared = 0;
             using var entities = query.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
-                DynamicBuffer<PlaceableInfoviewItem> buffer = EntityManager.GetBuffer<PlaceableInfoviewItem>(entities[i]);
+                Entity entity = entities[i];
+                DynamicBuffer<PlaceableInfoviewItem> buffer = EntityManager.GetBuffer<PlaceableInfoviewItem>(entity);
                 if (buffer.Length == 0)
                 {
                     continue;
                 }
 
-                // Item 0 is the infoview the tool activates; the rest are
-                // supplemental infomodes. If ours won the top slot, the vanilla
-                // alternatives all scored negative — clearing the buffer just
-                // disables auto-activation for that asset.
+                // Item 0 is the infoview the tool auto-activates; any further
+                // entries are supplemental infomodes. When ours took the top slot
+                // it displaced a vanilla choice that the buffer never recorded, so
+                // put back the pre-mod snapshot when we have one and fall back to
+                // disabling auto-activation for that asset when we do not.
                 if (buffer[0].m_Item == infoviewEntity)
                 {
                     buffer.Clear();
-                    stripped++;
+                    if (m_VanillaPlaceableInfoviews != null
+                        && m_VanillaPlaceableInfoviews.TryGetValue(entity, out PlaceableInfoviewItem[] vanilla))
+                    {
+                        for (int j = 0; j < vanilla.Length; j++)
+                        {
+                            buffer.Add(vanilla[j]);
+                        }
+
+                        restored++;
+                    }
+                    else
+                    {
+                        cleared++;
+                    }
+
                     continue;
                 }
 
@@ -604,11 +786,11 @@ namespace StationSuitabilityOverlay
 
                 if (removed)
                 {
-                    stripped++;
+                    cleared++;
                 }
             }
 
-            return stripped;
+            return restored;
         }
 
         private int GetActiveChannel()
@@ -773,8 +955,11 @@ namespace StationSuitabilityOverlay
             int totalCells = gridSize.x * gridSize.y;
 
             List<float2> stopPositions = CollectStopPositions(settings.Mode);
-            CollectRoadNetwork(out List<float2> nodePositions, out List<float2> edgePositions);
-            CollectWorkplaces(out List<float2> jobPositions, out List<float> jobWorkers);
+            EnsureCollectionsCurrent();
+            List<float2> nodePositions = m_CachedNodePositions;
+            List<float2> edgePositions = m_CachedEdgePositions;
+            List<float2> jobPositions = m_CachedJobPositions;
+            List<float> jobWorkers = m_CachedJobWorkers;
 
             int2 bucketGrid = GridDims(mapSize, BucketSize);
 
@@ -838,7 +1023,6 @@ namespace StationSuitabilityOverlay
             m_PendingEdgeCount = edgePositions.Count;
             m_JobPending = true;
             m_GridAtCompute = GetGridSize();
-            m_LastComputeStart = UnityEngine.Time.realtimeSinceStartup;
             return true;
         }
 
@@ -851,6 +1035,9 @@ namespace StationSuitabilityOverlay
 
             m_PendingHandle.Complete();
             m_JobPending = false;
+            // Stamped on completion, not on schedule, so the refresh interval is a
+            // real idle cooldown even if a compute cycle outlasts it.
+            m_LastComputeFinish = UnityEngine.Time.realtimeSinceStartup;
 
             int totalCells = m_PendingTerms.Length;
             if (m_RawTerms == null || m_RawTerms.Length != totalCells)
@@ -1076,8 +1263,31 @@ namespace StationSuitabilityOverlay
             return lower.Contains("metro") || lower.Contains("subway");
         }
 
+        // Rebuilds the cached road and workplace collections only when change
+        // detection says they moved. Both walk large parts of the entity world on
+        // the main thread, and the periodic overlay refresh would otherwise pay for
+        // them every ten seconds for as long as the infoview stays open.
+        private void EnsureCollectionsCurrent()
+        {
+            if (m_RoadCacheDirty || m_CachedNodePositions == null)
+            {
+                CollectRoadNetwork(out m_CachedNodePositions, out m_CachedEdgePositions);
+                m_RoadCacheDirty = false;
+            }
+
+            if (m_WorkplaceCacheDirty || m_CachedJobPositions == null)
+            {
+                CollectWorkplaces(out m_CachedJobPositions, out m_CachedJobWorkers);
+                m_WorkplaceCacheDirty = false;
+            }
+
+            m_LastCollectionRefresh = UnityEngine.Time.realtimeSinceStartup;
+        }
+
         // Accessibility only considers the road network: pipes, power lines and rail
         // would otherwise inflate the score in places pedestrians cannot reach.
+        // The node map spans every net node because road edges reference their
+        // endpoints by entity; only road endpoints end up in nodePositions.
         private void CollectRoadNetwork(out List<float2> nodePositions, out List<float2> edgePositions)
         {
             using var nodeEntities = m_NodeQuery.ToEntityArray(Allocator.Temp);
@@ -1126,6 +1336,9 @@ namespace StationSuitabilityOverlay
             using var entities = m_WorkplaceQuery.ToEntityArray(Allocator.Temp);
             using var providers = m_WorkplaceQuery.ToComponentDataArray<WorkProvider>(Allocator.Temp);
 
+            m_TransformLookup.Update(this);
+            m_PropertyRenterLookup.Update(this);
+
             for (int i = 0; i < entities.Length; i++)
             {
                 int maxWorkers = providers[i].m_MaxWorkers;
@@ -1136,19 +1349,19 @@ namespace StationSuitabilityOverlay
 
                 Entity entity = entities[i];
                 float3 pos;
-                if (EntityManager.HasComponent<Transform>(entity))
+                if (m_TransformLookup.HasComponent(entity))
                 {
-                    pos = EntityManager.GetComponentData<Transform>(entity).m_Position;
+                    pos = m_TransformLookup[entity].m_Position;
                 }
-                else if (EntityManager.HasComponent<Game.Buildings.PropertyRenter>(entity))
+                else if (m_PropertyRenterLookup.HasComponent(entity))
                 {
-                    Entity property = EntityManager.GetComponentData<Game.Buildings.PropertyRenter>(entity).m_Property;
-                    if (property == Entity.Null || !EntityManager.HasComponent<Transform>(property))
+                    Entity property = m_PropertyRenterLookup[entity].m_Property;
+                    if (property == Entity.Null || !m_TransformLookup.HasComponent(property))
                     {
                         continue;
                     }
 
-                    pos = EntityManager.GetComponentData<Transform>(property).m_Position;
+                    pos = m_TransformLookup[property].m_Position;
                 }
                 else
                 {
@@ -1169,7 +1382,11 @@ namespace StationSuitabilityOverlay
             out NativeArray<int> counts)
         {
             NativeArray<float2> result = BuildWeightedBuckets(positions, null, gridSize, worldMin, tileSize, out offsets, out counts, out NativeArray<float> weights);
-            weights.Dispose();
+            if (weights.IsCreated)
+            {
+                weights.Dispose();
+            }
+
             return result;
         }
 
@@ -1202,7 +1419,11 @@ namespace StationSuitabilityOverlay
             }
 
             var result = new NativeArray<float2>(positions.Count, Allocator.Persistent, NativeArrayOptions.ClearMemory);
-            weightsOut = new NativeArray<float>(positions.Count, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+            // Only the weighted callers need this array; the unweighted ones would
+            // otherwise pay a Persistent allocation per compute just to free it.
+            weightsOut = weights != null
+                ? new NativeArray<float>(positions.Count, Allocator.Persistent, NativeArrayOptions.ClearMemory)
+                : default;
             var write = new NativeArray<int>(bucketCount, Allocator.Temp);
             NativeArray<int>.Copy(offsets, write);
 
@@ -1212,7 +1433,10 @@ namespace StationSuitabilityOverlay
                 int index = cell.x + cell.y * gridSize.x;
                 int writeIndex = write[index]++;
                 result[writeIndex] = positions[i];
-                weightsOut[writeIndex] = weights != null ? weights[i] : 1f;
+                if (weights != null)
+                {
+                    weightsOut[writeIndex] = weights[i];
+                }
             }
 
             write.Dispose();
