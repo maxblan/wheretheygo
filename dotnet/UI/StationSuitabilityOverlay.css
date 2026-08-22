@@ -241,20 +241,46 @@
 }
 
 /* Toolbar toggle, sitting alongside the vanilla top-left buttons. */
+ /* --floatingToggleSize is the variable the vanilla infoview toggle uses, so this
+    button matches its neighbours at every UI scale. */
+.sso-toolbar-slot {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    height: var(--floatingToggleSize);
+    width: var(--floatingToggleSize);
+    margin-bottom: 6rem;
+}
+
 .sso-toolbar-button {
-    width: 36rem;
-    height: 36rem;
-    margin-left: 4rem;
-    background-color: rgba(24, 38, 54, 0.9);
-    border: 1rem solid rgba(120, 170, 220, 0.4);
-    border-radius: 4rem;
-    color: #cfe2f5;
-    font-size: 18rem;
-    text-align: center;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(11, 21, 32, 0.85);
+    border: none;
+    border-radius: 50%;
     cursor: pointer;
     pointer-events: auto;
 }
 
 .sso-toolbar-button:hover {
-    background-color: rgba(50, 85, 125, 0.95);
+    background-color: rgba(41, 72, 104, 0.95);
+}
+
+.sso-toolbar-button-on {
+    background-color: rgba(70, 140, 210, 0.95);
+}
+
+.sso-toolbar-icon {
+    width: 60%;
+    height: 60%;
+}
+
+/* The mod drives itself from its own button now, so its row in the vanilla
+   infoview menu would just be a second way in. */
+.sso-hide-vanilla-infoview [class*="infoview-menu"] {
+    display: none;
 }

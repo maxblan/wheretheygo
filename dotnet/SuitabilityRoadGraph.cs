@@ -273,30 +273,74 @@ namespace StationSuitabilityOverlay
             return (roadDataLookup[prefab].m_Flags & Game.Prefabs.RoadFlags.UseHighwayRules) != 0;
         }
 
-        // Nearest graph node to each zone centre, or -1 where the zone has no road
-        // near it. Linear scan per zone: zones number in the hundreds and this only
-        // reruns when the graph changes.
+        // Nearest graph node to each zone centre, or -1 where the zone has no node
+        // near it.
+        //
+        // Bucketed rather than scanned: a linear scan is zones x nodes, which on a
+        // lattice network is tens of millions of distance tests per rebuild and was
+        // the visible stall when the overlay opened.
         public int[] MapZonesToNodes(int2 zoneGrid, float2 worldMin)
         {
             int zoneCount = zoneGrid.x * zoneGrid.y;
             var mapping = new int[zoneCount];
-            float snapSq = ZoneSnapRadius * ZoneSnapRadius;
+            for (int i = 0; i < zoneCount; i++)
+            {
+                mapping[i] = -1;
+            }
 
+            if (NodeCount == 0)
+            {
+                return mapping;
+            }
+
+            // One bucket per zone cell, so a zone only examines the nodes in itself
+            // and its eight neighbours.
+            var buckets = new List<int>[zoneCount];
+            for (int n = 0; n < NodeCount; n++)
+            {
+                var position = new float2(NodePositionsX[n], NodePositionsZ[n]);
+                int zone = SuitabilityTravelDemand.ZoneOf(position, worldMin, zoneGrid);
+                if (zone < 0)
+                {
+                    continue;
+                }
+
+                (buckets[zone] ?? (buckets[zone] = new List<int>())).Add(n);
+            }
+
+            float snapSq = ZoneSnapRadius * ZoneSnapRadius;
             for (int zone = 0; zone < zoneCount; zone++)
             {
                 float2 centre = SuitabilityTravelDemand.ZoneCentre(zone, worldMin, zoneGrid);
+                int zx = zone % zoneGrid.x;
+                int zy = zone / zoneGrid.x;
                 int best = -1;
                 float bestSq = snapSq;
 
-                for (int n = 0; n < NodeCount; n++)
+                for (int dy = -1; dy <= 1; dy++)
                 {
-                    float dx = NodePositionsX[n] - centre.x;
-                    float dz = NodePositionsZ[n] - centre.y;
-                    float distSq = dx * dx + dz * dz;
-                    if (distSq < bestSq)
+                    int ny = zy + dy;
+                    if (ny < 0 || ny >= zoneGrid.y) continue;
+                    for (int dx = -1; dx <= 1; dx++)
                     {
-                        bestSq = distSq;
-                        best = n;
+                        int nx = zx + dx;
+                        if (nx < 0 || nx >= zoneGrid.x) continue;
+
+                        List<int> bucket = buckets[nx + ny * zoneGrid.x];
+                        if (bucket == null) continue;
+
+                        for (int i = 0; i < bucket.Count; i++)
+                        {
+                            int node = bucket[i];
+                            float ndx = NodePositionsX[node] - centre.x;
+                            float ndz = NodePositionsZ[node] - centre.y;
+                            float distSq = ndx * ndx + ndz * ndz;
+                            if (distSq < bestSq)
+                            {
+                                bestSq = distSq;
+                                best = node;
+                            }
+                        }
                     }
                 }
 

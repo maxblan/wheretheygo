@@ -57,8 +57,12 @@ namespace StationSuitabilityOverlay
             float demandFloor,
             Setting.ModePreset? forcedMode,
             List<SuggestedRoute> output,
-            System.Func<float2, float> scoreAt)
+            System.Func<float2, float> scoreAt,
+            out int grown,
+            out int tooShort)
         {
+            grown = 0;
+            tooShort = 0;
             if (network?.Graph == null || network.EdgeFlow == null || network.EdgeCount == 0)
             {
                 return;
@@ -85,7 +89,11 @@ namespace StationSuitabilityOverlay
             float flowFloor = meanFlow * minFlowFraction;
             var corridor = new Corridor();
 
-            for (int r = 0; r < maxRoutes; r++)
+            // Grow more corridors than asked for: many are discarded for being too
+            // short or too light, and stopping at maxRoutes attempts left the merged
+            // set far thinner than the requested count.
+            int attempts = maxRoutes * 4;
+            for (int r = 0; r < attempts && output.Count < maxRoutes * 2; r++)
             {
                 if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight,
                         flowFloor, maxRouteLength, corridor, nodeDemand, demandFloor))
@@ -123,7 +131,12 @@ namespace StationSuitabilityOverlay
 
                 // Rail and water suggestions are only worth making at a scale that
                 // justifies the infrastructure; a 900 m metro line is nonsense.
-                if (route.Length >= MinLengthFor(route.Mode))
+                grown++;
+                if (route.Length < MinLengthFor(route.Mode))
+                {
+                    tooShort++;
+                }
+                else
                 {
                     PlaceStops(route, StopSpacingFor(route.Mode), scoreAt);
                     if (route.Stops.Count >= 2)

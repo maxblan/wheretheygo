@@ -143,6 +143,15 @@ namespace StationSuitabilityOverlay
                     }
                 }
 
+                // Each segment is drawn independently with flat ends, so a direction
+                // change leaves a visible notch on the outside of the corner. A dot
+                // the width of the line at each interior vertex closes it.
+                for (int i = 1; i < route.Path.Count - 1; i++)
+                {
+                    float3 joint = ToGround(route.Path[i], ref heightData);
+                    buffer.DrawCircle(color, joint, LineWidthFor(route.Mode));
+                }
+
                 for (int s = 0; s < route.Stops.Count; s++)
                 {
                     float3 stop = ToGround(route.Stops[s], ref heightData);

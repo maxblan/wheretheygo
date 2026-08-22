@@ -143,6 +143,7 @@ function Panel() {
     const showRoutes = useBound("showRoutes", true);
     const routeList = useBound("routeList", "");
     const ownsInfoview = useBound("ownsInfoview", false);
+    const heatmap = useBound("heatmap", true);
 
     // Suppress the vanilla infoview legend while ours is showing; a class on the
     // document root is the only hook a plain CSS file can key off.
@@ -172,7 +173,7 @@ function Panel() {
             h("button", {
                 className: "sso-header",
                 onClick: () => setCollapsed(false),
-            }, "Station Suitability ▸"));
+            }, "Station Suitability  +"));
     }
 
     return h("div", { className: "sso-panel" },
@@ -193,7 +194,13 @@ function Panel() {
             onClick: () => trigger("applyPreset"),
         }, "Apply preset weights for this mode"),
 
-        h(Legend, {}),
+        h(Toggle, {
+            label: "Suitability heat map",
+            value: heatmap,
+            onToggle: (next) => trigger("setHeatmap", next),
+        }),
+
+        heatmap ? h(Legend, {}) : null,
 
         h("div", { className: "sso-section" }, "Route planning"),
 
@@ -227,12 +234,20 @@ function Panel() {
         h(RouteList, { raw: routeList }));
 }
 
+// Styled to match the vanilla floating toggles beside it: same size variable, same
+// rounded container, and the mod's own SVG icon rather than a text glyph.
 function ToolbarButton() {
-    return h("button", {
-        className: "sso-toolbar-button",
-        title: "Station Suitability",
-        onClick: () => trigger("toggle"),
-    }, "◎");
+    const open = useBound("visible", false);
+    return h("div", { className: "sso-toolbar-slot" },
+        h("button", {
+            className: "sso-toolbar-button" + (open ? " sso-toolbar-button-on" : ""),
+            title: "Station Suitability",
+            onClick: () => trigger("toggle"),
+        },
+            h("img", {
+                className: "sso-toolbar-icon",
+                src: "coui://stationsuitabilityoverlay/StationSuitability.svg",
+            })));
 }
 
 const register = (moduleRegistry) => {

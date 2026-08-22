@@ -30,6 +30,14 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "ownsInfoview", () =>
                 m_OverlaySystem != null && m_OverlaySystem.IsInfoviewActive));
 
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
+                m_OverlaySystem != null && m_OverlaySystem.IsInfoviewActive));
+
+            AddBinding(new TriggerBinding<bool>(Group, "setHeatmap", value =>
+            {
+                m_OverlaySystem?.SetInfoviewActive(value);
+            }));
+
             AddBinding(new TriggerBinding(Group, "toggle", () =>
             {
                 m_Open = !m_Open;

@@ -2095,23 +2095,30 @@ namespace StationSuitabilityOverlay
             // through-traffic — that is what stopped routes looping into empty land.
             float demandFloor = 0.02f;
 
+            int grownTotal = 0;
+            int shortTotal = 0;
+
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
-                0.2f, 12000f, roadDemand, demandFloor, null, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize));
+                0.1f, 12000f, roadDemand, demandFloor, null, m_RouteCandidates,
+                point => ScoreAtWorld(point, gridSize), out int g1, out int s1);
 
             SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
                 0.6f, 20000f, trainDemand, demandFloor, Setting.ModePreset.Train, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize));
+                point => ScoreAtWorld(point, gridSize), out int g2, out int s2);
 
             SuitabilityRoutes.BuildForNetwork(m_MetroNetwork, objective, settings.RouteCount,
                 0.4f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize));
+                point => ScoreAtWorld(point, gridSize), out int g3, out int s3);
 
             // Water is gated on the demand of the land beside it, so a ferry cannot
             // wander down an empty coast.
             SuitabilityRoutes.BuildForNetwork(m_WaterNetwork, objective, settings.RouteCount,
                 0.5f, 20000f, BuildWaterNodeDemand(m_WaterNetwork, gridSize), demandFloor,
-                Setting.ModePreset.Ferry, m_RouteCandidates, point => ShorelineScoreAt(point, gridSize));
+                Setting.ModePreset.Ferry, m_RouteCandidates, point => ShorelineScoreAt(point, gridSize),
+                out int g4, out int s4);
+
+            grownTotal = g1 + g2 + g3 + g4;
+            shortTotal = s1 + s2 + s3 + s4;
 
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
@@ -2136,10 +2143,10 @@ namespace StationSuitabilityOverlay
                 m_Routes.Add(candidate);
             }
 
-            if (rejected > 0)
-            {
-                Mod.Log.Info($"Route suggestions: {rejected} candidate(s) rejected as too light for their mode (reference flow {reference:F0}).");
-            }
+            Mod.Log.Info(
+                $"Route suggestions: grown={grownTotal}, tooShort={shortTotal}, " +
+                $"candidates={m_RouteCandidates.Count}, tooLight={rejected}, kept={m_Routes.Count}, " +
+                $"referenceFlow={reference:F0} (floors: tram {reference * 1.5f:F0}, metro {reference * 5f:F0}, train {reference * 8f:F0})");
         }
 
         // Demand near each network node, so corridor growth can tell a street with
