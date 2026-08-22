@@ -29,6 +29,7 @@ namespace StationSuitabilityOverlay
             Settings = new Setting(this);
             Settings.RegisterInOptionsUI();
             GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(Settings));
+            GameManager.instance.localizationManager.AddSource("de-DE", new LocaleDE(Settings));
 
             // Zero the tuning fields so ClampAll can distinguish "loaded from file"
             // from "absent in a pre-1.1 file" and fill in mode-aware defaults.
