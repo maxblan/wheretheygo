@@ -144,26 +144,37 @@ const VERDICT_COLORS = {
 
 // Existing lines, worst first, with the numbers the verdict came from — a remedy
 // you cannot check is not worth much.
-function LineHealth({ raw }) {
+// Existing lines, worst first, each with a button that works out a concrete
+// improvement. Lives in its own scrolling column so a city with twenty lines does
+// not push the controls off the screen.
+function LineHealth({ raw, plan }) {
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
     if (!rows.length) {
         return null;
     }
 
-    return h("div", { className: "sso-routes" },
+    return h("div", { className: "sso-column" },
         h("div", { className: "sso-section" }, "Line health"),
-        rows.map((parts, i) => {
-            const verdict = parts[1] || "Healthy";
-            return h("div", { className: "sso-health", key: i },
-                h("div", { className: "sso-health-head" },
-                    h("div", {
-                        className: "sso-dot",
-                        style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
-                    }),
-                    h("div", { className: "sso-route-mode" }, parts[0] || "Bus"),
-                    h("div", { className: "sso-route-meta" }, parts[3] || "")),
-                h("div", { className: "sso-health-note" }, parts[2] || ""));
-        }));
+        h("div", { className: "sso-scroll" },
+            rows.map((parts, i) => {
+                const index = parseInt(parts[0], 10);
+                const verdict = parts[2] || "Healthy";
+                const healthy = verdict === "Healthy";
+                return h("div", { className: "sso-health", key: i },
+                    h("div", { className: "sso-health-head" },
+                        h("div", {
+                            className: "sso-dot",
+                            style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
+                        }),
+                        h("div", { className: "sso-route-mode" }, (parts[1] || "Bus") + " " + (parts[0] || "")),
+                        h("div", { className: "sso-route-meta" }, parts[4] || "")),
+                    h("div", { className: "sso-health-note" }, parts[3] || ""),
+                    healthy ? null : h("button", {
+                        className: "sso-improve",
+                        onClick: () => trigger("improveLine", index),
+                    }, "Suggest improvement"));
+            })),
+        plan ? h("div", { className: "sso-plan" }, plan) : null);
 }
 
 function Panel() {
@@ -177,6 +188,7 @@ function Panel() {
     const ownsInfoview = useBound("ownsInfoview", false);
     const heatmap = useBound("heatmap", true);
     const lineHealth = useBound("lineHealth", "");
+    const improvePlan = useBound("improvePlan", "");
 
     // Suppress the vanilla infoview legend while ours is showing; a class on the
     // document root is the only hook a plain CSS file can key off.
@@ -213,7 +225,10 @@ function Panel() {
         h("button", {
             className: "sso-header",
             onClick: () => setCollapsed(true),
-        }, "Station Suitability ▾"),
+        }, "Station Suitability  -"),
+
+        h("div", { className: "sso-body" },
+        h("div", { className: "sso-column" },
 
         h(Choice, {
             label: "Mode",
@@ -264,9 +279,9 @@ function Panel() {
                 onSet: (value) => trigger("set" + slider.key.charAt(0).toUpperCase() + slider.key.slice(1), value),
             })),
 
-        h(RouteList, { raw: routeList }),
+        h(RouteList, { raw: routeList })),
 
-        h(LineHealth, { raw: lineHealth }));
+        h(LineHealth, { raw: lineHealth, plan: improvePlan })));
 }
 
 // Styled to match the vanilla floating toggles beside it: same size variable, same

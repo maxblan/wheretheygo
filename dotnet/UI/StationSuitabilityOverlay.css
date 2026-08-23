@@ -10,7 +10,7 @@
     position: absolute;
     top: 60rem;
     right: 60rem;
-    width: 300rem;
+    width: 620rem;
     padding: 8rem;
     background-color: rgba(12, 18, 26, 0.92);
     border: 1rem solid rgba(120, 170, 220, 0.35);
@@ -305,5 +305,56 @@
 .sso-health-note {
     margin-left: 14rem;
     color: #9fb6cc;
+    font-size: 10rem;
+}
+
+/* Two columns: the controls on the left, line health scrolling on the right. With
+   twenty lines a single column pushed everything off the bottom of the screen. */
+.sso-body {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+}
+
+.sso-column {
+    width: 300rem;
+    margin-right: 10rem;
+}
+
+.sso-column:last-child {
+    margin-right: 0;
+}
+
+/* Fixed height so the panel keeps the size of the controls column, with its own
+   scrollbar rather than growing without bound. */
+.sso-scroll {
+    height: 420rem;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4rem;
+}
+
+.sso-improve {
+    margin-top: 2rem;
+    margin-left: 14rem;
+    padding: 2rem 6rem;
+    background-color: rgba(45, 70, 100, 0.9);
+    border: 1rem solid rgba(120, 170, 220, 0.35);
+    border-radius: 3rem;
+    color: #dceaf8;
+    font-size: 10rem;
+    cursor: pointer;
+}
+
+.sso-improve:hover {
+    background-color: rgba(70, 110, 160, 0.95);
+}
+
+.sso-plan {
+    margin-top: 6rem;
+    padding: 5rem;
+    background-color: rgba(30, 50, 70, 0.85);
+    border-radius: 3rem;
+    color: #e6f0fa;
     font-size: 10rem;
 }

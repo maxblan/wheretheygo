@@ -21,6 +21,8 @@ namespace StationSuitabilityOverlay
         public readonly List<float> m_RideSeconds = new List<float>();
         public readonly List<float2> m_Path = new List<float2>();
         public float m_ExpectedWait;
+        // The line's own headway, as the game maintains it.
+        public float m_VehicleInterval;
         public float m_LineDurationSeconds;
         public float m_LengthMetres;
         public int m_Vehicles;
@@ -93,6 +95,7 @@ namespace StationSuitabilityOverlay
                 // The wait a rider actually experiences, the way the game's own
                 // pathfinder computes it.
                 float dwell = lineData.m_StopDuration;
+                line.m_VehicleInterval = transportLine.m_VehicleInterval;
                 line.m_ExpectedWait = SuitabilityTransit.ExpectedWait(
                     transportLine.m_VehicleInterval, line.m_AverageWait, dwell);
 
@@ -248,11 +251,12 @@ namespace StationSuitabilityOverlay
                 ExistingLine line = lines[i];
                 float usage = line.m_Capacity > 0 ? (float)line.m_Passengers / line.m_Capacity : 0f;
 
-                // The fleet the line's own interval implies; the game converges
-                // m_VehicleInterval to lineDuration / fleetSize, so inverting it gives
-                // the target the game is aiming at.
-                int target = line.m_ExpectedWait > 0f
-                    ? math.max(1, (int)math.round(line.m_LineDurationSeconds / math.max(1f, line.m_ExpectedWait * 2f)))
+                // The fleet the line's own interval implies. The game converges
+                // m_VehicleInterval to lineDuration / fleetSize, so inverting it with
+                // the RAW interval gives the target it is aiming at. Using the derived
+                // expected wait here produced targets of 1 against fleets of 6.
+                int target = line.m_VehicleInterval > 0f && line.m_LineDurationSeconds > 0f
+                    ? math.max(1, (int)math.round(line.m_LineDurationSeconds / math.max(1f, line.m_VehicleInterval)))
                     : math.max(1, line.m_Vehicles);
 
                 LineVerdict verdict = SuitabilityLineHealth.Judge(

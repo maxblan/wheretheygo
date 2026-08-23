@@ -25,6 +25,7 @@ namespace StationSuitabilityOverlay
         // participate in the assignment.
         private const float ZoneSnapRadius = SuitabilityTravelDemand.ZoneSize;
 
+        public RouteNetwork Network;
         public CompactGraph Graph;
         public float[] NodePositionsX;
         public float[] NodePositionsZ;
@@ -279,6 +280,95 @@ namespace StationSuitabilityOverlay
         // Bucketed rather than scanned: a linear scan is zones x nodes, which on a
         // lattice network is tens of millions of distance tests per rebuild and was
         // the visible stall when the overlay opened.
+        // Nearest node to a world position. Linear, but only called a handful of
+        // times when a corridor is re-traced.
+        public int NearestNode(float2 position, float maxDistance)
+        {
+            int best = -1;
+            float bestSq = maxDistance * maxDistance;
+            for (int n = 0; n < NodeCount; n++)
+            {
+                float dx = NodePositionsX[n] - position.x;
+                float dz = NodePositionsZ[n] - position.y;
+                float distSq = dx * dx + dz * dz;
+                if (distSq < bestSq)
+                {
+                    bestSq = distSq;
+                    best = n;
+                }
+            }
+
+            return best;
+        }
+
+        // Shortest path between two nodes as a list of node indices, for re-tracing a
+        // corridor on a different network.
+        public bool TracePath(int fromNode, int toNode, float maxCost, List<int> nodes)
+        {
+            nodes.Clear();
+            if (Graph == null || fromNode < 0 || toNode < 0 || fromNode == toNode)
+            {
+                return false;
+            }
+
+            m_Workspace.Run(Graph, fromNode, maxCost);
+            if (m_Workspace.Dist[toNode] == float.MaxValue)
+            {
+                return false;
+            }
+
+            int node = toNode;
+            int guard = Graph.EdgeCount + 2;
+            while (node != fromNode && guard-- > 0)
+            {
+                nodes.Add(node);
+                int edge = m_Workspace.PrevEdge[node];
+                if (edge < 0)
+                {
+                    return false;
+                }
+
+                node = Graph.OtherEnd(edge, node);
+            }
+
+            nodes.Add(fromNode);
+            nodes.Reverse();
+            return true;
+        }
+
+        // Mean flow along a traced path, matching how corridor flow is measured.
+        public float FlowAlong(List<int> nodes)
+        {
+            if (Graph == null || EdgeFlow == null || nodes.Count < 2)
+            {
+                return 0f;
+            }
+
+            float weighted = 0f;
+            float length = 0f;
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                int a = nodes[i - 1];
+                int b = nodes[i];
+                int start = Graph.NodeOffsets[a];
+                int end = Graph.NodeOffsets[a + 1];
+                for (int k = start; k < end; k++)
+                {
+                    if (Graph.AdjOther[k] != b)
+                    {
+                        continue;
+                    }
+
+                    int edge = Graph.AdjEdge[k];
+                    weighted += EdgeFlow[edge] * Graph.EdgeCost[edge];
+                    length += Graph.EdgeCost[edge];
+                    break;
+                }
+            }
+
+            return length > 0f ? weighted / length : 0f;
+        }
+
         public int[] MapZonesToNodes(int2 zoneGrid, float2 worldMin)
         {
             int zoneCount = zoneGrid.x * zoneGrid.y;

@@ -12,6 +12,11 @@ namespace StationSuitabilityOverlay
         public Setting.ModePreset Mode;
         public float CapturedFlow;
         public float Length;
+        // Which network traced this alignment, and therefore which modes could
+        // actually run on it. A tunnel path cannot host a bus.
+        public RouteNetwork Network;
+        // Fleet the line would need to hold its assumed headway.
+        public int Vehicles;
 
         public void Clear()
         {
@@ -112,6 +117,7 @@ namespace StationSuitabilityOverlay
                 {
                     CapturedFlow = corridor.CapturedFlow,
                     Length = corridor.Length,
+                    Network = network.Network,
                 };
 
                 for (int i = 0; i < corridor.Nodes.Count; i++)
@@ -158,6 +164,170 @@ namespace StationSuitabilityOverlay
                 : Setting.ModePreset.Bus;
         }
 
+        // Modes a given alignment can carry, best capacity first. Choosing among these
+        // is what lets an under-used rail corridor come back as something feasible
+        // instead of being dropped for not justifying a metro.
+        public static Setting.ModePreset[] ModesFor(RouteNetwork network)
+        {
+            switch (network)
+            {
+                case RouteNetwork.Rail:
+                    return new[] { Setting.ModePreset.Train, Setting.ModePreset.Metro };
+                case RouteNetwork.Water:
+                    return new[] { Setting.ModePreset.Ferry };
+                default:
+                    // Streets can host either, and a bus has no capacity floor, so a
+                    // road corridor always yields a usable suggestion.
+                    return new[] { Setting.ModePreset.Tram, Setting.ModePreset.Bus };
+            }
+        }
+
+        // Highest-capacity mode whose demand floor and minimum length this corridor
+        // actually meets. Returns false when nothing on this alignment is justified.
+        public static bool ChooseMode(
+            RouteNetwork network,
+            float flow,
+            float length,
+            float referenceFlow,
+            out Setting.ModePreset mode)
+        {
+            Setting.ModePreset[] options = ModesFor(network);
+            for (int i = 0; i < options.Length; i++)
+            {
+                Setting.ModePreset option = options[i];
+                float floor = referenceFlow * MinFlowMultipleFor(option);
+                if (flow >= floor && length >= MinLengthFor(option))
+                {
+                    mode = option;
+                    return true;
+                }
+            }
+
+            mode = options[options.Length - 1];
+            return false;
+        }
+
+        // Fleet needed to hold the mode's assumed headway around the whole line.
+        public static int EstimateVehicles(Setting.ModePreset mode, float lengthMetres, int stops, float headwaySeconds)
+        {
+            float speed = CruiseSpeedFor(mode);
+            float dwell = 15f;
+            float roundTrip = (lengthMetres * 2f) / math.max(1f, speed) + stops * 2 * dwell;
+            return math.max(1, (int)math.round(roundTrip / math.max(30f, headwaySeconds)));
+        }
+
+        public static float CruiseSpeedFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 12f;
+                case Setting.ModePreset.Metro: return 18f;
+                case Setting.ModePreset.Train: return 28f;
+                case Setting.ModePreset.Ferry: return 10f;
+                default: return 9f;
+            }
+        }
+
+        // Re-traces a corridor on the ROAD network between the same endpoints.
+        //
+        // Needed because falling back across mode families changes what the alignment
+        // may be: a metro corridor is a tunnel path, and a bus cannot drive it. So the
+        // route is genuinely recalculated along streets rather than merely relabelled.
+        public static SuggestedRoute RetraceOnRoad(
+            SuitabilityRoadGraph roads,
+            float2 from,
+            float2 to,
+            float referenceFlow,
+            System.Func<float2, float> scoreAt,
+            List<int> scratch)
+        {
+            if (roads?.Graph == null)
+            {
+                return null;
+            }
+
+            int fromNode = roads.NearestNode(from, 600f);
+            int toNode = roads.NearestNode(to, 600f);
+            if (fromNode < 0 || toNode < 0 || !roads.TracePath(fromNode, toNode, 30000f, scratch))
+            {
+                return null;
+            }
+
+            var route = new SuggestedRoute { Network = RouteNetwork.Road };
+            for (int i = 0; i < scratch.Count; i++)
+            {
+                int node = scratch[i];
+                route.Path.Add(new float2(roads.NodePositionsX[node], roads.NodePositionsZ[node]));
+            }
+
+            float length = 0f;
+            for (int i = 1; i < route.Path.Count; i++)
+            {
+                length += math.distance(route.Path[i - 1], route.Path[i]);
+            }
+
+            route.Length = length;
+            route.CapturedFlow = roads.FlowAlong(scratch);
+
+            if (!ChooseMode(RouteNetwork.Road, route.CapturedFlow, route.Length, referenceFlow, out Setting.ModePreset mode))
+            {
+                return null;
+            }
+
+            Restop(route, mode, scoreAt);
+            return route.Stops.Count >= 2 ? route : null;
+        }
+
+        // Re-places stops after a mode change, since spacing is mode-specific.
+        public static void Restop(SuggestedRoute route, Setting.ModePreset mode, System.Func<float2, float> scoreAt)
+        {
+            route.Mode = mode;
+            PlaceStops(route, StopSpacingFor(mode), scoreAt);
+        }
+
+        // True when this candidate essentially retraces a line that already exists.
+        // Without this a suggestion survived being built: the player laid the tram the
+        // mod asked for and the same suggestion kept being offered.
+        public static bool DuplicatesExisting(SuggestedRoute route, List<ExistingLine> existing, List<float2> stopPositions, float matchRadius)
+        {
+            if (route.Stops.Count == 0 || existing == null)
+            {
+                return false;
+            }
+
+            float radiusSq = matchRadius * matchRadius;
+            for (int l = 0; l < existing.Count; l++)
+            {
+                ExistingLine line = existing[l];
+                int matched = 0;
+                for (int s = 0; s < route.Stops.Count; s++)
+                {
+                    for (int i = 0; i < line.m_StopIndices.Count; i++)
+                    {
+                        int index = line.m_StopIndices[i];
+                        if (index < 0 || index >= stopPositions.Count)
+                        {
+                            continue;
+                        }
+
+                        if (math.distancesq(route.Stops[s], stopPositions[index]) <= radiusSq)
+                        {
+                            matched++;
+                            break;
+                        }
+                    }
+                }
+
+                // Most of the suggestion already has service on the same alignment.
+                if (matched >= (int)math.ceil(route.Stops.Count * 0.6f))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // Below these lengths the mode is not worth building, whatever the demand.
         public static float MinLengthFor(Setting.ModePreset mode)
         {
@@ -188,7 +358,7 @@ namespace StationSuitabilityOverlay
         // best-scoring position — so the flow still decides where the line runs and
         // the suitability score still decides exactly where a stop sits, but a stop
         // can never end up beside its own route.
-        private static void PlaceStops(SuggestedRoute route, float spacing, System.Func<float2, float> scoreAt)
+        internal static void PlaceStops(SuggestedRoute route, float spacing, System.Func<float2, float> scoreAt)
         {
             route.Stops.Clear();
             if (route.Path.Count < 2)

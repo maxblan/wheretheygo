@@ -57,8 +57,9 @@ namespace StationSuitabilityOverlay
         public const float FullUsage = 0.85f;
         // Below this it is not carrying enough to justify itself.
         public const float EmptyUsage = 0.15f;
-        // Average wait, in the game's own units, past which service feels sparse.
-        public const float LongWait = 45f;
+        // Average wait past which service genuinely feels sparse. Observed waits on a
+        // working city run 20-100 for healthy lines, so 45 flagged almost everything.
+        public const float LongWait = 150f;
 
         // `requireVehicles` and `notEnoughVehicles` come straight from
         // TransportLineFlags — the game already decides when a line is short of
@@ -94,16 +95,19 @@ namespace StationSuitabilityOverlay
                 return LineVerdict.Overcrowded;
             }
 
-            // Long waits with room to spare means the service is too infrequent for
-            // the demand pattern rather than too small.
-            if (averageWait >= LongWait && usage < FullUsage)
-            {
-                return LineVerdict.LongWaits;
-            }
-
-            if (usage > 0f && usage <= EmptyUsage)
+            // Emptiness is checked BEFORE waits: a barely-used line is lightly used,
+            // not badly timetabled, and reporting it as "long waits" told the player
+            // to run more buses down an empty street.
+            if (usage <= EmptyUsage)
             {
                 return LineVerdict.NearlyEmpty;
+            }
+
+            // Long waits with room to spare means the service is too infrequent for
+            // the demand pattern rather than too small.
+            if (averageWait >= LongWait)
+            {
+                return LineVerdict.LongWaits;
             }
 
             return LineVerdict.Healthy;
@@ -120,6 +124,135 @@ namespace StationSuitabilityOverlay
                 case Setting.ModePreset.Tram: return Setting.ModePreset.Metro;
                 case Setting.ModePreset.Metro: return Setting.ModePreset.Train;
                 default: return mode;
+            }
+        }
+
+        // A concrete improvement for one line: what to run it with, how many, and what
+        // to do about its shape. Every number is derived from the line's own
+        // measurements so the player can check the reasoning.
+        public static string Improve(
+            LineHealth health,
+            float lengthMetres,
+            float lineDurationSeconds,
+            int capacityPerVehicle,
+            float targetLoad)
+        {
+            var parts = new System.Text.StringBuilder();
+
+            // Mode: grow when the vehicles themselves are the ceiling, shrink when the
+            // line cannot fill what it already runs.
+            Setting.ModePreset mode = health.m_Mode;
+            if (health.m_Verdict == LineVerdict.AtModeCapacity)
+            {
+                mode = NextModeUp(health.m_Mode);
+            }
+            else if (health.m_Verdict == LineVerdict.NearlyEmpty)
+            {
+                mode = NextModeDown(health.m_Mode);
+            }
+
+            parts.Append("run it as ");
+            parts.Append(mode);
+
+            // Fleet: enough capacity to carry the observed load at a comfortable fill,
+            // and enough vehicles to hold a sensible headway around the line.
+            int perVehicle = Math.Max(1, capacityPerVehicle);
+            int forLoad = (int)Math.Ceiling(health.m_Passengers / Math.Max(0.2f, targetLoad) / perVehicle);
+            int forHeadway = lineDurationSeconds > 0f
+                ? (int)Math.Round(lineDurationSeconds / TargetHeadwayFor(mode))
+                : health.m_Vehicles;
+            int vehicles = Math.Max(1, Math.Max(forLoad, forHeadway));
+
+            parts.Append(" with ");
+            parts.Append(vehicles);
+            parts.Append(" vehicle(s)");
+            if (vehicles != health.m_Vehicles)
+            {
+                parts.Append(vehicles > health.m_Vehicles ? " (+" : " (");
+                parts.Append(vehicles - health.m_Vehicles);
+                parts.Append(')');
+            }
+
+            // Shape: the two failures worth calling out are a line too long to keep a
+            // headway, and one making far more stops than its mode wants.
+            float maxLength = MaxSensibleLength(mode);
+            float spacing = health.m_Stops > 1 ? lengthMetres / (health.m_Stops - 1) : lengthMetres;
+            float wantedSpacing = TargetSpacingFor(mode);
+
+            if (lengthMetres > maxLength)
+            {
+                parts.Append("; split it — ");
+                parts.Append((lengthMetres / 1000f).ToString("F1"));
+                parts.Append(" km is beyond what one ");
+                parts.Append(mode);
+                parts.Append(" line can keep to time");
+            }
+            else if (spacing < wantedSpacing * 0.6f && health.m_Stops > 4)
+            {
+                int keep = Math.Max(2, (int)Math.Round(lengthMetres / wantedSpacing) + 1);
+                parts.Append("; thin the stops to about ");
+                parts.Append(keep);
+                parts.Append(" — they average ");
+                parts.Append(spacing.ToString("F0"));
+                parts.Append(" m apart, close for a ");
+                parts.Append(mode);
+            }
+            else if (health.m_Verdict == LineVerdict.NearlyEmpty)
+            {
+                parts.Append("; or reroute it through denser ground — the suggestions list shows where demand is unserved");
+            }
+            else
+            {
+                parts.Append("; the route shape looks reasonable");
+            }
+
+            return parts.ToString();
+        }
+
+        public static Setting.ModePreset NextModeDown(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Train: return Setting.ModePreset.Metro;
+                case Setting.ModePreset.Metro: return Setting.ModePreset.Tram;
+                case Setting.ModePreset.Tram: return Setting.ModePreset.Bus;
+                default: return mode;
+            }
+        }
+
+        private static float TargetHeadwayFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 240f;
+                case Setting.ModePreset.Metro: return 200f;
+                case Setting.ModePreset.Train: return 480f;
+                case Setting.ModePreset.Ferry: return 600f;
+                default: return 300f;
+            }
+        }
+
+        private static float TargetSpacingFor(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 450f;
+                case Setting.ModePreset.Metro: return 800f;
+                case Setting.ModePreset.Train: return 2000f;
+                case Setting.ModePreset.Ferry: return 1200f;
+                default: return 350f;
+            }
+        }
+
+        private static float MaxSensibleLength(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Tram: return 12000f;
+                case Setting.ModePreset.Metro: return 20000f;
+                case Setting.ModePreset.Train: return 60000f;
+                case Setting.ModePreset.Ferry: return 20000f;
+                default: return 9000f;
             }
         }
 

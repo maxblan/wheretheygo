@@ -73,6 +73,8 @@ namespace StationSuitabilityOverlay
         private static string s_LineHealthList = string.Empty;
         private static bool s_ApplyFitRequested;
         private static bool s_ResetCalibrationRequested;
+        private static int s_ImproveRequest = -1;
+        private static string s_ImprovePlan = string.Empty;
 
         public static string CalibrationStatusText =>
             string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
@@ -90,6 +92,11 @@ namespace StationSuitabilityOverlay
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 
         public static void RequestResetCalibration() => s_ResetCalibrationRequested = true;
+
+        // The panel asks for one line's improvement plan by its displayed index.
+        public static void RequestImprovement(int lineIndex) => s_ImproveRequest = lineIndex;
+
+        public static string ImprovePlanText => s_ImprovePlan;
 
         private TerrainSystem m_TerrainSystem;
         private WaterSystem m_WaterSystem;
@@ -1918,6 +1925,7 @@ namespace StationSuitabilityOverlay
                 m_ExistingLines, m_TransitStops, m_StopIndices);
             SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
             UpdateLineHealthText();
+            HandleImprovementRequest();
 
             if (m_TransitStops.Count == 0)
             {
@@ -2151,9 +2159,12 @@ namespace StationSuitabilityOverlay
                     withCandidate, workspace, m_PairOrigins, m_PairDests, m_PairWeights, m_PairCount,
                     lines.Count - 1, discount, MaxJourneySeconds, out float _);
 
-                // Corridor flow stays as the floor so a candidate on a busy street is
-                // not thrown away just because the transit model cannot reach it yet.
-                candidate.CapturedFlow = math.max(candidate.CapturedFlow, enabled);
+                // Enabled demand governs, with only a small floor from corridor flow
+                // so a candidate the transit model cannot reach yet is not lost. The
+                // old max() kept raw corridor flow in charge, which is why a
+                // suggestion survived being built: once the line existed its enabled
+                // demand collapsed but its corridor flow did not.
+                candidate.CapturedFlow = math.max(enabled, candidate.CapturedFlow * 0.15f);
             }
         }
 
@@ -2183,6 +2194,45 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // Builds the improvement plan for whichever line the panel asked about. Run
+        // here rather than in the binding so it uses the same measurements the list
+        // was built from.
+        private void HandleImprovementRequest()
+        {
+            if (s_ImproveRequest < 0)
+            {
+                return;
+            }
+
+            int requested = s_ImproveRequest;
+            s_ImproveRequest = -1;
+
+            for (int i = 0; i < m_LineHealth.Count; i++)
+            {
+                LineHealth health = m_LineHealth[i];
+                if (health.m_Index != requested)
+                {
+                    continue;
+                }
+
+                int source = health.m_Index - 1;
+                if (source < 0 || source >= m_ExistingLines.Count)
+                {
+                    return;
+                }
+
+                ExistingLine line = m_ExistingLines[source];
+                int perVehicle = health.m_Vehicles > 0 ? health.m_Capacity / health.m_Vehicles : health.m_Capacity;
+
+                // Aim to fill about 70%: full enough to justify the service, with room
+                // for the peaks the averages hide.
+                s_ImprovePlan = $"Line {health.m_Index} ({health.m_Mode}): " + SuitabilityLineHealth.Improve(
+                    health, line.m_LengthMetres, line.m_LineDurationSeconds, perVehicle, 0.7f);
+                Mod.Log.Info(s_ImprovePlan);
+                return;
+            }
+        }
+
         private void UpdateLineHealthText()
         {
             var builder = new StringBuilder();
@@ -2194,6 +2244,8 @@ namespace StationSuitabilityOverlay
                     builder.Append('\n');
                 }
 
+                builder.Append(health.m_Index);
+                builder.Append('|');
                 builder.Append(health.m_Mode);
                 builder.Append('|');
                 builder.Append(health.m_Verdict);
@@ -2435,31 +2487,74 @@ namespace StationSuitabilityOverlay
             ScoreCandidatesWithTransfers(settings);
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
-            // Each network hands out its own mode, but the mode is only justified if
-            // the corridor carries enough to warrant that infrastructure. Judged
-            // against the ROAD network's mean flow so every mode is measured on one
-            // city-wide scale rather than its own network's average.
+            // Pick each candidate's mode from what its demand actually justifies, and
+            // re-trace it on the streets when nothing its own alignment can carry is
+            // justified. Judged against the ROAD network's mean flow so every mode is
+            // measured on one city-wide scale rather than its own network's average.
             float reference = SuitabilityGraphMath.MeanPositiveFlow(m_RoadGraph.EdgeFlow, m_RoadGraph.EdgeCount);
 
             m_Routes.Clear();
             int rejected = 0;
+            int retraced = 0;
+            int duplicates = 0;
+            var scratch = new List<int>();
+
             for (int i = 0; i < m_RouteCandidates.Count && m_Routes.Count < settings.RouteCount; i++)
             {
                 SuggestedRoute candidate = m_RouteCandidates[i];
-                float floor = reference * SuitabilityRoutes.MinFlowMultipleFor(candidate.Mode);
-                if (reference > 0f && candidate.CapturedFlow < floor)
+
+                if (SuitabilityRoutes.ChooseMode(candidate.Network, candidate.CapturedFlow, candidate.Length,
+                        reference, out Setting.ModePreset mode))
+                {
+                    // Spacing is mode-specific, so a changed mode needs its stops back.
+                    if (mode != candidate.Mode)
+                    {
+                        SuitabilityRoutes.Restop(candidate, mode, point => ScoreAtWorld(point, gridSize));
+                    }
+                }
+                else if (candidate.Network != RouteNetwork.Road && candidate.Stops.Count >= 2)
+                {
+                    // Nothing this alignment can carry is justified — a tunnel for a
+                    // handful of riders. Re-trace the same journey along streets, where
+                    // a bus or tram can actually run it.
+                    SuggestedRoute onRoad = SuitabilityRoutes.RetraceOnRoad(
+                        m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1],
+                        reference, point => ScoreAtWorld(point, gridSize), scratch);
+
+                    if (onRoad == null)
+                    {
+                        rejected++;
+                        continue;
+                    }
+
+                    candidate = onRoad;
+                    retraced++;
+                }
+                else
                 {
                     rejected++;
                     continue;
                 }
+
+                // A suggestion the player has already built should stop being offered.
+                if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, 250f))
+                {
+                    duplicates++;
+                    continue;
+                }
+
+                candidate.Vehicles = SuitabilityRoutes.EstimateVehicles(
+                    candidate.Mode, candidate.Length, candidate.Stops.Count,
+                    SuggestedWaitFor(candidate.Mode) * 2f);
 
                 m_Routes.Add(candidate);
             }
 
             Mod.Log.Info(
                 $"Route suggestions: grown={grownTotal}, tooShort={shortTotal}, " +
-                $"candidates={m_RouteCandidates.Count}, tooLight={rejected}, kept={m_Routes.Count}, " +
-                $"referenceFlow={reference:F0} (floors: tram {reference * 1.5f:F0}, metro {reference * 5f:F0}, train {reference * 8f:F0})");
+                $"candidates={m_RouteCandidates.Count}, unjustified={rejected}, retracedOnRoad={retraced}, " +
+                $"alreadyBuilt={duplicates}, kept={m_Routes.Count}, referenceFlow={reference:F0} " +
+                $"(floors: tram {reference * 1.5f:F0}, metro {reference * 5f:F0}, train {reference * 8f:F0})");
         }
 
         // Demand near each network node, so corridor growth can tell a street with
@@ -2612,6 +2707,8 @@ namespace StationSuitabilityOverlay
                 list.Append((r.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
                 list.Append('|');
                 list.Append(r.Stops.Count);
+                list.Append('|');
+                list.Append(r.Vehicles);
             }
             s_RouteList = list.ToString();
 
@@ -2634,7 +2731,9 @@ namespace StationSuitabilityOverlay
                 builder.Append((route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
                 builder.Append("km, ");
                 builder.Append(route.Stops.Count);
-                builder.Append(" stops");
+                builder.Append(" stops, ");
+                builder.Append(route.Vehicles);
+                builder.Append(" veh");
             }
 
             s_RouteSummary = builder.ToString();
@@ -2649,7 +2748,8 @@ namespace StationSuitabilityOverlay
                 float2 to = route.Stops.Count > 0 ? route.Stops[route.Stops.Count - 1] : float2.zero;
                 Mod.Log.Info(
                     $"Route #{i + 1}: {route.Mode}, {route.Length / 1000f:F2} km, {route.Stops.Count} stops, " +
-                    $"flow={route.CapturedFlow:F0}, ({(int)from.x},{(int)from.y}) -> ({(int)to.x},{(int)to.y})");
+                    $"flow={route.CapturedFlow:F0}, {route.Vehicles} vehicles, " +
+                    $"({(int)from.x},{(int)from.y}) -> ({(int)to.x},{(int)to.y})");
             }
         }
 

@@ -58,6 +58,12 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeSummary", () => StationSuitabilityOverlaySystem.RouteSummaryText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", () => StationSuitabilityOverlaySystem.RouteListText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", () => StationSuitabilityOverlaySystem.LineHealthText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", () => StationSuitabilityOverlaySystem.ImprovePlanText));
+
+            AddBinding(new TriggerBinding<int>(Group, "improveLine", index =>
+            {
+                StationSuitabilityOverlaySystem.RequestImprovement(index);
+            }));
 
             AddBinding(new TriggerBinding<int>(Group, "setMode", value =>
             {

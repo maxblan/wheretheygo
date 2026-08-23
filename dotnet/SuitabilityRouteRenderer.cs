@@ -111,39 +111,6 @@ namespace StationSuitabilityOverlay
 
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(false);
 
-            // Existing lines that need attention, tinted by severity. Drawn thin and
-            // beneath the suggestions so they inform without competing with them.
-            System.Collections.Generic.List<ExistingLine> existing = m_OverlaySystem.ExistingLines;
-            System.Collections.Generic.List<LineHealth> health = m_OverlaySystem.LineHealthList;
-            if (existing != null && health != null)
-            {
-                for (int i = 0; i < health.Count; i++)
-                {
-                    LineHealth entry = health[i];
-                    if (entry.Severity == 0)
-                    {
-                        continue;
-                    }
-
-                    // LineHealth is sorted worst-first, so m_Index carries the
-                    // original position in the gathered list.
-                    int source = entry.m_Index - 1;
-                    if (source < 0 || source >= existing.Count)
-                    {
-                        continue;
-                    }
-
-                    ExistingLine line = existing[source];
-                    Color tint = SeverityColor(entry.m_Verdict);
-                    for (int p = 1; p < line.m_Path.Count; p++)
-                    {
-                        float3 from = ToGround(line.m_Path[p - 1], ref heightData);
-                        float3 to = ToGround(line.m_Path[p], ref heightData);
-                        buffer.DrawLine(tint, new Line3.Segment(from, to), 6f);
-                    }
-                }
-            }
-
             for (int r = 0; r < routes.Count; r++)
             {
                 SuggestedRoute route = routes[r];
@@ -194,17 +161,6 @@ namespace StationSuitabilityOverlay
 
             // The buffer was written on the main thread with the prior writers already
             // completed, so there is no new job handle to register.
-        }
-
-        private static Color SeverityColor(LineVerdict verdict)
-        {
-            switch (verdict)
-            {
-                case LineVerdict.AtModeCapacity: return new Color(0.9f, 0.24f, 0.2f, 0.85f);
-                case LineVerdict.Overcrowded: return new Color(0.94f, 0.55f, 0.16f, 0.85f);
-                case LineVerdict.LongWaits: return new Color(0.9f, 0.78f, 0.24f, 0.8f);
-                default: return new Color(0.51f, 0.55f, 0.61f, 0.7f);
-            }
         }
 
         private float3 ToGround(float2 flat, ref TerrainHeightData heightData)
