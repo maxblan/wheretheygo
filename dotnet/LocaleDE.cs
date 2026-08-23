@@ -1,5 +1,6 @@
-using Colossal;
+﻿using Colossal;
 using System.Collections.Generic;
+using System;
 
 namespace StationSuitabilityOverlay
 {
@@ -16,7 +17,7 @@ namespace StationSuitabilityOverlay
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            return new Dictionary<string, string>
+            return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Haltestellen-Eignung" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Allgemein" },

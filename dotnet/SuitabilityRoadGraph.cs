@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Colossal.Entities;
 using Game.Net;
 using PathMethod = Game.Pathfind.PathMethod;
@@ -7,6 +7,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Colossal.Mathematics;
 using Unity.Mathematics;
+using System;
 
 namespace StationSuitabilityOverlay
 {
@@ -31,25 +32,25 @@ namespace StationSuitabilityOverlay
         private const int MaxCurveSamples = 8;
 
         public RouteNetwork Network;
-        public CompactGraph Graph;
-        public float[] NodePositionsX;
-        public float[] NodePositionsZ;
-        public float[] EdgeFlow;
+        public CompactGraph? Graph;
+        public float[] NodePositionsX = Array.Empty<float>();
+        public float[] NodePositionsZ = Array.Empty<float>();
+        public float[] EdgeFlow = Array.Empty<float>();
 
         // Interior points of each edge's actual centreline, in A->B order. Without
         // these a traced route is a chord between intersections, which visibly leaves
         // the street on anything curved — the reason suggested bus and tram lines
         // looked like they cut across blocks.
-        public float[] EdgeShapeX;
-        public float[] EdgeShapeZ;
-        public int[] EdgeShapeStart;
-        public int[] EdgeShapeCount;
+        public float[]? EdgeShapeX;
+        public float[]? EdgeShapeZ;
+        public int[]? EdgeShapeStart;
+        public int[]? EdgeShapeCount;
 
         private readonly Dictionary<Entity, int> m_NodeIndices = new Dictionary<Entity, int>();
         private readonly List<int> m_EdgeA = new List<int>();
         private readonly List<int> m_EdgeB = new List<int>();
         private readonly List<float> m_EdgeCost = new List<float>();
-        private DijkstraWorkspace m_Workspace;
+        private DijkstraWorkspace? m_Workspace;
 
         // Takes ownership of a graph built elsewhere — used for the lattice networks,
         // which are not derived from road entities at all.
@@ -111,7 +112,7 @@ namespace StationSuitabilityOverlay
 
         private static bool HasTrackLane(EntityManager entityManager, Entity edge)
         {
-            if (!entityManager.TryGetBuffer(edge, true, out DynamicBuffer<Game.Net.SubLane> lanes))
+            if (!entityManager.TryGetBuffer(edge, isReadOnly: true, out DynamicBuffer<Game.Net.SubLane> lanes))
             {
                 return false;
             }
@@ -252,7 +253,7 @@ namespace StationSuitabilityOverlay
         // far more reliable than inferring it from the prefab.
         private static bool IsTransitDrivable(EntityManager entityManager, Entity edge)
         {
-            if (!entityManager.TryGetBuffer(edge, true, out DynamicBuffer<Game.Net.SubLane> lanes))
+            if (!entityManager.TryGetBuffer(edge, isReadOnly: true, out DynamicBuffer<Game.Net.SubLane> lanes))
             {
                 return false;
             }
@@ -375,7 +376,7 @@ namespace StationSuitabilityOverlay
         public void MaterialisePath(List<int> nodes, List<float2> path)
         {
             path.Clear();
-            if (Graph == null || nodes == null || nodes.Count == 0)
+            if (Graph is null || nodes is null || nodes.Count == 0)
             {
                 return;
             }
@@ -388,7 +389,10 @@ namespace StationSuitabilityOverlay
                 int to = nodes[i];
 
                 int edge = FindEdge(from, to);
-                if (edge >= 0 && EdgeShapeCount != null && EdgeShapeCount[edge] > 0)
+                // All four shape arrays are written together in Build and left null by
+                // Adopt, so they are all present or all absent.
+                if (edge >= 0 && EdgeShapeCount is not null && EdgeShapeStart is not null
+                    && EdgeShapeX is not null && EdgeShapeZ is not null && EdgeShapeCount[edge] > 0)
                 {
                     int start = EdgeShapeStart[edge];
                     int count = EdgeShapeCount[edge];
@@ -408,6 +412,11 @@ namespace StationSuitabilityOverlay
         // Cheapest edge joining two adjacent nodes, or -1 if they are not adjacent.
         private int FindEdge(int from, int to)
         {
+            if (Graph is null)
+            {
+                return -1;
+            }
+
             int best = -1;
             float bestCost = float.MaxValue;
             for (int a = Graph.NodeOffsets[from]; a < Graph.NodeOffsets[from + 1]; a++)
@@ -431,7 +440,7 @@ namespace StationSuitabilityOverlay
         public bool TracePath(int fromNode, int toNode, float maxCost, List<int> nodes)
         {
             nodes.Clear();
-            if (Graph == null || fromNode < 0 || toNode < 0 || fromNode == toNode)
+            if (Graph is null || m_Workspace is null || fromNode < 0 || toNode < 0 || fromNode == toNode)
             {
                 return false;
             }
@@ -464,7 +473,7 @@ namespace StationSuitabilityOverlay
         // Mean flow along a traced path, matching how corridor flow is measured.
         public float FlowAlong(List<int> nodes)
         {
-            if (Graph == null || EdgeFlow == null || nodes.Count < 2)
+            if (Graph is null || EdgeFlow is null || nodes.Count < 2)
             {
                 return 0f;
             }
@@ -535,14 +544,23 @@ namespace StationSuitabilityOverlay
                 for (int dy = -1; dy <= 1; dy++)
                 {
                     int ny = zy + dy;
-                    if (ny < 0 || ny >= zoneGrid.y) continue;
+                    if (ny < 0 || ny >= zoneGrid.y)
+                    {
+                        continue;
+                    }
                     for (int dx = -1; dx <= 1; dx++)
                     {
                         int nx = zx + dx;
-                        if (nx < 0 || nx >= zoneGrid.x) continue;
+                        if (nx < 0 || nx >= zoneGrid.x)
+                        {
+                            continue;
+                        }
 
                         List<int> bucket = buckets[nx + ny * zoneGrid.x];
-                        if (bucket == null) continue;
+                        if (bucket is null)
+                        {
+                            continue;
+                        }
 
                         for (int i = 0; i < bucket.Count; i++)
                         {
@@ -574,7 +592,7 @@ namespace StationSuitabilityOverlay
         public int AssignFlow(List<ZoneFlow> flows, int[] zoneNodes, float maxCost, out float assignedWeight)
         {
             assignedWeight = 0f;
-            if (Graph == null || EdgeFlow == null || flows.Count == 0)
+            if (Graph is null || m_Workspace is null || EdgeFlow is null || flows.Count == 0)
             {
                 return 0;
             }

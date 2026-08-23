@@ -25,7 +25,7 @@ UI_LOG      := $(USERDATA)/Logs/UI.log
 DOTNET_WIN  := powershell.exe -NoProfile -Command
 
 .DEFAULT_GOAL := help
-.PHONY: help build debug test check-ui verify deploy wait-for-game status logs errors clean
+.PHONY: help build debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
 
 help: ## Show this help
 	@echo "StationSuitabilityOverlay — targets:"
@@ -49,6 +49,22 @@ check-ui: ## Syntax-check the UI module, which is never compiled
 
 verify: check-ui test build ## Everything a change should pass before a run
 	@$(MAKE) --no-print-directory status
+
+# The compiler's TreatWarningsAsErrors covers C# diagnostics; MSBuild's own
+# --warnaserror also fails on warnings raised by build tasks outside the compiler.
+strict: check-ui format-check ## The full gate: locked restore, no warnings from anything, tests
+	$(DOTNET_WIN) "dotnet restore $(PROJECT) --locked-mode"
+	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG) --no-restore --warnaserror"
+	dotnet build $(TESTS) --warnaserror
+	dotnet run --project $(TESTS) --no-build
+
+format: ## Apply .editorconfig formatting to both projects
+	$(DOTNET_WIN) "dotnet format $(PROJECT)"
+	dotnet format $(TESTS)
+
+format-check: ## Fail if either project deviates from .editorconfig
+	$(DOTNET_WIN) "dotnet format $(PROJECT) --verify-no-changes"
+	dotnet format $(TESTS) --verify-no-changes
 
 # The game locks the deployed DLL, and ModPostProcessor returns a misleading exit
 # code if it runs too soon after the game closes. So: wait for the process to go,

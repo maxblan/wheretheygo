@@ -1,4 +1,4 @@
-using Game.Prefabs;
+﻿using Game.Prefabs;
 using Unity.Entities;
 using UnityEngine;
 
@@ -148,8 +148,13 @@ namespace StationSuitabilityOverlay
 
         public override void GetPrefabComponents(System.Collections.Generic.HashSet<ComponentType> components)
         {
+            if (components is null)
+            {
+                throw new System.ArgumentNullException(nameof(components));
+            }
+
             base.GetPrefabComponents(components);
-            components.Add(ComponentType.ReadWrite<SuitabilityInfomodeData>());
+            _ = components.Add(ComponentType.ReadWrite<SuitabilityInfomodeData>());
         }
     }
 }

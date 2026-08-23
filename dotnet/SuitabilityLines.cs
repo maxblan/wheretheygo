@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Colossal.Entities;
@@ -10,6 +10,7 @@ using Game.Vehicles;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace StationSuitabilityOverlay
 {
@@ -22,7 +23,7 @@ namespace StationSuitabilityOverlay
         public Setting.ModePreset m_Mode;
         // The name the game shows for this line, so the panel and the Transportation
         // Overview agree instead of the mod inventing its own numbering.
-        public string m_Name;
+        public string m_Name = string.Empty;
         public readonly List<int> m_StopIndices = new List<int>();
         public readonly List<float> m_RideSeconds = new List<float>();
         public readonly List<float2> m_Path = new List<float2>();
@@ -100,7 +101,7 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                if (!entityManager.TryGetBuffer(lineEntity, true, out DynamicBuffer<RouteWaypoint> waypoints) ||
+                if (!entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteWaypoint> waypoints) ||
                     waypoints.Length < 2)
                 {
                     continue;
@@ -114,7 +115,8 @@ namespace StationSuitabilityOverlay
                     m_Name = ResolveName(entityManager, nameSystem, prefabSystem, lineEntity, lineData.m_TransportType),
                 };
 
-                entityManager.TryGetBuffer(lineEntity, true, out DynamicBuffer<RouteSegment> segments);
+                // A line with no segments is still readable; the reader handles an empty buffer.
+                _ = entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteSegment> segments);
                 ReadWaypoints(entityManager, waypoints, segments, line, stopPositions, stopIndices);
 
                 if (line.m_StopIndices.Count < 2)
@@ -133,7 +135,7 @@ namespace StationSuitabilityOverlay
                 // the target interval it feeds to CalculateVehicleCount.
                 line.m_StableDurationSeconds = line.m_LineDurationSeconds + line.m_StopIndices.Count * dwell;
                 float targetInterval = lineData.m_DefaultVehicleInterval;
-                if (entityManager.TryGetBuffer(lineEntity, true, out DynamicBuffer<RouteModifier> modifiers))
+                if (entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteModifier> modifiers))
                 {
                     RouteUtils.ApplyModifier(ref targetInterval, modifiers, RouteModifierType.VehicleInterval);
                 }
@@ -216,7 +218,7 @@ namespace StationSuitabilityOverlay
         // counts every carriage.
         private static void ReadVehicles(EntityManager entityManager, Entity lineEntity, ExistingLine line)
         {
-            if (!entityManager.TryGetBuffer(lineEntity, true, out DynamicBuffer<RouteVehicle> vehicles))
+            if (!entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteVehicle> vehicles))
             {
                 return;
             }
@@ -225,7 +227,7 @@ namespace StationSuitabilityOverlay
             for (int v = 0; v < vehicles.Length; v++)
             {
                 Entity vehicle = vehicles[v].m_Vehicle;
-                if (entityManager.TryGetBuffer(vehicle, true, out DynamicBuffer<LayoutElement> layout) && layout.Length > 0)
+                if (entityManager.TryGetBuffer(vehicle, isReadOnly: true, out DynamicBuffer<LayoutElement> layout) && layout.Length > 0)
                 {
                     for (int u = 0; u < layout.Length; u++)
                     {
@@ -248,7 +250,7 @@ namespace StationSuitabilityOverlay
             }
 
             line.m_Capacity += vehicleData.m_PassengerCapacity;
-            if (entityManager.TryGetBuffer(unit, true, out DynamicBuffer<Passenger> passengers))
+            if (entityManager.TryGetBuffer(unit, isReadOnly: true, out DynamicBuffer<Passenger> passengers))
             {
                 line.m_Passengers += passengers.Length;
             }
@@ -262,6 +264,10 @@ namespace StationSuitabilityOverlay
         // the raw pattern ("Buslinie {NUMBER}") with no number in it — every bus line
         // would read the same. So this follows NameSystem.GetRouteName and does the
         // substitution the UI would have done.
+        [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+            Justification = "A line's display name is cosmetic. Any surprise from the game's " +
+                "naming or localization APIs is logged and the mode name used instead, rather " +
+                "than losing the whole line-health pass.")]
         private static string ResolveName(
             EntityManager entityManager,
             Game.UI.NameSystem nameSystem,
@@ -273,7 +279,7 @@ namespace StationSuitabilityOverlay
             {
                 // A line the player renamed: that name is what the Transportation
                 // Overview shows, so it wins.
-                if (nameSystem != null
+                if (nameSystem is not null
                     && nameSystem.TryGetCustomName(lineEntity, out string custom)
                     && !string.IsNullOrEmpty(custom))
                 {
@@ -289,7 +295,7 @@ namespace StationSuitabilityOverlay
                 {
                     string id = routePrefab.m_LocaleID + "[" + routePrefab.name + "]";
                     var dictionary = GameManager.instance?.localizationManager?.activeDictionary;
-                    if (dictionary != null && dictionary.TryGetValue(id, out string pattern)
+                    if (dictionary is not null && dictionary.TryGetValue(id, out string pattern)
                         && !string.IsNullOrEmpty(pattern))
                     {
                         return Sanitize(pattern.Replace("{NUMBER}", number));
@@ -444,22 +450,22 @@ namespace StationSuitabilityOverlay
             {
                 ExistingLine line = lines[i];
                 Mod.Log.Info(
-                    $"Line {i + 1} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
-                    $"len={line.m_LengthMetres:F0}m, ride={line.m_LineDurationSeconds:F0}s, " +
-                    $"roundTrip={line.m_StableDurationSeconds:F0}s, " +
-                    $"interval={line.m_VehicleInterval:F0}s (target {line.m_TargetInterval:F0}s), " +
-                    $"expectedWait={line.m_ExpectedWait:F0}s, " +
-                    $"waitAccumulator={line.m_WaitAccumulator:F0} (game units, not seconds), " +
-                    $"vehicles={line.m_Vehicles}, " +
-                    $"aboard={line.m_Passengers}/{line.m_Capacity}, " +
+                    $"Line {(i + 1).ToString(CultureInfo.InvariantCulture)} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
+                    $"len={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, ride={(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"roundTrip={(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"interval={(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s (target {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
+                    $"expectedWait={(line.m_ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"waitAccumulator={(line.m_WaitAccumulator).ToString("F0", CultureInfo.InvariantCulture)} (game units, not seconds), " +
+                    $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"aboard={(line.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(line.m_Capacity).ToString(CultureInfo.InvariantCulture)}, " +
                     $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
             }
 
             Mod.Log.Info(
-                $"Line health reference: medianUsage={medianUsage * 100f:F1}%, " +
-                $"emptyBelow={emptyThreshold * 100f:F1}% of fleet capacity");
+                $"Line health reference: medianUsage={(medianUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, " +
+                $"emptyBelow={(emptyThreshold * 100f).ToString("F1", CultureInfo.InvariantCulture)}% of fleet capacity");
 
-            health.Sort((a, b) =>
+            health.Sort(static (a, b) =>
             {
                 int bySeverity = b.Severity.CompareTo(a.Severity);
                 return bySeverity != 0 ? bySeverity : b.m_Usage.CompareTo(a.m_Usage);

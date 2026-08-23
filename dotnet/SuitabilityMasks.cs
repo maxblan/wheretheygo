@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Game.Simulation;
 using Unity.Collections;
 using Unity.Mathematics;
@@ -40,12 +40,12 @@ namespace StationSuitabilityOverlay
         {
             componentCount = 0;
             int cells = gridSize.x * gridSize.y;
-            if (cells <= 0 || !buildable.IsCreated || !components.IsCreated || land == null || land.Length < cells)
+            if (cells <= 0 || !buildable.IsCreated || !components.IsCreated || land is null || land.Length < cells)
             {
                 return;
             }
 
-            TerrainHeightData heightData = terrainSystem.GetHeightData(true);
+            TerrainHeightData heightData = terrainSystem.GetHeightData(waitForPending: true);
             WaterSurfaceData<SurfaceWater> waterData = waterSystem.GetSurfaceData(out Unity.Jobs.JobHandle waterDeps);
             // Sampling on the main thread, so the producing jobs must be finished.
             waterDeps.Complete();
@@ -115,11 +115,17 @@ namespace StationSuitabilityOverlay
                     for (int dy = -1; dy <= 1 && !nearWater; dy++)
                     {
                         int ny = y + dy;
-                        if (ny < 0 || ny >= gridSize.y) continue;
+                        if (ny < 0 || ny >= gridSize.y)
+                        {
+                            continue;
+                        }
                         for (int dx = -1; dx <= 1; dx++)
                         {
                             int nx = x + dx;
-                            if (nx < 0 || nx >= gridSize.x) continue;
+                            if (nx < 0 || nx >= gridSize.x)
+                            {
+                                continue;
+                            }
                             if (land[nx + ny * gridSize.x] == 0)
                             {
                                 nearWater = true;

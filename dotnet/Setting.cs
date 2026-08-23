@@ -1,16 +1,18 @@
+﻿using System;
 using Colossal;
 using Colossal.IO.AssetDatabase;
 using Game.Modding;
 using Game.Settings;
 using Game.UI;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace StationSuitabilityOverlay
 {
     [FileLocation(nameof(StationSuitabilityOverlay))]
     [SettingsUIGroupOrder(kPresetGroup, kWeightsGroup, kTuningGroup, kRoutesGroup, kCalibrationGroup)]
     [SettingsUIShowGroupName(kPresetGroup, kWeightsGroup, kTuningGroup, kRoutesGroup, kCalibrationGroup)]
-    public class Setting : ModSetting
+    public sealed class Setting : ModSetting
     {
         public const string kSection = "Main";
         public const string kPresetGroup = "Preset";
@@ -230,6 +232,9 @@ namespace StationSuitabilityOverlay
         public float TransferDiscount => 1f - (m_TransferPenalty / 100f);
 
         [SettingsUISection(kSection, kRoutesGroup)]
+        [SuppressMessage("Performance", "CA1822:Mark members as static",
+            Justification = "The game's settings UI binds to instance properties by "
+                + "reflection; a static member would not appear in the Options page.")]
         public string RouteSummary => StationSuitabilityOverlaySystem.RouteSummaryText;
 
         // A get-only string property renders as a read-only field in the options
@@ -241,10 +246,16 @@ namespace StationSuitabilityOverlay
         // like this one renders an empty box under the label. The full breakdown
         // goes to the log; this stays a single line.
         [SettingsUISection(kSection, kCalibrationGroup)]
+        [SuppressMessage("Performance", "CA1822:Mark members as static",
+            Justification = "The game's settings UI binds to instance properties by "
+                + "reflection; a static member would not appear in the Options page.")]
         public string CalibrationStatus => StationSuitabilityOverlaySystem.CalibrationStatusText;
 
         [SettingsUIButton]
         [SettingsUISection(kSection, kCalibrationGroup)]
+        [SuppressMessage("Performance", "CA1822:Mark members as static",
+            Justification = "The game's settings UI binds to instance properties by "
+                + "reflection; a static member would not appear in the Options page.")]
         public bool ApplyFittedWeights
         {
             set => StationSuitabilityOverlaySystem.RequestApplyFittedWeights();
@@ -253,6 +264,9 @@ namespace StationSuitabilityOverlay
         [SettingsUIButton]
         [SettingsUIConfirmation]
         [SettingsUISection(kSection, kCalibrationGroup)]
+        [SuppressMessage("Performance", "CA1822:Mark members as static",
+            Justification = "The game's settings UI binds to instance properties by "
+                + "reflection; a static member would not appear in the Options page.")]
         public bool ResetRidershipData
         {
             set => StationSuitabilityOverlaySystem.RequestResetCalibration();
@@ -451,7 +465,7 @@ namespace StationSuitabilityOverlay
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            return new Dictionary<string, string>
+            return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Station Suitability Overlay" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Main" },

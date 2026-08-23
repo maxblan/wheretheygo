@@ -1,4 +1,4 @@
-using Game.Simulation;
+﻿using Game.Simulation;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Mathematics;
@@ -161,7 +161,7 @@ namespace StationSuitabilityOverlay
             return sum;
         }
 
-        private int2 ClampToTexture(float2 position, float2 mapMin)
+        private readonly int2 ClampToTexture(float2 position, float2 mapMin)
         {
             float2 rel = (position - mapMin) / PopulationCellSize;
             int2 cell = new int2((int)math.floor(rel.x), (int)math.floor(rel.y));

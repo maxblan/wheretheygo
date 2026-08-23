@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -21,6 +21,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
+using System.Diagnostics.CodeAnalysis;
 
 namespace StationSuitabilityOverlay
 {
@@ -104,8 +105,11 @@ namespace StationSuitabilityOverlay
         public static int ImprovedLineIndex => s_ImprovedLine;
 
         // The re-traced alignment for that line, drawn on the map.
-        internal SuggestedRoute ImprovedRoute => m_ImprovedRoute;
+        internal SuggestedRoute? ImprovedRoute => m_ImprovedRoute;
 
+#pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
+        // runs before OnUpdate. Annotating these nullable would force a null check at
+        // every use site for a state (OnCreate not yet run) in which nothing works anyway.
         private TerrainSystem m_TerrainSystem;
         private WaterSystem m_WaterSystem;
         private PopulationToGridSystem m_PopulationSystem;
@@ -114,6 +118,7 @@ namespace StationSuitabilityOverlay
         private ToolSystem m_ToolSystem;
         private Game.UI.NameSystem m_NameSystem;
         private OverlayInfomodeSystem m_OverlayInfomodeSystem;
+#pragma warning restore CS8618
 
         private EntityQuery m_StopQuery;
         private EntityQuery m_StopChangedQuery;
@@ -138,19 +143,19 @@ namespace StationSuitabilityOverlay
         private readonly Dictionary<SuitabilityLayer, SuitabilityInfomodePrefab> m_LayerPrefabs =
             new Dictionary<SuitabilityLayer, SuitabilityInfomodePrefab>();
         private readonly Dictionary<Entity, SuitabilityLayer> m_InfomodeLayers = new Dictionary<Entity, SuitabilityLayer>();
-        private InfoviewPrefab m_InfoviewPrefab;
+        private InfoviewPrefab? m_InfoviewPrefab;
 
         private readonly SuitabilityCalibration m_Calibration = new SuitabilityCalibration();
 
         // One intensity array per layer, plus the interleaved RGBA buffer uploaded
         // to the terrain texture.
         private readonly byte[][] m_LayerIntensities = new byte[SuitabilityLayers.Count][];
-        private byte[] m_ExpandedCache;
+        private byte[]? m_ExpandedCache;
         private long m_ExpandedSignature = -1;
         private int2 m_IntensityGrid;
 
-        private static MethodInfo s_GetTerrainTextureData;
-        private static FieldInfo s_TerrainTextureField;
+        private static MethodInfo? s_GetTerrainTextureData;
+        private static FieldInfo? s_TerrainTextureField;
         private static bool s_ReflectionChecked;
 
         private bool m_LastActive;
@@ -165,8 +170,8 @@ namespace StationSuitabilityOverlay
         private float m_LastMaskRefresh;
         private float m_LastRidershipSample;
         private float m_LastRidershipSave;
-        private int[] m_LoggedSiteIndices;
-        private float[] m_LoggedSiteScores;
+        private int[]? m_LoggedSiteIndices;
+        private float[]? m_LoggedSiteScores;
         private int m_LoggedSiteCount = -1;
         private bool m_PrefabsAdded;
         private bool m_InfoviewLinkChecked;
@@ -174,7 +179,7 @@ namespace StationSuitabilityOverlay
         private bool m_PlaceableSweepDone;
         private float m_LastPlaceableSweep;
         private int m_LastPlaceableCount = -1;
-        private Dictionary<Entity, PlaceableInfoviewItem[]> m_VanillaPlaceableInfoviews;
+        private Dictionary<Entity, PlaceableInfoviewItem[]>? m_VanillaPlaceableInfoviews;
         private bool m_LastOverlayApplied;
         private int m_LastStopCount;
 
@@ -191,10 +196,10 @@ namespace StationSuitabilityOverlay
         private int2 m_GridAtCompute;
 
         // Cached raw terms from the last compute, plus everything derived from them.
-        private SuitabilityCell[] m_RawTerms;
-        private float[] m_Scores;
-        private float[] m_ScoreScratch;
-        private float[] m_TermScratch;
+        private SuitabilityCell[]? m_RawTerms;
+        private float[]? m_Scores;
+        private float[]? m_ScoreScratch;
+        private float[]? m_TermScratch;
         private float2 m_ScoreWorldMin;
         // Term caps from the last combine. Cached because the ridership sampler
         // needs them per stop, and recomputing a percentile over the whole grid for
@@ -207,7 +212,7 @@ namespace StationSuitabilityOverlay
         private NativeArray<byte> m_Buildable;
         // Managed because only the main thread reads it (mask build + site
         // refinement); the job takes Buildable and Components.
-        private byte[] m_Land;
+        private byte[]? m_Land;
         private NativeArray<int> m_Components;
         private int2 m_MaskGrid;
         private bool m_MaskDirty = true;
@@ -232,10 +237,10 @@ namespace StationSuitabilityOverlay
         private int m_LastOrphanCount;
 
         // Per-tile densities for the walk-distance refinement of reported sites.
-        private float[] m_TileDemand;
-        private float[] m_TileJobs;
-        private float[] m_DistanceScratch;
-        private byte[] m_VisitedScratch;
+        private float[]? m_TileDemand;
+        private float[]? m_TileJobs;
+        private float[]? m_DistanceScratch;
+        private byte[]? m_VisitedScratch;
 
         // Travel demand and route suggestions.
         private EntityQuery m_CitizenQuery;
@@ -255,7 +260,7 @@ namespace StationSuitabilityOverlay
         private readonly SuitabilityRoadGraph m_MetroNetwork = new SuitabilityRoadGraph();
         private readonly SuitabilityRoadGraph m_WaterNetwork = new SuitabilityRoadGraph();
         private EntityQuery m_AllEdgeQuery;
-        private byte[] m_TrackMask;
+        private byte[]? m_TrackMask;
         private readonly List<float2> m_TrackStarts = new List<float2>();
         private readonly List<float2> m_TrackEnds = new List<float2>();
         private readonly List<SuggestedRoute> m_RouteCandidates = new List<SuggestedRoute>();
@@ -268,21 +273,21 @@ namespace StationSuitabilityOverlay
         private readonly List<float2> m_TransitStops = new List<float2>();
         private readonly Dictionary<Entity, int> m_StopIndices = new Dictionary<Entity, int>();
         private readonly List<LineHealth> m_LineHealth = new List<LineHealth>();
-        private SuggestedRoute m_ImprovedRoute;
-        private TransitNetwork m_TransitNetwork;
-        private DijkstraWorkspace m_TransitWorkspace;
-        private int[] m_ZoneStops;
-        private int[] m_PairOrigins;
-        private int[] m_PairDests;
-        private float[] m_PairWeights;
+        private SuggestedRoute? m_ImprovedRoute;
+        private TransitNetwork? m_TransitNetwork;
+        private DijkstraWorkspace? m_TransitWorkspace;
+        private int[]? m_ZoneStops;
+        private int[]? m_PairOrigins;
+        private int[]? m_PairDests;
+        private float[]? m_PairWeights;
         private int m_PairCount;
 
         internal List<ExistingLine> ExistingLines => m_ExistingLines;
         internal List<LineHealth> LineHealthList => m_LineHealth;
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
-        private int[] m_ZoneNodes;
-        private float[] m_DemandRaster;
+        private int[]? m_ZoneNodes;
+        private float[]? m_DemandRaster;
         private int2 m_ZoneGrid;
         private float m_LastDemandRefresh;
         private bool m_GraphDirty = true;
@@ -297,7 +302,7 @@ namespace StationSuitabilityOverlay
         // overlay channel our heat map is drawn into.
         public void SetInfoviewActive(bool active)
         {
-            if (m_ToolSystem == null || m_InfoviewPrefab == null)
+            if (m_ToolSystem is null || m_InfoviewPrefab is null)
             {
                 return;
             }
@@ -318,7 +323,7 @@ namespace StationSuitabilityOverlay
         }
 
         public bool IsInfoviewActive =>
-            m_InfoviewPrefab != null && m_ToolSystem != null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
+            m_InfoviewPrefab is not null && m_ToolSystem is not null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
 
         private readonly int[] m_SiteIndices = new int[Setting.kSiteCountMax];
         private readonly float[] m_SiteScores = new float[Setting.kSiteCountMax];
@@ -342,12 +347,30 @@ namespace StationSuitabilityOverlay
                 };
             }
 
-            public bool Equals(ComputeSnapshot other)
+            public readonly bool Equals(ComputeSnapshot other)
             {
                 return Mode == other.Mode
                     && CatchmentRadius == other.CatchmentRadius
                     && AccessRadius == other.AccessRadius
                     && MaxSlope == other.MaxSlope;
+            }
+
+            public readonly override bool Equals(object obj)
+            {
+                return obj is ComputeSnapshot other && Equals(other);
+            }
+
+            public readonly override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = 17;
+                    hash = (hash * 31) ^ Mode.GetHashCode();
+                    hash = (hash * 31) ^ CatchmentRadius.GetHashCode();
+                    hash = (hash * 31) ^ AccessRadius.GetHashCode();
+                    hash = (hash * 31) ^ MaxSlope.GetHashCode();
+                    return hash;
+                }
             }
         }
 
@@ -375,10 +398,31 @@ namespace StationSuitabilityOverlay
                 };
             }
 
-            public bool Equals(CombineSnapshot other)
+            public readonly bool Equals(CombineSnapshot other)
             {
                 return W1 == other.W1 && W2 == other.W2 && W3 == other.W3 && W4 == other.W4 && W5 == other.W5
                     && HighlightShare == other.HighlightShare && SiteCount == other.SiteCount;
+            }
+
+            public readonly override bool Equals(object obj)
+            {
+                return obj is CombineSnapshot other && Equals(other);
+            }
+
+            public readonly override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = 17;
+                    hash = (hash * 31) ^ W1.GetHashCode();
+                    hash = (hash * 31) ^ W2.GetHashCode();
+                    hash = (hash * 31) ^ W3.GetHashCode();
+                    hash = (hash * 31) ^ W4.GetHashCode();
+                    hash = (hash * 31) ^ W5.GetHashCode();
+                    hash = (hash * 31) ^ HighlightShare.GetHashCode();
+                    hash = (hash * 31) ^ SiteCount.GetHashCode();
+                    return hash;
+                }
             }
         }
 
@@ -474,17 +518,17 @@ namespace StationSuitabilityOverlay
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
-            m_WorkerLookup = GetComponentLookup<Worker>(true);
-            m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(true);
-            m_TouristLookup = GetComponentLookup<TouristHousehold>(true);
-            m_NodeLookup = GetComponentLookup<Node>(true);
-            m_CurveLookup = GetComponentLookup<Curve>(true);
-            m_PrefabRefLookup = GetComponentLookup<PrefabRef>(true);
-            m_RoadDataLookup = GetComponentLookup<RoadData>(true);
+            m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
+            m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(isReadOnly: true);
+            m_TouristLookup = GetComponentLookup<TouristHousehold>(isReadOnly: true);
+            m_NodeLookup = GetComponentLookup<Node>(isReadOnly: true);
+            m_CurveLookup = GetComponentLookup<Curve>(isReadOnly: true);
+            m_PrefabRefLookup = GetComponentLookup<PrefabRef>(isReadOnly: true);
+            m_RoadDataLookup = GetComponentLookup<RoadData>(isReadOnly: true);
 
-            m_TransformLookup = GetComponentLookup<Transform>(true);
-            m_PropertyRenterLookup = GetComponentLookup<Game.Buildings.PropertyRenter>(true);
-            m_ZoneDataLookup = GetComponentLookup<ZoneData>(true);
+            m_TransformLookup = GetComponentLookup<Transform>(isReadOnly: true);
+            m_PropertyRenterLookup = GetComponentLookup<Game.Buildings.PropertyRenter>(isReadOnly: true);
+            m_ZoneDataLookup = GetComponentLookup<ZoneData>(isReadOnly: true);
 
             m_ActiveInfomodeQuery = GetEntityQuery(
                 ComponentType.ReadOnly<SuitabilityInfomodeData>(),
@@ -500,7 +544,7 @@ namespace StationSuitabilityOverlay
             m_LastStopCount = m_StopQuery.CalculateEntityCount();
 
             var settings = Mod.Settings;
-            if (settings != null)
+            if (settings is not null)
             {
                 m_LastComputeSettings = ComputeSnapshot.Capture(settings);
                 m_LastCombineSettings = CombineSnapshot.Capture(settings);
@@ -540,14 +584,20 @@ namespace StationSuitabilityOverlay
 
         private void DisposeMasks()
         {
-            if (m_Buildable.IsCreated) m_Buildable.Dispose();
-            if (m_Components.IsCreated) m_Components.Dispose();
+            if (m_Buildable.IsCreated)
+            {
+                m_Buildable.Dispose();
+            }
+            if (m_Components.IsCreated)
+            {
+                m_Components.Dispose();
+            }
         }
 
         protected override void OnUpdate()
         {
             var settings = Mod.Settings;
-            if (settings == null)
+            if (settings is null)
             {
                 return;
             }
@@ -605,7 +655,7 @@ namespace StationSuitabilityOverlay
             m_LastComputeSettings = computeSettings;
 
             var combineSettings = CombineSnapshot.Capture(settings);
-            if (active && !combineSettings.Equals(m_LastCombineSettings) && m_RawTerms != null)
+            if (active && !combineSettings.Equals(m_LastCombineSettings) && m_RawTerms is not null)
             {
                 RecombineAndNormalize();
             }
@@ -626,14 +676,14 @@ namespace StationSuitabilityOverlay
             }
 
             float now = UnityEngine.Time.realtimeSinceStartup;
-            if (active && !m_JobPending && !m_RecomputeRequested && m_RawTerms != null
+            if (active && !m_JobPending && !m_RecomputeRequested && m_RawTerms is not null
                 && now - m_LastComputeFinish >= PeriodicRefreshSeconds)
             {
                 ScheduleRecompute(0f);
             }
 
             int2 currentSize = GetGridSize();
-            if (active && !m_JobPending && (m_RawTerms == null || !m_GridAtCompute.Equals(currentSize)))
+            if (active && !m_JobPending && (m_RawTerms is null || !m_GridAtCompute.Equals(currentSize)))
             {
                 ScheduleRecompute(0f);
             }
@@ -660,7 +710,7 @@ namespace StationSuitabilityOverlay
         // discount and stop snapping), so it always runs after a compute has landed.
         private void MaybeUpdateTravelDemand(Setting settings, bool active, float now)
         {
-            if (!active || m_RawTerms == null || m_JobPending)
+            if (!active || m_RawTerms is null || m_JobPending)
             {
                 return;
             }
@@ -677,7 +727,7 @@ namespace StationSuitabilityOverlay
 
             // Changing only the objective re-grows routes from the flow already
             // assigned; no need to walk every citizen again.
-            if (objectiveChanged && !due && m_ZoneFlows.Count > 0 && m_RoadGraph.Graph != null)
+            if (objectiveChanged && !due && m_ZoneFlows.Count > 0 && m_RoadGraph.Graph is not null)
             {
                 BuildRoutes(settings, m_IntensityGrid, m_ScoreWorldMin);
                 UpdateRouteSummary(-1, -1);
@@ -748,7 +798,7 @@ namespace StationSuitabilityOverlay
 
         private void EnsurePrefabs()
         {
-            if (m_PrefabsAdded || m_PrefabSystem == null)
+            if (m_PrefabsAdded || m_PrefabSystem is null)
             {
                 return;
             }
@@ -765,7 +815,7 @@ namespace StationSuitabilityOverlay
                 SuitabilityInfomodePrefab prefab = CreateLayerPrefab(layer);
                 m_LayerPrefabs[layer] = prefab;
 
-                if (!m_PrefabSystem.AddPrefab(prefab, null, null, null))
+                if (!m_PrefabSystem.AddPrefab(prefab))
                 {
                     Mod.Log.Warn($"Failed to register infomode prefab for layer {layer}.");
                 }
@@ -776,7 +826,7 @@ namespace StationSuitabilityOverlay
                 // Only the combined score is on by default; the rest are opt-in so
                 // opening the infoview does not immediately burn all four channels.
                 SetField(info, "m_Supplemental", layer != SuitabilityLayer.Score);
-                SetField(info, "m_Optional", false);
+                SetField(info, "m_Optional", value: false);
                 infomodeInfos.Add(info);
             }
 
@@ -793,10 +843,10 @@ namespace StationSuitabilityOverlay
             // infomodes while ToolSystem.activeInfoview is non-null, and that getter
             // returns null for an invalid view, so the heat map would never draw. The
             // menu row is hidden in the UI module instead (HideInfoviewMenuEntry).
-            SetField(m_InfoviewPrefab, "m_Editor", false);
-            SetField(m_InfoviewPrefab, "<isValid>k__BackingField", true);
+            SetField(m_InfoviewPrefab, "m_Editor", value: false);
+            SetField(m_InfoviewPrefab, "<isValid>k__BackingField", value: true);
 
-            if (!m_PrefabSystem.AddPrefab(m_InfoviewPrefab, null, null, null))
+            if (!m_PrefabSystem.AddPrefab(m_InfoviewPrefab))
             {
                 Mod.Log.Warn("Failed to register infoview prefab.");
             }
@@ -806,13 +856,13 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info($"Registered {layers.Length} suitability infomodes and the infoview prefab.");
         }
 
-        private SuitabilityInfomodePrefab CreateLayerPrefab(SuitabilityLayer layer)
+        private static SuitabilityInfomodePrefab CreateLayerPrefab(SuitabilityLayer layer)
         {
             var prefab = PrefabBase.Create<SuitabilityInfomodePrefab>(SuitabilityLayers.NameOf(layer));
             SuitabilityLayers.ColorsOf(layer, out Color low, out Color medium, out Color high);
 
             SetField(prefab, "m_Priority", InfomodePriority);
-            SetField(prefab, "editor", false);
+            SetField(prefab, "editor", value: false);
             SetField(prefab, "m_Low", low);
             SetField(prefab, "m_Medium", medium);
             SetField(prefab, "m_High", high);
@@ -890,7 +940,7 @@ namespace StationSuitabilityOverlay
 
                 if (!linked)
                 {
-                    buffer.Add(new InfoviewMode(
+                    _ = buffer.Add(new InfoviewMode(
                         entity,
                         InfomodePriority - i,
                         supplemental: layer != SuitabilityLayer.Score,
@@ -904,7 +954,7 @@ namespace StationSuitabilityOverlay
                 m_ToolSystem.EventInfomodesChanged?.Invoke();
             }
 
-            Mod.Log.Info($"Infoview link check: buffer existed={hadBuffer}, added {added} entries, {buffer.Length} total.");
+            Mod.Log.Info($"Infoview link check: buffer existed={hadBuffer}, added {(added).ToString(CultureInfo.InvariantCulture)} entries, {buffer.Length} total.");
             m_InfoviewLinkChecked = true;
         }
 
@@ -914,7 +964,7 @@ namespace StationSuitabilityOverlay
             using var entities = m_PlaceableInfoviewQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
-                DynamicBuffer<PlaceableInfoviewItem> buffer = EntityManager.GetBuffer<PlaceableInfoviewItem>(entities[i], true);
+                DynamicBuffer<PlaceableInfoviewItem> buffer = EntityManager.GetBuffer<PlaceableInfoviewItem>(entities[i], isReadOnly: true);
                 if (buffer.Length == 0)
                 {
                     continue;
@@ -966,7 +1016,7 @@ namespace StationSuitabilityOverlay
             int restored = StripPlaceableInfoviewItems(query, infoviewEntity, out int cleared);
             if (!m_PlaceableSweepDone || restored > 0 || cleared > 0)
             {
-                Mod.Log.Info($"Placeable infoview sweep ({(full ? "full" : "incremental")}): restored vanilla auto-activation on {restored} prefabs, disabled it on {cleared}.");
+                Mod.Log.Info($"Placeable infoview sweep ({(full ? "full" : "incremental")}): restored vanilla auto-activation on {(restored).ToString(CultureInfo.InvariantCulture)} prefabs, disabled it on {(cleared).ToString(CultureInfo.InvariantCulture)}.");
             }
 
             m_LastPlaceableCount = placeableCount;
@@ -995,12 +1045,12 @@ namespace StationSuitabilityOverlay
                 if (buffer[0].m_Item == infoviewEntity)
                 {
                     buffer.Clear();
-                    if (m_VanillaPlaceableInfoviews != null
+                    if (m_VanillaPlaceableInfoviews is not null
                         && m_VanillaPlaceableInfoviews.TryGetValue(entity, out PlaceableInfoviewItem[] vanilla))
                     {
                         for (int j = 0; j < vanilla.Length; j++)
                         {
-                            buffer.Add(vanilla[j]);
+                            _ = buffer.Add(vanilla[j]);
                         }
 
                         restored++;
@@ -1063,7 +1113,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 int channel = actives[i].m_Index - 1;
-                if (channel < 0 || channel >= SuitabilityLayers.MaxActiveLayers)
+                if (channel is < 0 or >= SuitabilityLayers.MaxActiveLayers)
                 {
                     skipped++;
                     continue;
@@ -1075,7 +1125,7 @@ namespace StationSuitabilityOverlay
 
             if (skipped > 0 && signature != m_ExpandedSignature)
             {
-                Mod.Log.Warn($"{skipped} suitability layer(s) skipped: the terrain overlay only has {SuitabilityLayers.MaxActiveLayers} channels. Turn one off to see another.");
+                Mod.Log.Warn($"{(skipped).ToString(CultureInfo.InvariantCulture)} suitability layer(s) skipped: the terrain overlay only has {SuitabilityLayers.MaxActiveLayers} channels. Turn one off to see another.");
             }
 
             if (m_ActiveChannels.Count > 0 && m_LastLoggedIndex != m_ActiveChannels.Count)
@@ -1090,7 +1140,7 @@ namespace StationSuitabilityOverlay
         private void ApplyOverlayState(bool active, long signature)
         {
             bool applied = false;
-            if (active && m_RawTerms != null && m_OverlayInfomodeSystem != null && CheckPipeline())
+            if (active && m_RawTerms is not null && m_OverlayInfomodeSystem is not null && CheckPipeline())
             {
                 BuildExpandedCache(signature);
                 applied = InjectOverlay();
@@ -1098,14 +1148,17 @@ namespace StationSuitabilityOverlay
 
             if (applied != m_LastOverlayApplied)
             {
-                Mod.Log.Info($"Overlay map {(applied ? "attached" : "detached")} (active={active}, data={(m_RawTerms != null ? "yes" : "no")})");
+                Mod.Log.Info($"Overlay map {(applied ? "attached" : "detached")} (active={active}, data={(m_RawTerms is not null ? "yes" : "no")})");
                 m_LastOverlayApplied = applied;
             }
         }
 
         // Verify the reflected members once and report loudly if a game update moved
         // them, rather than silently rendering nothing forever.
-        private bool CheckPipeline()
+        [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+            Justification = "Reading the game's version string is only for the diagnostic below. " +
+                "Any failure there must not stop the check from reporting what it found.")]
+        private static bool CheckPipeline()
         {
             if (s_ReflectionChecked)
             {
@@ -1116,9 +1169,9 @@ namespace StationSuitabilityOverlay
             s_GetTerrainTextureData = typeof(OverlayInfomodeSystem).GetMethod(
                 "GetTerrainTextureData",
                 BindingFlags.Instance | BindingFlags.NonPublic,
-                null,
-                new[] { typeof(int2) },
-                null);
+                binder: null,
+                types: new[] { typeof(int2) },
+                modifiers: null);
             s_TerrainTextureField = typeof(OverlayInfomodeSystem).GetField(
                 "m_TerrainTexture",
                 BindingFlags.Instance | BindingFlags.NonPublic);
@@ -1155,7 +1208,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            if (m_ExpandedCache == null || m_ExpandedCache.Length != cells * 4)
+            if (m_ExpandedCache is null || m_ExpandedCache.Length != cells * 4)
             {
                 m_ExpandedCache = new byte[cells * 4];
                 m_ExpandedSignature = -1;
@@ -1171,7 +1224,7 @@ namespace StationSuitabilityOverlay
             {
                 int channel = m_ActiveChannels[a].Key;
                 byte[] source = m_LayerIntensities[(int)m_ActiveChannels[a].Value];
-                if (source == null || source.Length < cells)
+                if (source is null || source.Length < cells)
                 {
                     continue;
                 }
@@ -1193,18 +1246,24 @@ namespace StationSuitabilityOverlay
         // because the vanilla system clears the override at the start of each frame.
         private bool InjectOverlay()
         {
+            // CheckPipeline resolves both reflected members before anything calls this.
+            if (s_GetTerrainTextureData is null || s_TerrainTextureField is null)
+            {
+                return false;
+            }
+
             var data = (NativeArray<byte>)s_GetTerrainTextureData.Invoke(m_OverlayInfomodeSystem, new object[] { m_IntensityGrid });
             m_OverlayInfomodeSystem.ApplyOverlay();
 
             int expected = m_IntensityGrid.x * m_IntensityGrid.y * 4;
-            if (data.Length != expected || m_ExpandedCache == null || m_ExpandedCache.Length != expected)
+            if (data.Length != expected || m_ExpandedCache is null || m_ExpandedCache.Length != expected)
             {
                 return false;
             }
 
             data.CopyFrom(m_ExpandedCache);
             var texture = (Texture2D)s_TerrainTextureField.GetValue(m_OverlayInfomodeSystem);
-            texture.Apply(false, false);
+            texture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
             return true;
         }
 
@@ -1212,21 +1271,21 @@ namespace StationSuitabilityOverlay
 
         private int2 GetGridSize()
         {
-            float2 playable = m_TerrainSystem != null ? m_TerrainSystem.playableArea : new float2(0f, 0f);
+            float2 playable = m_TerrainSystem is not null ? m_TerrainSystem.playableArea : new float2(0f, 0f);
             return SuitabilityInputs.GridDims(playable, TileSize);
         }
 
         private bool StartCompute()
         {
             var settings = Mod.Settings;
-            if (m_JobPending || m_PopulationSystem == null || m_TerrainSystem == null || settings == null)
+            if (m_JobPending || m_PopulationSystem is null || m_TerrainSystem is null || settings is null)
             {
                 return false;
             }
 
             Dependency.Complete();
 
-            CellMapData<PopulationCell> popData = m_PopulationSystem.GetData(true, out JobHandle popDeps);
+            CellMapData<PopulationCell> popData = m_PopulationSystem.GetData(readOnly: true, out JobHandle popDeps);
             if (popData.m_CellSize.x <= 0f || popData.m_CellSize.y <= 0f ||
                 popData.m_TextureSize.x <= 0 || popData.m_TextureSize.y <= 0)
             {
@@ -1252,9 +1311,9 @@ namespace StationSuitabilityOverlay
             popDeps.Complete();
             EnsureTileDensities(popData, gridSize, worldMin);
 
-            PointBuckets stops = SuitabilityInputs.BuildBuckets(m_StopPositions, null, bucketGrid, worldMin, BucketSize);
-            PointBuckets nodes = SuitabilityInputs.BuildBuckets(m_NodePositions, null, bucketGrid, worldMin, BucketSize);
-            PointBuckets edges = SuitabilityInputs.BuildBuckets(m_EdgePositions, null, bucketGrid, worldMin, BucketSize);
+            PointBuckets stops = SuitabilityInputs.BuildBuckets(m_StopPositions, weights: null, bucketGrid, worldMin, BucketSize);
+            PointBuckets nodes = SuitabilityInputs.BuildBuckets(m_NodePositions, weights: null, bucketGrid, worldMin, BucketSize);
+            PointBuckets edges = SuitabilityInputs.BuildBuckets(m_EdgePositions, weights: null, bucketGrid, worldMin, BucketSize);
             PointBuckets jobs = SuitabilityInputs.BuildBuckets(m_JobPositions, m_JobWorkers, bucketGrid, worldMin, BucketSize);
             PointBuckets futureHomes = SuitabilityInputs.BuildBuckets(m_FutureHomePositions, m_FutureHomeWeights, bucketGrid, worldMin, BucketSize);
             PointBuckets futureJobs = SuitabilityInputs.BuildBuckets(m_FutureJobPositions, m_FutureJobWeights, bucketGrid, worldMin, BucketSize);
@@ -1345,7 +1404,7 @@ namespace StationSuitabilityOverlay
             m_LastComputeFinish = UnityEngine.Time.realtimeSinceStartup;
 
             int totalCells = m_PendingTerms.Length;
-            if (m_RawTerms == null || m_RawTerms.Length != totalCells)
+            if (m_RawTerms is null || m_RawTerms.Length != totalCells)
             {
                 m_RawTerms = new SuitabilityCell[totalCells];
             }
@@ -1357,9 +1416,9 @@ namespace StationSuitabilityOverlay
             RecombineAndNormalize();
 
             Mod.Log.Info(
-                $"Overlay computed: grid {m_PendingGrid.x}x{m_PendingGrid.y}, stops={m_PendingStopCount} " +
-                $"(orphans ignored={m_PendingOrphanCount}), otherModeStops={m_PendingOtherStopCount}, " +
-                $"jobSites={m_PendingJobSiteCount}, zonedCells={m_PendingZonedCount}, sites={m_SiteCount}");
+                $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, stops={(m_PendingStopCount).ToString(CultureInfo.InvariantCulture)} " +
+                $"(orphans ignored={(m_PendingOrphanCount).ToString(CultureInfo.InvariantCulture)}), otherModeStops={(m_PendingOtherStopCount).ToString(CultureInfo.InvariantCulture)}, " +
+                $"jobSites={(m_PendingJobSiteCount).ToString(CultureInfo.InvariantCulture)}, zonedCells={(m_PendingZonedCount).ToString(CultureInfo.InvariantCulture)}, sites={(m_SiteCount).ToString(CultureInfo.InvariantCulture)}");
         }
 
         private void DiscardPendingCompute()
@@ -1383,7 +1442,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            if (resized)
+            if (resized || m_Land is null)
             {
                 DisposeMasks();
                 m_Buildable = new NativeArray<byte>(cells, Allocator.Persistent);
@@ -1413,10 +1472,13 @@ namespace StationSuitabilityOverlay
             int buildableCount = 0;
             for (int i = 0; i < cells; i++)
             {
-                if (m_Buildable[i] != 0) buildableCount++;
+                if (m_Buildable[i] != 0)
+                {
+                    buildableCount++;
+                }
             }
 
-            Mod.Log.Info($"Terrain mask rebuilt: {buildableCount}/{cells} tiles buildable, {componentCount} landmasses.");
+            Mod.Log.Info($"Terrain mask rebuilt: {(buildableCount).ToString(CultureInfo.InvariantCulture)}/{(cells).ToString(CultureInfo.InvariantCulture)} tiles buildable, {(componentCount).ToString(CultureInfo.InvariantCulture)} landmasses.");
         }
 
         // Rebuilds the cached collections only when change detection says they moved.
@@ -1483,7 +1545,8 @@ namespace StationSuitabilityOverlay
         private void EnsureTileDensities(CellMapData<PopulationCell> popData, int2 gridSize, float2 worldMin)
         {
             int cells = gridSize.x * gridSize.y;
-            if (m_TileDemand == null || m_TileDemand.Length != cells)
+            if (m_TileDemand is null || m_TileJobs is null || m_DistanceScratch is null
+                || m_VisitedScratch is null || m_TileDemand.Length != cells)
             {
                 m_TileDemand = new float[cells];
                 m_TileJobs = new float[cells];
@@ -1522,8 +1585,13 @@ namespace StationSuitabilityOverlay
         // whenever only weights or the highlight share change.
         private void RecombineAndNormalize()
         {
+            if (m_RawTerms is null || m_Scores is null || m_ScoreScratch is null)
+            {
+                return;
+            }
+
             var settings = Mod.Settings;
-            if (settings == null || m_RawTerms == null)
+            if (settings is null)
             {
                 return;
             }
@@ -1605,7 +1673,7 @@ namespace StationSuitabilityOverlay
 
         private void EnsureScoreBuffers(int totalCells)
         {
-            if (m_Scores == null || m_Scores.Length != totalCells)
+            if (m_Scores is null || m_Scores.Length != totalCells)
             {
                 m_Scores = new float[totalCells];
                 m_ScoreScratch = new float[totalCells];
@@ -1614,7 +1682,7 @@ namespace StationSuitabilityOverlay
 
             for (int i = 0; i < SuitabilityLayers.Count; i++)
             {
-                if (m_LayerIntensities[i] == null || m_LayerIntensities[i].Length != totalCells)
+                if (m_LayerIntensities[i] is null || m_LayerIntensities[i].Length != totalCells)
                 {
                     m_LayerIntensities[i] = new byte[totalCells];
                 }
@@ -1629,24 +1697,35 @@ namespace StationSuitabilityOverlay
 
         private float TermPercentile(SuitabilityLayer layer, int totalCells)
         {
+            if (m_RawTerms is null || m_TermScratch is null || m_ScoreScratch is null)
+            {
+                return 0f;
+            }
+
+            // Bound to locals: the compiler discards a field's null-state across any
+            // intervening call, and the loop below makes several.
+            SuitabilityCell[] terms = m_RawTerms;
+            float[] scratch = m_TermScratch;
+            float[] percentileScratch = m_ScoreScratch;
+
             for (int i = 0; i < totalCells; i++)
             {
-                SuitabilityCell cell = m_RawTerms[i];
+                SuitabilityCell cell = terms[i];
                 switch (layer)
                 {
                     case SuitabilityLayer.Jobs:
-                        m_TermScratch[i] = cell.m_Jobs;
+                        scratch[i] = cell.m_Jobs;
                         break;
                     case SuitabilityLayer.Future:
-                        m_TermScratch[i] = cell.m_Future;
+                        scratch[i] = cell.m_Future;
                         break;
                     default:
-                        m_TermScratch[i] = cell.m_Demand;
+                        scratch[i] = cell.m_Demand;
                         break;
                 }
             }
 
-            return SuitabilityScoring.PositivePercentile(m_TermScratch, totalCells, TermCapPercentile, m_ScoreScratch);
+            return SuitabilityScoring.PositivePercentile(scratch, totalCells, TermCapPercentile, percentileScratch);
         }
 
         // Non-maximum suppression turns the gradient into discrete candidate sites,
@@ -1654,6 +1733,11 @@ namespace StationSuitabilityOverlay
         // the landmass — affordable here precisely because there are only a handful.
         private void ExtractSites(Setting settings)
         {
+            if (m_Scores is null)
+            {
+                return;
+            }
+
             byte[] sitesLayer = m_LayerIntensities[(int)SuitabilityLayer.Sites];
             Array.Clear(sitesLayer, 0, sitesLayer.Length);
             m_SiteCount = 0;
@@ -1701,12 +1785,21 @@ namespace StationSuitabilityOverlay
                 for (int dy = -radius; dy <= radius; dy++)
                 {
                     int y = cy + dy;
-                    if (y < 0 || y >= height) continue;
+                    if (y < 0 || y >= height)
+                    {
+                        continue;
+                    }
                     for (int dx = -radius; dx <= radius; dx++)
                     {
                         int x = cx + dx;
-                        if (x < 0 || x >= width) continue;
-                        if (dx * dx + dy * dy > radius * radius) continue;
+                        if (x < 0 || x >= width)
+                        {
+                            continue;
+                        }
+                        if (dx * dx + dy * dy > radius * radius)
+                        {
+                            continue;
+                        }
                         sitesLayer[x + y * width] = intensity;
                     }
                 }
@@ -1717,10 +1810,17 @@ namespace StationSuitabilityOverlay
 
         private void RefineAndRankSites(Setting settings)
         {
-            if (m_Land == null || m_TileDemand == null || m_DistanceScratch == null || m_VisitedScratch == null)
+            if (m_Land is null || m_TileDemand is null || m_TileJobs is null
+                || m_DistanceScratch is null || m_VisitedScratch is null)
             {
                 return;
             }
+
+            byte[] land = m_Land;
+            float[] tileDemand = m_TileDemand;
+            float[] tileJobs = m_TileJobs;
+            float[] distanceScratch = m_DistanceScratch;
+            byte[] visitedScratch = m_VisitedScratch;
 
             var refined = new float[m_SiteCount];
             for (int s = 0; s < m_SiteCount; s++)
@@ -1731,13 +1831,13 @@ namespace StationSuitabilityOverlay
                     m_IntensityGrid.y,
                     TileSize,
                     settings.CatchmentRadius,
-                    m_Land,
-                    m_TileDemand,
-                    m_TileJobs,
+                    land,
+                    tileDemand,
+                    tileJobs,
                     settings.W1,
                     settings.W2,
-                    m_DistanceScratch,
-                    m_VisitedScratch,
+                    distanceScratch,
+                    visitedScratch,
                     out float _,
                     out float _);
             }
@@ -1782,7 +1882,12 @@ namespace StationSuitabilityOverlay
 
         private bool SitesChangedMeaningfully()
         {
-            if (m_LoggedSiteCount != m_SiteCount || m_LoggedSiteIndices == null)
+            if (m_LoggedSiteIndices is null || m_LoggedSiteScores is null)
+            {
+                return true;
+            }
+
+            if (m_LoggedSiteCount != m_SiteCount)
             {
                 return true;
             }
@@ -1819,7 +1924,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            if (m_LoggedSiteIndices == null || m_LoggedSiteIndices.Length != m_SiteIndices.Length)
+            if (m_LoggedSiteIndices is null || m_LoggedSiteIndices.Length != m_SiteIndices.Length)
             {
                 m_LoggedSiteIndices = new int[m_SiteIndices.Length];
                 m_LoggedSiteScores = new float[m_SiteScores.Length];
@@ -1830,7 +1935,7 @@ namespace StationSuitabilityOverlay
             Array.Copy(m_SiteScores, m_LoggedSiteScores, m_SiteCount);
 
             var builder = new StringBuilder();
-            builder.Append("Recommended sites (walk-distance ranked): ");
+            _ = builder.Append("Recommended sites (walk-distance ranked): ");
             for (int s = 0; s < m_SiteCount; s++)
             {
                 int index = m_SiteIndices[s];
@@ -1839,17 +1944,17 @@ namespace StationSuitabilityOverlay
                 float2 world = m_ScoreWorldMin + new float2((x + 0.5f) * TileSize, (y + 0.5f) * TileSize);
                 if (s > 0)
                 {
-                    builder.Append(", ");
+                    _ = builder.Append(", ");
                 }
 
-                builder.Append('#');
-                builder.Append(s + 1);
-                builder.Append(" (");
-                builder.Append(((int)world.x).ToString(CultureInfo.InvariantCulture));
-                builder.Append(", ");
-                builder.Append(((int)world.y).ToString(CultureInfo.InvariantCulture));
-                builder.Append(") score ");
-                builder.Append(m_SiteScores[s].ToString("F1", CultureInfo.InvariantCulture));
+                _ = builder.Append('#');
+                _ = builder.Append(s + 1);
+                _ = builder.Append(" (");
+                _ = builder.Append(((int)world.x).ToString(CultureInfo.InvariantCulture));
+                _ = builder.Append(", ");
+                _ = builder.Append(((int)world.y).ToString(CultureInfo.InvariantCulture));
+                _ = builder.Append(") score ");
+                _ = builder.Append(m_SiteScores[s].ToString("F1", CultureInfo.InvariantCulture));
             }
 
             Mod.Log.Info(builder.ToString());
@@ -1880,8 +1985,8 @@ namespace StationSuitabilityOverlay
                 var job = new ExtractTripsJob
                 {
                     EntityType = GetEntityTypeHandle(),
-                    CitizenType = GetComponentTypeHandle<Citizen>(true),
-                    HouseholdMemberType = GetComponentTypeHandle<HouseholdMember>(true),
+                    CitizenType = GetComponentTypeHandle<Citizen>(isReadOnly: true),
+                    HouseholdMemberType = GetComponentTypeHandle<HouseholdMember>(isReadOnly: true),
                     WorkerLookup = m_WorkerLookup,
                     StudentLookup = m_StudentLookup,
                     PropertyRenterLookup = m_PropertyRenterLookup,
@@ -1906,14 +2011,14 @@ namespace StationSuitabilityOverlay
             DiscountServedDemand(gridSize);
             BuildDemandLayer(settings, gridSize, worldMin);
 
-            if (m_GraphDirty || m_RoadGraph.Graph == null)
+            if (m_GraphDirty || m_RoadGraph.Graph is null)
             {
                 BuildNetworks(gridSize, worldMin);
             }
 
             int assignedPairs = 0;
             float assignedWeight = 0f;
-            if (m_RoadGraph.Graph != null && m_ZoneNodes != null)
+            if (m_RoadGraph.Graph is not null && m_ZoneNodes is not null)
             {
                 // Generous cost ceiling: a trip longer than this is not a candidate
                 // for a single transit line anyway.
@@ -1934,8 +2039,8 @@ namespace StationSuitabilityOverlay
             m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
             UpdateRouteSummary(tripCount, assignedPairs);
             Mod.Log.Info(
-                $"Travel demand: trips={tripCount}, weight={totalWeight:F0}, zonePairs={m_ZoneFlows.Count}, " +
-                $"assignedPairs={assignedPairs}, assignedWeight={assignedWeight:F0}, " +
+                $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)}, weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}, " +
+                $"assignedPairs={(assignedPairs).ToString(CultureInfo.InvariantCulture)}, assignedWeight={(assignedWeight).ToString("F0", CultureInfo.InvariantCulture)}, " +
                 $"crossWaterPairs={m_CrossWaterFlows.Count}, candidates={m_RouteCandidates.Count}, routes={m_Routes.Count}");
         }
 
@@ -1974,22 +2079,25 @@ namespace StationSuitabilityOverlay
             int problems = 0;
             for (int i = 0; i < m_LineHealth.Count; i++)
             {
-                if (m_LineHealth[i].Severity > 0) problems++;
+                if (m_LineHealth[i].Severity > 0)
+                {
+                    problems++;
+                }
             }
 
             Mod.Log.Info(
                 $"Transit model: lines={m_ExistingLines.Count}, stops={m_TransitStops.Count}, " +
-                $"graphNodes={m_TransitNetwork.Graph.NodeCount}, routablePairs={m_PairCount}, " +
-                $"linesNeedingAttention={problems}");
+                $"graphNodes={(m_TransitNetwork.Graph.NodeCount).ToString(CultureInfo.InvariantCulture)}, routablePairs={(m_PairCount).ToString(CultureInfo.InvariantCulture)}, " +
+                $"linesNeedingAttention={(problems).ToString(CultureInfo.InvariantCulture)}");
 
             for (int i = 0; i < m_LineHealth.Count && i < 12; i++)
             {
                 LineHealth entry = m_LineHealth[i];
                 Mod.Log.Info(
-                    $"Line {entry.m_Index} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
-                    $"{entry.m_Passengers}/{entry.m_Capacity} aboard ({entry.m_Usage * 100f:F0}%), " +
-                    $"{entry.m_Vehicles}/{entry.m_TargetVehicles} vehicles, typicalWait {entry.m_TypicalWait:F0}, " +
-                    $"{entry.m_Stops} stops, {entry.m_LengthKm:F1} km");
+                    $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
+                    $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard ({(entry.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture)}%), " +
+                    $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, typicalWait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"{(entry.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(entry.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km");
             }
         }
 
@@ -1998,7 +2106,7 @@ namespace StationSuitabilityOverlay
         private void MapZonesToStops(float[] xs, float[] zs)
         {
             int zoneCount = m_ZoneGrid.x * m_ZoneGrid.y;
-            if (m_ZoneStops == null || m_ZoneStops.Length != zoneCount)
+            if (m_ZoneStops is null || m_ZoneStops.Length != zoneCount)
             {
                 m_ZoneStops = new int[zoneCount];
             }
@@ -2029,8 +2137,15 @@ namespace StationSuitabilityOverlay
         // takes, keeping them grouped by origin so one search serves a run of pairs.
         private void BuildPairArrays()
         {
+            if (m_ZoneStops is null)
+            {
+                return;
+            }
+
+            int[] zoneStops = m_ZoneStops;
             int count = m_ZoneFlows.Count;
-            if (m_PairOrigins == null || m_PairOrigins.Length < count)
+            if (m_PairOrigins is null || m_PairDests is null || m_PairWeights is null
+                || m_PairOrigins.Length < count)
             {
                 m_PairOrigins = new int[count];
                 m_PairDests = new int[count];
@@ -2041,8 +2156,8 @@ namespace StationSuitabilityOverlay
             for (int i = 0; i < count; i++)
             {
                 ZoneFlow flow = m_ZoneFlows[i];
-                int origin = m_ZoneStops[flow.m_Origin];
-                int destination = m_ZoneStops[flow.m_Destination];
+                int origin = zoneStops[flow.m_Origin];
+                int destination = zoneStops[flow.m_Destination];
                 if (origin < 0 || destination < 0 || origin == destination)
                 {
                     continue;
@@ -2064,15 +2179,23 @@ namespace StationSuitabilityOverlay
         // between two well-served places that no single service connects.
         private void DiscountServedDemand(int2 gridSize)
         {
-            if (m_RawTerms == null)
+            if (m_RawTerms is null)
             {
                 return;
             }
 
-            if (m_TransitNetwork?.Graph == null || m_ZoneStops == null)
+            if (m_TransitNetwork is null || m_TransitWorkspace is null || m_ZoneStops is null
+                || m_PairOrigins is null || m_PairDests is null || m_PairWeights is null)
             {
                 return;
             }
+
+            TransitNetwork network = m_TransitNetwork;
+            DijkstraWorkspace workspace = m_TransitWorkspace;
+            int[] zoneStops = m_ZoneStops;
+            int[] pairOrigins = m_PairOrigins;
+            int[] pairDests = m_PairDests;
+            float[] pairWeights = m_PairWeights;
 
             float weightBefore = 0f;
             float weightAfter = 0f;
@@ -2082,8 +2205,8 @@ namespace StationSuitabilityOverlay
             for (int i = 0; i < m_ZoneFlows.Count && pair < m_PairCount; i++)
             {
                 ZoneFlow flow = m_ZoneFlows[i];
-                int origin = m_ZoneStops[flow.m_Origin];
-                int destination = m_ZoneStops[flow.m_Destination];
+                int origin = zoneStops[flow.m_Origin];
+                int destination = zoneStops[flow.m_Destination];
                 if (origin < 0 || destination < 0 || origin == destination)
                 {
                     continue;
@@ -2093,10 +2216,10 @@ namespace StationSuitabilityOverlay
                 if (origin != currentOrigin)
                 {
                     currentOrigin = origin;
-                    m_TransitWorkspace.Run(m_TransitNetwork.Graph, origin, MaxJourneySeconds);
+                    workspace.Run(network.Graph, origin, MaxJourneySeconds);
                 }
 
-                if (!SuitabilityTransit.Inspect(m_TransitNetwork, m_TransitWorkspace, origin, destination,
+                if (!SuitabilityTransit.Inspect(network, workspace, origin, destination,
                         -1, out int boardings, out bool _, out float travelTime))
                 {
                     continue;
@@ -2118,9 +2241,9 @@ namespace StationSuitabilityOverlay
             }
 
             Mod.Log.Info(
-                $"Served-demand discount: {servedPairs} of {m_PairCount} routable pairs already carried, " +
-                $"weight {weightBefore:F0} -> {weightAfter:F0} " +
-                $"({(weightBefore > 0f ? (1f - weightAfter / weightBefore) * 100f : 0f):F0}% absorbed by existing lines)");
+                $"Served-demand discount: {(servedPairs).ToString(CultureInfo.InvariantCulture)} of {(m_PairCount).ToString(CultureInfo.InvariantCulture)} routable pairs already carried, " +
+                $"weight {(weightBefore).ToString("F0", CultureInfo.InvariantCulture)} -> {(weightAfter).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"({((weightBefore > 0f ? (1f - weightAfter / weightBefore) * 100f : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% absorbed by existing lines)");
         }
 
         // Re-scores candidates by the demand they would ENABLE once riders are allowed
@@ -2132,7 +2255,16 @@ namespace StationSuitabilityOverlay
         // direct service still outranks a three-leg itinerary carrying the same people.
         private void ScoreCandidatesWithTransfers(Setting settings)
         {
-            if (m_TransitNetwork?.Graph == null || m_PairCount == 0 || m_RouteCandidates.Count == 0)
+            if (m_PairOrigins is null || m_PairDests is null || m_PairWeights is null)
+            {
+                return;
+            }
+
+            int[] pairOrigins = m_PairOrigins;
+            int[] pairDests = m_PairDests;
+            float[] pairWeights = m_PairWeights;
+
+            if (m_TransitNetwork?.Graph is null || m_PairCount == 0 || m_RouteCandidates.Count == 0)
             {
                 return;
             }
@@ -2189,12 +2321,12 @@ namespace StationSuitabilityOverlay
                 var workspace = new DijkstraWorkspace(withCandidate.Graph.NodeCount);
 
                 float enabled = SuitabilityTransit.CreditLine(
-                    withCandidate, workspace, m_PairOrigins, m_PairDests, m_PairWeights, m_PairCount,
+                    withCandidate, workspace, pairOrigins, pairDests, pairWeights, m_PairCount,
                     lines.Count - 1, discount, MaxJourneySeconds, out float _);
 
                 Mod.Log.Info(
-                    $"  transfer scoring {c}: {candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops, " +
-                    $"corridorFlow={candidate.CapturedFlow:F0}, enabledDemand={enabled:F0}");
+                    $"  transfer scoring {(c).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops, " +
+                    $"corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, enabledDemand={(enabled).ToString("F0", CultureInfo.InvariantCulture)}");
 
                 // Enabled demand governs, with only a small floor from corridor flow
                 // so a candidate the transit model cannot reach yet is not lost. The
@@ -2259,7 +2391,7 @@ namespace StationSuitabilityOverlay
                 // whatever chunk order the ECS happens to have them in, so a positional
                 // lookup silently pointed at a different line after a refresh — which
                 // is why an improvement plan could end up sitting under the wrong name.
-                ExistingLine line = null;
+                ExistingLine? line = null;
                 for (int k = 0; k < m_ExistingLines.Count; k++)
                 {
                     if (m_ExistingLines[k].m_Id == health.m_Id)
@@ -2269,9 +2401,9 @@ namespace StationSuitabilityOverlay
                     }
                 }
 
-                if (line == null)
+                if (line is null)
                 {
-                    Mod.Log.Info($"Improvement requested for line id {requested}, which no longer exists.");
+                    Mod.Log.Info($"Improvement requested for line id {(requested).ToString(CultureInfo.InvariantCulture)}, which no longer exists.");
                     return;
                 }
                 int perVehicle = health.m_Vehicles > 0 ? health.m_Capacity / health.m_Vehicles : health.m_Capacity;
@@ -2286,10 +2418,10 @@ namespace StationSuitabilityOverlay
 
                 Mod.Log.Info(
                     $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {s_ImprovePlan} " +
-                    $"[measured: {health.m_Passengers}/{health.m_Capacity} aboard, {health.m_Vehicles}/{health.m_TargetVehicles} veh, " +
-                    $"typicalWait {health.m_TypicalWait:F0}, {health.m_Stops} stops, {health.m_LengthKm:F1} km, " +
-                    $"perVehicle {perVehicle}, roundTrip {line.m_StableDurationSeconds:F0}s, " +
-                    $"targetInterval {line.m_TargetInterval:F0}s]");
+                    $"[measured: {(health.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(health.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard, {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(health.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} veh, " +
+                    $"typicalWait {(health.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}, {(health.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(health.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km, " +
+                    $"perVehicle {(perVehicle).ToString(CultureInfo.InvariantCulture)}, roundTrip {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"targetInterval {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s]");
                 return;
             }
         }
@@ -2335,7 +2467,7 @@ namespace StationSuitabilityOverlay
             // train on the road graph reported "no road path between its endpoints" and
             // produced nothing at all.
             SuitabilityRoadGraph graph = NetworkForMode(mode);
-            if (graph?.Graph == null)
+            if (graph?.Graph is null)
             {
                 Mod.Log.Info($"Improved route for \"{health.m_Name}\": no {mode} network is built yet.");
                 return;
@@ -2348,7 +2480,7 @@ namespace StationSuitabilityOverlay
             {
                 Mod.Log.Info(
                     $"Improved route for \"{health.m_Name}\": no {graph.Network} path between its endpoints " +
-                    $"(fromNode={from}, toNode={to}).");
+                    $"(fromNode={(from).ToString(CultureInfo.InvariantCulture)}, toNode={(to).ToString(CultureInfo.InvariantCulture)}).");
                 return;
             }
 
@@ -2370,9 +2502,9 @@ namespace StationSuitabilityOverlay
             m_ImprovedRoute = route.Stops.Count >= 2 ? route : null;
 
             Mod.Log.Info(
-                $"Improved route for \"{health.m_Name}\": {mode}, {length / 1000f:F2} km " +
-                $"(was {health.m_LengthKm:F2}), {route.Stops.Count} stops (was {health.m_Stops}), " +
-                $"{route.Vehicles} vehicles (was {health.m_Vehicles}), corridorFlow={route.CapturedFlow:F0}");
+                $"Improved route for \"{health.m_Name}\": {mode}, {(length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km " +
+                $"(was {(health.m_LengthKm).ToString("F2", CultureInfo.InvariantCulture)}), {route.Stops.Count} stops (was {(health.m_Stops).ToString(CultureInfo.InvariantCulture)}), " +
+                $"{(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles (was {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}), corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}");
         }
 
         private void UpdateLineHealthText()
@@ -2383,25 +2515,25 @@ namespace StationSuitabilityOverlay
                 LineHealth health = m_LineHealth[i];
                 if (i > 0)
                 {
-                    builder.Append('\n');
+                    _ = builder.Append('\n');
                 }
 
-                builder.Append(health.m_Id);
-                builder.Append('|');
+                _ = builder.Append(health.m_Id);
+                _ = builder.Append('|');
                 // The game's own name, so this list matches the Transportation
                 // Overview rather than using an invented index.
-                builder.Append(string.IsNullOrEmpty(health.m_Name) ? health.m_Mode.ToString() : health.m_Name);
-                builder.Append('|');
-                builder.Append(health.m_Verdict);
-                builder.Append('|');
-                builder.Append(SuitabilityLineHealth.Describe(health));
-                builder.Append('|');
-                builder.Append((health.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                builder.Append("% full, ");
-                builder.Append(health.m_Vehicles);
-                builder.Append(" veh, ");
-                builder.Append(health.m_Stops);
-                builder.Append(" stops");
+                _ = builder.Append(string.IsNullOrEmpty(health.m_Name) ? health.m_Mode.ToString() : health.m_Name);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_Verdict);
+                _ = builder.Append('|');
+                _ = builder.Append(SuitabilityLineHealth.Describe(health));
+                _ = builder.Append('|');
+                _ = builder.Append((health.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                _ = builder.Append("% full, ");
+                _ = builder.Append(health.m_Vehicles);
+                _ = builder.Append(" veh, ");
+                _ = builder.Append(health.m_Stops);
+                _ = builder.Append(" stops");
             }
 
             s_LineHealthList = builder.ToString();
@@ -2417,6 +2549,11 @@ namespace StationSuitabilityOverlay
 
         private float CoverageAt(float2 position, int2 gridSize)
         {
+            if (m_RawTerms is null)
+            {
+                return 0f;
+            }
+
             int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
             int index = cell.x + cell.y * gridSize.x;
             if (index < 0 || index >= m_RawTerms.Length)
@@ -2430,7 +2567,7 @@ namespace StationSuitabilityOverlay
         private void BuildDemandLayer(Setting settings, int2 gridSize, float2 worldMin)
         {
             int cells = gridSize.x * gridSize.y;
-            if (m_DemandRaster == null || m_DemandRaster.Length != cells)
+            if (m_DemandRaster is null || m_DemandRaster.Length != cells)
             {
                 m_DemandRaster = new float[cells];
             }
@@ -2439,7 +2576,7 @@ namespace StationSuitabilityOverlay
                 m_ZoneFlows, worldMin, m_ZoneGrid, gridSize, TileSize, m_DemandRaster);
 
             byte[] layer = m_LayerIntensities[(int)SuitabilityLayer.TravelDemand];
-            if (layer != null && layer.Length == cells && m_ScoreScratch != null && m_ScoreScratch.Length >= cells)
+            if (layer is not null && layer.Length == cells && m_ScoreScratch is not null && m_ScoreScratch.Length >= cells)
             {
                 SuitabilityScoring.NormalizeIntensities(
                     m_DemandRaster, cells, settings.HighlightShare / 100f, IntensityGamma, layer, m_ScoreScratch);
@@ -2461,7 +2598,7 @@ namespace StationSuitabilityOverlay
             m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
 
             int cells = gridSize.x * gridSize.y;
-            if (m_TrackMask == null || m_TrackMask.Length != cells)
+            if (m_TrackMask is null || m_TrackMask.Length != cells)
             {
                 m_TrackMask = new byte[cells];
             }
@@ -2469,9 +2606,9 @@ namespace StationSuitabilityOverlay
             SuitabilityRoadGraph.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds);
             SuitabilityLattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, gridSize, worldMin, TileSize, m_TrackMask);
 
-            bool LandTile(int tile) => m_Land != null && tile < m_Land.Length && m_Land[tile] != 0;
-            bool WaterTile(int tile) => m_Land != null && tile < m_Land.Length && m_Land[tile] == 0;
-            bool OnTrack(int tile) => m_TrackMask != null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
+            bool LandTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] != 0;
+            bool WaterTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] == 0;
+            bool OnTrack(int tile) => m_TrackMask is not null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
 
             CompactGraph trainGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
                 tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Train, OnTrack(tile)),
@@ -2484,26 +2621,26 @@ namespace StationSuitabilityOverlay
             m_MetroNetwork.Adopt(metroGraph, metroX, metroZ, RouteNetwork.Rail);
 
             CompactGraph waterGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, WaterTile,
-                null, out float[] waterX, out float[] waterZ);
+                tileCostScale: null, out float[] waterX, out float[] waterZ);
             m_WaterNetwork.Adopt(waterGraph, waterX, waterZ, RouteNetwork.Water);
 
             m_GraphDirty = false;
             Mod.Log.Info(
-                $"Networks built: road {m_RoadGraph.NodeCount}/{m_RoadGraph.EdgeCount}, " +
-                $"rail {m_TrainNetwork.NodeCount}/{m_TrainNetwork.EdgeCount}, " +
-                $"water {m_WaterNetwork.NodeCount}/{m_WaterNetwork.EdgeCount}, " +
+                $"Networks built: road {(m_RoadGraph.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_RoadGraph.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
+                $"rail {(m_TrainNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_TrainNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
+                $"water {(m_WaterNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_WaterNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
                 $"trackSegments={m_TrackStarts.Count}");
         }
 
         private void AssignLatticeFlow(SuitabilityRoadGraph network, float2 worldMin, List<ZoneFlow> flows)
         {
-            if (network.Graph == null || network.NodeCount == 0 || flows.Count == 0)
+            if (network.Graph is null || network.NodeCount == 0 || flows.Count == 0)
             {
                 return;
             }
 
             int[] zoneNodes = network.MapZonesToNodes(m_ZoneGrid, worldMin);
-            network.AssignFlow(flows, zoneNodes, 30000f, out float _);
+            _ = network.AssignFlow(flows, zoneNodes, 30000f, out float _);
         }
 
         // Keeps only journeys whose two ends sit on different landmasses — the one
@@ -2542,9 +2679,9 @@ namespace StationSuitabilityOverlay
         // Demand reachable from a water node, sampled from the land around it. Open
         // ocean scores nothing, which is what stops a ferry corridor crawling along
         // an empty coastline.
-        private float[] BuildWaterNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
+        private float[]? BuildWaterNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
         {
-            if (network.Graph == null || m_RawTerms == null || network.NodeCount == 0)
+            if (network.Graph is null || m_RawTerms is null || network.NodeCount == 0)
             {
                 return null;
             }
@@ -2564,14 +2701,23 @@ namespace StationSuitabilityOverlay
                 for (int dy = -span; dy <= span; dy += 2)
                 {
                     int y = centre.y + dy;
-                    if (y < 0 || y >= gridSize.y) continue;
+                    if (y < 0 || y >= gridSize.y)
+                    {
+                        continue;
+                    }
                     for (int dx = -span; dx <= span; dx += 2)
                     {
                         int x = centre.x + dx;
-                        if (x < 0 || x >= gridSize.x) continue;
+                        if (x < 0 || x >= gridSize.x)
+                        {
+                            continue;
+                        }
 
                         int index = x + y * gridSize.x;
-                        if (index >= m_RawTerms.Length) continue;
+                        if (index >= m_RawTerms.Length)
+                        {
+                            continue;
+                        }
 
                         SuitabilityCell terms = m_RawTerms[index];
                         float local = SuitabilityScoring.Saturate(terms.m_Demand * invDemand)
@@ -2597,9 +2743,9 @@ namespace StationSuitabilityOverlay
             var objective = (RouteObjective)settings.Objective;
             m_RouteCandidates.Clear();
 
-            float[] roadDemand = BuildNodeDemand(m_RoadGraph, gridSize);
-            float[] trainDemand = BuildNodeDemand(m_TrainNetwork, gridSize);
-            float[] metroDemand = BuildNodeDemand(m_MetroNetwork, gridSize);
+            float[]? roadDemand = BuildNodeDemand(m_RoadGraph, gridSize);
+            float[]? trainDemand = BuildNodeDemand(m_TrainNetwork, gridSize);
+            float[]? metroDemand = BuildNodeDemand(m_MetroNetwork, gridSize);
 
             // Corridors must serve somebody along their length, not merely carry
             // through-traffic — that is what stopped routes looping into empty land.
@@ -2611,7 +2757,7 @@ namespace StationSuitabilityOverlay
             int shortTotal = 0;
 
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
-                0.1f, 12000f, roadDemand, demandFloor, null, m_RouteCandidates,
+                0.1f, 12000f, roadDemand, demandFloor, forcedMode: null, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g1, out int s1);
 
             SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
@@ -2633,15 +2779,15 @@ namespace StationSuitabilityOverlay
             shortTotal = s1 + s2 + s3 + s4;
 
             Mod.Log.Info(
-                $"Candidates by network: road grown={g1} tooShort={s1}, train grown={g2} tooShort={s2}, " +
-                $"metro grown={g3} tooShort={s3}, ferry grown={g4} tooShort={s4}, " +
-                $"minLengths: bus {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Bus):F0} " +
-                $"tram {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Tram):F0} " +
-                $"metro {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Metro):F0}");
+                $"Candidates by network: road grown={(g1).ToString(CultureInfo.InvariantCulture)} tooShort={(s1).ToString(CultureInfo.InvariantCulture)}, train grown={(g2).ToString(CultureInfo.InvariantCulture)} tooShort={(s2).ToString(CultureInfo.InvariantCulture)}, " +
+                $"metro grown={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, ferry grown={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
+                $"minLengths: bus {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Bus)).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"tram {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"metro {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}");
 
-            m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
+            m_RouteCandidates.Sort(static (a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
             ScoreCandidatesWithTransfers(settings);
-            m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
+            m_RouteCandidates.Sort(static (a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
             // Pick each candidate's mode from what its demand actually justifies, and
             // re-trace it on the streets when nothing its own alignment can carry is
@@ -2674,16 +2820,16 @@ namespace StationSuitabilityOverlay
                     // Nothing this alignment can carry is justified — a tunnel for a
                     // handful of riders. Re-trace the same journey along streets, where
                     // a bus or tram can actually run it.
-                    SuggestedRoute onRoad = SuitabilityRoutes.RetraceOnRoad(
+                    SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
                         m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1],
                         reference, point => ScoreAtWorld(point, gridSize), scratch);
 
-                    if (onRoad == null)
+                    if (onRoad is null)
                     {
                         rejected++;
                         Mod.Log.Info(
-                            $"  candidate {i}: {candidate.Network}, flow={beforeFlow:F0}, len={candidate.Length:F0}m " +
-                            $"— DROPPED, nothing justified and no road path between its ends");
+                            $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m " +
+                            "— DROPPED, nothing justified and no road path between its ends");
                         continue;
                     }
 
@@ -2694,7 +2840,7 @@ namespace StationSuitabilityOverlay
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {i}: road, flow={beforeFlow:F0}, len={candidate.Length:F0}m, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: road, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, " +
                         $"{candidate.Stops.Count} stops — DROPPED, below every floor");
                     continue;
                 }
@@ -2706,8 +2852,8 @@ namespace StationSuitabilityOverlay
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {i}: {candidate.Network} {candidate.Mode}, flow={beforeFlow:F2}, " +
-                        $"len={candidate.Length:F0}m — DROPPED, no demand on this corridor");
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, flow={(beforeFlow).ToString("F2", CultureInfo.InvariantCulture)}, " +
+                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
                     continue;
                 }
 
@@ -2716,7 +2862,7 @@ namespace StationSuitabilityOverlay
                 {
                     duplicates++;
                     Mod.Log.Info(
-                        $"  candidate {i}: {candidate.Network} {candidate.Mode}, flow={beforeFlow:F0}, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"{candidate.Stops.Count} stops — DROPPED, already built");
                     continue;
                 }
@@ -2726,24 +2872,24 @@ namespace StationSuitabilityOverlay
                     SuggestedWaitFor(candidate.Mode) * 2f);
 
                 Mod.Log.Info(
-                    $"  candidate {i}: {candidate.Network} -> {candidate.Mode}, flow={beforeFlow:F0}, " +
-                    $"len={candidate.Length:F0}m, {candidate.Stops.Count} stops, {candidate.Vehicles} veh — KEPT");
+                    $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops, {(candidate.Vehicles).ToString(CultureInfo.InvariantCulture)} veh — KEPT");
 
                 m_Routes.Add(candidate);
             }
 
             Mod.Log.Info(
-                $"Route suggestions: grown={grownTotal}, tooShort={shortTotal}, " +
-                $"candidates={m_RouteCandidates.Count}, unjustified={rejected}, retracedOnRoad={retraced}, " +
-                $"alreadyBuilt={duplicates}, kept={m_Routes.Count}, referenceFlow={reference:F0} " +
-                $"(floors: tram {reference * 1.5f:F0}, metro {reference * 5f:F0}, train {reference * 8f:F0})");
+                $"Route suggestions: grown={(grownTotal).ToString(CultureInfo.InvariantCulture)}, tooShort={(shortTotal).ToString(CultureInfo.InvariantCulture)}, " +
+                $"candidates={m_RouteCandidates.Count}, unjustified={(rejected).ToString(CultureInfo.InvariantCulture)}, retracedOnRoad={(retraced).ToString(CultureInfo.InvariantCulture)}, " +
+                $"alreadyBuilt={(duplicates).ToString(CultureInfo.InvariantCulture)}, kept={m_Routes.Count}, referenceFlow={(reference).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"(floors: tram {(reference * 1.5f).ToString("F0", CultureInfo.InvariantCulture)}, metro {(reference * 5f).ToString("F0", CultureInfo.InvariantCulture)}, train {(reference * 8f).ToString("F0", CultureInfo.InvariantCulture)})");
         }
 
         // Demand near each network node, so corridor growth can tell a street with
         // people on it from a rural through-road carrying only passing trips.
-        private float[] BuildNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
+        private float[]? BuildNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
         {
-            if (network.Graph == null || m_RawTerms == null || network.NodeCount == 0)
+            if (network.Graph is null || m_RawTerms is null || network.NodeCount == 0)
             {
                 return null;
             }
@@ -2776,7 +2922,7 @@ namespace StationSuitabilityOverlay
         // it; the route builder now only asks how good a point is.
         private float ScoreAtWorld(float2 point, int2 gridSize)
         {
-            if (m_Scores == null)
+            if (m_Scores is null)
             {
                 return 0f;
             }
@@ -2796,7 +2942,7 @@ namespace StationSuitabilityOverlay
         // nearby land then decides which stretch of coast gets the pier.
         private float ShorelineScoreAt(float2 point, int2 gridSize)
         {
-            if (m_Land == null)
+            if (m_Land is null)
             {
                 return 0f;
             }
@@ -2809,11 +2955,17 @@ namespace StationSuitabilityOverlay
             for (int dy = -span; dy <= span; dy++)
             {
                 int y = centre.y + dy;
-                if (y < 0 || y >= gridSize.y) continue;
+                if (y < 0 || y >= gridSize.y)
+                {
+                    continue;
+                }
                 for (int dx = -span; dx <= span; dx++)
                 {
                     int x = centre.x + dx;
-                    if (x < 0 || x >= gridSize.x) continue;
+                    if (x < 0 || x >= gridSize.x)
+                    {
+                        continue;
+                    }
 
                     int index = x + y * gridSize.x;
                     if (index >= m_Land.Length || m_Land[index] == 0)
@@ -2822,7 +2974,7 @@ namespace StationSuitabilityOverlay
                     }
 
                     touchesLand = true;
-                    if (m_Scores != null && index < m_Scores.Length && m_Scores[index] > best)
+                    if (m_Scores is not null && index < m_Scores.Length && m_Scores[index] > best)
                     {
                         best = m_Scores[index];
                     }
@@ -2834,7 +2986,7 @@ namespace StationSuitabilityOverlay
 
         private bool SegmentCrossesWater(float2 a, float2 b, int2 gridSize)
         {
-            if (m_Land == null)
+            if (m_Land is null)
             {
                 return false;
             }
@@ -2869,7 +3021,7 @@ namespace StationSuitabilityOverlay
                 }
                 else
                 {
-                    s_RouteSummary = $"{tripCount} journeys, {assignedPairs} routed, but no corridor was strong enough to suggest.";
+                    s_RouteSummary = $"{(tripCount).ToString(CultureInfo.InvariantCulture)} journeys, {(assignedPairs).ToString(CultureInfo.InvariantCulture)} routed, but no corridor was strong enough to suggest.";
                 }
 
                 return;
@@ -2881,41 +3033,41 @@ namespace StationSuitabilityOverlay
                 SuggestedRoute r = m_Routes[i];
                 if (i > 0)
                 {
-                    list.Append('\n');
+                    _ = list.Append('\n');
                 }
 
-                list.Append(r.Mode);
-                list.Append('|');
-                list.Append((r.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
-                list.Append('|');
-                list.Append(r.Stops.Count);
-                list.Append('|');
-                list.Append(r.Vehicles);
+                _ = list.Append(r.Mode);
+                _ = list.Append('|');
+                _ = list.Append((r.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
+                _ = list.Append('|');
+                _ = list.Append(r.Stops.Count);
+                _ = list.Append('|');
+                _ = list.Append(r.Vehicles);
             }
             s_RouteList = list.ToString();
 
             var builder = new StringBuilder();
-            builder.Append(m_Routes.Count);
-            builder.Append(" suggested: ");
+            _ = builder.Append(m_Routes.Count);
+            _ = builder.Append(" suggested: ");
             for (int i = 0; i < m_Routes.Count; i++)
             {
                 if (i > 0)
                 {
-                    builder.Append("; ");
+                    _ = builder.Append("; ");
                 }
 
                 SuggestedRoute route = m_Routes[i];
-                builder.Append('#');
-                builder.Append(i + 1);
-                builder.Append(' ');
-                builder.Append(route.Mode);
-                builder.Append(' ');
-                builder.Append((route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
-                builder.Append("km, ");
-                builder.Append(route.Stops.Count);
-                builder.Append(" stops, ");
-                builder.Append(route.Vehicles);
-                builder.Append(" veh");
+                _ = builder.Append('#');
+                _ = builder.Append(i + 1);
+                _ = builder.Append(' ');
+                _ = builder.Append(route.Mode);
+                _ = builder.Append(' ');
+                _ = builder.Append((route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
+                _ = builder.Append("km, ");
+                _ = builder.Append(route.Stops.Count);
+                _ = builder.Append(" stops, ");
+                _ = builder.Append(route.Vehicles);
+                _ = builder.Append(" veh");
             }
 
             s_RouteSummary = builder.ToString();
@@ -2929,9 +3081,9 @@ namespace StationSuitabilityOverlay
                 float2 from = route.Stops.Count > 0 ? route.Stops[0] : float2.zero;
                 float2 to = route.Stops.Count > 0 ? route.Stops[route.Stops.Count - 1] : float2.zero;
                 Mod.Log.Info(
-                    $"Route #{i + 1}: {route.Mode}, {route.Length / 1000f:F2} km, {route.Stops.Count} stops, " +
-                    $"flow={route.CapturedFlow:F0}, {route.Vehicles} vehicles, " +
-                    $"({(int)from.x},{(int)from.y}) -> ({(int)to.x},{(int)to.y})");
+                    $"Route #{(i + 1).ToString(CultureInfo.InvariantCulture)}: {route.Mode}, {(route.Length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km, {route.Stops.Count} stops, " +
+                    $"flow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
+                    $"({((int)from.x).ToString(CultureInfo.InvariantCulture)},{((int)from.y).ToString(CultureInfo.InvariantCulture)}) -> ({((int)to.x).ToString(CultureInfo.InvariantCulture)},{((int)to.y).ToString(CultureInfo.InvariantCulture)})");
             }
         }
 
@@ -2939,7 +3091,7 @@ namespace StationSuitabilityOverlay
 
         private void SampleRidership(Setting settings, float now)
         {
-            if (m_RawTerms == null || now - m_LastRidershipSample < RidershipSampleSeconds)
+            if (m_RawTerms is null || now - m_LastRidershipSample < RidershipSampleSeconds)
             {
                 return;
             }
@@ -2947,7 +3099,7 @@ namespace StationSuitabilityOverlay
             // Only sample while the simulation is actually running; a paused game
             // would otherwise contribute many identical observations.
             var simulation = World.GetExistingSystemManaged<SimulationSystem>();
-            if (simulation != null && simulation.selectedSpeed <= 0f)
+            if (simulation is not null && simulation.selectedSpeed <= 0f)
             {
                 return;
             }
@@ -2958,8 +3110,8 @@ namespace StationSuitabilityOverlay
             if (m_Calibration.TryFit())
             {
                 Mod.Log.Info(
-                    $"Ridership fit: R²={m_Calibration.RSquared:F3}, demand={m_Calibration.FittedDemand:F2}, " +
-                    $"jobs={m_Calibration.FittedJobs:F2}, access={m_Calibration.FittedAccess:F2}, future={m_Calibration.FittedFuture:F2}");
+                    $"Ridership fit: R²={(m_Calibration.RSquared).ToString("F3", CultureInfo.InvariantCulture)}, demand={(m_Calibration.FittedDemand).ToString("F2", CultureInfo.InvariantCulture)}, " +
+                    $"jobs={(m_Calibration.FittedJobs).ToString("F2", CultureInfo.InvariantCulture)}, access={(m_Calibration.FittedAccess).ToString("F2", CultureInfo.InvariantCulture)}, future={(m_Calibration.FittedFuture).ToString("F2", CultureInfo.InvariantCulture)}");
             }
 
             settings.RidershipData = m_Calibration.Serialize();
@@ -2979,7 +3131,7 @@ namespace StationSuitabilityOverlay
         // multiply, so a fitted weight means exactly what the slider means.
         private bool SampleFeaturesAt(float2 position, float[] features)
         {
-            if (m_RawTerms == null || m_IntensityGrid.x <= 0)
+            if (m_RawTerms is null || m_IntensityGrid.x <= 0)
             {
                 return false;
             }
@@ -3040,7 +3192,7 @@ namespace StationSuitabilityOverlay
 
         private static void SetField(object target, string name, object value)
         {
-            if (target == null)
+            if (target is null)
             {
                 return;
             }

@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Globalization;
 
 namespace StationSuitabilityOverlay
 {
@@ -38,7 +39,7 @@ namespace StationSuitabilityOverlay
         public LineVerdict m_Verdict;
         public int m_AddVehicles;
 
-        public int Severity
+        public readonly int Severity
         {
             get
             {
@@ -174,15 +175,15 @@ namespace StationSuitabilityOverlay
                 mode = NextModeDown(health.m_Mode);
             }
 
-            parts.Append("run it as ");
-            parts.Append(mode);
+            _ = parts.Append("run it as ");
+            _ = parts.Append(mode);
 
             // Fleet: enough capacity to carry the observed load at a comfortable fill,
             // and enough vehicles to hold a sensible headway around the line.
             int perVehicle = Math.Max(1, capacityPerVehicle);
             int forLoad = (int)Math.Ceiling(health.m_Passengers / Math.Max(0.2f, targetLoad) / perVehicle);
             int forHeadway = roundTripSeconds > 0f
-                ? (int)Math.Round(roundTripSeconds / TargetHeadwayFor(mode))
+                ? (int)Math.Round(roundTripSeconds / TargetHeadwayFor(mode), MidpointRounding.AwayFromZero)
                 : health.m_Vehicles;
             int vehicles = Math.Max(1, Math.Max(forLoad, forHeadway));
 
@@ -190,19 +191,19 @@ namespace StationSuitabilityOverlay
             // for m_TargetVehicles. Recommending fewer than that on a line flagged as
             // short of vehicles produced "overcrowded — add 1 vehicle" next to a plan
             // saying "run it with 1 vehicle (-3)".
-            if (health.m_Verdict == LineVerdict.Overcrowded || health.m_Verdict == LineVerdict.AtModeCapacity)
+            if (health.m_Verdict is LineVerdict.Overcrowded or LineVerdict.AtModeCapacity)
             {
                 vehicles = Math.Max(vehicles, health.m_TargetVehicles);
             }
 
-            parts.Append(" with ");
-            parts.Append(vehicles);
-            parts.Append(" vehicle(s)");
+            _ = parts.Append(" with ");
+            _ = parts.Append(vehicles);
+            _ = parts.Append(" vehicle(s)");
             if (vehicles != health.m_Vehicles)
             {
-                parts.Append(vehicles > health.m_Vehicles ? " (+" : " (");
-                parts.Append(vehicles - health.m_Vehicles);
-                parts.Append(')');
+                _ = parts.Append(vehicles > health.m_Vehicles ? " (+" : " (");
+                _ = parts.Append(vehicles - health.m_Vehicles);
+                _ = parts.Append(')');
             }
 
             // The player cannot set a vehicle count in Cities: Skylines II — the game
@@ -210,9 +211,9 @@ namespace StationSuitabilityOverlay
             // interval that yields this fleet, which is how it is quoted here.
             if (roundTripSeconds > 0f)
             {
-                parts.Append(", i.e. an interval of about ");
-                parts.Append((roundTripSeconds / vehicles).ToString("F0"));
-                parts.Append(" s");
+                _ = parts.Append(", i.e. an interval of about ");
+                _ = parts.Append((roundTripSeconds / vehicles).ToString("F0", CultureInfo.InvariantCulture));
+                _ = parts.Append(" s");
             }
 
             // Shape: the two failures worth calling out are a line too long to keep a
@@ -223,29 +224,29 @@ namespace StationSuitabilityOverlay
 
             if (lengthMetres > maxLength)
             {
-                parts.Append("; split it — ");
-                parts.Append((lengthMetres / 1000f).ToString("F1"));
-                parts.Append(" km is beyond what one ");
-                parts.Append(mode);
-                parts.Append(" line can keep to time");
+                _ = parts.Append("; split it — ");
+                _ = parts.Append((lengthMetres / 1000f).ToString("F1", CultureInfo.InvariantCulture));
+                _ = parts.Append(" km is beyond what one ");
+                _ = parts.Append(mode);
+                _ = parts.Append(" line can keep to time");
             }
             else if (spacing < wantedSpacing * 0.6f && health.m_Stops > 4)
             {
-                int keep = Math.Max(2, (int)Math.Round(lengthMetres / wantedSpacing) + 1);
-                parts.Append("; thin the stops to about ");
-                parts.Append(keep);
-                parts.Append(" — they average ");
-                parts.Append(spacing.ToString("F0"));
-                parts.Append(" m apart, close for a ");
-                parts.Append(mode);
+                int keep = Math.Max(2, (int)Math.Round(lengthMetres / wantedSpacing, MidpointRounding.AwayFromZero) + 1);
+                _ = parts.Append("; thin the stops to about ");
+                _ = parts.Append(keep);
+                _ = parts.Append(" — they average ");
+                _ = parts.Append(spacing.ToString("F0", CultureInfo.InvariantCulture));
+                _ = parts.Append(" m apart, close for a ");
+                _ = parts.Append(mode);
             }
             else if (health.m_Verdict == LineVerdict.NearlyEmpty)
             {
-                parts.Append("; or reroute it through denser ground — the suggestions list shows where demand is unserved");
+                _ = parts.Append("; or reroute it through denser ground — the suggestions list shows where demand is unserved");
             }
             else
             {
-                parts.Append("; the route shape looks reasonable");
+                _ = parts.Append("; the route shape looks reasonable");
             }
 
             return parts.ToString();
@@ -304,7 +305,7 @@ namespace StationSuitabilityOverlay
             {
                 case LineVerdict.Overcrowded:
                     return health.m_AddVehicles > 0
-                        ? $"overcrowded — add {health.m_AddVehicles} vehicle(s)"
+                        ? $"overcrowded — add {(health.m_AddVehicles).ToString(CultureInfo.InvariantCulture)} vehicle(s)"
                         : "overcrowded — increase service";
                 case LineVerdict.AtModeCapacity:
                     Setting.ModePreset next = NextModeUp(health.m_Mode);

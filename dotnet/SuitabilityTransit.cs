@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay
@@ -25,10 +25,10 @@ namespace StationSuitabilityOverlay
     internal sealed class TransitNetwork
     {
         public int StopCount;
-        public CompactGraph Graph;
+        public CompactGraph Graph = new CompactGraph();
         // Per edge, parallel to Graph's edge arrays.
-        public TransitEdgeKind[] EdgeKind;
-        public int[] EdgeLine;
+        public TransitEdgeKind[] EdgeKind = Array.Empty<TransitEdgeKind>();
+        public int[] EdgeLine = Array.Empty<int>();
 
         public bool IsStopNode(int node) => node >= 0 && node < StopCount;
     }
@@ -37,7 +37,7 @@ namespace StationSuitabilityOverlay
     // a rider waits for it, and how fast it covers ground.
     internal struct TransitLine
     {
-        public int[] m_Stops;
+        public int[]? m_Stops;
         // Expected wait in seconds, computed the way the game's own pathfinder does:
         // max(vehicleInterval / 2, observedAverageWait) - stopDwell, floored at zero.
         // m_VehicleInterval converges to lineDuration / fleetSize, so it already IS
@@ -46,7 +46,7 @@ namespace StationSuitabilityOverlay
         // Seconds from the previous stop to this one, taken from the route segment's
         // PathInformation.m_Duration. Index i is the ride into m_Stops[i], so index 0
         // is unused. Null falls back to distance over m_SpeedMetresPerSecond.
-        public float[] m_RideSeconds;
+        public float[]? m_RideSeconds;
         public float m_SpeedMetresPerSecond;
     }
 
@@ -117,7 +117,7 @@ namespace StationSuitabilityOverlay
             for (int l = 0; l < lines.Count; l++)
             {
                 TransitLine line = lines[l];
-                if (line.m_Stops == null || line.m_Stops.Length < 2)
+                if (line.m_Stops is null || line.m_Stops.Length < 2)
                 {
                     continue;
                 }
@@ -151,7 +151,7 @@ namespace StationSuitabilityOverlay
                             // Prefer the real pathfound duration the game keeps per
                             // route segment; fall back to geometry only if absent.
                             float ride;
-                            if (line.m_RideSeconds != null && i < line.m_RideSeconds.Length && line.m_RideSeconds[i] > 0f)
+                            if (line.m_RideSeconds is not null && i < line.m_RideSeconds.Length && line.m_RideSeconds[i] > 0f)
                             {
                                 ride = line.m_RideSeconds[i];
                             }
@@ -198,7 +198,7 @@ namespace StationSuitabilityOverlay
             travelTime = 0f;
             int accessSteps = 0;
 
-            if (network?.Graph == null || originStop == destStop)
+            if (network?.Graph is null || originStop == destStop)
             {
                 return false;
             }
@@ -260,7 +260,7 @@ namespace StationSuitabilityOverlay
         {
             servedWeight = 0f;
             float credited = 0f;
-            if (network?.Graph == null || pairCount <= 0)
+            if (network?.Graph is null || pairCount <= 0)
             {
                 return 0f;
             }

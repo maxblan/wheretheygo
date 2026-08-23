@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
@@ -58,7 +58,7 @@ namespace StationSuitabilityOverlay
             int maxRoutes,
             float minFlowFraction,
             float maxRouteLength,
-            float[] nodeDemand,
+            float[]? nodeDemand,
             float demandFloor,
             Setting.ModePreset? forcedMode,
             List<SuggestedRoute> output,
@@ -68,7 +68,7 @@ namespace StationSuitabilityOverlay
         {
             grown = 0;
             tooShort = 0;
-            if (network?.Graph == null || network.EdgeFlow == null || network.EdgeCount == 0)
+            if (network?.Graph is null || network.EdgeFlow is null || network.EdgeCount == 0)
             {
                 return;
             }
@@ -128,7 +128,7 @@ namespace StationSuitabilityOverlay
 
                 // Lattice corridors are 8-connected staircases; straighten them
                 // before measuring or drawing so a tunnel does not zig-zag.
-                if (route.Mode != Setting.ModePreset.Bus && route.Mode != Setting.ModePreset.Tram)
+                if (route.Mode is not (Setting.ModePreset.Bus or Setting.ModePreset.Tram))
                 {
                     Simplify(route.Path, SimplifyTolerance);
                 }
@@ -247,7 +247,7 @@ namespace StationSuitabilityOverlay
         // Needed because falling back across mode families changes what the alignment
         // may be: a metro corridor is a tunnel path, and a bus cannot drive it. So the
         // route is genuinely recalculated along streets rather than merely relabelled.
-        public static SuggestedRoute RetraceOnRoad(
+        public static SuggestedRoute? RetraceOnRoad(
             SuitabilityRoadGraph roads,
             float2 from,
             float2 to,
@@ -255,7 +255,7 @@ namespace StationSuitabilityOverlay
             System.Func<float2, float> scoreAt,
             List<int> scratch)
         {
-            if (roads?.Graph == null)
+            if (roads?.Graph is null)
             {
                 return null;
             }
@@ -300,7 +300,7 @@ namespace StationSuitabilityOverlay
         // mod asked for and the same suggestion kept being offered.
         public static bool DuplicatesExisting(SuggestedRoute route, List<ExistingLine> existing, List<float2> stopPositions, float matchRadius)
         {
-            if (route.Stops.Count == 0 || existing == null)
+            if (route.Stops.Count == 0 || existing is null)
             {
                 return false;
             }
@@ -406,7 +406,7 @@ namespace StationSuitabilityOverlay
                 float at = math.min(target, total);
                 float best = at;
 
-                if (scoreAt != null && search > 0f)
+                if (scoreAt is not null && search > 0f)
                 {
                     float bestScore = float.MinValue;
                     // Sample a handful of positions in the window; more would not

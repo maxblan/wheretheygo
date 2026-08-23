@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -117,7 +117,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 Entity stop = entities[i];
-                if (!entityManager.TryGetBuffer(stop, true, out DynamicBuffer<ConnectedRoute> routes) || routes.Length == 0)
+                if (!entityManager.TryGetBuffer(stop, isReadOnly: true, out DynamicBuffer<ConnectedRoute> routes) || routes.Length == 0)
                 {
                     continue;
                 }
@@ -243,30 +243,30 @@ namespace StationSuitabilityOverlay
 
             if (m_HasFit)
             {
-                builder.Append("R² ");
-                builder.Append(m_RSquared.ToString("F2", CultureInfo.InvariantCulture));
-                builder.Append(" over ");
-                builder.Append(m_FittedStops);
-                builder.Append(" stops — suggested: demand ");
-                builder.Append(m_Fitted[0].ToString("F2", CultureInfo.InvariantCulture));
-                builder.Append(", jobs ");
-                builder.Append(m_Fitted[1].ToString("F2", CultureInfo.InvariantCulture));
-                builder.Append(", access ");
-                builder.Append(m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
-                builder.Append(", future ");
-                builder.Append(m_Fitted[3].ToString("F2", CultureInfo.InvariantCulture));
+                _ = builder.Append("R² ");
+                _ = builder.Append(m_RSquared.ToString("F2", CultureInfo.InvariantCulture));
+                _ = builder.Append(" over ");
+                _ = builder.Append(m_FittedStops);
+                _ = builder.Append(" stops — suggested: demand ");
+                _ = builder.Append(m_Fitted[0].ToString("F2", CultureInfo.InvariantCulture));
+                _ = builder.Append(", jobs ");
+                _ = builder.Append(m_Fitted[1].ToString("F2", CultureInfo.InvariantCulture));
+                _ = builder.Append(", access ");
+                _ = builder.Append(m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
+                _ = builder.Append(", future ");
+                _ = builder.Append(m_Fitted[3].ToString("F2", CultureInfo.InvariantCulture));
                 return builder.ToString();
             }
 
-            builder.Append("Collecting while unpaused: ");
-            builder.Append(ReadyStops);
-            builder.Append(" of ");
-            builder.Append(MinStops);
-            builder.Append(" stops ready, ");
-            builder.Append(m_Records.Count);
-            builder.Append(" tracked (need ");
-            builder.Append(MinSamplesPerStop);
-            builder.Append(" samples each)");
+            _ = builder.Append("Collecting while unpaused: ");
+            _ = builder.Append(ReadyStops);
+            _ = builder.Append(" of ");
+            _ = builder.Append(MinStops);
+            _ = builder.Append(" stops ready, ");
+            _ = builder.Append(m_Records.Count);
+            _ = builder.Append(" tracked (need ");
+            _ = builder.Append(MinSamplesPerStop);
+            _ = builder.Append(" samples each)");
             return builder.ToString();
         }
 
@@ -278,20 +278,20 @@ namespace StationSuitabilityOverlay
             foreach (KeyValuePair<long, StopRecord> pair in m_Records)
             {
                 StopRecord record = pair.Value;
-                builder.Append(pair.Key.ToString(CultureInfo.InvariantCulture));
-                builder.Append(':');
-                builder.Append(record.m_Samples.ToString(CultureInfo.InvariantCulture));
-                builder.Append(':');
-                builder.Append(record.m_ArrivalRateSum.ToString("R", CultureInfo.InvariantCulture));
-                builder.Append(':');
-                builder.Append(record.m_WaitSum.ToString("R", CultureInfo.InvariantCulture));
+                _ = builder.Append(pair.Key.ToString(CultureInfo.InvariantCulture));
+                _ = builder.Append(':');
+                _ = builder.Append(record.m_Samples.ToString(CultureInfo.InvariantCulture));
+                _ = builder.Append(':');
+                _ = builder.Append(record.m_ArrivalRateSum.ToString("R", CultureInfo.InvariantCulture));
+                _ = builder.Append(':');
+                _ = builder.Append(record.m_WaitSum.ToString("R", CultureInfo.InvariantCulture));
                 for (int c = 0; c < FeatureCount; c++)
                 {
-                    builder.Append(':');
-                    builder.Append(record.m_Features[c].ToString("R", CultureInfo.InvariantCulture));
+                    _ = builder.Append(':');
+                    _ = builder.Append(record.m_Features[c].ToString("R", CultureInfo.InvariantCulture));
                 }
 
-                builder.Append(';');
+                _ = builder.Append(';');
             }
 
             return builder.ToString();

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Colossal.Entities;
 using Game.Companies;
 using Game.Prefabs;
@@ -26,12 +26,27 @@ namespace StationSuitabilityOverlay
 
         public int Count => m_Positions.IsCreated ? m_Positions.Length : 0;
 
+        // NativeArray.Dispose(handle) returns the handle of the deallocation job.
+        // Nothing here waits on it: these arrays are never reused, and the job that
+        // reads them is the one being passed in.
         public void Dispose(Unity.Jobs.JobHandle handle)
         {
-            if (m_Positions.IsCreated) m_Positions.Dispose(handle);
-            if (m_Weights.IsCreated) m_Weights.Dispose(handle);
-            if (m_Offsets.IsCreated) m_Offsets.Dispose(handle);
-            if (m_Counts.IsCreated) m_Counts.Dispose(handle);
+            if (m_Positions.IsCreated)
+            {
+                _ = m_Positions.Dispose(handle);
+            }
+            if (m_Weights.IsCreated)
+            {
+                _ = m_Weights.Dispose(handle);
+            }
+            if (m_Offsets.IsCreated)
+            {
+                _ = m_Offsets.Dispose(handle);
+            }
+            if (m_Counts.IsCreated)
+            {
+                _ = m_Counts.Dispose(handle);
+            }
         }
     }
 
@@ -72,7 +87,7 @@ namespace StationSuitabilityOverlay
 
         public static PointBuckets BuildBuckets(
             List<float2> positions,
-            List<float> weights,
+            List<float>? weights,
             int2 gridSize,
             float2 worldMin,
             float cellSize)
@@ -107,7 +122,7 @@ namespace StationSuitabilityOverlay
                 int index = cell.x + cell.y * gridSize.x;
                 int writeIndex = write[index]++;
                 result.m_Positions[writeIndex] = positions[i];
-                result.m_Weights[writeIndex] = weights != null ? weights[i] : 1f;
+                result.m_Weights[writeIndex] = weights is not null ? weights[i] : 1f;
             }
 
             write.Dispose();
@@ -222,7 +237,7 @@ namespace StationSuitabilityOverlay
 
         public static bool IsServedByLine(EntityManager entityManager, Entity stop)
         {
-            return entityManager.TryGetBuffer(stop, true, out DynamicBuffer<ConnectedRoute> routes)
+            return entityManager.TryGetBuffer(stop, isReadOnly: true, out DynamicBuffer<ConnectedRoute> routes)
                 && routes.Length > 0;
         }
 
@@ -276,8 +291,8 @@ namespace StationSuitabilityOverlay
 
                 float3 mid = (start + end) * 0.5f;
                 edgePositions.Add(new float2(mid.x, mid.z));
-                roadNodes.Add(edge.m_Start);
-                roadNodes.Add(edge.m_End);
+                _ = roadNodes.Add(edge.m_Start);
+                _ = roadNodes.Add(edge.m_End);
             }
 
             foreach (Entity node in roadNodes)
@@ -361,14 +376,14 @@ namespace StationSuitabilityOverlay
             jobPositions.Clear();
             jobWeights.Clear();
 
-            if (zoneSystem == null)
+            if (zoneSystem is null)
             {
                 return;
             }
 
             using var entities = blockQuery.ToEntityArray(Allocator.Temp);
             using var blocks = blockQuery.ToComponentDataArray<Block>(Allocator.Temp);
-            var zoneKinds = new Dictionary<ZoneType, AreaKind>();
+            var zoneKinds = new Dictionary<ushort, AreaKind>();
 
             for (int b = 0; b < entities.Length; b++)
             {
@@ -378,7 +393,7 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                if (!entityManager.TryGetBuffer(entities[b], true, out DynamicBuffer<Cell> cells))
+                if (!entityManager.TryGetBuffer(entities[b], isReadOnly: true, out DynamicBuffer<Cell> cells))
                 {
                     continue;
                 }
@@ -391,15 +406,15 @@ namespace StationSuitabilityOverlay
                         continue;
                     }
 
-                    if (cell.m_Zone.Equals(ZoneType.None))
+                    if (cell.m_Zone.m_Index == 0)
                     {
                         continue;
                     }
 
-                    if (!zoneKinds.TryGetValue(cell.m_Zone, out AreaKind kind))
+                    if (!zoneKinds.TryGetValue(cell.m_Zone.m_Index, out AreaKind kind))
                     {
                         kind = ClassifyZone(zoneSystem, zoneDataLookup, cell.m_Zone);
-                        zoneKinds[cell.m_Zone] = kind;
+                        zoneKinds[cell.m_Zone.m_Index] = kind;
                     }
 
                     if (kind == AreaKind.Other)

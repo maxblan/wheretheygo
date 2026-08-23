@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay
@@ -33,12 +33,12 @@ namespace StationSuitabilityOverlay
     {
         public int NodeCount;
         public int EdgeCount;
-        public int[] EdgeA;
-        public int[] EdgeB;
-        public float[] EdgeCost;
-        public int[] NodeOffsets;
-        public int[] AdjEdge;
-        public int[] AdjOther;
+        public int[] EdgeA = Array.Empty<int>();
+        public int[] EdgeB = Array.Empty<int>();
+        public float[] EdgeCost = Array.Empty<float>();
+        public int[] NodeOffsets = Array.Empty<int>();
+        public int[] AdjEdge = Array.Empty<int>();
+        public int[] AdjOther = Array.Empty<int>();
 
         public static CompactGraph Build(int nodeCount, int[] edgeA, int[] edgeB, float[] edgeCost, int edgeCount)
         {
@@ -54,8 +54,8 @@ namespace StationSuitabilityOverlay
             graph.NodeOffsets = new int[graph.NodeCount + 1];
             if (graph.NodeCount == 0 || graph.EdgeCount == 0)
             {
-                graph.AdjEdge = new int[0];
-                graph.AdjOther = new int[0];
+                graph.AdjEdge = Array.Empty<int>();
+                graph.AdjOther = Array.Empty<int>();
                 return graph;
             }
 
@@ -123,14 +123,14 @@ namespace StationSuitabilityOverlay
     // caller running hundreds of sources allocates once.
     internal sealed class DijkstraWorkspace
     {
-        public float[] Dist;
-        public int[] PrevEdge;
-        private int[] m_Heap;
-        private int[] m_HeapIndex;
+        public float[] Dist = Array.Empty<float>();
+        public int[] PrevEdge = Array.Empty<int>();
+        private int[] m_Heap = Array.Empty<int>();
+        private int[] m_HeapIndex = Array.Empty<int>();
         private int m_HeapCount;
         // Touched nodes, so a search over a small neighbourhood does not pay to
         // clear a city-sized distance array.
-        private int[] m_Touched;
+        private int[] m_Touched = Array.Empty<int>();
         private int m_TouchedCount;
 
         public DijkstraWorkspace(int nodeCount)
@@ -140,7 +140,7 @@ namespace StationSuitabilityOverlay
 
         public void Resize(int nodeCount)
         {
-            if (Dist != null && Dist.Length == nodeCount)
+            if (Dist is not null && Dist.Length == nodeCount)
             {
                 return;
             }
@@ -335,7 +335,7 @@ namespace StationSuitabilityOverlay
             float weight,
             float[] edgeFlow)
         {
-            if (graph == null || workspace == null || edgeFlow == null)
+            if (graph is null || workspace is null || edgeFlow is null)
             {
                 return false;
             }
@@ -387,7 +387,7 @@ namespace StationSuitabilityOverlay
 
         public static float MeanPositiveFlow(float[] edgeFlow, int edgeCount)
         {
-            if (edgeFlow == null || edgeCount <= 0)
+            if (edgeFlow is null || edgeCount <= 0)
             {
                 return 0f;
             }
@@ -421,11 +421,11 @@ namespace StationSuitabilityOverlay
             float flowFloor,
             float maxLength,
             Corridor result,
-            float[] nodeDemand = null,
+            float[]? nodeDemand = null,
             float demandFloor = 0f)
         {
             result.Clear();
-            if (graph == null || edgeFlow == null || edgeUsed == null || graph.EdgeCount == 0)
+            if (graph is null || edgeFlow is null || edgeUsed is null || graph.EdgeCount == 0)
             {
                 return false;
             }
@@ -457,8 +457,8 @@ namespace StationSuitabilityOverlay
 
             int headNode = graph.EdgeA[seed];
             int tailNode = graph.EdgeB[seed];
-            visited.Add(headNode);
-            visited.Add(tailNode);
+            _ = visited.Add(headNode);
+            _ = visited.Add(tailNode);
             float length = graph.EdgeCost[seed];
             float weightedFlow = edgeFlow[seed] * graph.EdgeCost[seed];
 
@@ -471,10 +471,10 @@ namespace StationSuitabilityOverlay
 
                 FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
                     headNode, length, maxLength, nodeDemand, demandFloor,
-                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, true);
+                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, atHead: true);
                 FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
                     tailNode, length, maxLength, nodeDemand, demandFloor,
-                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, false);
+                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, atHead: false);
 
                 if (bestEdge < 0)
                 {
@@ -483,7 +483,7 @@ namespace StationSuitabilityOverlay
 
                 weightedFlow += edgeFlow[bestEdge] * graph.EdgeCost[bestEdge];
                 length += graph.EdgeCost[bestEdge];
-                visited.Add(bestNext);
+                _ = visited.Add(bestNext);
 
                 if (bestAtHead)
                 {
@@ -526,7 +526,7 @@ namespace StationSuitabilityOverlay
             int fromNode,
             float length,
             float maxLength,
-            float[] nodeDemand,
+            float[]? nodeDemand,
             float demandFloor,
             ref int bestEdge,
             ref int bestNext,
@@ -558,12 +558,12 @@ namespace StationSuitabilityOverlay
                 // Flow alone is not enough to justify extending: a rural through-road
                 // legitimately carries assigned trips while serving nobody along it.
                 // Without this the corridor happily loops out into empty land.
-                if (nodeDemand != null && next < nodeDemand.Length && nodeDemand[next] < demandFloor)
+                if (nodeDemand is not null && next < nodeDemand.Length && nodeDemand[next] < demandFloor)
                 {
                     continue;
                 }
 
-                float novelty = nodeNovelty != null && next < nodeNovelty.Length ? nodeNovelty[next] : 1f;
+                float novelty = nodeNovelty is not null && next < nodeNovelty.Length ? nodeNovelty[next] : 1f;
                 float score = edgeFlow[edge] + noveltyWeight * novelty;
                 if (score <= bestScore)
                 {
@@ -605,7 +605,7 @@ namespace StationSuitabilityOverlay
             bool[] edgeUsed,
             float capture)
         {
-            if (graph == null || corridor == null || edgeFlow == null || edgeUsed == null)
+            if (graph is null || corridor is null || edgeFlow is null || edgeUsed is null)
             {
                 return;
             }
@@ -642,7 +642,7 @@ namespace StationSuitabilityOverlay
         // going there. Spreads outward `hops` steps from the corridor's nodes.
         public static void DecayNovelty(CompactGraph graph, Corridor corridor, float[] nodeNovelty, int hops, float factor)
         {
-            if (graph == null || corridor == null || nodeNovelty == null)
+            if (graph is null || corridor is null || nodeNovelty is null)
             {
                 return;
             }
@@ -697,7 +697,7 @@ namespace StationSuitabilityOverlay
         // is both prettier and more honest about the alignment.
         public static void SimplifyPolyline(List<float2Like> points, float tolerance)
         {
-            if (points == null || points.Count < 3 || tolerance <= 0f)
+            if (points is null || points.Count < 3 || tolerance <= 0f)
             {
                 return;
             }
@@ -783,7 +783,7 @@ namespace StationSuitabilityOverlay
             float y1,
             float weight)
         {
-            if (raster == null || width <= 0 || height <= 0 || raster.Length < width * height)
+            if (raster is null || width <= 0 || height <= 0 || raster.Length < width * height)
             {
                 return;
             }

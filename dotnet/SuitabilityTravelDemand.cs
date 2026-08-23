@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Game.Buildings;
 using Game.Citizens;
 using Game.Objects;
@@ -198,7 +198,8 @@ namespace StationSuitabilityOverlay
                 totalWeight += trip.m_Weight;
 
                 long key = (long)origin * zoneCount + destination;
-                totals.TryGetValue(key, out float existing);
+                // Absent key leaves `existing` at zero, which is the wanted starting total.
+                _ = totals.TryGetValue(key, out float existing);
                 totals[key] = existing + trip.m_Weight;
             }
 
@@ -214,7 +215,7 @@ namespace StationSuitabilityOverlay
 
             // Grouped by origin so the flow assignment can run one search per origin
             // zone rather than one per pair.
-            flows.Sort((a, b) => a.m_Origin.CompareTo(b.m_Origin));
+            flows.Sort(static (a, b) => a.m_Origin.CompareTo(b.m_Origin));
             return totalWeight;
         }
 
@@ -249,7 +250,7 @@ namespace StationSuitabilityOverlay
             float tileSize,
             float[] raster)
         {
-            if (raster == null)
+            if (raster is null)
             {
                 return;
             }

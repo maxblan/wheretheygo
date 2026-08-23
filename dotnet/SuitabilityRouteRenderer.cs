@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Colossal.Mathematics;
 using Game;
 using Game.Rendering;
@@ -65,10 +65,14 @@ namespace StationSuitabilityOverlay
             }
         }
 
+#pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
+        // runs before OnUpdate. Annotating these nullable would force a null check at
+        // every use site for a state (OnCreate not yet run) in which nothing works anyway.
         private OverlayRenderSystem m_OverlayRenderSystem;
         private RenderingSystem m_RenderingSystem;
         private TerrainSystem m_TerrainSystem;
         private StationSuitabilityOverlaySystem m_OverlaySystem;
+#pragma warning restore CS8618
 
         protected override void OnCreate()
         {
@@ -82,13 +86,13 @@ namespace StationSuitabilityOverlay
         protected override void OnUpdate()
         {
             var settings = Mod.Settings;
-            if (settings == null || !settings.ShowRoutes || m_OverlaySystem == null)
+            if (settings is null || !settings.ShowRoutes || m_OverlaySystem is null)
             {
                 return;
             }
 
             // Photo mode and screenshot capture hide every overlay; match that.
-            if (m_RenderingSystem != null && m_RenderingSystem.hideOverlay)
+            if (m_RenderingSystem is not null && m_RenderingSystem.hideOverlay)
             {
                 return;
             }
@@ -101,7 +105,7 @@ namespace StationSuitabilityOverlay
             }
 
             List<SuggestedRoute> routes = m_OverlaySystem.SuggestedRoutes;
-            if (routes == null || routes.Count == 0)
+            if (routes is null || routes.Count == 0)
             {
                 return;
             }
@@ -109,12 +113,12 @@ namespace StationSuitabilityOverlay
             OverlayRenderSystem.Buffer buffer = m_OverlayRenderSystem.GetBuffer(out Unity.Jobs.JobHandle dependencies);
             dependencies.Complete();
 
-            TerrainHeightData heightData = m_TerrainSystem.GetHeightData(false);
+            TerrainHeightData heightData = m_TerrainSystem.GetHeightData(waitForPending: false);
 
             // The improved alignment for whichever line the player asked about, drawn
             // white and dashed so it reads as a proposal against its existing line.
-            SuggestedRoute improved = m_OverlaySystem.ImprovedRoute;
-            if (improved != null)
+            SuggestedRoute? improved = m_OverlaySystem.ImprovedRoute;
+            if (improved is not null)
             {
                 var proposalColor = new Color(1f, 1f, 1f, 0.95f);
                 for (int i = 1; i < improved.Path.Count; i++)
@@ -206,7 +210,7 @@ namespace StationSuitabilityOverlay
             return cosine < 0.94f;
         }
 
-        private float3 ToGround(float2 flat, ref TerrainHeightData heightData)
+        private static float3 ToGround(float2 flat, ref TerrainHeightData heightData)
         {
             var probe = new float3(flat.x, 0f, flat.y);
             float height = TerrainUtils.SampleHeight(ref heightData, probe);

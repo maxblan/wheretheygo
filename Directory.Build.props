@@ -1,0 +1,58 @@
+<Project>
+
+  <!-- Applies to both projects below this directory: the mod and the test harness.
+       See CLAUDE.md for why the two are deliberately different in other respects. -->
+
+  <PropertyGroup>
+    <!-- Null safety. The toolchain pins LangVersion 9.0 / net48, which is new enough
+         for nullable reference types; BCL calls are "oblivious" rather than annotated,
+         so this catches our own nulls rather than the framework's. -->
+    <Nullable>enable</Nullable>
+
+    <!-- Microsoft's Roslyn analyzers, essentially the whole rule set. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-all</AnalysisLevel>
+
+    <!-- Make the .editorconfig severities participate in the build. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Catch integer overflow instead of letting it wrap silently. The mod project
+         turns this back off for Burst's sake — see its csproj for why. -->
+    <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+
+    <!-- Nothing here needs pointers. -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <Deterministic>true</Deterministic>
+
+    <!-- A ratchet, not a switch. Any warning that is NOT in WarningsNotAsErrors below
+         fails the build, so no NEW class of warning can be introduced. The listed rules
+         are the pre-existing backlog measured when strictness was turned on; the list is
+         meant to shrink and never to grow. `make warnings` prints the current counts. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>
+      <!-- Nullability backlog. Most of these are ECS/gathered data classes whose fields
+           are assigned by the reader that builds them rather than by a constructor. -->
+      CS8618;CS8625;CS8603;CS8601;CS8600;
+      <!-- CA1822: member does not access instance state, could be static. -->
+      CA1822;
+      <!-- CA1814: multidimensional arrays. The score grids are genuinely rectangular. -->
+      CA1814;
+      <!-- CA1305: missing IFormatProvider. Worth fixing where a value reaches the panel;
+           harmless in log text. -->
+      CA1305;
+      <!-- CA1044 write-only property, CA1067 Equals/GetHashCode pairing,
+           CA1825 empty array allocation, CA1716 identifier clashes a keyword. -->
+      CA1044;CA1067;CA1825;CA1716;
+      <!-- CA1062: null-check public arguments. Internal call sites, all in-process. -->
+      CA1062;
+      <!-- CA1031: catching Exception. Deliberate on cosmetic paths, where a game API
+           surprise must never break the analysis pass — those catches log what they
+           lost. Review before adding another one. -->
+      CA1031
+    </WarningsNotAsErrors>
+
+    <!-- Meziantou's rules as errors from the start: there was no backlog. -->
+    <MeziantouAnalysisMode>all-errors</MeziantouAnalysisMode>
+  </PropertyGroup>
+
+</Project>

@@ -8,11 +8,31 @@
 	
 		<!--The file where mod information which is required for publishing mod on PDX mods are stored-->
 		<PublishConfigurationPath>Properties\PublishConfiguration.xml</PublishConfigurationPath>
+
+		<!--Checked arithmetic is deliberately OFF for the mod, and only for the mod.
+		    SuitabilityJob and ExtractTripsJob are Burst-compiled and run per cell over
+		    ~200k tiles; Burst does not support throwing, so an overflow check there is
+		    either a compile failure or an abort, and the branch costs vectorization.
+		    The test project (Directory.Build.props) keeps it on, and the pure math files
+		    are compiled into BOTH — so overflow is still checked where it is reachable.-->
+		<CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
+
+		<!--Pins the analyzer package so a locked-mode restore (make strict) resolves
+		    the same version on every machine.-->
+		<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 	</PropertyGroup>
 	
 	<!--Imports must be after PropertyGroup block-->
 	<Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.props" />
 	<Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.targets" />
+
+	<ItemGroup>
+		<!--Analyzer only: PrivateAssets keeps it out of the deployed mod.-->
+		<PackageReference Include="Meziantou.Analyzer" Version="3.0.177">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+	</ItemGroup>
 
 	<ItemGroup>
 		<Reference Include="Game">

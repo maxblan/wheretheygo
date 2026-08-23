@@ -14,7 +14,8 @@ reasoning behind the scoring terms.
 There is a `Makefile` wrapping the awkward parts; `make` lists the targets.
 
 ```bash
-make verify        # check-ui + test + build + status — the gate before a run
+make strict        # the full gate: locked restore, --warnaserror both projects, format, tests
+make verify        # check-ui + test + build + status — the quick gate before a run
 make test          # offline harness; exit code = number of failures
 make check-ui      # node --check on the .mjs, which nothing else validates
 make build         # compile AND deploy (close the game first)
@@ -46,6 +47,54 @@ by comparing file sizes, not by trusting the exit code**. `make deploy` encodes 
 runs offline with nothing to restore. It is deliberately **not** in `smart-transit-planner.sln`, so
 the mod toolchain build is unaffected. There is no filter flag: to run one test, comment out the
 other `Run(...)` calls at the top of `Program.cs`.
+
+## Strictness
+
+`Directory.Build.props` turns C# up as far as it goes and the build is expected to stay at **zero
+warnings**: `Nullable=enable`, `TreatWarningsAsErrors`, `AnalysisLevel=latest-all`,
+`EnforceCodeStyleInBuild`, `AllowUnsafeBlocks=false`, plus `Meziantou.Analyzer` in
+`all-errors` mode. `MA0191` makes the null-forgiving `!` operator an error, so "trust me" is not
+available — a nullable value has to be narrowed or guarded.
+
+Two deliberate asymmetries:
+
+- **`CheckForOverflowUnderflow` is on everywhere except the mod project.** `SuitabilityJob` and
+  `ExtractTripsJob` are Burst-compiled and run per cell over ~200k tiles; Burst cannot throw, so an
+  overflow check there is either a compile failure or an abort. The test project keeps it on, and
+  the pure math files compile into *both*, so overflow is still checked where it is reachable.
+- **The test project relaxes exactly three rules** (`CA1303`, `CA5394`, `CA1861`) under a
+  `[tests/**/*.cs]` section: it is a console harness with no localization, no security surface and
+  no hot path.
+
+`.editorconfig` disables a rule only where the rule is wrong *for this codebase*, and every one
+carries its reason inline — Unity's `IJobChunk` signature, game enums with no zero-valued member,
+Burst and `HasFlag`, set-only properties being the settings-UI idiom for a button, the `Mod` type
+name being fixed by the toolchain, `partial` being required on `SystemBase` by the ECS source
+generator (found the hard way: removing it fails the build with EA0007). Volume alone is not a
+reason — read the comment before adding another.
+
+`MA0051` (method length) is **ratcheted, not disabled**: the limits sit just above today's worst
+offender so no method may grow. The seven over 60 lines are known debt —
+`StationSuitabilityOverlaySystem.OnCreate/StartCompute/BuildRoutes`,
+`SuitabilityPanelUISystem.OnCreate`, `SuitabilityRouteRenderer.OnUpdate`,
+`SuitabilityScoring.FindTopSites/AccumulateWalkDistance`. Lower the numbers as they are split;
+never raise them.
+
+### Nullability conventions
+
+The annotations already in place encode decisions worth keeping:
+
+- **Data arrays and caches are nullable** (`float[]? m_Scores`) because they genuinely are null
+  before the first compute, and the code already tested for it.
+- **ECS system references are not**, behind a narrow `#pragma warning disable CS8618` naming the
+  reason: they are assigned in `OnCreate`, which always runs before `OnUpdate`, and annotating them
+  nullable would force a null check at every use site for a state in which nothing works anyway.
+- **Guard, then bind to a local.** The compiler discards a *field's* null-state across any
+  intervening call, so a method that checks `m_TermScratch is null` and then calls something else
+  will warn again. Copy the checked field into a local right after the guard and use that — see
+  `TermPercentile` and `DiscountServedDemand`.
+- **A field whose allocation is conditional must have every co-allocated field in the condition**,
+  or flow analysis only trusts the one that was tested (`EnsureTileDensities`, `BuildPairArrays`).
 
 **Logs are the primary instrument** — the game cannot be driven from here. After a run, read
 `%LOCALAPPDATA%Low\Colossal Order\Cities Skylines II\Logs\StationSuitabilityOverlay.Mod.log` (mod

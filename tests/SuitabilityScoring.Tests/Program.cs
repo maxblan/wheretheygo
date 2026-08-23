@@ -1,10 +1,28 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay.Tests
 {
     // Minimal self-contained harness: no test framework, so it runs offline with
     // nothing to restore. Exit code is the number of failed tests.
+    // Distinguishes an assertion failure from a genuine crash in the code under test.
+    internal sealed class TestFailedException : Exception
+    {
+        public TestFailedException()
+        {
+        }
+
+        public TestFailedException(string message)
+            : base(message)
+        {
+        }
+
+        public TestFailedException(string message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
+    }
+
     internal static class Program
     {
         private static int s_Failures;
@@ -138,8 +156,14 @@ namespace StationSuitabilityOverlay.Tests
             int zeroed = 0;
             for (int i = 0; i < cells; i++)
             {
-                if (intensities[i] == 255) saturated++;
-                if (intensities[i] == 0) zeroed++;
+                if (intensities[i] == 255)
+                {
+                    saturated++;
+                }
+                if (intensities[i] == 0)
+                {
+                    zeroed++;
+                }
             }
 
             // Empty land and negative cells must stay at zero intensity...
@@ -223,7 +247,10 @@ namespace StationSuitabilityOverlay.Tests
                     {
                         int x = peak.x + dx;
                         int y = peak.y + dy;
-                        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                        if (x < 0 || x >= width || y < 0 || y >= height)
+                        {
+                            continue;
+                        }
                         float value = (dx == 0 && dy == 0) ? peak.v : peak.v * 0.5f;
                         scores[x + y * width] = Math.Max(scores[x + y * width], value);
                     }
@@ -380,7 +407,7 @@ namespace StationSuitabilityOverlay.Tests
             // Demand far outside the radius must not be reached at all.
             demand[0] = 1000f;
 
-            SuitabilityScoring.AccumulateWalkDistance(
+            _ = SuitabilityScoring.AccumulateWalkDistance(
                 site, width, height, 10f, 30f, land, demand, jobs, 1f, 0f,
                 new float[cells], new byte[cells], out float reached, out _);
 
@@ -411,7 +438,7 @@ namespace StationSuitabilityOverlay.Tests
             demand[(barrierX + 1) + 4 * width] = 500f;
 
             int site = (barrierX - 1) + 4 * width;
-            SuitabilityScoring.AccumulateWalkDistance(
+            _ = SuitabilityScoring.AccumulateWalkDistance(
                 site, width, height, 10f, 60f, land, demand, jobs, 1f, 0f,
                 new float[cells], new byte[cells], out float reached, out _);
 
@@ -419,7 +446,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // Opening a gap in the barrier must let it through again.
             land[barrierX + 4 * width] = 1;
-            SuitabilityScoring.AccumulateWalkDistance(
+            _ = SuitabilityScoring.AccumulateWalkDistance(
                 site, width, height, 10f, 60f, land, demand, jobs, 1f, 0f,
                 new float[cells], new byte[cells], out float throughGap, out _);
 
@@ -658,7 +685,7 @@ namespace StationSuitabilityOverlay.Tests
             // of the edge flows it covers — never their sum. Summing counted a trip
             // once per edge it traversed, which inflated long corridors past the
             // city's entire demand and made everything look like a metro.
-            AssertTrue(corridor.CapturedFlow > 20f && corridor.CapturedFlow < 61f,
+            AssertTrue(corridor.CapturedFlow is > 20f and < 61f,
                 $"mean flow {corridor.CapturedFlow} must lie within the per-edge range, not be a sum");
         }
 
@@ -698,7 +725,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 10f, 10f, 10f, 10f, 10f };
 
             var corridor = new Corridor();
-            SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[5], NewNovelty(6), 0f, 1f, 250f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[5], NewNovelty(6), 0f, 1f, 250f, corridor);
 
             AssertTrue(corridor.Length <= 250f, $"length {corridor.Length} must respect the limit");
             AssertTrue(corridor.Edges.Count <= 2, $"only 2 edges of 100 fit under 250, got {corridor.Edges.Count}");
@@ -715,7 +742,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 40f, 40f, 40f, 40f };
 
             var corridor = new Corridor();
-            SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor);
 
             AssertTrue(corridor.Edges.Count >= 3, $"should grow along the chain, got {corridor.Edges.Count} edges");
             AssertEqual(40f, corridor.CapturedFlow, 1e-3f, "uniform flow means the mean equals that flow");
@@ -736,11 +763,11 @@ namespace StationSuitabilityOverlay.Tests
             var demand = new[] { 1f, 1f, 1f, 0f, 0f };
 
             var ungated = new Corridor();
-            SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, ungated);
+            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, ungated);
             AssertTrue(ungated.Edges.Count == 4, "without the gate it runs the whole chain including empty land");
 
             var gated = new Corridor();
-            SuitabilityGraphMath.GrowCorridor(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), 0f, 1f, 10000f,
+            _ = SuitabilityGraphMath.GrowCorridor(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), 0f, 1f, 10000f,
                 gated, demand, 0.5f);
 
             AssertTrue(gated.Nodes.Contains(0) && gated.Nodes.Contains(2), "populated stretch is kept");
@@ -758,14 +785,20 @@ namespace StationSuitabilityOverlay.Tests
             var used = new bool[3];
 
             var corridor = new Corridor();
-            SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(4), 0f, 1f, 1000f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(4), 0f, 1f, 1000f, corridor);
             float before = 0f;
-            for (int e = 0; e < 3; e++) before += flow[e];
+            for (int e = 0; e < 3; e++)
+            {
+                before += flow[e];
+            }
 
             SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, 0.8f);
 
             float after = 0f;
-            for (int e = 0; e < 3; e++) after += flow[e];
+            for (int e = 0; e < 3; e++)
+            {
+                after += flow[e];
+            }
             AssertTrue(after < before, $"peeling must reduce total flow ({after} vs {before})");
 
             for (int i = 0; i < corridor.Edges.Count; i++)
@@ -795,14 +828,14 @@ namespace StationSuitabilityOverlay.Tests
 
             var ridership = new Corridor();
             var flowA = new[] { 100f, 90f, 20f };
-            SuitabilityGraphMath.GrowCorridor(graph, flowA, new bool[3], NewNovelty(4),
+            _ = SuitabilityGraphMath.GrowCorridor(graph, flowA, new bool[3], NewNovelty(4),
                 SuitabilityGraphMath.NoveltyWeight(RouteObjective.Ridership, 70f), 0f, 1000f, ridership);
 
             var coverage = new Corridor();
             var flowB = new[] { 100f, 90f, 20f };
             // Node 3 is virgin territory; nodes 0-2 are already covered.
             var novelty = new[] { 0.05f, 0.05f, 0.05f, 1f };
-            SuitabilityGraphMath.GrowCorridor(graph, flowB, new bool[3], novelty,
+            _ = SuitabilityGraphMath.GrowCorridor(graph, flowB, new bool[3], novelty,
                 SuitabilityGraphMath.NoveltyWeight(RouteObjective.Coverage, 70f), 0f, 1000f, coverage);
 
             AssertTrue(ridership.Edges.Contains(1), "ridership objective should take the busy trunk");
@@ -910,11 +943,11 @@ namespace StationSuitabilityOverlay.Tests
 
             var wsCheap = new DijkstraWorkspace(cheap.Graph.NodeCount);
             wsCheap.Run(cheap.Graph, 4, 100000f);
-            SuitabilityTransit.Inspect(cheap, wsCheap, 4, 3, -1, out _, out _, out float cheapTime);
+            _ = SuitabilityTransit.Inspect(cheap, wsCheap, 4, 3, -1, out _, out _, out float cheapTime);
 
             var wsDear = new DijkstraWorkspace(dear.Graph.NodeCount);
             wsDear.Run(dear.Graph, 4, 100000f);
-            SuitabilityTransit.Inspect(dear, wsDear, 4, 3, -1, out _, out _, out float dearTime);
+            _ = SuitabilityTransit.Inspect(dear, wsDear, 4, 3, -1, out _, out _, out float dearTime);
 
             // Two boardings, each paying the extra wait: the gap is about 2x.
             AssertTrue(dearTime > cheapTime + 1000f, $"longer headways must cost more ({dearTime} vs {cheapTime})");
@@ -1018,11 +1051,17 @@ namespace StationSuitabilityOverlay.Tests
             int count = 0;
             for (int i = 0; i < values.Length; i++)
             {
-                if (values[i] == 255) count++;
+                if (values[i] == 255)
+                {
+                    count++;
+                }
             }
             return count;
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:Do not catch general exception types",
+            Justification = "A test runner must report any failure and continue; narrowing this " +
+                "would let one unexpected exception abort the whole suite.")]
         private static void Run(string name, Action test)
         {
             s_Current = name;
@@ -1043,7 +1082,7 @@ namespace StationSuitabilityOverlay.Tests
         {
             if (!condition)
             {
-                throw new Exception($"{because}");
+                throw new TestFailedException(because);
             }
         }
 
@@ -1051,7 +1090,7 @@ namespace StationSuitabilityOverlay.Tests
         {
             if (float.IsNaN(actual) || Math.Abs(expected - actual) > tolerance)
             {
-                throw new Exception($"{because}: expected {expected}, got {actual}");
+                throw new TestFailedException($"{because}: expected {expected}, got {actual}");
             }
         }
 
@@ -1059,7 +1098,7 @@ namespace StationSuitabilityOverlay.Tests
         {
             if (Math.Abs(expected - actual) > tolerance)
             {
-                throw new Exception($"{because}: expected {expected}, got {actual}");
+                throw new TestFailedException($"{because}: expected {expected}, got {actual}");
             }
         }
     }

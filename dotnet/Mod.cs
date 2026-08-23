@@ -1,3 +1,4 @@
+﻿using System;
 using System.IO;
 using Colossal.IO.AssetDatabase;
 using Colossal.Logging;
@@ -10,11 +11,16 @@ namespace StationSuitabilityOverlay
 {
     public class Mod : IMod
     {
-        public static readonly ILog Log = LogManager.GetLogger($"{nameof(StationSuitabilityOverlay)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
-        public static Setting Settings { get; private set; }
+        public static readonly ILog Log = LogManager.GetLogger(name: $"{nameof(StationSuitabilityOverlay)}.{nameof(Mod)}").SetShowsErrorsInUI(showsErrorsInUI: false);
+        public static Setting? Settings { get; private set; }
 
         public void OnLoad(UpdateSystem updateSystem)
         {
+            if (updateSystem is null)
+            {
+                throw new ArgumentNullException(nameof(updateSystem));
+            }
+
             Log.Info(nameof(OnLoad));
 
             if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
@@ -58,7 +64,7 @@ namespace StationSuitabilityOverlay
         {
             Log.Info(nameof(OnDispose));
 
-            if (Settings != null)
+            if (Settings is not null)
             {
                 Settings.UnregisterInOptionsUI();
                 Settings = null;

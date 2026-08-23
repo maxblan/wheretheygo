@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
@@ -36,7 +36,7 @@ namespace StationSuitabilityOverlay
             float2 worldMin,
             float tileSize,
             System.Func<int, bool> tilePassable,
-            System.Func<int, float> tileCostScale,
+            System.Func<int, float>? tileCostScale,
             out float[] nodeX,
             out float[] nodeZ)
         {
@@ -115,7 +115,7 @@ namespace StationSuitabilityOverlay
             float2 worldMin,
             float tileSize,
             int2 tileGrid,
-            System.Func<int, float> tileCostScale)
+            System.Func<int, float>? tileCostScale)
         {
             if (nx < 0 || nx >= cols || ny < 0 || ny >= rows)
             {
@@ -129,7 +129,7 @@ namespace StationSuitabilityOverlay
             }
 
             float cost = baseCost;
-            if (tileCostScale != null)
+            if (tileCostScale is not null)
             {
                 // Scale by the midpoint's tile, so an edge running along existing
                 // track is cheap even though its endpoints straddle the grid.
@@ -165,7 +165,7 @@ namespace StationSuitabilityOverlay
             float tileSize,
             byte[] trackMask)
         {
-            if (trackMask == null)
+            if (trackMask is null)
             {
                 return;
             }
@@ -205,11 +205,17 @@ namespace StationSuitabilityOverlay
             for (int dy = -1; dy <= 1; dy++)
             {
                 int ny = y + dy;
-                if (ny < 0 || ny >= grid.y) continue;
+                if (ny < 0 || ny >= grid.y)
+                {
+                    continue;
+                }
                 for (int dx = -1; dx <= 1; dx++)
                 {
                     int nx = x + dx;
-                    if (nx < 0 || nx >= grid.x) continue;
+                    if (nx < 0 || nx >= grid.x)
+                    {
+                        continue;
+                    }
                     mask[nx + ny * grid.x] = 1;
                 }
             }

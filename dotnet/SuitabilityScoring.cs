@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay
@@ -30,7 +30,7 @@ namespace StationSuitabilityOverlay
         // untouched, which lets callers reuse one oversized scratch buffer.
         public static float SelectKth(float[] values, int length, int k)
         {
-            if (values == null || length <= 0)
+            if (values is null || length <= 0)
             {
                 return 0f;
             }
@@ -45,8 +45,14 @@ namespace StationSuitabilityOverlay
                 int j = hi;
                 while (i <= j)
                 {
-                    while (values[i] < pivot) i++;
-                    while (values[j] > pivot) j--;
+                    while (values[i] < pivot)
+                    {
+                        i++;
+                    }
+                    while (values[j] > pivot)
+                    {
+                        j--;
+                    }
                     if (i <= j)
                     {
                         float tmp = values[i];
@@ -83,7 +89,7 @@ namespace StationSuitabilityOverlay
         // saturates — the "entire map turns red" failure this replaced.
         public static float PositivePercentile(float[] source, int length, float percentile, float[] scratch)
         {
-            if (source == null || scratch == null || length <= 0)
+            if (source is null || scratch is null || length <= 0)
             {
                 return 0f;
             }
@@ -118,7 +124,7 @@ namespace StationSuitabilityOverlay
             byte[] intensities,
             float[] scratch)
         {
-            if (scores == null || intensities == null || length <= 0)
+            if (scores is null || intensities is null || length <= 0)
             {
                 return;
             }
@@ -167,7 +173,7 @@ namespace StationSuitabilityOverlay
             out bool truncated)
         {
             truncated = false;
-            if (scores == null || outIndices == null || outScores == null)
+            if (scores is null || outIndices is null || outScores is null)
             {
                 return 0;
             }
@@ -350,8 +356,8 @@ namespace StationSuitabilityOverlay
             reachedJobs = 0f;
 
             int cells = width * height;
-            if (land == null || tileDemand == null || tileJobs == null
-                || distanceScratch == null || visitedScratch == null
+            if (land is null || tileDemand is null || tileJobs is null
+                || distanceScratch is null || visitedScratch is null
                 || width <= 0 || height <= 0 || radius <= 0f || tileSize <= 0f
                 || siteIndex < 0 || siteIndex >= cells
                 || distanceScratch.Length < cells || visitedScratch.Length < cells
@@ -487,7 +493,7 @@ namespace StationSuitabilityOverlay
             int cols,
             float[] weights)
         {
-            if (features == null || target == null || weights == null)
+            if (features is null || target is null || weights is null)
             {
                 return false;
             }
@@ -513,7 +519,10 @@ namespace StationSuitabilityOverlay
                 int activeCount = 0;
                 for (int c = 0; c < cols; c++)
                 {
-                    if (active[c]) activeCount++;
+                    if (active[c])
+                    {
+                        activeCount++;
+                    }
                 }
 
                 if (activeCount == 0)
@@ -525,7 +534,10 @@ namespace StationSuitabilityOverlay
                 int m = 0;
                 for (int c = 0; c < cols; c++)
                 {
-                    if (active[c]) map[m++] = c;
+                    if (active[c])
+                    {
+                        map[m++] = c;
+                    }
                 }
 
                 // Normal equations over the active columns only.
@@ -652,7 +664,7 @@ namespace StationSuitabilityOverlay
         // Returns 0 when the target has no variance to explain.
         public static float RSquared(float[,] features, float[] target, int rows, int cols, float[] weights)
         {
-            if (features == null || target == null || weights == null || rows <= 0 || cols <= 0)
+            if (features is null || target is null || weights is null || rows <= 0 || cols <= 0)
             {
                 return 0f;
             }
