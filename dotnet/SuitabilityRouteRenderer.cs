@@ -167,8 +167,14 @@ namespace StationSuitabilityOverlay
                 // the width of the line at each interior vertex closes it.
                 for (int i = 1; i < route.Path.Count - 1; i++)
                 {
-                    float3 joint = ToGround(route.Path[i], ref heightData);
-                    buffer.DrawCircle(color, joint, LineWidthFor(route.Mode));
+                    // Only where the line actually turns hard enough to leave a notch.
+                    // Street routes now carry sampled curve points, and a dot at every
+                    // one of those turned a smooth bend into a string of beads.
+                    if (TurnsSharply(route.Path[i - 1], route.Path[i], route.Path[i + 1]))
+                    {
+                        float3 joint = ToGround(route.Path[i], ref heightData);
+                        buffer.DrawCircle(color, joint, LineWidthFor(route.Mode));
+                    }
                 }
 
                 for (int s = 0; s < route.Stops.Count; s++)
@@ -180,6 +186,24 @@ namespace StationSuitabilityOverlay
 
             // The buffer was written on the main thread with the prior writers already
             // completed, so there is no new job handle to register.
+        }
+
+        // Interior corner sharp enough that the two segments' square ends leave a gap
+        // on the outside of the turn.
+        private static bool TurnsSharply(float2 before, float2 at, float2 after)
+        {
+            float2 incoming = at - before;
+            float2 outgoing = after - at;
+            float inLength = math.length(incoming);
+            float outLength = math.length(outgoing);
+            if (inLength < 0.01f || outLength < 0.01f)
+            {
+                return false;
+            }
+
+            // cos 20 degrees; below this the joint is invisible at any zoom.
+            float cosine = math.dot(incoming / inLength, outgoing / outLength);
+            return cosine < 0.94f;
         }
 
         private float3 ToGround(float2 flat, ref TerrainHeightData heightData)

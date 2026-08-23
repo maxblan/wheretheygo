@@ -61,7 +61,15 @@ Journeys are then aggregated into coarse zones, discounted by how well your exis
 
 That same graph decides what a suggestion is worth. A candidate line is credited for every journey it forms **any** leg of, discounted for each change of vehicle (the Transfer penalty setting). This is what lets a short feeder rank properly: a line whose own corridor carries almost nobody can still be the leg that unlocks hundreds of journeys onto a trunk service. Wait times, the boarding cost and the absence of any separate transfer penalty all follow the game's own pathfinder, so the model behaves like the simulation rather than like an invention.
 
-**Line health** reports on what you have already built. For each existing line the mod reads its fleet, how full its vehicles are, how long people wait, and the game's own "needs more vehicles" flags, then gives a verdict with a concrete remedy: add N vehicles, upgrade to the next mode up, shorten the route, or reroute a line that runs nearly empty. Problem lines are listed worst-first in the panel and tinted by severity on the map, and every verdict shows the numbers it came from.
+**Line health** reports on what you have already built. For each existing line the mod reads its fleet, how full its vehicles are, the headway it actually achieves, and the game's own "needs more vehicles" flags, then gives a verdict with a concrete remedy: a larger fleet (quoted as the interval that produces it, since that is what the game lets you set), an upgrade to the next mode up, a shorter route, or a reroute for a line that runs nearly empty. Problem lines are listed worst-first in the panel, and every verdict shows the numbers it came from.
+
+Three details matter for reading it:
+
+- **The fleet target is the game's own.** `TransportLineSystem` sizes a line's fleet as `round(roundTrip / targetInterval)`, where the round trip includes the dwell at every stop and the target interval is the prefab default plus the line's own modifier. The mod computes exactly that, so its target agrees with the fleet the game is already maintaining.
+- **Waiting is measured from the headway**, as half the achieved `m_VehicleInterval`. It is deliberately *not* read from `WaitingPassengers.m_AverageWaitingTime`: that field is an accumulator the game keeps for its pathfinder, and a single stranded rider drives it into the thousands.
+- **"Nearly empty" is relative.** Usage is an instantaneous count of riders against total fleet capacity, and healthy lines sit low on that measure, so the threshold is a fraction of the city's own median rather than a fixed share.
+
+Only modes the mod can actually plan are judged — bus, tram, metro, train and ferry. Air, ship and taxi lines are passenger transport too, but there is no alignment to suggest for them.
 
 **Route suggestions** are grown from that loaded network. The strongest corridor is grown outward along the heaviest remaining flow, stops are placed at mode-appropriate spacing and nudged onto the best-scoring nearby tile, and a mode is assigned from the corridor's flow intensity and length. The demand that line would carry is then removed from the pool before the next suggestion, so later lines complement earlier ones instead of stacking on the same street. Suggestions are drawn as coloured polylines with stop markers while the infoview is open.
 

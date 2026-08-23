@@ -21,6 +21,8 @@ namespace StationSuitabilityOverlay
     internal struct LineHealth
     {
         public int m_Index;
+        // Stable per-line identity, unaffected by the list being re-sorted worst-first.
+        public int m_Id;
         // The game's own display name for the line.
         public string m_Name;
         public Setting.ModePreset m_Mode;
@@ -29,7 +31,8 @@ namespace StationSuitabilityOverlay
         public int m_Passengers;
         public int m_Capacity;
         public float m_Usage;
-        public float m_AverageWait;
+        // Half the achieved headway: what a rider turning up at random waits.
+        public float m_TypicalWait;
         public float m_LengthKm;
         public int m_Stops;
         public LineVerdict m_Verdict;
@@ -62,8 +65,18 @@ namespace StationSuitabilityOverlay
         // line sits well under half full most of the time — at 0.15 this flagged 18 of
         // 19 lines on a working city, which is noise rather than advice.
         public const float EmptyUsage = 0.06f;
-        // Average wait past which service genuinely feels sparse. Observed waits on a
-        // working city run 20-100 for healthy lines, so 45 flagged almost everything.
+        // A line is only "empty" if it is far below what this city's lines normally
+        // carry. Without the relative test a fixed threshold flags most of a healthy
+        // network, because usage is an instantaneous snapshot.
+        public const float EmptyShareOfMedian = 0.35f;
+        // Wait past which service genuinely feels sparse, in the same units as the
+        // line's round trip. Measured as half the achieved headway.
+        //
+        // NOT from WaitingPassengers.m_TypicalWaitingTime: that is an accumulator the
+        // game keeps for its pathfinder — max(ongoing/waiting, concluded/boarded),
+        // quantised to 5 — so a single stranded rider drives it to thousands. Read as
+        // seconds it reported 45-minute waits on a line running every two minutes, and
+        // flagged 8 of 18 lines on that basis.
         public const float LongWait = 150f;
 
         // `requireVehicles` and `notEnoughVehicles` come straight from
@@ -71,11 +84,12 @@ namespace StationSuitabilityOverlay
         // vehicles, so that signal is read rather than re-derived.
         public static LineVerdict Judge(
             float usage,
-            float averageWait,
+            float achievedInterval,
             int vehicles,
             int targetVehicles,
             bool requireVehicles,
             bool notEnoughVehicles,
+            float emptyThreshold,
             out int addVehicles)
         {
             addVehicles = 0;
@@ -103,7 +117,7 @@ namespace StationSuitabilityOverlay
             // Emptiness is checked BEFORE waits: a barely-used line is lightly used,
             // not badly timetabled, and reporting it as "long waits" told the player
             // to run more buses down an empty street.
-            if (usage <= EmptyUsage)
+            if (usage <= emptyThreshold)
             {
                 return LineVerdict.NearlyEmpty;
             }
@@ -111,7 +125,7 @@ namespace StationSuitabilityOverlay
             // Long waits with room to spare means the service is too infrequent for
             // the demand pattern rather than too small. Only meaningful on a line that
             // is actually carrying people.
-            if (averageWait >= LongWait)
+            if (achievedInterval * 0.5f >= LongWait)
             {
                 return LineVerdict.LongWaits;
             }
@@ -136,10 +150,13 @@ namespace StationSuitabilityOverlay
         // A concrete improvement for one line: what to run it with, how many, and what
         // to do about its shape. Every number is derived from the line's own
         // measurements so the player can check the reasoning.
+        // `roundTripSeconds` is the game's stableDuration: every hop plus the dwell at
+        // every stop. The fleet follows from it exactly as TransportLineSystem derives
+        // it, so the recommendation is one the game can actually produce.
         public static string Improve(
             LineHealth health,
             float lengthMetres,
-            float lineDurationSeconds,
+            float roundTripSeconds,
             int capacityPerVehicle,
             float targetLoad)
         {
@@ -164,10 +181,19 @@ namespace StationSuitabilityOverlay
             // and enough vehicles to hold a sensible headway around the line.
             int perVehicle = Math.Max(1, capacityPerVehicle);
             int forLoad = (int)Math.Ceiling(health.m_Passengers / Math.Max(0.2f, targetLoad) / perVehicle);
-            int forHeadway = lineDurationSeconds > 0f
-                ? (int)Math.Round(lineDurationSeconds / TargetHeadwayFor(mode))
+            int forHeadway = roundTripSeconds > 0f
+                ? (int)Math.Round(roundTripSeconds / TargetHeadwayFor(mode))
                 : health.m_Vehicles;
             int vehicles = Math.Max(1, Math.Max(forLoad, forHeadway));
+
+            // The game sizes the fleet from the line's interval and is already asking
+            // for m_TargetVehicles. Recommending fewer than that on a line flagged as
+            // short of vehicles produced "overcrowded — add 1 vehicle" next to a plan
+            // saying "run it with 1 vehicle (-3)".
+            if (health.m_Verdict == LineVerdict.Overcrowded || health.m_Verdict == LineVerdict.AtModeCapacity)
+            {
+                vehicles = Math.Max(vehicles, health.m_TargetVehicles);
+            }
 
             parts.Append(" with ");
             parts.Append(vehicles);
@@ -177,6 +203,16 @@ namespace StationSuitabilityOverlay
                 parts.Append(vehicles > health.m_Vehicles ? " (+" : " (");
                 parts.Append(vehicles - health.m_Vehicles);
                 parts.Append(')');
+            }
+
+            // The player cannot set a vehicle count in Cities: Skylines II — the game
+            // derives it from the line's interval. So the actionable number is the
+            // interval that yields this fleet, which is how it is quoted here.
+            if (roundTripSeconds > 0f)
+            {
+                parts.Append(", i.e. an interval of about ");
+                parts.Append((roundTripSeconds / vehicles).ToString("F0"));
+                parts.Append(" s");
             }
 
             // Shape: the two failures worth calling out are a line too long to keep a

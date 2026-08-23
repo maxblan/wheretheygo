@@ -156,11 +156,14 @@ function LineHealth({ raw, plan, planFor }) {
     return h("div", { className: "sso-column" },
         h("div", { className: "sso-section" }, "Line health"),
         h("div", { className: "sso-scroll" },
-            rows.map((parts, i) => {
+            rows.map((parts) => {
+                // parts[0] is the line's own id, not its position in this list. The list
+                // is re-sorted worst-first on every refresh, so keying by position made
+                // React re-seat the rows and the open plan appeared under another line.
                 const index = parseInt(parts[0], 10);
                 const verdict = parts[2] || "Healthy";
                 const healthy = verdict === "Healthy";
-                return h("div", { className: "sso-health", key: i },
+                return h("div", { className: "sso-health", key: index },
                     h("div", { className: "sso-health-head" },
                         h("div", {
                             className: "sso-dot",
@@ -308,6 +311,47 @@ function ToolbarButton() {
             })));
 }
 
+// Our infoview has to stay registered and valid — the terrain heat map only draws
+// while it is the active infoview — so its row cannot be removed from the game's
+// infoview menu on the C# side. It is removed here instead, by hiding the menu button
+// carrying our icon. Our own toolbar button uses the same icon, so it is excluded by
+// checking for the wrapper class.
+function HideInfoviewMenuEntry() {
+    React.useEffect(() => {
+        const hide = () => {
+            const icons = document.querySelectorAll('img[src*="stationsuitabilityoverlay"]');
+            for (let i = 0; i < icons.length; i++) {
+                const icon = icons[i];
+                if (icon.closest(".sso-toolbar-slot")) {
+                    continue;
+                }
+
+                const button = icon.closest("button") || icon.parentElement;
+                if (button && button.style.display !== "none") {
+                    button.style.display = "none";
+                }
+            }
+        };
+
+        hide();
+        // The menu is built and rebuilt as the player opens it, so one pass is not
+        // enough; this watches for it appearing rather than polling on a timer.
+        let observer = null;
+        if (typeof MutationObserver !== "undefined") {
+            observer = new MutationObserver(hide);
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+
+        return () => {
+            if (observer) {
+                observer.disconnect();
+            }
+        };
+    }, []);
+
+    return null;
+}
+
 const register = (moduleRegistry) => {
     if (!React || !Api || !moduleRegistry || !moduleRegistry.append) {
         console.error("[StationSuitability] UI module could not register.");
@@ -316,6 +360,7 @@ const register = (moduleRegistry) => {
 
     moduleRegistry.append("Game", Panel);
     moduleRegistry.append("GameTopLeft", ToolbarButton);
+    moduleRegistry.append("Game", HideInfoviewMenuEntry);
     console.info("[StationSuitability] Control panel registered.");
 };
 

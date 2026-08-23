@@ -308,7 +308,7 @@ namespace StationSuitabilityOverlay
                 bool took = m_ToolSystem.activeInfoview == m_InfoviewPrefab;
                 Mod.Log.Info(
                     $"Infoview activation requested: activeInfoview matches={took}. " +
-                    "If this is false the editor-only flag is blocking activation and the heat map will not draw.");
+                    "If this is false the view is not registered as valid and the heat map will not draw.");
             }
             else if (m_ToolSystem.activeInfoview == m_InfoviewPrefab)
             {
@@ -787,11 +787,13 @@ namespace StationSuitabilityOverlay
             SetField(m_InfoviewPrefab, "m_Group", 0);
             SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
             SetField(m_InfoviewPrefab, "m_SecondaryColor", new Color(0.5f, 0.5f, 0.55f, 1f));
-            // Marked editor-only so the game does not list it in the Infoansicht menu:
-            // the mod is entered through its own toolbar button, and a second way in
-            // was confusing. Activation still works, because that goes through
-            // ToolSystem.infoview from SetInfoviewActive rather than through the menu.
-            SetField(m_InfoviewPrefab, "m_Editor", true);
+            // The view MUST stay valid and non-editor. InfoviewsUISystem.BindInfoviews
+            // skips invalid views, which is tempting as a way to keep this out of the
+            // Infoansicht menu — but ToolSystem.SetInfoview only activates a view's
+            // infomodes while ToolSystem.activeInfoview is non-null, and that getter
+            // returns null for an invalid view, so the heat map would never draw. The
+            // menu row is hidden in the UI module instead (HideInfoviewMenuEntry).
+            SetField(m_InfoviewPrefab, "m_Editor", false);
             SetField(m_InfoviewPrefab, "<isValid>k__BackingField", true);
 
             if (!m_PrefabSystem.AddPrefab(m_InfoviewPrefab, null, null, null))
@@ -1986,7 +1988,7 @@ namespace StationSuitabilityOverlay
                 Mod.Log.Info(
                     $"Line {entry.m_Index} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
                     $"{entry.m_Passengers}/{entry.m_Capacity} aboard ({entry.m_Usage * 100f:F0}%), " +
-                    $"{entry.m_Vehicles}/{entry.m_TargetVehicles} vehicles, wait {entry.m_AverageWait:F0}, " +
+                    $"{entry.m_Vehicles}/{entry.m_TargetVehicles} vehicles, typicalWait {entry.m_TypicalWait:F0}, " +
                     $"{entry.m_Stops} stops, {entry.m_LengthKm:F1} km");
             }
         }
@@ -2248,34 +2250,60 @@ namespace StationSuitabilityOverlay
             for (int i = 0; i < m_LineHealth.Count; i++)
             {
                 LineHealth health = m_LineHealth[i];
-                if (health.m_Index != requested)
+                if (health.m_Id != requested)
                 {
                     continue;
                 }
 
-                int source = health.m_Index - 1;
-                if (source < 0 || source >= m_ExistingLines.Count)
+                // Matched by identity, not by position. The query returns lines in
+                // whatever chunk order the ECS happens to have them in, so a positional
+                // lookup silently pointed at a different line after a refresh — which
+                // is why an improvement plan could end up sitting under the wrong name.
+                ExistingLine line = null;
+                for (int k = 0; k < m_ExistingLines.Count; k++)
                 {
-                    return;
+                    if (m_ExistingLines[k].m_Id == health.m_Id)
+                    {
+                        line = m_ExistingLines[k];
+                        break;
+                    }
                 }
 
-                ExistingLine line = m_ExistingLines[source];
+                if (line == null)
+                {
+                    Mod.Log.Info($"Improvement requested for line id {requested}, which no longer exists.");
+                    return;
+                }
                 int perVehicle = health.m_Vehicles > 0 ? health.m_Capacity / health.m_Vehicles : health.m_Capacity;
 
                 // Aim to fill about 70%: full enough to justify the service, with room
                 // for the peaks the averages hide.
                 s_ImprovePlan = SuitabilityLineHealth.Improve(
-                    health, line.m_LengthMetres, line.m_LineDurationSeconds, perVehicle, 0.7f);
-                s_ImprovedLine = health.m_Index;
+                    health, line.m_LengthMetres, line.m_StableDurationSeconds, perVehicle, 0.7f);
+                s_ImprovedLine = health.m_Id;
 
                 BuildImprovedRoute(health, line);
 
                 Mod.Log.Info(
                     $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {s_ImprovePlan} " +
                     $"[measured: {health.m_Passengers}/{health.m_Capacity} aboard, {health.m_Vehicles}/{health.m_TargetVehicles} veh, " +
-                    $"wait {health.m_AverageWait:F0}, {health.m_Stops} stops, {health.m_LengthKm:F1} km, " +
-                    $"perVehicle {perVehicle}, duration {line.m_LineDurationSeconds:F0}s]");
+                    $"typicalWait {health.m_TypicalWait:F0}, {health.m_Stops} stops, {health.m_LengthKm:F1} km, " +
+                    $"perVehicle {perVehicle}, roundTrip {line.m_StableDurationSeconds:F0}s, " +
+                    $"targetInterval {line.m_TargetInterval:F0}s]");
                 return;
+            }
+        }
+
+        // The alignment a mode may run on. Buses and trams are stuck with streets,
+        // metro and train lay their own, ferries need water.
+        private SuitabilityRoadGraph NetworkForMode(Setting.ModePreset mode)
+        {
+            switch (mode)
+            {
+                case Setting.ModePreset.Train: return m_TrainNetwork;
+                case Setting.ModePreset.Metro: return m_MetroNetwork;
+                case Setting.ModePreset.Ferry: return m_WaterNetwork;
+                default: return m_RoadGraph;
             }
         }
 
@@ -2285,7 +2313,7 @@ namespace StationSuitabilityOverlay
         private void BuildImprovedRoute(LineHealth health, ExistingLine line)
         {
             m_ImprovedRoute = null;
-            if (line.m_StopIndices.Count < 2 || m_RoadGraph?.Graph == null)
+            if (line.m_StopIndices.Count < 2)
             {
                 return;
             }
@@ -2303,21 +2331,29 @@ namespace StationSuitabilityOverlay
                     ? SuitabilityLineHealth.NextModeDown(health.m_Mode)
                     : health.m_Mode;
 
-            var scratch = new List<int>();
-            int from = m_RoadGraph.NearestNode(m_TransitStops[firstStop], 600f);
-            int to = m_RoadGraph.NearestNode(m_TransitStops[lastStop], 600f);
-            if (from < 0 || to < 0 || !m_RoadGraph.TracePath(from, to, 30000f, scratch))
+            // Re-trace on the network the recommended mode can actually use. Tracing a
+            // train on the road graph reported "no road path between its endpoints" and
+            // produced nothing at all.
+            SuitabilityRoadGraph graph = NetworkForMode(mode);
+            if (graph?.Graph == null)
             {
-                Mod.Log.Info($"Improved route for \"{health.m_Name}\": no road path between its endpoints.");
+                Mod.Log.Info($"Improved route for \"{health.m_Name}\": no {mode} network is built yet.");
                 return;
             }
 
-            var route = new SuggestedRoute { Network = RouteNetwork.Road, Mode = mode };
-            for (int i = 0; i < scratch.Count; i++)
+            var scratch = new List<int>();
+            int from = graph.NearestNode(m_TransitStops[firstStop], 600f);
+            int to = graph.NearestNode(m_TransitStops[lastStop], 600f);
+            if (from < 0 || to < 0 || !graph.TracePath(from, to, 60000f, scratch))
             {
-                int node = scratch[i];
-                route.Path.Add(new float2(m_RoadGraph.NodePositionsX[node], m_RoadGraph.NodePositionsZ[node]));
+                Mod.Log.Info(
+                    $"Improved route for \"{health.m_Name}\": no {graph.Network} path between its endpoints " +
+                    $"(fromNode={from}, toNode={to}).");
+                return;
             }
+
+            var route = new SuggestedRoute { Network = graph.Network, Mode = mode };
+            graph.MaterialisePath(scratch, route.Path);
 
             float length = 0f;
             for (int i = 1; i < route.Path.Count; i++)
@@ -2326,7 +2362,7 @@ namespace StationSuitabilityOverlay
             }
 
             route.Length = length;
-            route.CapturedFlow = m_RoadGraph.FlowAlong(scratch);
+            route.CapturedFlow = graph.FlowAlong(scratch);
             SuitabilityRoutes.Restop(route, mode, point => ScoreAtWorld(point, m_IntensityGrid));
             route.Vehicles = SuitabilityRoutes.EstimateVehicles(mode, length, route.Stops.Count,
                 SuggestedWaitFor(mode) * 2f);
@@ -2350,7 +2386,7 @@ namespace StationSuitabilityOverlay
                     builder.Append('\n');
                 }
 
-                builder.Append(health.m_Index);
+                builder.Append(health.m_Id);
                 builder.Append('|');
                 // The game's own name, so this list matches the Transportation
                 // Overview rather than using an invented index.
@@ -2373,6 +2409,9 @@ namespace StationSuitabilityOverlay
 
         // How far a rider will walk to reach or change service.
         private const float TransferWalkRadius = 250f;
+        // Enabled demand a candidate must carry to be worth drawing at all. Deliberately
+        // tiny: this rejects corridors with nothing on them, not weak ones.
+        private const float MinCandidateFlow = 1f;
         // Journeys longer than this are not realistically made by transit.
         private const float MaxJourneySeconds = 3600f;
 
@@ -2437,16 +2476,16 @@ namespace StationSuitabilityOverlay
             CompactGraph trainGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
                 tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Train, OnTrack(tile)),
                 out float[] trainX, out float[] trainZ);
-            m_TrainNetwork.Adopt(trainGraph, trainX, trainZ);
+            m_TrainNetwork.Adopt(trainGraph, trainX, trainZ, RouteNetwork.Rail);
 
             CompactGraph metroGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
                 tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Metro, OnTrack(tile)),
                 out float[] metroX, out float[] metroZ);
-            m_MetroNetwork.Adopt(metroGraph, metroX, metroZ);
+            m_MetroNetwork.Adopt(metroGraph, metroX, metroZ, RouteNetwork.Rail);
 
             CompactGraph waterGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, WaterTile,
                 null, out float[] waterX, out float[] waterZ);
-            m_WaterNetwork.Adopt(waterGraph, waterX, waterZ);
+            m_WaterNetwork.Adopt(waterGraph, waterX, waterZ, RouteNetwork.Water);
 
             m_GraphDirty = false;
             Mod.Log.Info(
@@ -2657,6 +2696,18 @@ namespace StationSuitabilityOverlay
                     Mod.Log.Info(
                         $"  candidate {i}: road, flow={beforeFlow:F0}, len={candidate.Length:F0}m, " +
                         $"{candidate.Stops.Count} stops — DROPPED, below every floor");
+                    continue;
+                }
+
+                // A corridor nobody travels is not a suggestion. These reached the map
+                // as buses in empty country because a bus has no demand floor, so the
+                // floor is applied here explicitly.
+                if (beforeFlow <= MinCandidateFlow)
+                {
+                    rejected++;
+                    Mod.Log.Info(
+                        $"  candidate {i}: {candidate.Network} {candidate.Mode}, flow={beforeFlow:F2}, " +
+                        $"len={candidate.Length:F0}m — DROPPED, no demand on this corridor");
                     continue;
                 }
 

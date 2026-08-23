@@ -120,11 +120,9 @@ namespace StationSuitabilityOverlay
                     Network = network.Network,
                 };
 
-                for (int i = 0; i < corridor.Nodes.Count; i++)
-                {
-                    int node = corridor.Nodes[i];
-                    route.Path.Add(new float2(network.NodePositionsX[node], network.NodePositionsZ[node]));
-                }
+                // Follow each edge's real centreline where there is one, so a street
+                // route stays on the street instead of cutting every corner.
+                network.MaterialisePath(corridor.Nodes, route.Path);
 
                 route.Mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
 
@@ -135,10 +133,13 @@ namespace StationSuitabilityOverlay
                     Simplify(route.Path, SimplifyTolerance);
                 }
 
-                // Rail and water suggestions are only worth making at a scale that
-                // justifies the infrastructure; a 900 m metro line is nonsense.
+                // Judged against the SHORTEST mode this alignment can host, not the
+                // mode first guessed from flow. A busy 800 m street was classified Tram,
+                // failed the 1200 m tram floor and was thrown away, when it was a
+                // perfectly good bus route — which is why road candidates kept coming
+                // out as "grown=8 tooShort=8".
                 grown++;
-                if (route.Length < MinLengthFor(route.Mode))
+                if (route.Length < ShortestModeLength(network.Network))
                 {
                     tooShort++;
                 }
@@ -154,6 +155,19 @@ namespace StationSuitabilityOverlay
                 SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, CaptureFraction);
                 SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, NoveltyHops, NoveltyFactor);
             }
+        }
+
+        // Minimum length of the least demanding mode this network can host.
+        private static float ShortestModeLength(RouteNetwork network)
+        {
+            Setting.ModePreset[] options = ModesFor(network);
+            float shortest = float.MaxValue;
+            for (int i = 0; i < options.Length; i++)
+            {
+                shortest = math.min(shortest, MinLengthFor(options[i]));
+            }
+
+            return shortest;
         }
 
         // On the street network the only choice is how heavy the corridor is.
@@ -254,11 +268,7 @@ namespace StationSuitabilityOverlay
             }
 
             var route = new SuggestedRoute { Network = RouteNetwork.Road };
-            for (int i = 0; i < scratch.Count; i++)
-            {
-                int node = scratch[i];
-                route.Path.Add(new float2(roads.NodePositionsX[node], roads.NodePositionsZ[node]));
-            }
+            roads.MaterialisePath(scratch, route.Path);
 
             float length = 0f;
             for (int i = 1; i < route.Path.Count; i++)
@@ -389,6 +399,8 @@ namespace StationSuitabilityOverlay
             }
 
             float search = spacing * StopSearchFraction;
+            float firstAt = -1f;
+            float lastAt = -1f;
             for (float target = 0f; target <= total + 1f; target += spacing)
             {
                 float at = math.min(target, total);
@@ -411,13 +423,68 @@ namespace StationSuitabilityOverlay
                     }
                 }
 
-                AddStop(route, PointAlong(route.Path, best));
+                if (AddStop(route, PointAlong(route.Path, best)))
+                {
+                    if (firstAt < 0f)
+                    {
+                        firstAt = best;
+                    }
+
+                    lastAt = best;
+                }
 
                 if (at >= total)
                 {
                     break;
                 }
             }
+
+            // The line is drawn between its termini. The nudge search can pull the end
+            // stops inward, and a rejected near-duplicate can drop the final one
+            // altogether, both of which left the polyline running on past the last stop
+            // marker with nothing to serve out there.
+            if (firstAt >= 0f && lastAt > firstAt)
+            {
+                TrimPath(route, firstAt, lastAt);
+            }
+        }
+
+        // Keeps only the stretch of the polyline between two distances along it,
+        // inserting exact endpoints so the drawn line starts and ends on a stop.
+        private static void TrimPath(SuggestedRoute route, float from, float to)
+        {
+            var trimmed = new List<float2> { PointAlong(route.Path, from) };
+
+            float travelled = 0f;
+            for (int i = 1; i < route.Path.Count; i++)
+            {
+                float segment = math.distance(route.Path[i - 1], route.Path[i]);
+                float at = travelled + segment;
+                if (at > from && at < to)
+                {
+                    trimmed.Add(route.Path[i]);
+                }
+
+                travelled = at;
+            }
+
+            trimmed.Add(PointAlong(route.Path, to));
+
+            route.Path.Clear();
+            for (int i = 0; i < trimmed.Count; i++)
+            {
+                route.Path.Add(trimmed[i]);
+            }
+
+            // Length is quoted to the player and used by the mode floors, so it has to
+            // follow the trim rather than keep describing the untrimmed corridor.
+            float length = 0f;
+            for (int i = 1; i < route.Path.Count; i++)
+            {
+                length += math.distance(route.Path[i - 1], route.Path[i]);
+            }
+
+            route.Length = length;
         }
 
         // Position at `distance` along the polyline.
@@ -461,18 +528,19 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        private static void AddStop(SuggestedRoute route, float2 placed)
+        private static bool AddStop(SuggestedRoute route, float2 placed)
         {
             // The along-line search can land two stops on nearly the same spot.
             for (int i = 0; i < route.Stops.Count; i++)
             {
                 if (math.distancesq(route.Stops[i], placed) < 400f)
                 {
-                    return;
+                    return false;
                 }
             }
 
             route.Stops.Add(placed);
+            return true;
         }
 
         // Absolute capacity floors, expressed against a city-wide reference flow so

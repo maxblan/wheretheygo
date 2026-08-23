@@ -247,8 +247,8 @@
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    height: var(--floatingToggleSize);
-    width: var(--floatingToggleSize);
+    height: var(--floatingToggleSize, 44rem);
+    width: var(--floatingToggleSize, 44rem);
     margin-bottom: 6rem;
 }
 
@@ -259,31 +259,36 @@
     justify-content: center;
     width: 100%;
     height: 100%;
-    background-color: var(--menuControl);
-    border: var(--stroke2) solid var(--menuControlBorder);
-    border-radius: var(--floatingToggleBorderRadius);
-    color: var(--iconColor);
+    /* Measured off the vanilla buttons rather than guessed: --menuControl resolves to
+       a dark slate in this context, which is why this button looked transparent and
+       square next to the game's own cyan tiles. */
+    background-color: rgb(75, 195, 241);
+    border: none;
+    border-radius: 20%;
+    color: #ffffff;
     cursor: pointer;
     pointer-events: auto;
 }
 
 .sso-toolbar-button:hover {
-    background-color: var(--menuHoverColor);
+    background-color: rgb(112, 210, 246);
 }
 
 .sso-toolbar-button-on {
-    background-color: var(--menuActiveColor);
+    background-color: rgb(38, 158, 208);
 }
 
 .sso-toolbar-icon {
-    width: var(--iconWidth);
-    height: var(--iconHeight);
+    width: var(--iconWidth, 30rem);
+    height: var(--iconHeight, 30rem);
 }
 
 /* Deliberately NOT hiding [class*="infoview-menu"]: that matched the vanilla
    Infoansicht toggle too, so opening this panel made the game's own infoview button
-   disappear. Our own row is removed by not registering the infoview in the menu at
-   all (see m_Editor in StationSuitabilityOverlaySystem), which needs no CSS. */
+   disappear. Our row in the infoview menu is removed by HideInfoviewMenuEntry in the
+   module instead — it cannot be done from C#, because ToolSystem.SetInfoview only
+   activates a view's infomodes while ToolSystem.activeInfoview is non-null, and that
+   getter returns null for any prefab flagged invalid or hidden. */
 
 .sso-health {
     margin-bottom: 5rem;
@@ -319,16 +324,21 @@
 .sso-column {
     width: 300rem;
     margin-right: 10rem;
+    display: flex;
+    flex-direction: column;
 }
 
 .sso-column:last-child {
     margin-right: 0;
 }
 
-/* Fixed height so the panel keeps the size of the controls column, with its own
-   scrollbar rather than growing without bound. */
+/* The controls column sets the panel's height; this one stretches to match it and
+   the list takes whatever is left below its heading, so the full height is used
+   instead of stopping at a fixed 420rem with dead space underneath. min-height 0 is
+   what actually lets a flex child scroll rather than growing the panel. */
 .sso-scroll {
-    height: 420rem;
+    flex: 1 1 auto;
+    min-height: 320rem;
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 4rem;

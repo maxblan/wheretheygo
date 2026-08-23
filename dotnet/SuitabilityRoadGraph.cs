@@ -5,6 +5,7 @@ using PathMethod = Game.Pathfind.PathMethod;
 using Game.Prefabs;
 using Unity.Collections;
 using Unity.Entities;
+using Colossal.Mathematics;
 using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
@@ -25,11 +26,24 @@ namespace StationSuitabilityOverlay
         // participate in the assignment.
         private const float ZoneSnapRadius = SuitabilityTravelDemand.ZoneSize;
 
+        // Bow below which an edge is drawn as a straight chord.
+        private const float StraightEnough = 3f;
+        private const int MaxCurveSamples = 8;
+
         public RouteNetwork Network;
         public CompactGraph Graph;
         public float[] NodePositionsX;
         public float[] NodePositionsZ;
         public float[] EdgeFlow;
+
+        // Interior points of each edge's actual centreline, in A->B order. Without
+        // these a traced route is a chord between intersections, which visibly leaves
+        // the street on anything curved — the reason suggested bus and tram lines
+        // looked like they cut across blocks.
+        public float[] EdgeShapeX;
+        public float[] EdgeShapeZ;
+        public int[] EdgeShapeStart;
+        public int[] EdgeShapeCount;
 
         private readonly Dictionary<Entity, int> m_NodeIndices = new Dictionary<Entity, int>();
         private readonly List<int> m_EdgeA = new List<int>();
@@ -39,13 +53,24 @@ namespace StationSuitabilityOverlay
 
         // Takes ownership of a graph built elsewhere — used for the lattice networks,
         // which are not derived from road entities at all.
-        public void Adopt(CompactGraph graph, float[] nodeX, float[] nodeZ)
+        public void Adopt(CompactGraph graph, float[] nodeX, float[] nodeZ, RouteNetwork network)
         {
+            // Which network this is MUST be recorded: the mode-fallback path uses it to
+            // decide that a lattice alignment has to be re-traced on streets before a
+            // bus may run it. Left at the enum default every graph claimed to be a
+            // road, so ferry and metro alignments were relabelled as buses and drawn
+            // straight over water and through buildings.
+            Network = network;
             Graph = graph;
             NodePositionsX = nodeX;
             NodePositionsZ = nodeZ;
             EdgeFlow = new float[graph.EdgeCount];
             m_Workspace = new DijkstraWorkspace(graph.NodeCount);
+            // A lattice has no real centreline to follow.
+            EdgeShapeX = null;
+            EdgeShapeZ = null;
+            EdgeShapeStart = null;
+            EdgeShapeCount = null;
         }
 
         // Collects the endpoints of every track edge, so the rail lattice can tell
@@ -118,6 +143,7 @@ namespace StationSuitabilityOverlay
             ComponentLookup<RoadData> roadDataLookup,
             bool useTravelTime)
         {
+            Network = RouteNetwork.Road;
             m_NodeIndices.Clear();
             m_EdgeA.Clear();
             m_EdgeB.Clear();
@@ -125,6 +151,10 @@ namespace StationSuitabilityOverlay
 
             var positionsX = new List<float>();
             var positionsZ = new List<float>();
+            var shapeX = new List<float>();
+            var shapeZ = new List<float>();
+            var shapeStart = new List<int>();
+            var shapeCount = new List<int>();
 
             using var edges = roadEdgeQuery.ToEntityArray(Allocator.Temp);
             using var edgeData = roadEdgeQuery.ToComponentDataArray<Edge>(Allocator.Temp);
@@ -156,7 +186,8 @@ namespace StationSuitabilityOverlay
 
                 // Curve.m_Length is a precomputed arc length on the edge, so the
                 // distance cost is exact rather than a midpoint approximation.
-                float length = math.max(1f, curveLookup[edgeEntity].m_Length);
+                Curve curve = curveLookup[edgeEntity];
+                float length = math.max(1f, curve.m_Length);
                 float cost = length;
 
                 if (useTravelTime)
@@ -168,10 +199,17 @@ namespace StationSuitabilityOverlay
                 m_EdgeA.Add(a);
                 m_EdgeB.Add(b);
                 m_EdgeCost.Add(cost);
+
+                shapeStart.Add(shapeX.Count);
+                shapeCount.Add(SampleCurve(curve, shapeX, shapeZ));
             }
 
             NodePositionsX = positionsX.ToArray();
             NodePositionsZ = positionsZ.ToArray();
+            EdgeShapeX = shapeX.ToArray();
+            EdgeShapeZ = shapeZ.ToArray();
+            EdgeShapeStart = shapeStart.ToArray();
+            EdgeShapeCount = shapeCount.ToArray();
             Graph = CompactGraph.Build(
                 positionsX.Count,
                 m_EdgeA.ToArray(),
@@ -303,6 +341,93 @@ namespace StationSuitabilityOverlay
 
         // Shortest path between two nodes as a list of node indices, for re-tracing a
         // corridor on a different network.
+        // Interior samples of one edge's centreline, appended in A->B order. Straight
+        // edges get none: the chord already IS the street, and every extra vertex
+        // costs a draw call and a joint dot.
+        private static int SampleCurve(Curve curve, List<float> shapeX, List<float> shapeZ)
+        {
+            float3 start = curve.m_Bezier.a;
+            float3 end = curve.m_Bezier.d;
+            float3 middle = MathUtils.Position(curve.m_Bezier, 0.5f);
+            float2 chordMid = new float2((start.x + end.x) * 0.5f, (start.z + end.z) * 0.5f);
+            float bow = math.distance(new float2(middle.x, middle.z), chordMid);
+
+            if (bow < StraightEnough)
+            {
+                return 0;
+            }
+
+            // One sample per ~8 m of bow, so a gentle bend gets a couple of points and
+            // a hairpin gets enough to read as a curve.
+            int count = math.clamp((int)math.round(bow / 8f), 1, MaxCurveSamples);
+            for (int i = 1; i <= count; i++)
+            {
+                float3 point = MathUtils.Position(curve.m_Bezier, i / (float)(count + 1));
+                shapeX.Add(point.x);
+                shapeZ.Add(point.z);
+            }
+
+            return count;
+        }
+
+        // Turns a node path into the polyline a vehicle would actually drive,
+        // following each edge's centreline rather than cutting the corner.
+        public void MaterialisePath(List<int> nodes, List<float2> path)
+        {
+            path.Clear();
+            if (Graph == null || nodes == null || nodes.Count == 0)
+            {
+                return;
+            }
+
+            path.Add(new float2(NodePositionsX[nodes[0]], NodePositionsZ[nodes[0]]));
+
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                int from = nodes[i - 1];
+                int to = nodes[i];
+
+                int edge = FindEdge(from, to);
+                if (edge >= 0 && EdgeShapeCount != null && EdgeShapeCount[edge] > 0)
+                {
+                    int start = EdgeShapeStart[edge];
+                    int count = EdgeShapeCount[edge];
+                    // Samples are stored A->B; this hop may run the other way.
+                    bool forward = Graph.EdgeA[edge] == from;
+                    for (int k = 0; k < count; k++)
+                    {
+                        int at = forward ? start + k : start + count - 1 - k;
+                        path.Add(new float2(EdgeShapeX[at], EdgeShapeZ[at]));
+                    }
+                }
+
+                path.Add(new float2(NodePositionsX[to], NodePositionsZ[to]));
+            }
+        }
+
+        // Cheapest edge joining two adjacent nodes, or -1 if they are not adjacent.
+        private int FindEdge(int from, int to)
+        {
+            int best = -1;
+            float bestCost = float.MaxValue;
+            for (int a = Graph.NodeOffsets[from]; a < Graph.NodeOffsets[from + 1]; a++)
+            {
+                if (Graph.AdjOther[a] != to)
+                {
+                    continue;
+                }
+
+                int edge = Graph.AdjEdge[a];
+                if (Graph.EdgeCost[edge] < bestCost)
+                {
+                    bestCost = Graph.EdgeCost[edge];
+                    best = edge;
+                }
+            }
+
+            return best;
+        }
+
         public bool TracePath(int fromNode, int toNode, float maxCost, List<int> nodes)
         {
             nodes.Clear();
