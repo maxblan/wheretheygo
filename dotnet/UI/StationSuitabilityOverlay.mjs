@@ -147,7 +147,7 @@ const VERDICT_COLORS = {
 // Existing lines, worst first, each with a button that works out a concrete
 // improvement. Lives in its own scrolling column so a city with twenty lines does
 // not push the controls off the screen.
-function LineHealth({ raw, plan }) {
+function LineHealth({ raw, plan, planFor }) {
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
     if (!rows.length) {
         return null;
@@ -166,15 +166,22 @@ function LineHealth({ raw, plan }) {
                             className: "sso-dot",
                             style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
                         }),
-                        h("div", { className: "sso-route-mode" }, (parts[1] || "Bus") + " " + (parts[0] || "")),
+                        h("div", { className: "sso-line-name" }, parts[1] || "Line"),
                         h("div", { className: "sso-route-meta" }, parts[4] || "")),
                     h("div", { className: "sso-health-note" }, parts[3] || ""),
                     healthy ? null : h("button", {
                         className: "sso-improve",
                         onClick: () => trigger("improveLine", index),
-                    }, "Suggest improvement"));
-            })),
-        plan ? h("div", { className: "sso-plan" }, plan) : null);
+                    }, "Suggest improvement"),
+                    // Shown against its own row: at the bottom of a twenty-line list
+                    // nobody would ever see it.
+                    (plan && planFor === index)
+                        ? h("div", { className: "sso-plan" },
+                            h("div", { className: "sso-plan-title" }, "Improved plan"),
+                            h("div", {}, plan),
+                            h("div", { className: "sso-plan-hint" }, "The white dashed line on the map is the re-traced route."))
+                        : null);
+            })));
 }
 
 function Panel() {
@@ -189,6 +196,7 @@ function Panel() {
     const heatmap = useBound("heatmap", true);
     const lineHealth = useBound("lineHealth", "");
     const improvePlan = useBound("improvePlan", "");
+    const improvedLine = useBound("improvedLine", -1);
 
     // Suppress the vanilla infoview legend while ours is showing; a class on the
     // document root is the only hook a plain CSS file can key off.
@@ -281,14 +289,14 @@ function Panel() {
 
         h(RouteList, { raw: routeList })),
 
-        h(LineHealth, { raw: lineHealth, plan: improvePlan })));
+        h(LineHealth, { raw: lineHealth, plan: improvePlan, planFor: improvedLine })));
 }
 
 // Styled to match the vanilla floating toggles beside it: same size variable, same
 // rounded container, and the mod's own SVG icon rather than a text glyph.
 function ToolbarButton() {
     const open = useBound("visible", false);
-    return h("div", { className: "sso-toolbar-slot" },
+    return h("div", { className: "infoview-menu-toggle_bYF sso-toolbar-slot" },
         h("button", {
             className: "sso-toolbar-button" + (open ? " sso-toolbar-button-on" : ""),
             title: "Station Suitability",

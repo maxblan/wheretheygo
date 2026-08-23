@@ -111,6 +111,25 @@ namespace StationSuitabilityOverlay
 
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(false);
 
+            // The improved alignment for whichever line the player asked about, drawn
+            // white and dashed so it reads as a proposal against its existing line.
+            SuggestedRoute improved = m_OverlaySystem.ImprovedRoute;
+            if (improved != null)
+            {
+                var proposalColor = new Color(1f, 1f, 1f, 0.95f);
+                for (int i = 1; i < improved.Path.Count; i++)
+                {
+                    float3 from = ToGround(improved.Path[i - 1], ref heightData);
+                    float3 to = ToGround(improved.Path[i], ref heightData);
+                    buffer.DrawDashedLine(proposalColor, new Line3.Segment(from, to), 14f, 50f, 25f);
+                }
+
+                for (int i = 0; i < improved.Stops.Count; i++)
+                {
+                    buffer.DrawCircle(proposalColor, ToGround(improved.Stops[i], ref heightData), 28f);
+                }
+            }
+
             for (int r = 0; r < routes.Count; r++)
             {
                 SuggestedRoute route = routes[r];

@@ -259,31 +259,31 @@
     justify-content: center;
     width: 100%;
     height: 100%;
-    background-color: rgba(11, 21, 32, 0.85);
-    border: none;
-    border-radius: 50%;
+    background-color: var(--menuControl);
+    border: var(--stroke2) solid var(--menuControlBorder);
+    border-radius: var(--floatingToggleBorderRadius);
+    color: var(--iconColor);
     cursor: pointer;
     pointer-events: auto;
 }
 
 .sso-toolbar-button:hover {
-    background-color: rgba(41, 72, 104, 0.95);
+    background-color: var(--menuHoverColor);
 }
 
 .sso-toolbar-button-on {
-    background-color: rgba(70, 140, 210, 0.95);
+    background-color: var(--menuActiveColor);
 }
 
 .sso-toolbar-icon {
-    width: 60%;
-    height: 60%;
+    width: var(--iconWidth);
+    height: var(--iconHeight);
 }
 
-/* The mod drives itself from its own button now, so its row in the vanilla
-   infoview menu would just be a second way in. */
-.sso-hide-vanilla-infoview [class*="infoview-menu"] {
-    display: none;
-}
+/* Deliberately NOT hiding [class*="infoview-menu"]: that matched the vanilla
+   Infoansicht toggle too, so opening this panel made the game's own infoview button
+   disappear. Our own row is removed by not registering the infoview in the menu at
+   all (see m_Editor in StationSuitabilityOverlaySystem), which needs no CSS. */
 
 .sso-health {
     margin-bottom: 5rem;
@@ -357,4 +357,27 @@
     border-radius: 3rem;
     color: #e6f0fa;
     font-size: 10rem;
+}
+
+.sso-plan-title {
+    margin-bottom: 2rem;
+    color: #ffffff;
+    font-size: 10rem;
+}
+
+.sso-plan-hint {
+    margin-top: 3rem;
+    color: #9fb6cc;
+    font-size: 9rem;
+}
+
+/* Line names are longer and more variable than a mode word, so they get room and
+   ellipsis rather than wrapping the row. */
+.sso-line-name {
+    flex-grow: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #eaf2fb;
+    font-size: 11rem;
 }

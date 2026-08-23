@@ -21,6 +21,8 @@ namespace StationSuitabilityOverlay
     internal struct LineHealth
     {
         public int m_Index;
+        // The game's own display name for the line.
+        public string m_Name;
         public Setting.ModePreset m_Mode;
         public int m_Vehicles;
         public int m_TargetVehicles;
@@ -55,8 +57,11 @@ namespace StationSuitabilityOverlay
     {
         // Above this share of capacity a line is effectively full.
         public const float FullUsage = 0.85f;
-        // Below this it is not carrying enough to justify itself.
-        public const float EmptyUsage = 0.15f;
+        // Below this it is not carrying enough to justify itself. Usage is an
+        // INSTANTANEOUS snapshot of passengers against fleet capacity, and a healthy
+        // line sits well under half full most of the time — at 0.15 this flagged 18 of
+        // 19 lines on a working city, which is noise rather than advice.
+        public const float EmptyUsage = 0.06f;
         // Average wait past which service genuinely feels sparse. Observed waits on a
         // working city run 20-100 for healthy lines, so 45 flagged almost everything.
         public const float LongWait = 150f;
@@ -104,7 +109,8 @@ namespace StationSuitabilityOverlay
             }
 
             // Long waits with room to spare means the service is too infrequent for
-            // the demand pattern rather than too small.
+            // the demand pattern rather than too small. Only meaningful on a line that
+            // is actually carrying people.
             if (averageWait >= LongWait)
             {
                 return LineVerdict.LongWaits;

@@ -1,6 +1,9 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using Colossal.Entities;
 using Game.Pathfind;
+using Game.SceneFlow;
 using Game.Prefabs;
 using Game.Routes;
 using Game.Vehicles;
@@ -17,6 +20,9 @@ namespace StationSuitabilityOverlay
     {
         public Entity m_Entity;
         public Setting.ModePreset m_Mode;
+        // The name the game shows for this line, so the panel and the Transportation
+        // Overview agree instead of the mod inventing its own numbering.
+        public string m_Name;
         public readonly List<int> m_StopIndices = new List<int>();
         public readonly List<float> m_RideSeconds = new List<float>();
         public readonly List<float2> m_Path = new List<float2>();
@@ -46,6 +52,7 @@ namespace StationSuitabilityOverlay
             EntityManager entityManager,
             EntityQuery lineQuery,
             PrefabSystem prefabSystem,
+            Game.UI.NameSystem nameSystem,
             List<ExistingLine> lines,
             List<float2> stopPositions,
             Dictionary<Entity, int> stopIndices)
@@ -80,6 +87,7 @@ namespace StationSuitabilityOverlay
                 {
                     m_Entity = lineEntity,
                     m_Mode = ModeOf(lineData.m_TransportType),
+                    m_Name = ResolveName(entityManager, nameSystem, prefabSystem, lineEntity, lineData.m_TransportType),
                 };
 
                 entityManager.TryGetBuffer(lineEntity, true, out DynamicBuffer<RouteSegment> segments);
@@ -211,6 +219,73 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // The name the game shows for a line, reproduced rather than approximated.
+        //
+        // NameSystem.GetRenderedLabelName is NOT usable here: for an unnamed line the
+        // game returns Name.FormattedName("Assets.ROUTE_NAME[Bus Line]", "NUMBER", n)
+        // and the UI layer substitutes the argument, so the C# label helper hands back
+        // the raw pattern ("Buslinie {NUMBER}") with no number in it — every bus line
+        // would read the same. So this follows NameSystem.GetRouteName and does the
+        // substitution the UI would have done.
+        private static string ResolveName(
+            EntityManager entityManager,
+            Game.UI.NameSystem nameSystem,
+            PrefabSystem prefabSystem,
+            Entity lineEntity,
+            TransportType type)
+        {
+            try
+            {
+                // A line the player renamed: that name is what the Transportation
+                // Overview shows, so it wins.
+                if (nameSystem != null
+                    && nameSystem.TryGetCustomName(lineEntity, out string custom)
+                    && !string.IsNullOrEmpty(custom))
+                {
+                    return Sanitize(custom);
+                }
+
+                string number = entityManager.TryGetComponent(lineEntity, out RouteNumber routeNumber)
+                    ? routeNumber.m_Number.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty;
+
+                if (entityManager.TryGetComponent(lineEntity, out PrefabRef prefabRef)
+                    && prefabSystem.TryGetPrefab(prefabRef, out RoutePrefab routePrefab))
+                {
+                    string id = routePrefab.m_LocaleID + "[" + routePrefab.name + "]";
+                    var dictionary = GameManager.instance?.localizationManager?.activeDictionary;
+                    if (dictionary != null && dictionary.TryGetValue(id, out string pattern)
+                        && !string.IsNullOrEmpty(pattern))
+                    {
+                        return Sanitize(pattern.Replace("{NUMBER}", number));
+                    }
+
+                    // No locale entry: the prefab name plus the number still identifies
+                    // the line, which is the point.
+                    return Sanitize((routePrefab.name + " " + number).Trim());
+                }
+
+                if (number.Length > 0)
+                {
+                    return $"{ModeOf(type)} {number}";
+                }
+            }
+            catch (Exception e)
+            {
+                // Naming is cosmetic; never let it break the health pass.
+                Mod.Log.Warn($"Could not resolve the game's name for a transport line: {e.Message}");
+            }
+
+            return ModeOf(type).ToString();
+        }
+
+        // The health rows reach the panel as a '|'-delimited, newline-separated string,
+        // and a renamed line may contain either character.
+        private static string Sanitize(string name)
+        {
+            return name.Replace('|', '/').Replace('\n', ' ').Replace('\r', ' ').Trim();
+        }
+
         public static Setting.ModePreset ModeOf(TransportType type)
         {
             switch (type)
@@ -266,6 +341,7 @@ namespace StationSuitabilityOverlay
                 health.Add(new LineHealth
                 {
                     m_Index = i + 1,
+                    m_Name = line.m_Name,
                     m_Mode = line.m_Mode,
                     m_Vehicles = line.m_Vehicles,
                     m_TargetVehicles = target,
@@ -278,6 +354,18 @@ namespace StationSuitabilityOverlay
                     m_Verdict = verdict,
                     m_AddVehicles = addVehicles,
                 });
+            }
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                ExistingLine line = lines[i];
+                Mod.Log.Info(
+                    $"Line {i + 1} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
+                    $"len={line.m_LengthMetres:F0}m, duration={line.m_LineDurationSeconds:F0}s, " +
+                    $"interval={line.m_VehicleInterval:F0}s, expectedWait={line.m_ExpectedWait:F0}s, " +
+                    $"observedWait={line.m_AverageWait:F0}, vehicles={line.m_Vehicles}, " +
+                    $"aboard={line.m_Passengers}/{line.m_Capacity}, " +
+                    $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
             }
 
             health.Sort((a, b) =>

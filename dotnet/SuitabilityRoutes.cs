@@ -295,6 +295,11 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
+            if (route.Stops.Count < 3)
+            {
+                return false;
+            }
+
             float radiusSq = matchRadius * matchRadius;
             for (int l = 0; l < existing.Count; l++)
             {
@@ -319,7 +324,10 @@ namespace StationSuitabilityOverlay
                 }
 
                 // Most of the suggestion already has service on the same alignment.
-                if (matched >= (int)math.ceil(route.Stops.Count * 0.6f))
+                // Requires a real line's worth of stops: on a dense network a two-stop
+                // candidate trivially matched 60% of something and was thrown away as
+                // "already built" when it was not.
+                if (route.Stops.Count >= 3 && matched >= (int)math.ceil(route.Stops.Count * 0.75f))
                 {
                     return true;
                 }
@@ -333,11 +341,14 @@ namespace StationSuitabilityOverlay
         {
             switch (mode)
             {
-                case Setting.ModePreset.Tram: return 1500f;
-                case Setting.ModePreset.Metro: return 2500f;
-                case Setting.ModePreset.Train: return 5000f;
-                case Setting.ModePreset.Ferry: return 1500f;
-                default: return 800f;
+                // Lowered after a run where 51 of 53 grown corridors died here and
+                // nothing at all was suggested. Corridors on a real street grid come
+                // out shorter than these originally assumed.
+                case Setting.ModePreset.Tram: return 1200f;
+                case Setting.ModePreset.Metro: return 2000f;
+                case Setting.ModePreset.Train: return 4000f;
+                case Setting.ModePreset.Ferry: return 1200f;
+                default: return 500f;
             }
         }
 

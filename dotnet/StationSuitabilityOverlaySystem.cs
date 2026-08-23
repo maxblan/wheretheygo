@@ -75,6 +75,7 @@ namespace StationSuitabilityOverlay
         private static bool s_ResetCalibrationRequested;
         private static int s_ImproveRequest = -1;
         private static string s_ImprovePlan = string.Empty;
+        private static int s_ImprovedLine = -1;
 
         public static string CalibrationStatusText =>
             string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
@@ -98,12 +99,20 @@ namespace StationSuitabilityOverlay
 
         public static string ImprovePlanText => s_ImprovePlan;
 
+        // Which line the plan belongs to, so the panel can show it against the right
+        // row instead of at the bottom of a long list.
+        public static int ImprovedLineIndex => s_ImprovedLine;
+
+        // The re-traced alignment for that line, drawn on the map.
+        internal SuggestedRoute ImprovedRoute => m_ImprovedRoute;
+
         private TerrainSystem m_TerrainSystem;
         private WaterSystem m_WaterSystem;
         private PopulationToGridSystem m_PopulationSystem;
         private Game.Prefabs.ZoneSystem m_ZoneSystem;
         private PrefabSystem m_PrefabSystem;
         private ToolSystem m_ToolSystem;
+        private Game.UI.NameSystem m_NameSystem;
         private OverlayInfomodeSystem m_OverlayInfomodeSystem;
 
         private EntityQuery m_StopQuery;
@@ -259,6 +268,7 @@ namespace StationSuitabilityOverlay
         private readonly List<float2> m_TransitStops = new List<float2>();
         private readonly Dictionary<Entity, int> m_StopIndices = new Dictionary<Entity, int>();
         private readonly List<LineHealth> m_LineHealth = new List<LineHealth>();
+        private SuggestedRoute m_ImprovedRoute;
         private TransitNetwork m_TransitNetwork;
         private DijkstraWorkspace m_TransitWorkspace;
         private int[] m_ZoneStops;
@@ -295,10 +305,15 @@ namespace StationSuitabilityOverlay
             if (active)
             {
                 m_ToolSystem.infoview = m_InfoviewPrefab;
+                bool took = m_ToolSystem.activeInfoview == m_InfoviewPrefab;
+                Mod.Log.Info(
+                    $"Infoview activation requested: activeInfoview matches={took}. " +
+                    "If this is false the editor-only flag is blocking activation and the heat map will not draw.");
             }
             else if (m_ToolSystem.activeInfoview == m_InfoviewPrefab)
             {
                 m_ToolSystem.infoview = null;
+                Mod.Log.Info("Infoview deactivated.");
             }
         }
 
@@ -377,6 +392,7 @@ namespace StationSuitabilityOverlay
             m_ZoneSystem = World.GetOrCreateSystemManaged<Game.Prefabs.ZoneSystem>();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             m_ToolSystem = World.GetOrCreateSystemManaged<ToolSystem>();
+            m_NameSystem = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             m_OverlayInfomodeSystem = World.GetOrCreateSystemManaged<OverlayInfomodeSystem>();
 
             m_StopQuery = GetEntityQuery(new EntityQueryDesc
@@ -545,6 +561,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
+            HandleImprovementRequest();
             EnsureInfoviewLinked();
             SweepPlaceableInfoviews();
             TrackInputChanges();
@@ -770,7 +787,11 @@ namespace StationSuitabilityOverlay
             SetField(m_InfoviewPrefab, "m_Group", 0);
             SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
             SetField(m_InfoviewPrefab, "m_SecondaryColor", new Color(0.5f, 0.5f, 0.55f, 1f));
-            SetField(m_InfoviewPrefab, "m_Editor", false);
+            // Marked editor-only so the game does not list it in the Infoansicht menu:
+            // the mod is entered through its own toolbar button, and a second way in
+            // was confusing. Activation still works, because that goes through
+            // ToolSystem.infoview from SetInfoviewActive rather than through the menu.
+            SetField(m_InfoviewPrefab, "m_Editor", true);
             SetField(m_InfoviewPrefab, "<isValid>k__BackingField", true);
 
             if (!m_PrefabSystem.AddPrefab(m_InfoviewPrefab, null, null, null))
@@ -1921,11 +1942,10 @@ namespace StationSuitabilityOverlay
         // against how close its ends happen to be to some stop.
         private void BuildTransitModel(int2 gridSize)
         {
-            SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem,
+            SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
                 m_ExistingLines, m_TransitStops, m_StopIndices);
             SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
             UpdateLineHealthText();
-            HandleImprovementRequest();
 
             if (m_TransitStops.Count == 0)
             {
@@ -2052,6 +2072,9 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
+            float weightBefore = 0f;
+            float weightAfter = 0f;
+            int servedPairs = 0;
             int currentOrigin = -1;
             int pair = 0;
             for (int i = 0; i < m_ZoneFlows.Count && pair < m_PairCount; i++)
@@ -2085,9 +2108,17 @@ namespace StationSuitabilityOverlay
                 // Fully served journeys drop out; a slow, transfer-heavy itinerary is
                 // only partly served and still deserves a better option.
                 float quality = 1f - SuitabilityScoring.Saturate(travelTime / MaxJourneySeconds);
+                weightBefore += flow.m_Weight;
                 flow.m_Weight *= 1f - SuitabilityScoring.Saturate(quality);
+                weightAfter += flow.m_Weight;
+                servedPairs++;
                 m_ZoneFlows[i] = flow;
             }
+
+            Mod.Log.Info(
+                $"Served-demand discount: {servedPairs} of {m_PairCount} routable pairs already carried, " +
+                $"weight {weightBefore:F0} -> {weightAfter:F0} " +
+                $"({(weightBefore > 0f ? (1f - weightAfter / weightBefore) * 100f : 0f):F0}% absorbed by existing lines)");
         }
 
         // Re-scores candidates by the demand they would ENABLE once riders are allowed
@@ -2159,6 +2190,10 @@ namespace StationSuitabilityOverlay
                     withCandidate, workspace, m_PairOrigins, m_PairDests, m_PairWeights, m_PairCount,
                     lines.Count - 1, discount, MaxJourneySeconds, out float _);
 
+                Mod.Log.Info(
+                    $"  transfer scoring {c}: {candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops, " +
+                    $"corridorFlow={candidate.CapturedFlow:F0}, enabledDemand={enabled:F0}");
+
                 // Enabled demand governs, with only a small floor from corridor flow
                 // so a candidate the transit model cannot reach yet is not lost. The
                 // old max() kept raw corridor flow in charge, which is why a
@@ -2197,9 +2232,12 @@ namespace StationSuitabilityOverlay
         // Builds the improvement plan for whichever line the panel asked about. Run
         // here rather than in the binding so it uses the same measurements the list
         // was built from.
+        // Answers the panel's request immediately. It reads only the cached health and
+        // line data, so there is no reason to make the player wait for the next demand
+        // refresh — which is what made the button feel broken.
         private void HandleImprovementRequest()
         {
-            if (s_ImproveRequest < 0)
+            if (s_ImproveRequest < 0 || m_LineHealth.Count == 0)
             {
                 return;
             }
@@ -2226,11 +2264,79 @@ namespace StationSuitabilityOverlay
 
                 // Aim to fill about 70%: full enough to justify the service, with room
                 // for the peaks the averages hide.
-                s_ImprovePlan = $"Line {health.m_Index} ({health.m_Mode}): " + SuitabilityLineHealth.Improve(
+                s_ImprovePlan = SuitabilityLineHealth.Improve(
                     health, line.m_LengthMetres, line.m_LineDurationSeconds, perVehicle, 0.7f);
-                Mod.Log.Info(s_ImprovePlan);
+                s_ImprovedLine = health.m_Index;
+
+                BuildImprovedRoute(health, line);
+
+                Mod.Log.Info(
+                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {s_ImprovePlan} " +
+                    $"[measured: {health.m_Passengers}/{health.m_Capacity} aboard, {health.m_Vehicles}/{health.m_TargetVehicles} veh, " +
+                    $"wait {health.m_AverageWait:F0}, {health.m_Stops} stops, {health.m_LengthKm:F1} km, " +
+                    $"perVehicle {perVehicle}, duration {line.m_LineDurationSeconds:F0}s]");
                 return;
             }
+        }
+
+        // Re-traces the line between its own endpoints using current demand, then
+        // re-spaces its stops for the recommended mode. This is the improved routing
+        // the plan talks about, made visible rather than merely described.
+        private void BuildImprovedRoute(LineHealth health, ExistingLine line)
+        {
+            m_ImprovedRoute = null;
+            if (line.m_StopIndices.Count < 2 || m_RoadGraph?.Graph == null)
+            {
+                return;
+            }
+
+            int firstStop = line.m_StopIndices[0];
+            int lastStop = line.m_StopIndices[line.m_StopIndices.Count - 1];
+            if (firstStop >= m_TransitStops.Count || lastStop >= m_TransitStops.Count)
+            {
+                return;
+            }
+
+            Setting.ModePreset mode = health.m_Verdict == LineVerdict.AtModeCapacity
+                ? SuitabilityLineHealth.NextModeUp(health.m_Mode)
+                : health.m_Verdict == LineVerdict.NearlyEmpty
+                    ? SuitabilityLineHealth.NextModeDown(health.m_Mode)
+                    : health.m_Mode;
+
+            var scratch = new List<int>();
+            int from = m_RoadGraph.NearestNode(m_TransitStops[firstStop], 600f);
+            int to = m_RoadGraph.NearestNode(m_TransitStops[lastStop], 600f);
+            if (from < 0 || to < 0 || !m_RoadGraph.TracePath(from, to, 30000f, scratch))
+            {
+                Mod.Log.Info($"Improved route for \"{health.m_Name}\": no road path between its endpoints.");
+                return;
+            }
+
+            var route = new SuggestedRoute { Network = RouteNetwork.Road, Mode = mode };
+            for (int i = 0; i < scratch.Count; i++)
+            {
+                int node = scratch[i];
+                route.Path.Add(new float2(m_RoadGraph.NodePositionsX[node], m_RoadGraph.NodePositionsZ[node]));
+            }
+
+            float length = 0f;
+            for (int i = 1; i < route.Path.Count; i++)
+            {
+                length += math.distance(route.Path[i - 1], route.Path[i]);
+            }
+
+            route.Length = length;
+            route.CapturedFlow = m_RoadGraph.FlowAlong(scratch);
+            SuitabilityRoutes.Restop(route, mode, point => ScoreAtWorld(point, m_IntensityGrid));
+            route.Vehicles = SuitabilityRoutes.EstimateVehicles(mode, length, route.Stops.Count,
+                SuggestedWaitFor(mode) * 2f);
+
+            m_ImprovedRoute = route.Stops.Count >= 2 ? route : null;
+
+            Mod.Log.Info(
+                $"Improved route for \"{health.m_Name}\": {mode}, {length / 1000f:F2} km " +
+                $"(was {health.m_LengthKm:F2}), {route.Stops.Count} stops (was {health.m_Stops}), " +
+                $"{route.Vehicles} vehicles (was {health.m_Vehicles}), corridorFlow={route.CapturedFlow:F0}");
         }
 
         private void UpdateLineHealthText()
@@ -2246,7 +2352,9 @@ namespace StationSuitabilityOverlay
 
                 builder.Append(health.m_Index);
                 builder.Append('|');
-                builder.Append(health.m_Mode);
+                // The game's own name, so this list matches the Transportation
+                // Overview rather than using an invented index.
+                builder.Append(string.IsNullOrEmpty(health.m_Name) ? health.m_Mode.ToString() : health.m_Name);
                 builder.Append('|');
                 builder.Append(health.m_Verdict);
                 builder.Append('|');
@@ -2456,7 +2564,9 @@ namespace StationSuitabilityOverlay
 
             // Corridors must serve somebody along their length, not merely carry
             // through-traffic — that is what stopped routes looping into empty land.
-            float demandFloor = 0.02f;
+            // Loosened: at 0.02 the gate truncated corridors at the first thin block,
+            // which is what made almost every corridor too short to suggest.
+            float demandFloor = 0.005f;
 
             int grownTotal = 0;
             int shortTotal = 0;
@@ -2483,6 +2593,13 @@ namespace StationSuitabilityOverlay
             grownTotal = g1 + g2 + g3 + g4;
             shortTotal = s1 + s2 + s3 + s4;
 
+            Mod.Log.Info(
+                $"Candidates by network: road grown={g1} tooShort={s1}, train grown={g2} tooShort={s2}, " +
+                $"metro grown={g3} tooShort={s3}, ferry grown={g4} tooShort={s4}, " +
+                $"minLengths: bus {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Bus):F0} " +
+                $"tram {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Tram):F0} " +
+                $"metro {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Metro):F0}");
+
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
             ScoreCandidatesWithTransfers(settings);
             m_RouteCandidates.Sort((a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
@@ -2503,6 +2620,7 @@ namespace StationSuitabilityOverlay
             {
                 SuggestedRoute candidate = m_RouteCandidates[i];
 
+                float beforeFlow = candidate.CapturedFlow;
                 if (SuitabilityRoutes.ChooseMode(candidate.Network, candidate.CapturedFlow, candidate.Length,
                         reference, out Setting.ModePreset mode))
                 {
@@ -2524,6 +2642,9 @@ namespace StationSuitabilityOverlay
                     if (onRoad == null)
                     {
                         rejected++;
+                        Mod.Log.Info(
+                            $"  candidate {i}: {candidate.Network}, flow={beforeFlow:F0}, len={candidate.Length:F0}m " +
+                            $"— DROPPED, nothing justified and no road path between its ends");
                         continue;
                     }
 
@@ -2533,19 +2654,29 @@ namespace StationSuitabilityOverlay
                 else
                 {
                     rejected++;
+                    Mod.Log.Info(
+                        $"  candidate {i}: road, flow={beforeFlow:F0}, len={candidate.Length:F0}m, " +
+                        $"{candidate.Stops.Count} stops — DROPPED, below every floor");
                     continue;
                 }
 
                 // A suggestion the player has already built should stop being offered.
-                if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, 250f))
+                if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, 150f))
                 {
                     duplicates++;
+                    Mod.Log.Info(
+                        $"  candidate {i}: {candidate.Network} {candidate.Mode}, flow={beforeFlow:F0}, " +
+                        $"{candidate.Stops.Count} stops — DROPPED, already built");
                     continue;
                 }
 
                 candidate.Vehicles = SuitabilityRoutes.EstimateVehicles(
                     candidate.Mode, candidate.Length, candidate.Stops.Count,
                     SuggestedWaitFor(candidate.Mode) * 2f);
+
+                Mod.Log.Info(
+                    $"  candidate {i}: {candidate.Network} -> {candidate.Mode}, flow={beforeFlow:F0}, " +
+                    $"len={candidate.Length:F0}m, {candidate.Stops.Count} stops, {candidate.Vehicles} veh — KEPT");
 
                 m_Routes.Add(candidate);
             }
