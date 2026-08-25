@@ -97,9 +97,12 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            // Only draw while our own infoview is the active one, so the routes do
-            // not float over unrelated views.
-            if (!m_OverlaySystem.IsInfoviewActive)
+            // Draw while the mod's panel is open. Deliberately NOT gated on our
+            // infoview being active: the heat map is a separate toggle beside "Show
+            // routes" in the panel, and keying off the infoview meant turning the heat
+            // map off silently took the route suggestions with it. Still suppressed
+            // under someone else's infoview, which is what the old gate was really for.
+            if (!m_OverlaySystem.PanelOpen || m_OverlaySystem.ForeignInfoviewActive)
             {
                 return;
             }

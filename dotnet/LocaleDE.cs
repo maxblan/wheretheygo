@@ -17,7 +17,7 @@ namespace StationSuitabilityOverlay
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
+            var entries = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Haltestellen-Eignung" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Allgemein" },
@@ -114,6 +114,75 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Low]", "Niedrig" },
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Medium]", "Mittel" },
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.High]", "Hoch" },
+            };
+
+            foreach (KeyValuePair<string, string> panel in PanelEntries())
+            {
+                entries.Add(panel.Key, panel.Value);
+            }
+
+            return entries;
+        }
+
+        // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
+        // block above because they have a different consumer: those are rendered by the
+        // game's Options UI, these by StationSuitabilityOverlay.mjs.
+        private static Dictionary<string, string> PanelEntries()
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                // Control panel strings. The panel resolves these itself through cs2/l10n with
+                // the English text inline as a fallback, so a key missing here shows English
+                // rather than a raw key.
+                { "StationSuitabilityOverlay.Panel[Title]", "Haltestellen-Eignung" },
+                { "StationSuitabilityOverlay.Panel[Mode]", "Verkehrsmittel" },
+                { "StationSuitabilityOverlay.Panel[Objective]", "Zielsetzung" },
+                { "StationSuitabilityOverlay.Panel[Tuning]", "Feinabstimmung" },
+                { "StationSuitabilityOverlay.Panel[RoutePlanning]", "Linienplanung" },
+                { "StationSuitabilityOverlay.Panel[ApplyPreset]", "Voreinstellung für dieses Verkehrsmittel anwenden" },
+                { "StationSuitabilityOverlay.Panel[Heatmap]", "Eignungs-Heatmap" },
+                { "StationSuitabilityOverlay.Panel[ShowRoutes]", "Linien anzeigen" },
+                { "StationSuitabilityOverlay.Panel[On]", "An" },
+                { "StationSuitabilityOverlay.Panel[Off]", "Aus" },
+                { "StationSuitabilityOverlay.Panel[Legend]", "Haltestellen-Eignung" },
+                { "StationSuitabilityOverlay.Panel[LegendLow]", "Niedrig" },
+                { "StationSuitabilityOverlay.Panel[LegendHigh]", "Hoch" },
+                { "StationSuitabilityOverlay.Panel[SuggestedLines]", "Vorgeschlagene Linien" },
+                { "StationSuitabilityOverlay.Panel[Km]", "km" },
+                { "StationSuitabilityOverlay.Panel[Stops]", "Haltestellen" },
+                { "StationSuitabilityOverlay.Panel[LineHealth]", "Linienzustand" },
+                { "StationSuitabilityOverlay.Panel[SuggestImprovement]", "Verbesserung vorschlagen" },
+                { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Verbesserter Vorschlag" },
+                { "StationSuitabilityOverlay.Panel[ImprovedPlanHint]", "Die weiß gestrichelte Linie auf der Karte ist die neu geführte Route." },
+                { "StationSuitabilityOverlay.Panel[Meta]", "{0} % ausgelastet, {1} Fz., {2} Haltestellen" },
+                { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },
+                { "StationSuitabilityOverlay.Panel[Mode.Tram]", "Straßenbahn" },
+                { "StationSuitabilityOverlay.Panel[Mode.Metro]", "U-Bahn" },
+                { "StationSuitabilityOverlay.Panel[Mode.Train]", "Zug" },
+                { "StationSuitabilityOverlay.Panel[Mode.Ferry]", "Fähre" },
+                { "StationSuitabilityOverlay.Panel[Objective.Ridership]", "Fahrgastzahl" },
+                { "StationSuitabilityOverlay.Panel[Objective.Balanced]", "Ausgewogen" },
+                { "StationSuitabilityOverlay.Panel[Objective.Coverage]", "Abdeckung" },
+                { "StationSuitabilityOverlay.Panel[Slider.catchment]", "Einzugsradius" },
+                { "StationSuitabilityOverlay.Panel[Slider.access]", "Straßenanbindung" },
+                { "StationSuitabilityOverlay.Panel[Slider.highlight]", "Hervorhebung" },
+                { "StationSuitabilityOverlay.Panel[Slider.slope]", "Max. Steigung" },
+                { "StationSuitabilityOverlay.Panel[Slider.sites]", "Standorte" },
+                { "StationSuitabilityOverlay.Panel[Slider.routes]", "Linien" },
+                { "StationSuitabilityOverlay.Panel[Verdict.Healthy]", "gesund" },
+                { "StationSuitabilityOverlay.Panel[Verdict.NearlyEmpty]", "fast leer — umleiten oder entfernen" },
+                { "StationSuitabilityOverlay.Panel[Verdict.LongWaits]", "lange Wartezeiten trotz freier Kapazität — Route kürzen oder häufiger fahren" },
+                { "StationSuitabilityOverlay.Panel[Verdict.Overcrowded]", "überfüllt — Angebot erhöhen" },
+                { "StationSuitabilityOverlay.Panel[Verdict.Overcrowded.Arg]", "überfüllt — {0} Fahrzeug(e) hinzufügen" },
+                { "StationSuitabilityOverlay.Panel[Verdict.AtModeCapacity]", "an der Kapazitätsgrenze — Route aufteilen" },
+                { "StationSuitabilityOverlay.Panel[Verdict.AtModeCapacity.Arg]", "an der Kapazitätsgrenze — auf {0} umstellen" },
+                { "StationSuitabilityOverlay.Panel[Plan.Fleet]", "als {0} mit {1} Fahrzeug(en) betreiben" },
+                { "StationSuitabilityOverlay.Panel[Plan.Delta]", " ({0})" },
+                { "StationSuitabilityOverlay.Panel[Plan.Interval]", ", also ein Takt von etwa {0} s" },
+                { "StationSuitabilityOverlay.Panel[Plan.Split]", "; aufteilen — {0} km sind mehr, als eine {1}-Linie im Takt halten kann" },
+                { "StationSuitabilityOverlay.Panel[Plan.ThinStops]", "; Haltestellen auf etwa {0} ausdünnen — sie liegen im Schnitt {1} m auseinander, eng für eine {2}" },
+                { "StationSuitabilityOverlay.Panel[Plan.Reroute]", "; oder durch dichter besiedeltes Gebiet umleiten — die Vorschlagsliste zeigt, wo Nachfrage unbedient ist" },
+                { "StationSuitabilityOverlay.Panel[Plan.Fine]", "; der Streckenverlauf wirkt sinnvoll" },
             };
         }
 

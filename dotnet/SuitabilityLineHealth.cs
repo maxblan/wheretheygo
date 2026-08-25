@@ -154,14 +154,41 @@ namespace StationSuitabilityOverlay
         // `roundTripSeconds` is the game's stableDuration: every hop plus the dwell at
         // every stop. The fleet follows from it exactly as TransportLineSystem derives
         // it, so the recommendation is one the game can actually produce.
-        public static string Improve(
+        // What is wrong with a line's SHAPE, as a token the panel can translate.
+        public enum PlanShape
+        {
+            Fine = 0,
+            Split = 1,
+            ThinStops = 2,
+            Reroute = 3,
+        }
+
+        // A remedy, as numbers and tokens rather than a sentence. Improve() renders the
+        // English version for the log; the panel renders the player's language from the
+        // same values, so the two can never drift.
+        public struct ImprovePlan
+        {
+            public Setting.ModePreset m_Mode;
+            public int m_Vehicles;
+            // Signed change against the fleet running today; 0 means leave it alone.
+            public int m_VehicleDelta;
+            // Interval that yields this fleet. Negative when the round trip is unknown,
+            // which is the only case where there is no actionable number to quote.
+            public int m_IntervalSeconds;
+            public PlanShape m_Shape;
+            // Shape arguments: km for Split, stop count for ThinStops.
+            public float m_ShapeValue;
+            // Present spacing in metres, for ThinStops only.
+            public float m_ShapeSpacing;
+        }
+
+        public static ImprovePlan Plan(
             LineHealth health,
             float lengthMetres,
             float roundTripSeconds,
             int capacityPerVehicle,
             float targetLoad)
         {
-            var parts = new System.Text.StringBuilder();
 
             // Mode: grow when the vehicles themselves are the ceiling, shrink when the
             // line cannot fill what it already runs.
@@ -174,9 +201,6 @@ namespace StationSuitabilityOverlay
             {
                 mode = NextModeDown(health.m_Mode);
             }
-
-            _ = parts.Append("run it as ");
-            _ = parts.Append(mode);
 
             // Fleet: enough capacity to carry the observed load at a comfortable fill,
             // and enough vehicles to hold a sensible headway around the line.
@@ -196,25 +220,18 @@ namespace StationSuitabilityOverlay
                 vehicles = Math.Max(vehicles, health.m_TargetVehicles);
             }
 
-            _ = parts.Append(" with ");
-            _ = parts.Append(vehicles);
-            _ = parts.Append(" vehicle(s)");
-            if (vehicles != health.m_Vehicles)
+            var plan = new ImprovePlan
             {
-                _ = parts.Append(vehicles > health.m_Vehicles ? " (+" : " (");
-                _ = parts.Append(vehicles - health.m_Vehicles);
-                _ = parts.Append(')');
-            }
-
-            // The player cannot set a vehicle count in Cities: Skylines II — the game
-            // derives it from the line's interval. So the actionable number is the
-            // interval that yields this fleet, which is how it is quoted here.
-            if (roundTripSeconds > 0f)
-            {
-                _ = parts.Append(", i.e. an interval of about ");
-                _ = parts.Append((roundTripSeconds / vehicles).ToString("F0", CultureInfo.InvariantCulture));
-                _ = parts.Append(" s");
-            }
+                m_Mode = mode,
+                m_Vehicles = vehicles,
+                m_VehicleDelta = vehicles - health.m_Vehicles,
+                // The player cannot set a vehicle count in Cities: Skylines II — the
+                // game derives it from the line's interval. So the actionable number is
+                // the interval that yields this fleet.
+                m_IntervalSeconds = roundTripSeconds > 0f
+                    ? (int)Math.Round(roundTripSeconds / vehicles, MidpointRounding.AwayFromZero)
+                    : -1,
+            };
 
             // Shape: the two failures worth calling out are a line too long to keep a
             // headway, and one making far more stops than its mode wants.
@@ -224,32 +241,98 @@ namespace StationSuitabilityOverlay
 
             if (lengthMetres > maxLength)
             {
-                _ = parts.Append("; split it — ");
-                _ = parts.Append((lengthMetres / 1000f).ToString("F1", CultureInfo.InvariantCulture));
-                _ = parts.Append(" km is beyond what one ");
-                _ = parts.Append(mode);
-                _ = parts.Append(" line can keep to time");
+                plan.m_Shape = PlanShape.Split;
+                plan.m_ShapeValue = lengthMetres / 1000f;
             }
             else if (spacing < wantedSpacing * 0.6f && health.m_Stops > 4)
             {
-                int keep = Math.Max(2, (int)Math.Round(lengthMetres / wantedSpacing, MidpointRounding.AwayFromZero) + 1);
-                _ = parts.Append("; thin the stops to about ");
-                _ = parts.Append(keep);
-                _ = parts.Append(" — they average ");
-                _ = parts.Append(spacing.ToString("F0", CultureInfo.InvariantCulture));
-                _ = parts.Append(" m apart, close for a ");
-                _ = parts.Append(mode);
+                plan.m_Shape = PlanShape.ThinStops;
+                plan.m_ShapeValue = Math.Max(2, (int)Math.Round(lengthMetres / wantedSpacing, MidpointRounding.AwayFromZero) + 1);
+                plan.m_ShapeSpacing = spacing;
             }
             else if (health.m_Verdict == LineVerdict.NearlyEmpty)
             {
-                _ = parts.Append("; or reroute it through denser ground — the suggestions list shows where demand is unserved");
+                plan.m_Shape = PlanShape.Reroute;
             }
             else
             {
-                _ = parts.Append("; the route shape looks reasonable");
+                plan.m_Shape = PlanShape.Fine;
+            }
+
+            return plan;
+        }
+
+        // English rendering of a plan, for the log. The panel builds its own from the
+        // same ImprovePlan, so the two cannot disagree about the numbers.
+        public static string Improve(
+            LineHealth health,
+            float lengthMetres,
+            float roundTripSeconds,
+            int capacityPerVehicle,
+            float targetLoad)
+        {
+            ImprovePlan plan = Plan(health, lengthMetres, roundTripSeconds, capacityPerVehicle, targetLoad);
+            var parts = new System.Text.StringBuilder();
+            _ = parts.Append("run it as ");
+            _ = parts.Append(plan.m_Mode);
+            _ = parts.Append(" with ");
+            _ = parts.Append(plan.m_Vehicles);
+            _ = parts.Append(" vehicle(s)");
+            if (plan.m_VehicleDelta != 0)
+            {
+                _ = parts.Append(plan.m_VehicleDelta > 0 ? " (+" : " (");
+                _ = parts.Append(plan.m_VehicleDelta);
+                _ = parts.Append(')');
+            }
+
+            if (plan.m_IntervalSeconds >= 0)
+            {
+                _ = parts.Append(", i.e. an interval of about ");
+                _ = parts.Append(plan.m_IntervalSeconds.ToString(CultureInfo.InvariantCulture));
+                _ = parts.Append(" s");
+            }
+
+            switch (plan.m_Shape)
+            {
+                case PlanShape.Split:
+                    _ = parts.Append("; split it — ");
+                    _ = parts.Append(plan.m_ShapeValue.ToString("F1", CultureInfo.InvariantCulture));
+                    _ = parts.Append(" km is beyond what one ");
+                    _ = parts.Append(plan.m_Mode);
+                    _ = parts.Append(" line can keep to time");
+                    break;
+                case PlanShape.ThinStops:
+                    _ = parts.Append("; thin the stops to about ");
+                    _ = parts.Append(plan.m_ShapeValue.ToString("F0", CultureInfo.InvariantCulture));
+                    _ = parts.Append(" — they average ");
+                    _ = parts.Append(plan.m_ShapeSpacing.ToString("F0", CultureInfo.InvariantCulture));
+                    _ = parts.Append(" m apart, close for a ");
+                    _ = parts.Append(plan.m_Mode);
+                    break;
+                case PlanShape.Reroute:
+                    _ = parts.Append("; or reroute it through denser ground — the suggestions list shows where demand is unserved");
+                    break;
+                default:
+                    _ = parts.Append("; the route shape looks reasonable");
+                    break;
             }
 
             return parts.ToString();
+        }
+
+        // The same plan as the delimited payload the panel renders.
+        public static string PlanPayload(ImprovePlan plan)
+        {
+            return string.Join("|", new[]
+            {
+                plan.m_Mode.ToString(),
+                plan.m_Vehicles.ToString(CultureInfo.InvariantCulture),
+                plan.m_VehicleDelta.ToString(CultureInfo.InvariantCulture),
+                plan.m_IntervalSeconds.ToString(CultureInfo.InvariantCulture),
+                plan.m_Shape.ToString(),
+                plan.m_ShapeValue.ToString("F1", CultureInfo.InvariantCulture),
+                plan.m_ShapeSpacing.ToString("F0", CultureInfo.InvariantCulture),
+            });
         }
 
         public static Setting.ModePreset NextModeDown(Setting.ModePreset mode)
@@ -299,6 +382,28 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // The one variable piece of a verdict: how many vehicles to add, or the mode
+        // to upgrade to. Empty when the verdict takes no argument. Kept apart from
+        // Describe so the panel can substitute it into a TRANSLATED sentence instead
+        // of receiving English prose it cannot localise.
+        public static string VerdictArgument(LineHealth health)
+        {
+            switch (health.m_Verdict)
+            {
+                case LineVerdict.Overcrowded:
+                    return health.m_AddVehicles > 0
+                        ? health.m_AddVehicles.ToString(CultureInfo.InvariantCulture)
+                        : string.Empty;
+                case LineVerdict.AtModeCapacity:
+                    Setting.ModePreset upgrade = NextModeUp(health.m_Mode);
+                    return upgrade != health.m_Mode ? upgrade.ToString() : string.Empty;
+                default:
+                    return string.Empty;
+            }
+        }
+
+        // English prose for the LOG. The panel builds its own text from the verdict
+        // token and VerdictArgument above.
         public static string Describe(LineHealth health)
         {
             switch (health.m_Verdict)

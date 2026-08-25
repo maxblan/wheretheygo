@@ -325,6 +325,19 @@ namespace StationSuitabilityOverlay
         public bool IsInfoviewActive =>
             m_InfoviewPrefab is not null && m_ToolSystem is not null && m_ToolSystem.activeInfoview == m_InfoviewPrefab;
 
+        // Some OTHER infoview is on screen. Route polylines and the suppression of the
+        // vanilla legend both key off this rather than off IsInfoviewActive: the heat
+        // map is its own toggle in the panel, and turning it off must not take the
+        // routes with it, nor let the vanilla legend flash back in for the frames
+        // between our infoview closing and the game unmounting its panel.
+        public bool ForeignInfoviewActive =>
+            m_ToolSystem is not null && m_ToolSystem.activeInfoview is not null
+            && m_ToolSystem.activeInfoview != m_InfoviewPrefab;
+
+        // Whether the mod's own panel is open. Owned here rather than in the UI system
+        // because the renderer needs it too, and one fact needs one owner.
+        public bool PanelOpen { get; set; }
+
         private readonly int[] m_SiteIndices = new int[Setting.kSiteCountMax];
         private readonly float[] m_SiteScores = new float[Setting.kSiteCountMax];
         private int m_SiteCount;
@@ -381,6 +394,8 @@ namespace StationSuitabilityOverlay
             public float W3;
             public float W4;
             public float W5;
+            public float W6;
+            public float W7;
             public int HighlightShare;
             public int SiteCount;
 
@@ -393,6 +408,8 @@ namespace StationSuitabilityOverlay
                     W3 = settings.W3,
                     W4 = settings.W4,
                     W5 = settings.W5,
+                    W6 = settings.W6,
+                    W7 = settings.W7,
                     HighlightShare = settings.HighlightShare,
                     SiteCount = settings.SiteCount,
                 };
@@ -401,6 +418,7 @@ namespace StationSuitabilityOverlay
             public readonly bool Equals(CombineSnapshot other)
             {
                 return W1 == other.W1 && W2 == other.W2 && W3 == other.W3 && W4 == other.W4 && W5 == other.W5
+                    && W6 == other.W6 && W7 == other.W7
                     && HighlightShare == other.HighlightShare && SiteCount == other.SiteCount;
             }
 
@@ -419,6 +437,8 @@ namespace StationSuitabilityOverlay
                     hash = (hash * 31) ^ W3.GetHashCode();
                     hash = (hash * 31) ^ W4.GetHashCode();
                     hash = (hash * 31) ^ W5.GetHashCode();
+                    hash = (hash * 31) ^ W6.GetHashCode();
+                    hash = (hash * 31) ^ W7.GetHashCode();
                     hash = (hash * 31) ^ HighlightShare.GetHashCode();
                     hash = (hash * 31) ^ SiteCount.GetHashCode();
                     return hash;
@@ -1105,10 +1125,12 @@ namespace StationSuitabilityOverlay
             using var actives = m_ActiveInfomodeQuery.ToComponentDataArray<InfomodeActive>(Allocator.Temp);
 
             int skipped = 0;
+            int unlinked = 0;
             for (int i = 0; i < entities.Length; i++)
             {
                 if (!m_InfomodeLayers.TryGetValue(entities[i], out SuitabilityLayer layer))
                 {
+                    unlinked++;
                     continue;
                 }
 
@@ -1128,9 +1150,27 @@ namespace StationSuitabilityOverlay
                 Mod.Log.Warn($"{(skipped).ToString(CultureInfo.InvariantCulture)} suitability layer(s) skipped: the terrain overlay only has {SuitabilityLayers.MaxActiveLayers} channels. Turn one off to see another.");
             }
 
-            if (m_ActiveChannels.Count > 0 && m_LastLoggedIndex != m_ActiveChannels.Count)
+            // The query only ever holds our own infomodes, so reaching this point with
+            // none resolved is a fault, not the overlay being off — and it is the one
+            // fault that looks like a working overlay: the infoview is on, so
+            // TerrainRenderSystem keeps painting our gradient, but no intensity is ever
+            // written and the whole map sits at the low end of the ramp. It also stops
+            // every compute, so the route suggestions go with it. Say so.
+            if (m_LastLoggedIndex != m_ActiveChannels.Count)
             {
-                Mod.Log.Info($"Active suitability layers: {m_ActiveChannels.Count}.");
+                if (m_ActiveChannels.Count > 0)
+                {
+                    Mod.Log.Info($"Active suitability layers: {m_ActiveChannels.Count}.");
+                }
+                else
+                {
+                    Mod.Log.Warn(
+                        $"No suitability layer resolved from {(entities.Length).ToString(CultureInfo.InvariantCulture)} active infomode(s): " +
+                        $"{(unlinked).ToString(CultureInfo.InvariantCulture)} not linked to a layer, " +
+                        $"{(skipped).ToString(CultureInfo.InvariantCulture)} outside the {SuitabilityLayers.MaxActiveLayers} terrain channels. " +
+                        "Nothing will be computed or drawn, and the map will show the low end of the gradient everywhere.");
+                }
+
                 m_LastLoggedIndex = m_ActiveChannels.Count;
             }
 
@@ -1585,7 +1625,12 @@ namespace StationSuitabilityOverlay
         // whenever only weights or the highlight share change.
         private void RecombineAndNormalize()
         {
-            if (m_RawTerms is null || m_Scores is null || m_ScoreScratch is null)
+            // Guard on the INPUT only. m_Scores and m_ScoreScratch are outputs that
+            // EnsureScoreBuffers allocates below, so testing them here made that call
+            // unreachable and turned this whole pass into a permanent no-op: no
+            // intensities were ever written, no sites extracted, and the term caps
+            // stayed at zero, which starved the corridor seeds too.
+            if (m_RawTerms is null)
             {
                 return;
             }
@@ -1597,7 +1642,7 @@ namespace StationSuitabilityOverlay
             }
 
             int totalCells = m_RawTerms.Length;
-            EnsureScoreBuffers(totalCells);
+            EnsureScoreBuffers(totalCells, out float[] scores, out float[] scoreScratch);
 
             // Each unbounded term is normalized against a high percentile of its own
             // positive values, so W1..W5 behave as real relative weights. Without
@@ -1643,7 +1688,7 @@ namespace StationSuitabilityOverlay
                     - (settings.W3 * coverage)
                     - (settings.W7 * crossCoverage);
 
-                m_Scores[i] = score * SuitabilityScoring.Saturate(access * RoadGateScale);
+                scores[i] = score * SuitabilityScoring.Saturate(access * RoadGateScale);
 
                 // The per-term layers show the raw inputs, unweighted, so they stay
                 // meaningful when a weight is set to zero.
@@ -1657,13 +1702,14 @@ namespace StationSuitabilityOverlay
             }
 
             SuitabilityScoring.NormalizeIntensities(
-                m_Scores,
+                scores,
                 totalCells,
                 settings.HighlightShare / 100f,
                 IntensityGamma,
                 m_LayerIntensities[(int)SuitabilityLayer.Score],
-                m_ScoreScratch);
+                scoreScratch);
 
+            LogCombine(scores, totalCells);
             ExtractSites(settings);
 
             // Any layer's bytes may have changed, so force the interleaved buffer to
@@ -1671,14 +1717,66 @@ namespace StationSuitabilityOverlay
             m_ExpandedSignature = -1;
         }
 
-        private void EnsureScoreBuffers(int totalCells)
+        // The combine pass is where a plausible wrong map is made: a term cap of zero
+        // silently drops that term out of every score, and a score field with no
+        // positive member yields no sites and no corridor seeds while still painting a
+        // full-looking gradient. None of those numbers were visible anywhere, so a map
+        // showing only road access read exactly like a working one.
+        private void LogCombine(float[] scores, int totalCells)
         {
-            if (m_Scores is null || m_Scores.Length != totalCells)
+            float min = float.MaxValue;
+            float max = float.MinValue;
+            int positive = 0;
+            for (int i = 0; i < totalCells; i++)
+            {
+                float score = scores[i];
+                min = math.min(min, score);
+                max = math.max(max, score);
+                if (score > 0f)
+                {
+                    positive++;
+                }
+            }
+
+            float tileDemand = 0f;
+            float tileJobs = 0f;
+            if (m_TileDemand is not null && m_TileJobs is not null)
+            {
+                for (int i = 0; i < m_TileDemand.Length; i++)
+                {
+                    tileDemand += m_TileDemand[i];
+                    tileJobs += m_TileJobs[i];
+                }
+            }
+
+            Mod.Log.Info(
+                $"Combine: caps demand={(m_DemandCap).ToString("F1", CultureInfo.InvariantCulture)}, " +
+                $"jobs={(m_JobsCap).ToString("F1", CultureInfo.InvariantCulture)}, " +
+                $"future={(m_FutureCap).ToString("F1", CultureInfo.InvariantCulture)} " +
+                "(a cap of 0 means that term is zero everywhere and drops out of the score); " +
+                $"scores min={(min).ToString("F3", CultureInfo.InvariantCulture)} max={(max).ToString("F3", CultureInfo.InvariantCulture)}, " +
+                $"{(positive).ToString(CultureInfo.InvariantCulture)}/{(totalCells).ToString(CultureInfo.InvariantCulture)} positive; " +
+                $"tile totals population={(tileDemand).ToString("F0", CultureInfo.InvariantCulture)}, jobs={(tileJobs).ToString("F0", CultureInfo.InvariantCulture)}");
+        }
+
+        // Returns the two buffers the combine pass writes through. Handing them back
+        // is what keeps them out of that pass's entry guard, where a null test on them
+        // made this allocation unreachable.
+        //
+        // All three co-allocated fields are in the condition: testing only m_Scores
+        // left flow analysis trusting one of the three.
+        private void EnsureScoreBuffers(int totalCells, out float[] scores, out float[] scoreScratch)
+        {
+            if (m_Scores is null || m_ScoreScratch is null || m_TermScratch is null
+                || m_Scores.Length != totalCells)
             {
                 m_Scores = new float[totalCells];
                 m_ScoreScratch = new float[totalCells];
                 m_TermScratch = new float[totalCells];
             }
+
+            scores = m_Scores;
+            scoreScratch = m_ScoreScratch;
 
             for (int i = 0; i < SuitabilityLayers.Count; i++)
             {
@@ -2410,14 +2508,16 @@ namespace StationSuitabilityOverlay
 
                 // Aim to fill about 70%: full enough to justify the service, with room
                 // for the peaks the averages hide.
-                s_ImprovePlan = SuitabilityLineHealth.Improve(
+                SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
                     health, line.m_LengthMetres, line.m_StableDurationSeconds, perVehicle, 0.7f);
+                s_ImprovePlan = SuitabilityLineHealth.PlanPayload(plan);
                 s_ImprovedLine = health.m_Id;
 
                 BuildImprovedRoute(health, line);
 
                 Mod.Log.Info(
-                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {s_ImprovePlan} " +
+                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): " +
+                    $"{SuitabilityLineHealth.Improve(health, line.m_LengthMetres, line.m_StableDurationSeconds, perVehicle, 0.7f)} " +
                     $"[measured: {(health.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(health.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard, {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(health.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} veh, " +
                     $"typicalWait {(health.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}, {(health.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(health.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km, " +
                     $"perVehicle {(perVehicle).ToString(CultureInfo.InvariantCulture)}, roundTrip {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
@@ -2526,14 +2626,15 @@ namespace StationSuitabilityOverlay
                 _ = builder.Append('|');
                 _ = builder.Append(health.m_Verdict);
                 _ = builder.Append('|');
-                _ = builder.Append(SuitabilityLineHealth.Describe(health));
+                // Token plus argument, never a finished sentence: the panel is the only
+                // place that knows the player's language.
+                _ = builder.Append(SuitabilityLineHealth.VerdictArgument(health));
                 _ = builder.Append('|');
                 _ = builder.Append((health.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append("% full, ");
+                _ = builder.Append('|');
                 _ = builder.Append(health.m_Vehicles);
-                _ = builder.Append(" veh, ");
+                _ = builder.Append('|');
                 _ = builder.Append(health.m_Stops);
-                _ = builder.Append(" stops");
             }
 
             s_LineHealthList = builder.ToString();
@@ -2789,6 +2890,16 @@ namespace StationSuitabilityOverlay
             ScoreCandidatesWithTransfers(settings);
             m_RouteCandidates.Sort(static (a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
 
+            SelectRoutes(settings, gridSize, grownTotal, shortTotal);
+        }
+
+        // Second phase: turn the grown candidates into the handful of suggestions the
+        // player sees. Growing decides where a line could run; this decides whether it
+        // is worth running at all, and on which mode.
+        // grownTotal/shortTotal come from the growing phase purely so the one summary
+        // line the log is read by stays whole.
+        private void SelectRoutes(Setting settings, int2 gridSize, int grownTotal, int shortTotal)
+        {
             // Pick each candidate's mode from what its demand actually justifies, and
             // re-trace it on the streets when nothing its own alignment can carry is
             // justified. Judged against the ROAD network's mean flow so every mode is
@@ -2842,6 +2953,18 @@ namespace StationSuitabilityOverlay
                     Mod.Log.Info(
                         $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: road, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, " +
                         $"{candidate.Stops.Count} stops — DROPPED, below every floor");
+                    continue;
+                }
+
+                // Placing the stops trimmed the line back to its termini, which can
+                // leave it shorter than the floor ChooseMode approved it against.
+                if (!SuitabilityRoutes.KeepsItsFloor(candidate))
+                {
+                    rejected++;
+                    Mod.Log.Info(
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
+                        $"under the {(SuitabilityRoutes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
                     continue;
                 }
 

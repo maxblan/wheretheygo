@@ -465,7 +465,7 @@ namespace StationSuitabilityOverlay
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
+            var entries = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Station Suitability Overlay" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Main" },
@@ -564,6 +564,75 @@ namespace StationSuitabilityOverlay
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Low]", "Low" },
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Medium]", "Medium" },
                 { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.High]", "High" },
+            };
+
+            foreach (KeyValuePair<string, string> panel in PanelEntries())
+            {
+                entries.Add(panel.Key, panel.Value);
+            }
+
+            return entries;
+        }
+
+        // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
+        // block above because they have a different consumer: those are rendered by the
+        // game's Options UI, these by StationSuitabilityOverlay.mjs.
+        private static Dictionary<string, string> PanelEntries()
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                // Control panel strings. The panel resolves these itself through cs2/l10n with
+                // the English text inline as a fallback, so a key missing here shows English
+                // rather than a raw key.
+                { "StationSuitabilityOverlay.Panel[Title]", "Station Suitability" },
+                { "StationSuitabilityOverlay.Panel[Mode]", "Mode" },
+                { "StationSuitabilityOverlay.Panel[Objective]", "Objective" },
+                { "StationSuitabilityOverlay.Panel[Tuning]", "Tuning" },
+                { "StationSuitabilityOverlay.Panel[RoutePlanning]", "Route planning" },
+                { "StationSuitabilityOverlay.Panel[ApplyPreset]", "Apply preset weights for this mode" },
+                { "StationSuitabilityOverlay.Panel[Heatmap]", "Suitability heat map" },
+                { "StationSuitabilityOverlay.Panel[ShowRoutes]", "Show routes" },
+                { "StationSuitabilityOverlay.Panel[On]", "On" },
+                { "StationSuitabilityOverlay.Panel[Off]", "Off" },
+                { "StationSuitabilityOverlay.Panel[Legend]", "Station suitability" },
+                { "StationSuitabilityOverlay.Panel[LegendLow]", "Low" },
+                { "StationSuitabilityOverlay.Panel[LegendHigh]", "High" },
+                { "StationSuitabilityOverlay.Panel[SuggestedLines]", "Suggested lines" },
+                { "StationSuitabilityOverlay.Panel[Km]", "km" },
+                { "StationSuitabilityOverlay.Panel[Stops]", "stops" },
+                { "StationSuitabilityOverlay.Panel[LineHealth]", "Line health" },
+                { "StationSuitabilityOverlay.Panel[SuggestImprovement]", "Suggest improvement" },
+                { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Improved plan" },
+                { "StationSuitabilityOverlay.Panel[ImprovedPlanHint]", "The white dashed line on the map is the re-traced route." },
+                { "StationSuitabilityOverlay.Panel[Meta]", "{0}% full, {1} veh, {2} stops" },
+                { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },
+                { "StationSuitabilityOverlay.Panel[Mode.Tram]", "Tram" },
+                { "StationSuitabilityOverlay.Panel[Mode.Metro]", "Metro" },
+                { "StationSuitabilityOverlay.Panel[Mode.Train]", "Train" },
+                { "StationSuitabilityOverlay.Panel[Mode.Ferry]", "Ferry" },
+                { "StationSuitabilityOverlay.Panel[Objective.Ridership]", "Ridership" },
+                { "StationSuitabilityOverlay.Panel[Objective.Balanced]", "Balanced" },
+                { "StationSuitabilityOverlay.Panel[Objective.Coverage]", "Coverage" },
+                { "StationSuitabilityOverlay.Panel[Slider.catchment]", "Catchment" },
+                { "StationSuitabilityOverlay.Panel[Slider.access]", "Road access" },
+                { "StationSuitabilityOverlay.Panel[Slider.highlight]", "Highlight" },
+                { "StationSuitabilityOverlay.Panel[Slider.slope]", "Max slope" },
+                { "StationSuitabilityOverlay.Panel[Slider.sites]", "Sites" },
+                { "StationSuitabilityOverlay.Panel[Slider.routes]", "Routes" },
+                { "StationSuitabilityOverlay.Panel[Verdict.Healthy]", "healthy" },
+                { "StationSuitabilityOverlay.Panel[Verdict.NearlyEmpty]", "nearly empty — reroute or remove" },
+                { "StationSuitabilityOverlay.Panel[Verdict.LongWaits]", "long waits with spare room — shorten the route or run more often" },
+                { "StationSuitabilityOverlay.Panel[Verdict.Overcrowded]", "overcrowded — increase service" },
+                { "StationSuitabilityOverlay.Panel[Verdict.Overcrowded.Arg]", "overcrowded — add {0} vehicle(s)" },
+                { "StationSuitabilityOverlay.Panel[Verdict.AtModeCapacity]", "at capacity — split the route" },
+                { "StationSuitabilityOverlay.Panel[Verdict.AtModeCapacity.Arg]", "at capacity — upgrade to {0}" },
+                { "StationSuitabilityOverlay.Panel[Plan.Fleet]", "run it as {0} with {1} vehicle(s)" },
+                { "StationSuitabilityOverlay.Panel[Plan.Delta]", " ({0})" },
+                { "StationSuitabilityOverlay.Panel[Plan.Interval]", ", i.e. an interval of about {0} s" },
+                { "StationSuitabilityOverlay.Panel[Plan.Split]", "; split it — {0} km is beyond what one {1} line can keep to time" },
+                { "StationSuitabilityOverlay.Panel[Plan.ThinStops]", "; thin the stops to about {0} — they average {1} m apart, close for a {2}" },
+                { "StationSuitabilityOverlay.Panel[Plan.Reroute]", "; or reroute it through denser ground — the suggestions list shows where demand is unserved" },
+                { "StationSuitabilityOverlay.Panel[Plan.Fine]", "; the route shape looks reasonable" },
             };
         }
 

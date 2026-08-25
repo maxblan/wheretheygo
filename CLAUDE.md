@@ -76,8 +76,10 @@ reason — read the comment before adding another.
 `MA0051` (method length) is **ratcheted, not disabled**: the limits sit just above today's worst
 offender so no method may grow. The seven over 60 lines are known debt —
 `StationSuitabilityOverlaySystem.OnCreate/StartCompute/BuildRoutes`,
-`SuitabilityPanelUISystem.OnCreate`, `SuitabilityRouteRenderer.OnUpdate`,
-`SuitabilityScoring.FindTopSites/AccumulateWalkDistance`. Lower the numbers as they are split;
+`SuitabilityRouteRenderer.OnUpdate`,
+`SuitabilityScoring.FindTopSites/AccumulateWalkDistance`.
+`SuitabilityPanelUISystem.OnCreate` has since been split into it plus
+`AddTriggerBindings`, which is what let the limit come down from 150 to 147. Lower the numbers as they are split;
 never raise them.
 
 ### Nullability conventions

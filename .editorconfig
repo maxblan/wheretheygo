@@ -68,7 +68,7 @@ dotnet_diagnostic.MA0181.severity = none
 # method may grow past today's longest: the 16 methods over 60 lines are real smells
 # to split, but splitting them is a refactor rather than a fix, and it must not be
 # done blind. Lower this number as they are split; never raise it.
-MA0051.maximum_lines_per_method = 150
+MA0051.maximum_lines_per_method = 147
 MA0051.maximum_statements_per_method = 80
 
 # One type per file, named after the file. `SuitabilityLines.cs` deliberately holds

@@ -91,6 +91,10 @@ namespace StationSuitabilityOverlay
             }
 
             float noveltyWeight = SuitabilityGraphMath.NoveltyWeight(objective, meanFlow);
+            // The objective has to reach SEEDING, not just the extension tie-break:
+            // novelty is uniform while the first corridor grows, so a weight that only
+            // tips extensions leaves every objective producing the same suggestions.
+            float seedNoveltyBias = SuitabilityGraphMath.SeedNoveltyBias(objective);
             float flowFloor = meanFlow * minFlowFraction;
             var corridor = new Corridor();
 
@@ -101,7 +105,7 @@ namespace StationSuitabilityOverlay
             for (int r = 0; r < attempts && output.Count < maxRoutes * 2; r++)
             {
                 if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight,
-                        flowFloor, maxRouteLength, corridor, nodeDemand, demandFloor))
+                        flowFloor, maxRouteLength, corridor, nodeDemand, demandFloor, seedNoveltyBias))
                 {
                     break;
                 }
@@ -285,7 +289,21 @@ namespace StationSuitabilityOverlay
             }
 
             Restop(route, mode, scoreAt);
-            return route.Stops.Count >= 2 ? route : null;
+            return KeepsItsFloor(route) ? route : null;
+        }
+
+        // A route still clears the floor its mode was chosen against.
+        //
+        // ChooseMode is necessarily asked BEFORE the stops exist — the mode is what
+        // decides their spacing — but PlaceStops then trims the polyline back to its
+        // end stops, and that can pull a route under the very floor that approved it.
+        // That is how a 350 m corridor reached the map as a bus line against a 500 m
+        // minimum. Re-verify once the stops are placed.
+        public static bool KeepsItsFloor(SuggestedRoute route)
+        {
+            return route is not null
+                && route.Stops.Count >= 2
+                && route.Length >= MinLengthFor(route.Mode);
         }
 
         // Re-places stops after a mode change, since spacing is mode-specific.

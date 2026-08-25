@@ -11,6 +11,13 @@
     top: 60rem;
     right: 60rem;
     width: 620rem;
+    /* The scroll list can only fill its column if some ancestor has a DEFINITE
+       height to divide up. Without this the panel was sized by its content, flex-grow
+       had nothing to resolve against, and the list fell back to its own min-height
+       with dead panel below it. */
+    max-height: 78vh;
+    display: flex;
+    flex-direction: column;
     padding: 8rem;
     background-color: rgba(12, 18, 26, 0.92);
     border: 1rem solid rgba(120, 170, 220, 0.35);
@@ -240,15 +247,24 @@
     display: none;
 }
 
-/* Toolbar toggle, sitting alongside the vanilla top-left buttons. */
- /* --floatingToggleSize is the variable the vanilla infoview toggle uses, so this
-    button matches its neighbours at every UI scale. */
+/* Toolbar toggle, sitting alongside the vanilla top-left buttons.
+
+   Sized with literals, NOT with the game's --floatingToggleSize. That variable is
+   declared on a game panel root, and this button is appended to GameTopLeft as a
+   sibling of that subtree, so the variable never resolves here — cohtml then drops
+   the whole declaration instead of taking the fallback, which left the slot with no
+   width at all (UI.log: "Unable to resolve custom variable: floatingToggleSize").
+   40rem is the value the game gives that variable, so the size still matches the
+   neighbouring tiles; it just has to be written out. flex-basis is pinned too, or the
+   row stretches the slot to fill the bar. */
 .sso-toolbar-slot {
+    position: relative;
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    height: var(--floatingToggleSize, 44rem);
-    width: var(--floatingToggleSize, 44rem);
+    flex: 0 0 auto;
+    height: 40rem;
+    width: 40rem;
     margin-bottom: 6rem;
 }
 
@@ -278,9 +294,12 @@
     background-color: rgb(38, 158, 208);
 }
 
+/* Literal for the same reason as the slot above: --iconWidth/--iconHeight are not in
+   scope out here either. 27rem is two thirds of the 40rem tile, which is the inset the
+   vanilla toolbar icons use. */
 .sso-toolbar-icon {
-    width: var(--iconWidth, 30rem);
-    height: var(--iconHeight, 30rem);
+    width: 27rem;
+    height: 27rem;
 }
 
 /* Deliberately NOT hiding [class*="infoview-menu"]: that matched the vanilla
@@ -319,6 +338,11 @@
     display: flex;
     flex-direction: row;
     align-items: stretch;
+    /* Takes the panel's remaining height below the header. min-height 0 is what lets
+       a flex child be SHORTER than its content, which is the prerequisite for the
+       scroll box below to scroll instead of growing the panel. */
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .sso-column {
@@ -326,6 +350,7 @@
     margin-right: 10rem;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 .sso-column:last-child {
@@ -337,8 +362,10 @@
    instead of stopping at a fixed 420rem with dead space underneath. min-height 0 is
    what actually lets a flex child scroll rather than growing the panel. */
 .sso-scroll {
-    flex: 1 1 auto;
-    min-height: 320rem;
+    /* basis 0, not auto: with auto the box starts at its content height and grow has
+       nothing left to distribute. */
+    flex: 1 1 0;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 4rem;

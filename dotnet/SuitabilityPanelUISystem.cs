@@ -18,7 +18,6 @@ namespace StationSuitabilityOverlay
         // every use site for a state (OnCreate not yet run) in which nothing works anyway.
         private StationSuitabilityOverlaySystem m_OverlaySystem;
 #pragma warning restore CS8618
-        private bool m_Open;
 
         protected override void OnCreate()
         {
@@ -27,28 +26,16 @@ namespace StationSuitabilityOverlay
 
             // Visibility is driven by the mod's own toolbar button rather than by the
             // infoview menu, so the panel is the single entry point.
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "visible", () => m_Open));
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "visible",
+                () => m_OverlaySystem is not null && m_OverlaySystem.PanelOpen));
 
-            // Lets the panel hide the vanilla infoview legend, which would otherwise
-            // duplicate this panel's own legend on the opposite side of the screen.
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "ownsInfoview", () =>
-                m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
+            // Lets the panel keep the vanilla legend hidden while it is open, instead
+            // of only while our infoview happens to be active.
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "foreignInfoview", () =>
+                m_OverlaySystem is not null && m_OverlaySystem.ForeignInfoviewActive));
 
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
                 m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
-
-            AddBinding(new TriggerBinding<bool>(Group, "setHeatmap", value =>
-            {
-                m_OverlaySystem?.SetInfoviewActive(value);
-            }));
-
-            AddBinding(new TriggerBinding(Group, "toggle", () =>
-            {
-                m_Open = !m_Open;
-                // Opening the panel turns the overlay on and closing turns it off, so
-                // the button behaves like the other mods' toolbar toggles.
-                m_OverlaySystem?.SetInfoviewActive(m_Open);
-            }));
 
             AddUpdateBinding(new GetterValueBinding<int>(Group, "mode", static () => Read(static s => (int)s.Mode)));
             AddUpdateBinding(new GetterValueBinding<int>(Group, "objective", static () => Read(static s => (int)s.Objective)));
@@ -64,6 +51,32 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", static () => StationSuitabilityOverlaySystem.LineHealthText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", static () => StationSuitabilityOverlaySystem.ImprovePlanText));
             AddUpdateBinding(new GetterValueBinding<int>(Group, "improvedLine", static () => StationSuitabilityOverlaySystem.ImprovedLineIndex));
+
+            AddTriggerBindings();
+        }
+
+        // Commands in, kept apart from the value bindings above: one method reports
+        // state to the panel, the other acts on what the player clicks.
+        private void AddTriggerBindings()
+        {
+            AddBinding(new TriggerBinding<bool>(Group, "setHeatmap", value =>
+            {
+                m_OverlaySystem?.SetInfoviewActive(value);
+            }));
+
+            AddBinding(new TriggerBinding(Group, "toggle", () =>
+            {
+                if (m_OverlaySystem is null)
+                {
+                    return;
+                }
+
+                bool open = !m_OverlaySystem.PanelOpen;
+                m_OverlaySystem.PanelOpen = open;
+                // Opening the panel turns the overlay on and closing turns it off, so
+                // the button behaves like the other mods' toolbar toggles.
+                m_OverlaySystem.SetInfoviewActive(open);
+            }));
 
             AddBinding(new TriggerBinding<int>(Group, "improveLine", static index =>
             {

@@ -9,9 +9,30 @@
 
 const React = window.React;
 const Api = window["cs2/api"];
+const L10n = window["cs2/l10n"];
 
 const GROUP = "stationSuitability";
+// Every panel string is looked up under this prefix. The English text stays inline
+// as the fallback argument, so a key missing from a locale file degrades to English
+// rather than showing the raw key.
+const LOC = "StationSuitabilityOverlay.Panel[";
 
+// The game's localization, as a (key, englishFallback) => string. useLocalization is
+// a hook, so this is one too and must be called at the top of a component.
+function useTranslate() {
+    const loc = L10n && L10n.useLocalization ? L10n.useLocalization() : null;
+    return React.useCallback((key, fallback) => {
+        if (!loc || !loc.translate) {
+            return fallback;
+        }
+
+        const value = loc.translate(LOC + key + "]", fallback);
+        return (value === null || value === undefined || value === "") ? fallback : value;
+    }, [loc]);
+}
+
+// Mode and objective names are indexed by the enum value the binding carries, so the
+// order here is Setting.ModePreset / Setting.RouteGoal and must not be re-sorted.
 const MODES = ["Bus", "Tram", "Metro", "Train", "Ferry"];
 
 // Must match ColorFor() in SuitabilityRouteRenderer.cs — this is the key that lets
@@ -58,7 +79,8 @@ function h(tag, props, ...children) {
 }
 
 // A row of buttons standing in for a dropdown, since cohtml has no <select>.
-function Choice({ label, options, value, onPick }) {
+function Choice({ label, options, optionKey, value, onPick }) {
+    const t = useTranslate();
     return h("div", { className: "sso-row" },
         h("div", { className: "sso-label" }, label),
         h("div", { className: "sso-choice" },
@@ -67,7 +89,7 @@ function Choice({ label, options, value, onPick }) {
                     key: name,
                     className: "sso-chip" + (index === value ? " sso-chip-on" : ""),
                     onClick: () => onPick(index),
-                }, name))));
+                }, t(optionKey + "." + name, name)))));
 }
 
 // A stepper standing in for a range input: minus, value, plus. Holding is not
@@ -94,34 +116,37 @@ function Stepper({ label, value, min, max, step, unit, onSet }) {
 }
 
 function Toggle({ label, value, onToggle }) {
+    const t = useTranslate();
     return h("div", { className: "sso-row" },
         h("div", { className: "sso-label" }, label),
         h("button", {
             className: "sso-toggle" + (value ? " sso-toggle-on" : ""),
             onClick: () => onToggle(!value),
-        }, value ? "On" : "Off"));
+        }, value ? t("On", "On") : t("Off", "Off")));
 }
 
 // The suitability gradient, moved off the vanilla left-hand legend panel so the
 // mod presents itself in one place. Colours mirror LowColor/MediumColor/HighColor
 // in SuitabilityInfomodePrefab.cs.
 function Legend() {
+    const t = useTranslate();
     return h("div", { className: "sso-row" },
-        h("div", { className: "sso-label" }, "Station suitability"),
+        h("div", { className: "sso-label" }, t("Legend", "Station suitability")),
         h("div", { className: "sso-legend" }),
         h("div", { className: "sso-labelrow" },
-            h("div", { className: "sso-legend-end" }, "Low"),
-            h("div", { className: "sso-legend-end" }, "High")));
+            h("div", { className: "sso-legend-end" }, t("LegendLow", "Low")),
+            h("div", { className: "sso-legend-end" }, t("LegendHigh", "High"))));
 }
 
 function RouteList({ raw }) {
+    const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
     if (!rows.length) {
         return null;
     }
 
     return h("div", { className: "sso-routes" },
-        h("div", { className: "sso-section" }, "Suggested lines"),
+        h("div", { className: "sso-section" }, t("SuggestedLines", "Suggested lines")),
         rows.map((parts, i) => {
             const mode = parts[0] || "Bus";
             return h("div", { className: "sso-route", key: i },
@@ -129,9 +154,48 @@ function RouteList({ raw }) {
                     className: "sso-swatch",
                     style: { backgroundColor: MODE_COLORS[mode] || "rgb(200,200,200)" },
                 }),
-                h("div", { className: "sso-route-mode" }, mode),
-                h("div", { className: "sso-route-meta" }, (parts[1] || "?") + " km · " + (parts[2] || "?") + " stops"));
+                h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
+                h("div", { className: "sso-route-meta" },
+                    (parts[1] || "?") + " " + t("Km", "km") + " · " + (parts[2] || "?") + " " + t("Stops", "stops")));
         }));
+}
+
+// The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|spacing",
+// numbers and tokens only, so the sentence can be assembled in the player's language.
+function describePlan(t, raw) {
+    const p = (raw || "").split("|");
+    if (p.length < 5) {
+        return raw || "";
+    }
+
+    const mode = t("Mode." + p[0], p[0]);
+    let text = t("Plan.Fleet", "run it as {0} with {1} vehicle(s)")
+        .replace("{0}", mode)
+        .replace("{1}", p[1]);
+
+    const delta = parseInt(p[2], 10);
+    if (delta) {
+        text += t("Plan.Delta", " ({0})").replace("{0}", delta > 0 ? "+" + delta : String(delta));
+    }
+
+    const interval = parseInt(p[3], 10);
+    if (interval >= 0) {
+        text += t("Plan.Interval", ", i.e. an interval of about {0} s").replace("{0}", String(interval));
+    }
+
+    switch (p[4]) {
+        case "Split":
+            return text + t("Plan.Split", "; split it — {0} km is beyond what one {1} line can keep to time")
+                .replace("{0}", p[5]).replace("{1}", mode);
+        case "ThinStops":
+            return text + t("Plan.ThinStops", "; thin the stops to about {0} — they average {1} m apart, close for a {2}")
+                .replace("{0}", String(Math.round(parseFloat(p[5])))).replace("{1}", p[6]).replace("{2}", mode);
+        case "Reroute":
+            return text + t("Plan.Reroute",
+                "; or reroute it through denser ground — the suggestions list shows where demand is unserved");
+        default:
+            return text + t("Plan.Fine", "; the route shape looks reasonable");
+    }
 }
 
 const VERDICT_COLORS = {
@@ -148,13 +212,14 @@ const VERDICT_COLORS = {
 // improvement. Lives in its own scrolling column so a city with twenty lines does
 // not push the controls off the screen.
 function LineHealth({ raw, plan, planFor }) {
+    const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
     if (!rows.length) {
         return null;
     }
 
     return h("div", { className: "sso-column" },
-        h("div", { className: "sso-section" }, "Line health"),
+        h("div", { className: "sso-section" }, t("LineHealth", "Line health")),
         h("div", { className: "sso-scroll" },
             rows.map((parts) => {
                 // parts[0] is the line's own id, not its position in this list. The list
@@ -163,6 +228,15 @@ function LineHealth({ raw, plan, planFor }) {
                 const index = parseInt(parts[0], 10);
                 const verdict = parts[2] || "Healthy";
                 const healthy = verdict === "Healthy";
+                // Two verdicts carry an argument (vehicles to add, mode to upgrade to)
+                // and have their own key, so the placeholder never shows up bare.
+                const arg = parts[3] || "";
+                const note = t("Verdict." + verdict + (arg ? ".Arg" : ""), "")
+                    .replace("{0}", verdict === "AtModeCapacity" ? t("Mode." + arg, arg) : arg);
+                const meta = t("Meta", "{0}% full, {1} veh, {2} stops")
+                    .replace("{0}", parts[4] || "0")
+                    .replace("{1}", parts[5] || "0")
+                    .replace("{2}", parts[6] || "0");
                 return h("div", { className: "sso-health", key: index },
                     h("div", { className: "sso-health-head" },
                         h("div", {
@@ -170,24 +244,26 @@ function LineHealth({ raw, plan, planFor }) {
                             style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
                         }),
                         h("div", { className: "sso-line-name" }, parts[1] || "Line"),
-                        h("div", { className: "sso-route-meta" }, parts[4] || "")),
-                    h("div", { className: "sso-health-note" }, parts[3] || ""),
+                        h("div", { className: "sso-route-meta" }, meta)),
+                    h("div", { className: "sso-health-note" }, note),
                     healthy ? null : h("button", {
                         className: "sso-improve",
                         onClick: () => trigger("improveLine", index),
-                    }, "Suggest improvement"),
+                    }, t("SuggestImprovement", "Suggest improvement")),
                     // Shown against its own row: at the bottom of a twenty-line list
                     // nobody would ever see it.
                     (plan && planFor === index)
                         ? h("div", { className: "sso-plan" },
-                            h("div", { className: "sso-plan-title" }, "Improved plan"),
-                            h("div", {}, plan),
-                            h("div", { className: "sso-plan-hint" }, "The white dashed line on the map is the re-traced route."))
+                            h("div", { className: "sso-plan-title" }, t("ImprovedPlan", "Improved plan")),
+                            h("div", {}, describePlan(t, plan)),
+                            h("div", { className: "sso-plan-hint" },
+                                t("ImprovedPlanHint", "The white dashed line on the map is the re-traced route.")))
                         : null);
             })));
 }
 
 function Panel() {
+    const t = useTranslate();
     const visible = useBound("visible", false);
     const [collapsed, setCollapsed] = React.useState(false);
 
@@ -195,7 +271,7 @@ function Panel() {
     const objective = useBound("objective", 1);
     const showRoutes = useBound("showRoutes", true);
     const routeList = useBound("routeList", "");
-    const ownsInfoview = useBound("ownsInfoview", false);
+    const foreignInfoview = useBound("foreignInfoview", false);
     const heatmap = useBound("heatmap", true);
     const lineHealth = useBound("lineHealth", "");
     const improvePlan = useBound("improvePlan", "");
@@ -203,18 +279,23 @@ function Panel() {
 
     // Suppress the vanilla infoview legend while ours is showing; a class on the
     // document root is the only hook a plain CSS file can key off.
+    //
+    // Keyed on the panel being open and no OTHER infoview being active, not on us
+    // owning the infoview. Turning the heat map off drops ownsInfoview immediately,
+    // but the game takes a few frames to unmount its own legend — so the old
+    // condition un-hid it just in time for the player to watch it flash in and out.
     React.useEffect(() => {
         const root = document.documentElement;
         if (!root) {
             return;
         }
 
-        if (visible && ownsInfoview) {
+        if (visible && !foreignInfoview) {
             root.classList.add("sso-hide-vanilla-infoview");
         } else {
             root.classList.remove("sso-hide-vanilla-infoview");
         }
-    }, [visible, ownsInfoview]);
+    }, [visible, foreignInfoview]);
 
     // Hooks must run unconditionally, so the slider values are read before the
     // visibility check rather than inside it.
@@ -229,21 +310,22 @@ function Panel() {
             h("button", {
                 className: "sso-header",
                 onClick: () => setCollapsed(false),
-            }, "Station Suitability  +"));
+            }, t("Title", "Station Suitability") + "  +"));
     }
 
     return h("div", { className: "sso-panel" },
         h("button", {
             className: "sso-header",
             onClick: () => setCollapsed(true),
-        }, "Station Suitability  -"),
+        }, t("Title", "Station Suitability") + "  -"),
 
         h("div", { className: "sso-body" },
         h("div", { className: "sso-column" },
 
         h(Choice, {
-            label: "Mode",
+            label: t("Mode", "Mode"),
             options: MODES,
+            optionKey: "Mode",
             value: mode,
             onPick: (index) => trigger("setMode", index),
         }),
@@ -251,37 +333,38 @@ function Panel() {
         h("button", {
             className: "sso-preset",
             onClick: () => trigger("applyPreset"),
-        }, "Apply preset weights for this mode"),
+        }, t("ApplyPreset", "Apply preset weights for this mode")),
 
         h(Toggle, {
-            label: "Suitability heat map",
+            label: t("Heatmap", "Suitability heat map"),
             value: heatmap,
             onToggle: (next) => trigger("setHeatmap", next),
         }),
 
         heatmap ? h(Legend, {}) : null,
 
-        h("div", { className: "sso-section" }, "Route planning"),
+        h("div", { className: "sso-section" }, t("RoutePlanning", "Route planning")),
 
         h(Choice, {
-            label: "Objective",
+            label: t("Objective", "Objective"),
             options: OBJECTIVES,
+            optionKey: "Objective",
             value: objective,
             onPick: (index) => trigger("setObjective", index),
         }),
 
         h(Toggle, {
-            label: "Show routes",
+            label: t("ShowRoutes", "Show routes"),
             value: showRoutes,
             onToggle: (next) => trigger("setShowRoutes", next),
         }),
 
-        h("div", { className: "sso-section" }, "Tuning"),
+        h("div", { className: "sso-section" }, t("Tuning", "Tuning")),
 
         SLIDERS.map((slider, i) =>
             h(Stepper, {
                 key: slider.key,
-                label: slider.label,
+                label: t("Slider." + slider.key, slider.label),
                 value: sliderValues[i],
                 min: slider.min,
                 max: slider.max,
@@ -295,14 +378,19 @@ function Panel() {
         h(LineHealth, { raw: lineHealth, plan: improvePlan, planFor: improvedLine })));
 }
 
-// Styled to match the vanilla floating toggles beside it: same size variable, same
-// rounded container, and the mod's own SVG icon rather than a text glyph.
+// Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their
+// class. infoview-menu-toggle_bYF carries a second rule,
+// `width: calc(400rem * (0.33333 + var(--fontScale) / 1.5))`, which overrides its own
+// square rule — it is the infoview menu BAR, not a square toggle. Borrowing it stretched
+// this button into a 400rem lozenge across the toolbar. sso-toolbar-slot now supplies
+// the whole box itself.
 function ToolbarButton() {
+    const t = useTranslate();
     const open = useBound("visible", false);
-    return h("div", { className: "infoview-menu-toggle_bYF sso-toolbar-slot" },
+    return h("div", { className: "sso-toolbar-slot" },
         h("button", {
             className: "sso-toolbar-button" + (open ? " sso-toolbar-button-on" : ""),
-            title: "Station Suitability",
+            title: t("Title", "Station Suitability"),
             onClick: () => trigger("toggle"),
         },
             h("img", {

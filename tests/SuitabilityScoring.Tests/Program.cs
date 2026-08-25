@@ -63,6 +63,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Demand gate keeps corridors out of empty land", DemandGateBlocksEmptyLand);
             Run("Peeling reduces flow and blocks reuse", PeelingReducesFlow);
             Run("Coverage objective diverts from the busiest corridor", ObjectiveChangesRoutes);
+            Run("Coverage seeds the next corridor away from the last one", ObjectiveChangesSeeding);
             Run("Desire lines deposit once per cell crossed", RasterizeDepositsPerCell);
             Run("Polyline simplification removes staircase corners", SimplifyRemovesStaircase);
 
@@ -841,6 +842,67 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(ridership.Edges.Contains(1), "ridership objective should take the busy trunk");
             AssertTrue(!ridership.Edges.Contains(2), "ridership objective should skip the quiet branch");
             AssertTrue(coverage.Edges.Contains(2), "coverage objective should reach the untouched branch");
+        }
+
+        // The objective must survive the SECOND corridor, which is the one the player
+        // actually sees differ. Novelty is uniform when the first corridor is grown, so
+        // an objective that only tips the extension choice cannot change anything at
+        // all until something has already been chosen — and seeding ignored novelty
+        // entirely, so in a real city all three objectives produced identical output.
+        private static void ObjectiveChangesSeeding()
+        {
+            // Cluster A (0-1-2) is busiest and is taken first. Edge 6-7 hangs two hops
+            // off it: still busier than anywhere else, but in ground the first corridor
+            // has already come near. Cluster B (3-4-5) is quieter and untouched.
+            //
+            // Two hops matters: PeelFlow already halves the flow on edges TOUCHING the
+            // corridor's own nodes, so the interesting case is the one it does not
+            // reach — where only novelty can tell the two apart.
+            var a = new[] { 0, 1, 1, 3, 4, 6 };
+            var b = new[] { 1, 2, 6, 4, 5, 7 };
+            var cost = new[] { 100f, 100f, 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(8, a, b, cost, 6);
+            var baseFlow = new[] { 100f, 90f, 20f, 60f, 55f, 70f };
+
+            Corridor RunSecondSeed(RouteObjective objective)
+            {
+                var flow = (float[])baseFlow.Clone();
+                var used = new bool[graph.EdgeCount];
+                float[] novelty = NewNovelty(8);
+                float weight = SuitabilityGraphMath.NoveltyWeight(objective, 77f);
+                float bias = SuitabilityGraphMath.SeedNoveltyBias(objective);
+
+                var first = new Corridor();
+                AssertTrue(
+                    SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, weight, 0f, 250f, first,
+                        seedNoveltyBias: bias),
+                    "first corridor grows");
+                SuitabilityGraphMath.PeelFlow(graph, first, flow, used, 0.85f);
+                SuitabilityGraphMath.DecayNovelty(graph, first, novelty, 3, 0.15f);
+
+                var second = new Corridor();
+                AssertTrue(
+                    SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, weight, 0f, 250f, second,
+                        seedNoveltyBias: bias),
+                    "second corridor grows");
+                return second;
+            }
+
+            // Edge 5 is the busier stub near the first corridor; edges 3/4 are the
+            // untouched cluster. Assert on what the corridor COVERS rather than on its
+            // first edge: the edge list is emitted front-to-back, so the seed is not
+            // necessarily at index 0.
+            Corridor ridership = RunSecondSeed(RouteObjective.Ridership);
+            AssertTrue(ridership.Edges.Contains(5),
+                "ridership takes the busiest remaining edge even though it is next to the last corridor");
+            AssertTrue(!ridership.Edges.Contains(3),
+                "ridership does not go looking for the quieter untouched cluster");
+
+            Corridor coverage = RunSecondSeed(RouteObjective.Coverage);
+            AssertTrue(coverage.Edges.Contains(3),
+                "coverage seeds the next corridor in territory the first one did not touch");
+            AssertTrue(!coverage.Edges.Contains(5),
+                "coverage leaves the busy stub beside the last corridor alone");
         }
 
         private static void RasterizeDepositsPerCell()

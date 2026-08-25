@@ -375,6 +375,23 @@ namespace StationSuitabilityOverlay
         // Novelty multiplier for the objective: how much reaching an untouched area
         // counts against raw flow. Scaled by mean flow so it is unit-free and
         // behaves the same on a small town and a metropolis.
+        // How much the SEED of the next corridor is pulled towards untouched ground,
+        // from 0 (purely the busiest remaining edge) to 1 (flow scaled straight by
+        // novelty). This is what actually makes the objective visible: novelty is
+        // uniform while the first corridor is grown, so an objective that only tips
+        // the extension choice cannot change a thing until something has been chosen,
+        // and seeding used to ignore novelty entirely — which is why all three
+        // objectives produced identical suggestions on a real city.
+        public static float SeedNoveltyBias(RouteObjective objective)
+        {
+            switch (objective)
+            {
+                case RouteObjective.Ridership: return 0f;
+                case RouteObjective.Coverage: return 1f;
+                default: return 0.5f;
+            }
+        }
+
         public static float NoveltyWeight(RouteObjective objective, float meanFlow)
         {
             switch (objective)
@@ -422,7 +439,10 @@ namespace StationSuitabilityOverlay
             float maxLength,
             Corridor result,
             float[]? nodeDemand = null,
-            float demandFloor = 0f)
+            float demandFloor = 0f,
+            // 0 seeds purely on flow, which is both the Ridership objective and the
+            // behaviour every caller had before this existed.
+            float seedNoveltyBias = 0f)
         {
             result.Clear();
             if (graph is null || edgeFlow is null || edgeUsed is null || graph.EdgeCount == 0)
@@ -431,7 +451,7 @@ namespace StationSuitabilityOverlay
             }
 
             int seed = -1;
-            float seedFlow = 0f;
+            float seedScore = 0f;
             for (int e = 0; e < graph.EdgeCount; e++)
             {
                 if (edgeUsed[e] || edgeFlow[e] < flowFloor)
@@ -439,9 +459,20 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                if (edgeFlow[e] > seedFlow)
+                // Eligibility stays on raw flow, so no objective can seed a corridor
+                // on a street nobody travels; the bias only reorders what is eligible.
+                float score = edgeFlow[e];
+                if (seedNoveltyBias > 0f)
                 {
-                    seedFlow = edgeFlow[e];
+                    float ends = Math.Min(
+                        NoveltyAt(nodeNovelty, graph.EdgeA[e]),
+                        NoveltyAt(nodeNovelty, graph.EdgeB[e]));
+                    score *= (1f - seedNoveltyBias) + (seedNoveltyBias * ends);
+                }
+
+                if (score > seedScore)
+                {
+                    seedScore = score;
                     seed = e;
                 }
             }
@@ -513,6 +544,11 @@ namespace StationSuitabilityOverlay
             result.CapturedFlow = length > 0f ? weightedFlow / length : 0f;
             result.Length = length;
             return true;
+        }
+
+        private static float NoveltyAt(float[] nodeNovelty, int node)
+        {
+            return node >= 0 && node < nodeNovelty.Length ? nodeNovelty[node] : 1f;
         }
 
         private static void FindExtension(
