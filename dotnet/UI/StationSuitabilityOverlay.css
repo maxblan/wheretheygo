@@ -332,6 +332,43 @@
     font-size: 10rem;
 }
 
+/* How much of the rolling window has actually been observed. Sits above the controls
+   because it qualifies every number below it. No `gap` — cohtml does not support it. */
+.sso-coverage {
+    margin-bottom: 8rem;
+    padding-bottom: 6rem;
+    border-bottom: 1rem solid rgba(255, 255, 255, 0.12);
+}
+
+.sso-coverage-label {
+    color: #9fb6cc;
+    font-size: 10rem;
+    text-transform: uppercase;
+}
+
+.sso-coverage-value {
+    color: #dce8f2;
+    font-size: 11rem;
+    margin-top: 2rem;
+}
+
+.sso-coverage-empty {
+    color: #708698;
+    font-size: 10rem;
+    margin-top: 2rem;
+}
+
+.sso-coverage-track {
+    margin-top: 4rem;
+    height: 4rem;
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+.sso-coverage-fill {
+    height: 4rem;
+    background-color: #4a9de0;
+}
+
 /* What the verdict rests on: a day's mean or a single reading. Quieter than the
    verdict itself — it qualifies the number above, it is not a finding of its own. */
 .sso-health-basis {

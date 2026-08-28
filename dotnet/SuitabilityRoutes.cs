@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Globalization;
 using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
@@ -106,6 +107,10 @@ namespace StationSuitabilityOverlay
             float seedNoveltyBias = SuitabilityGraphMath.SeedNoveltyBias(objective);
             float flowFloor = meanFlow * minFlowFraction;
             var corridor = new Corridor();
+            var blocked = default(CorridorBlocks);
+            int hitMaxLength = 0;
+            float lengthSum = 0f;
+            int lengthCount = 0;
 
             // Grow more corridors than asked for: many are discarded for being too
             // short or too light, and stopping at maxRoutes attempts left the merged
@@ -118,6 +123,19 @@ namespace StationSuitabilityOverlay
                 {
                     break;
                 }
+
+                blocked.m_Used += corridor.Blocks.m_Used;
+                blocked.m_Flow += corridor.Blocks.m_Flow;
+                blocked.m_Visited += corridor.Blocks.m_Visited;
+                blocked.m_Length += corridor.Blocks.m_Length;
+                blocked.m_Demand += corridor.Blocks.m_Demand;
+                if (corridor.Blocks.m_HitMaxLength)
+                {
+                    hitMaxLength++;
+                }
+
+                lengthSum += corridor.Length;
+                lengthCount++;
 
                 // A single edge is not a line.
                 if (corridor.Edges.Count < 2)
@@ -168,6 +186,22 @@ namespace StationSuitabilityOverlay
                 SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, CaptureFraction);
                 SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, NoveltyHops, NoveltyFactor);
             }
+
+            // Why the corridors on this network came out the length they did. A route
+            // that ran out of demand and one hemmed in by corridors grown before it
+            // both arrive as a small number of metres, and the two call for opposite
+            // responses — the first means there is nothing there, the second means the
+            // growth order is eating its own network.
+            Mod.Log.Info(
+                $"Corridor growth on {network.Network}: {(lengthCount).ToString(CultureInfo.InvariantCulture)} grown, " +
+                $"mean length {((lengthCount > 0 ? lengthSum / lengthCount : 0f)).ToString("F0", CultureInfo.InvariantCulture)}m, " +
+                $"{(hitMaxLength).ToString(CultureInfo.InvariantCulture)} reached the {(maxRouteLength).ToString("F0", CultureInfo.InvariantCulture)}m limit; " +
+                $"meanEdgeFlow={(meanFlow).ToString("F0", CultureInfo.InvariantCulture)}, flowFloor={(flowFloor).ToString("F0", CultureInfo.InvariantCulture)}; " +
+                $"extensions refused — alreadyUsed={(blocked.m_Used).ToString(CultureInfo.InvariantCulture)}, " +
+                $"belowFlowFloor={(blocked.m_Flow).ToString(CultureInfo.InvariantCulture)}, " +
+                $"wouldRevisit={(blocked.m_Visited).ToString(CultureInfo.InvariantCulture)}, " +
+                $"pastMaxLength={(blocked.m_Length).ToString(CultureInfo.InvariantCulture)}, " +
+                $"noDemandBeside={(blocked.m_Demand).ToString(CultureInfo.InvariantCulture)}");
         }
 
         // Minimum length of the least demanding mode this network can host.
@@ -455,20 +489,32 @@ namespace StationSuitabilityOverlay
                 float at = math.min(target, total);
                 float best = at;
 
-                // The two termini are pinned. The nudge window is clamped to the
-                // polyline, so at distance 0 it can only search FORWARD and at the far
-                // end only BACKWARD — the end stops could therefore only ever move
-                // inward, and TrimPath then cut the line back to them. Every route lost
-                // up to two nudge windows of length (245 m for a bus) and died against
-                // the very length floor that had just approved it: corridors that
-                // passed the 500 m bus minimum came out at 309 m, 228 m, 391 m and were
-                // dropped, leaving whole refreshes with nothing to suggest.
+                // A terminus is pinned where the corridor ends, and only moves if it
+                // cannot be used where it is.
                 //
-                // The ends are also the one place the search is least welcome: corridor
-                // growth chose them because that is where the demand is.
+                // Pinning matters because the nudge window is clamped to the polyline:
+                // at distance 0 it can only search FORWARD and at the far end only
+                // BACKWARD, so the end stops could only ever move inward, and TrimPath
+                // then cut the line back to them. Every route lost up to two nudge
+                // windows of length (245 m for a bus) and died against the very length
+                // floor that had just approved it — corridors that cleared the 500 m
+                // bus minimum came out at 309 m, 228 m and 391 m and were dropped,
+                // leaving whole refreshes with nothing to suggest. The ends are also
+                // where the search is least welcome: growth chose them because that is
+                // where the demand is.
+                //
+                // But pinning alone put a stop wherever the corridor happened to stop,
+                // and on a free-form lattice that is not necessarily a place a stop can
+                // exist: a suggested ferry ended in open water, hundreds of metres from
+                // any shore, because its terminus scored zero and was pinned there
+                // anyway. So a terminus that scores nothing searches for the nearest
+                // position along the line that scores at all. That is a validity
+                // repair, not an optimisation — it moves only when staying is not an
+                // option, which is why it cannot bring back the systematic shortening.
                 bool terminus = at <= 0f || at >= total;
+                bool usable = scoreAt is null || scoreAt(PointAlong(route.Path, at)) > 0f;
 
-                if (scoreAt is not null && search > 0f && !terminus)
+                if (scoreAt is not null && search > 0f && (!terminus || !usable))
                 {
                     float bestScore = float.MinValue;
                     // Sample a handful of positions in the window; more would not

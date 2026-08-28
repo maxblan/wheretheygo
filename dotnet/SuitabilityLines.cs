@@ -442,6 +442,30 @@ namespace StationSuitabilityOverlay
             return usages[usages.Count / 2];
         }
 
+        // How far past its own target the typical line in this city is running. The
+        // long-wait verdict is measured against this, so it reports the lines that are
+        // unusual here rather than every line at once.
+        private static float MedianIntervalRatio(List<ExistingLine> lines)
+        {
+            var ratios = new List<float>(lines.Count);
+            for (int i = 0; i < lines.Count; i++)
+            {
+                ExistingLine line = lines[i];
+                if (line.m_TargetInterval > 0f && line.JudgedInterval > 0f)
+                {
+                    ratios.Add(line.JudgedInterval / line.m_TargetInterval);
+                }
+            }
+
+            if (ratios.Count == 0)
+            {
+                return 0f;
+            }
+
+            ratios.Sort();
+            return ratios[ratios.Count / 2];
+        }
+
         // Health verdict per line, worst first.
         public static void Judge(List<ExistingLine> lines, List<LineHealth> health)
         {
@@ -454,6 +478,8 @@ namespace StationSuitabilityOverlay
             // city's own median is the honest reference: a line is empty relative to
             // how busy this city's transit actually runs.
             float medianUsage = MedianUsage(lines);
+            float longWaitMultiple =
+                MedianIntervalRatio(lines) * SuitabilityLineHealth.LongWaitShareAboveMedian;
             float emptyThreshold = math.min(
                 SuitabilityLineHealth.EmptyUsage,
                 medianUsage * SuitabilityLineHealth.EmptyShareOfMedian);
@@ -472,7 +498,7 @@ namespace StationSuitabilityOverlay
                     : math.max(1, line.m_Vehicles);
 
                 LineVerdict verdict = SuitabilityLineHealth.Judge(
-                    usage, line.JudgedInterval, line.m_TargetInterval, line.m_Vehicles, target,
+                    usage, line.JudgedInterval, line.m_TargetInterval, longWaitMultiple, line.m_Vehicles, target,
                     line.m_RequireVehicles, line.m_NotEnoughVehicles, emptyThreshold, out int addVehicles);
 
                 health.Add(new LineHealth
@@ -519,6 +545,9 @@ namespace StationSuitabilityOverlay
                     $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
             }
 
+            Mod.Log.Info(
+                $"Line health long-wait bar: a line is flagged past {(math.max(SuitabilityLineHealth.LongWaitMultipleOfTarget, longWaitMultiple)).ToString("F2", CultureInfo.InvariantCulture)}x its own target interval " +
+                $"(city median is {(MedianIntervalRatio(lines)).ToString("F2", CultureInfo.InvariantCulture)}x)");
             Mod.Log.Info(
                 $"Line health reference: medianUsage={(medianUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, " +
                 $"emptyBelow={(emptyThreshold * 100f).ToString("F1", CultureInfo.InvariantCulture)}% of fleet capacity");

@@ -66,6 +66,9 @@ namespace StationSuitabilityOverlay.Tests
             Run("Coverage seeds the next corridor away from the last one", ObjectiveChangesSeeding);
             Run("Desire lines deposit once per cell crossed", RasterizeDepositsPerCell);
             Run("Polyline simplification removes staircase corners", SimplifyRemovesStaircase);
+            Run("Growth records why a corridor stopped", CorridorRecordsWhyItStopped);
+            Run("A corridor crosses a quiet gap between busy districts", CorridorBridgesQuietGap);
+            Run("A corridor never ends in the quiet gap it crossed", CorridorDoesNotEndInEmptiness);
 
             Run("Direct service beats an equal-time transfer", DirectBeatsTransfer);
             Run("Each change of vehicle costs a boarding", TransfersCostBoardings);
@@ -1288,6 +1291,101 @@ namespace StationSuitabilityOverlay.Tests
                 m_IntervalSeconds = 120f,
                 m_Vehicles = 1,
             };
+        }
+
+        // A short corridor and a long one arrive as nothing but a number of metres,
+        // and "ran out of demand" calls for the opposite response to "hemmed in by the
+        // corridor grown before it". Growth therefore records which test refused the
+        // last extension it looked for.
+        private static void CorridorRecordsWhyItStopped()
+        {
+            // A chain of five 100 m edges. Only the first two carry any flow, so growth
+            // must stop at the flow floor rather than for want of a graph.
+            var a = new[] { 0, 1, 2, 3, 4 };
+            var b = new[] { 1, 2, 3, 4, 5 };
+            var cost = new[] { 100f, 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(6, a, b, cost, 5);
+            var flow = new[] { 50f, 50f, 0f, 0f, 0f };
+
+            var corridor = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                graph, flow, new bool[5], NewNovelty(6), 0f, 10f, 100000f, corridor);
+
+            AssertTrue(corridor.Edges.Count == 2, $"only the two edges with flow are taken, got {corridor.Edges.Count}");
+            AssertTrue(!corridor.Blocks.m_HitMaxLength, "it stopped for want of flow, not at the length limit");
+            AssertTrue(corridor.Blocks.m_Flow > 0, "the refusal is attributed to the flow floor");
+            AssertTrue(corridor.Blocks.m_Used == 0, "nothing here was spent by an earlier corridor");
+            AssertTrue(corridor.Blocks.m_Demand == 0, "no demand gate was in play");
+
+            // The same graph with flow everywhere but a tight length limit stops for
+            // the other reason, and says so.
+            var flowing = new[] { 50f, 50f, 50f, 50f, 50f };
+            var capped = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                graph, flowing, new bool[5], NewNovelty(6), 0f, 10f, 250f, capped);
+
+            AssertTrue(capped.Blocks.m_Length > 0 || capped.Blocks.m_HitMaxLength,
+                "a corridor stopped by its length limit reports the length, not the flow");
+            AssertTrue(capped.Blocks.m_Flow == 0, "nothing here was below the flow floor");
+        }
+
+        // Two busy districts with a park between them are one bus route, not two.
+        // The demand gate was a per-node veto, so a corridor stopped dead at the first
+        // quiet junction: on a real street grid it refused more extensions than the
+        // flow floor and the used-edge test put together, and no corridor came near
+        // its length limit. Everything then died against the minimum length for a
+        // mode, which is why whole refreshes suggested nothing at all.
+        private static void CorridorBridgesQuietGap()
+        {
+            // 0-1-2 busy, 2-3 and 3-4 cross an empty park, 4-5-6 busy again.
+            var a = new[] { 0, 1, 2, 3, 4, 5 };
+            var b = new[] { 1, 2, 3, 4, 5, 6 };
+            var cost = new[] { 100f, 100f, 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(7, a, b, cost, 6);
+            var flow = new[] { 50f, 50f, 50f, 50f, 50f, 50f };
+            var demand = new[] { 1f, 1f, 1f, 0f, 0f, 1f, 1f };
+
+            var corridor = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                graph, flow, new bool[6], NewNovelty(7), 0f, 1f, 10000f, corridor, demand, 0.5f);
+
+            AssertTrue(corridor.Nodes.Contains(0), "the first district is served");
+            AssertTrue(corridor.Nodes.Contains(6), "the district across the gap is reached");
+            AssertTrue(corridor.Nodes.Contains(3) && corridor.Nodes.Contains(4),
+                "the quiet nodes are crossed rather than ending the line");
+            AssertTrue(corridor.Edges.Count == 6, $"the whole chain is one corridor, got {corridor.Edges.Count} edges");
+
+            // A gap wider than the bridge allowance is still refused: this is a
+            // crossing, not a licence to strike out into open country.
+            var wide = new[] { 1f, 1f, 1f, 0f, 0f, 0f, 0f };
+            var stopped = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                graph, (float[])flow.Clone(), new bool[6], NewNovelty(7), 0f, 1f, 10000f,
+                stopped, wide, 0.5f, seedNoveltyBias: 0f, maxLowDemandBridge: 2);
+
+            AssertTrue(!stopped.Nodes.Contains(6), "a gap wider than the allowance is not crossed");
+        }
+
+        // Crossing emptiness is only justified by what lies beyond it. A corridor that
+        // walks into a park and never comes out must hand back those edges, or the
+        // line ends at a stop in the middle of a field.
+        private static void CorridorDoesNotEndInEmptiness()
+        {
+            var a = new[] { 0, 1, 2, 3 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var flow = new[] { 50f, 50f, 50f, 50f };
+            // Busy to node 2, then nothing at all beyond it.
+            var demand = new[] { 1f, 1f, 1f, 0f, 0f };
+
+            var corridor = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor, demand, 0.5f);
+
+            AssertTrue(!corridor.Nodes.Contains(3) && !corridor.Nodes.Contains(4),
+                "a crossing that leads nowhere is handed back");
+            AssertEqual(200f, corridor.Length, 1e-3f, "and its length with it");
         }
 
         // ---- harness --------------------------------------------------------

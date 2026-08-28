@@ -94,6 +94,12 @@ namespace StationSuitabilityOverlay
         // One line per existing route as "mode|verdict|detail", for the panel.
         public static string LineHealthText => s_LineHealthList;
 
+        // "coveredHours|readings|windowHours" — how much observed history the verdicts
+        // and the served-demand discount are actually resting on. The panel shows it
+        // because a mean over twenty minutes and a mean over a full day are the same
+        // number on screen and mean very different things.
+        public static string DataCoverageText => s_DataCoverage;
+
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 
         public static void RequestResetCalibration() => s_ResetCalibrationRequested = true;
@@ -286,6 +292,7 @@ namespace StationSuitabilityOverlay
         private readonly LineHistory m_LineHistory = new LineHistory(LineHistory.FramesPerGameDay);
         private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
         private uint m_LastHistoryFrame;
+        private static string s_DataCoverage = string.Empty;
         // Where last refresh's suggestions ran between, so churn can be measured.
         private readonly List<RouteEnds> m_PreviousRouteEnds = new List<RouteEnds>();
         private float[]? m_ZoneStopDistSq;
@@ -2428,6 +2435,22 @@ namespace StationSuitabilityOverlay
                 line.m_WindowGameHours = LineHistory.GameHours(average.m_SpanFrames);
             }
 
+            // The widest coverage any line has, which is what the oldest reading in the
+            // window buys us. Lines added later have less and say so on their own row.
+            float coveredHours = 0f;
+            int readings = 0;
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                ExistingLine line = m_ExistingLines[i];
+                coveredHours = math.max(coveredHours, line.m_WindowGameHours);
+                readings = math.max(readings, line.m_WindowSamples);
+            }
+
+            s_DataCoverage =
+                $"{coveredHours.ToString("F1", CultureInfo.InvariantCulture)}|" +
+                $"{readings.ToString(CultureInfo.InvariantCulture)}|" +
+                $"{LineHistory.GameHours(m_LineHistory.WindowFrames).ToString("F0", CultureInfo.InvariantCulture)}";
+
             Mod.Log.Info(
                 $"Line window: frame={(frame).ToString(CultureInfo.InvariantCulture)} (advanced={advanced}), " +
                 $"tracking {(m_LineHistory.TrackedLines).ToString(CultureInfo.InvariantCulture)} lines over " +
@@ -3062,6 +3085,9 @@ namespace StationSuitabilityOverlay
         // bar deliberately — it rejects the empty-country stub, not a genuinely quiet
         // but real corridor.
         private const float MinFlowShareOfReference = 0.25f;
+        // Least a network's reference flow may be, as a share of the road network's.
+        // Stops an empty lattice from justifying a line on noise.
+        private const float MinNetworkReferenceShare = 0.25f;
         // How close a sampled stop entity has to be to a collected line's stop to be
         // the same stop. Generous, because the two come from different game components
         // and their positions need not agree exactly.
@@ -3394,11 +3420,25 @@ namespace StationSuitabilityOverlay
 
         private NetworkReferences MeasureNetworks()
         {
+            float road = SuitabilityGraphMath.MeanPositiveFlow(m_RoadGraph.EdgeFlow, m_RoadGraph.EdgeCount);
+
+            // A network that carries almost nothing has no meaningful "typical edge",
+            // and dividing by that near-zero number makes a trickle look significant.
+            // The water lattice averaged a flow of 3 while the roads averaged 628: the
+            // ferry floor came out at 3, a corridor carrying 5 cleared it, and a ferry
+            // to nowhere with no enabled demand at all was suggested to the player.
+            //
+            // The floor for a network is therefore its own mean or a fixed share of
+            // the city's road traffic, whichever is larger — the roads being the one
+            // network that always reflects how much this city actually travels.
+            float minimum = road * MinNetworkReferenceShare;
+            float Floor(float mean) => math.max(mean, minimum);
+
             return new NetworkReferences(
-                SuitabilityGraphMath.MeanPositiveFlow(m_RoadGraph.EdgeFlow, m_RoadGraph.EdgeCount),
-                SuitabilityGraphMath.MeanPositiveFlow(m_TrainNetwork.EdgeFlow, m_TrainNetwork.EdgeCount),
-                SuitabilityGraphMath.MeanPositiveFlow(m_MetroNetwork.EdgeFlow, m_MetroNetwork.EdgeCount),
-                SuitabilityGraphMath.MeanPositiveFlow(m_WaterNetwork.EdgeFlow, m_WaterNetwork.EdgeCount));
+                road,
+                Floor(SuitabilityGraphMath.MeanPositiveFlow(m_TrainNetwork.EdgeFlow, m_TrainNetwork.EdgeCount)),
+                Floor(SuitabilityGraphMath.MeanPositiveFlow(m_MetroNetwork.EdgeFlow, m_MetroNetwork.EdgeCount)),
+                Floor(SuitabilityGraphMath.MeanPositiveFlow(m_WaterNetwork.EdgeFlow, m_WaterNetwork.EdgeCount)));
         }
 
         // Second phase: turn the grown candidates into the handful of suggestions the

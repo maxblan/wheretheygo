@@ -313,17 +313,77 @@ namespace StationSuitabilityOverlay
         public float CapturedFlow;
         public float Length;
 
+        // Why growth stopped. A corridor ends when neither end has an eligible next
+        // edge, and these say which test did the rejecting on that final look. Without
+        // them a short corridor is indistinguishable from a long one: a route that ran
+        // out of demand, one hemmed in by corridors grown before it, and one that
+        // simply reached a dead end all arrive as the same number of metres.
+        public CorridorBlocks Blocks;
+
         public void Clear()
         {
             Edges.Clear();
             Nodes.Clear();
             CapturedFlow = 0f;
             Length = 0f;
+            Blocks = default;
         }
+    }
+
+    // Counts of the edges rejected on the last, failed search for an extension —
+    // across both ends of the corridor.
+    internal struct CorridorBlocks
+    {
+        // Already spent on an earlier corridor.
+        public int m_Used;
+        // Below the flow floor: nobody travels this way.
+        public int m_Flow;
+        // Would revisit a node the corridor already passes through.
+        public int m_Visited;
+        // Would push the corridor past its maximum length.
+        public int m_Length;
+        // Leads to a node with no demand beside it.
+        public int m_Demand;
+        // The corridor stopped because it hit the length limit, not for want of a
+        // next edge.
+        public bool m_HitMaxLength;
+
+        public readonly int Total => m_Used + m_Flow + m_Visited + m_Length + m_Demand;
     }
 
     internal static class SuitabilityGraphMath
     {
+        // Consecutive quiet nodes a corridor may cross before giving up. Two is a
+        // park, a river, a rail crossing or an industrial strip — the things that sit
+        // between two busy districts — and not a licence to strike out into open
+        // country, which is what the gate exists to prevent.
+        public const int DefaultLowDemandBridge = 2;
+
+        // How heavily a crossing is outranked by an extension into somewhere with
+        // people. Low enough that a bridge is only ever taken when it is the only
+        // thing on offer.
+        private const float LowDemandBridgePenalty = 0.05f;
+
+        // Removes a bridge the corridor never came out of, returning the length to
+        // take back off the total.
+        private static float DiscardBridge(
+            CompactGraph graph,
+            float[] edgeFlow,
+            List<int> bridge,
+            ref float weightedFlow)
+        {
+            float removed = 0f;
+            for (int i = 0; i < bridge.Count; i++)
+            {
+                int edge = bridge[i];
+                removed += graph.EdgeCost[edge];
+                weightedFlow -= edgeFlow[edge] * graph.EdgeCost[edge];
+            }
+
+            bridge.Clear();
+            return removed;
+        }
+
         // Adds `weight` onto every edge along the shortest path from the source the
         // workspace was last run from, back to `target`. Returns false if the target
         // was not reachable within the search radius.
@@ -443,7 +503,8 @@ namespace StationSuitabilityOverlay
             Corridor result,
             float[]? nodeDemand = null,
             float demandFloor = 0f,
-            float seedNoveltyBias = 0f)
+            float seedNoveltyBias = 0f,
+            int maxLowDemandBridge = DefaultLowDemandBridge)
         {
             result.Clear();
             if (graph is null || edgeFlow is null || edgeUsed is null || graph.EdgeCount == 0)
@@ -487,6 +548,13 @@ namespace StationSuitabilityOverlay
             var front = new List<int>();
             var back = new List<int>();
 
+            // Edges crossing quiet nodes, held back until the corridor reaches
+            // somewhere with people again. Flushed into the corridor when it does,
+            // discarded when it does not — which is what stops a line ending in a
+            // field while still letting it cross one.
+            var frontBridge = new List<int>();
+            var backBridge = new List<int>();
+
             int headNode = graph.EdgeA[seed];
             int tailNode = graph.EdgeB[seed];
             _ = visited.Add(headNode);
@@ -494,6 +562,7 @@ namespace StationSuitabilityOverlay
             float length = graph.EdgeCost[seed];
             float weightedFlow = edgeFlow[seed] * graph.EdgeCost[seed];
 
+            var blocks = default(CorridorBlocks);
             while (length < maxLength)
             {
                 int bestEdge = -1;
@@ -501,12 +570,17 @@ namespace StationSuitabilityOverlay
                 float bestScore = 0f;
                 bool bestAtHead = true;
 
+                // Reset each round: what matters is what blocked the LAST look, which
+                // is the reason this corridor is the length it is.
+                blocks = default;
                 FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
                     headNode, length, maxLength, nodeDemand, demandFloor,
-                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, atHead: true);
+                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, ref blocks,
+                    frontBridge.Count, maxLowDemandBridge, atHead: true);
                 FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
                     tailNode, length, maxLength, nodeDemand, demandFloor,
-                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, atHead: false);
+                    ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, ref blocks,
+                    backBridge.Count, maxLowDemandBridge, atHead: false);
 
                 if (bestEdge < 0)
                 {
@@ -517,17 +591,50 @@ namespace StationSuitabilityOverlay
                 length += graph.EdgeCost[bestEdge];
                 _ = visited.Add(bestNext);
 
+                bool crossingEmptiness = nodeDemand is not null
+                    && bestNext < nodeDemand.Length
+                    && nodeDemand[bestNext] < demandFloor;
+
                 if (bestAtHead)
                 {
-                    front.Add(bestEdge);
+                    if (crossingEmptiness)
+                    {
+                        frontBridge.Add(bestEdge);
+                    }
+                    else
+                    {
+                        // Demand resumed, so the crossing earned its place.
+                        front.AddRange(frontBridge);
+                        frontBridge.Clear();
+                        front.Add(bestEdge);
+                    }
+
                     headNode = bestNext;
                 }
                 else
                 {
-                    back.Add(bestEdge);
+                    if (crossingEmptiness)
+                    {
+                        backBridge.Add(bestEdge);
+                    }
+                    else
+                    {
+                        back.AddRange(backBridge);
+                        backBridge.Clear();
+                        back.Add(bestEdge);
+                    }
+
                     tailNode = bestNext;
                 }
             }
+
+            // Growth ended mid-crossing: the corridor was heading into emptiness and
+            // never came out, so those edges are not part of the line.
+            length -= DiscardBridge(graph, edgeFlow, frontBridge, ref weightedFlow);
+            length -= DiscardBridge(graph, edgeFlow, backBridge, ref weightedFlow);
+
+            blocks.m_HitMaxLength = length >= maxLength;
+            result.Blocks = blocks;
 
             // Emit front-to-back so the result is a drawable polyline.
             for (int i = front.Count - 1; i >= 0; i--)
@@ -569,6 +676,9 @@ namespace StationSuitabilityOverlay
             ref int bestNext,
             ref float bestScore,
             ref bool bestAtHead,
+            ref CorridorBlocks blocks,
+            int lowDemandRun,
+            int maxLowDemandBridge,
             bool atHead)
         {
             int start = graph.NodeOffsets[fromNode];
@@ -576,32 +686,62 @@ namespace StationSuitabilityOverlay
             for (int i = start; i < end; i++)
             {
                 int edge = graph.AdjEdge[i];
-                if (edgeUsed[edge] || edgeFlow[edge] < flowFloor)
+                if (edgeUsed[edge])
                 {
+                    blocks.m_Used++;
+                    continue;
+                }
+
+                if (edgeFlow[edge] < flowFloor)
+                {
+                    blocks.m_Flow++;
                     continue;
                 }
 
                 int next = graph.AdjOther[i];
                 if (visited.Contains(next))
                 {
+                    blocks.m_Visited++;
                     continue;
                 }
 
                 if (length + graph.EdgeCost[edge] > maxLength)
                 {
+                    blocks.m_Length++;
                     continue;
                 }
 
                 // Flow alone is not enough to justify extending: a rural through-road
                 // legitimately carries assigned trips while serving nobody along it.
                 // Without this the corridor happily loops out into empty land.
-                if (nodeDemand is not null && next < nodeDemand.Length && nodeDemand[next] < demandFloor)
+                //
+                // But a single quiet junction must not END the line. A real route
+                // crosses the park, the river and the industrial strip that lie
+                // between two busy districts, and a hard per-node veto stopped dead at
+                // the first of them: on this city's streets the demand gate refused
+                // more extensions than the flow floor and the used-edge test combined,
+                // and no corridor of twenty came within a tenth of its length limit.
+                // A bounded run of quiet nodes may therefore be crossed — and the
+                // caller discards any such run the corridor ends on, so a line can
+                // pass through emptiness but never terminate in it.
+                bool lowDemand = nodeDemand is not null
+                    && next < nodeDemand.Length
+                    && nodeDemand[next] < demandFloor;
+                if (lowDemand && lowDemandRun >= maxLowDemandBridge)
                 {
+                    blocks.m_Demand++;
                     continue;
                 }
 
                 float novelty = nodeNovelty is not null && next < nodeNovelty.Length ? nodeNovelty[next] : 1f;
                 float score = edgeFlow[edge] + noveltyWeight * novelty;
+
+                // Crossing emptiness is a last resort, never a preference: any node
+                // with people beside it outranks a bridge out of the same junction.
+                if (lowDemand)
+                {
+                    score *= LowDemandBridgePenalty;
+                }
                 if (score <= bestScore)
                 {
                     continue;

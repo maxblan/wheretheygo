@@ -92,6 +92,17 @@ namespace StationSuitabilityOverlay
         // bus and a 180 s train cannot share one bar.
         public const float LongWaitMultipleOfTarget = 2f;
 
+        // ...and at least this much worse than what this city's lines normally manage.
+        //
+        // The absolute part alone is not a threshold, it is a coin flip: every line in
+        // a working city sits somewhere around twice its target, because the game only
+        // adds vehicles in whole units and the player's target is an aspiration. On a
+        // six-line network with ratios of 1.8, 1.8, 2.1, 2.2, 2.3 and 3.3, a flat 2x
+        // bar flagged four of the six — the same noise the fixed 150 s bar produced,
+        // and the reason EmptyShareOfMedian exists a few lines above. Taking the
+        // stricter of the two leaves the genuine outlier and nothing else.
+        public const float LongWaitShareAboveMedian = 1.5f;
+
         // Below this the wait is not worth mentioning however badly the line is
         // missing its target: doubling a 20 s headway is not a problem a player needs
         // telling about.
@@ -110,6 +121,7 @@ namespace StationSuitabilityOverlay
             float usage,
             float achievedInterval,
             float targetInterval,
+            float longWaitMultiple,
             int vehicles,
             int targetVehicles,
             bool requireVehicles,
@@ -156,7 +168,7 @@ namespace StationSuitabilityOverlay
             // holding every mode to one stopwatch. A target of zero means the game has
             // not given us one, and then there is nothing to be late against.
             bool missesItsTarget = targetInterval > 0f
-                && achievedInterval >= targetInterval * LongWaitMultipleOfTarget;
+                && achievedInterval >= targetInterval * Math.Max(LongWaitMultipleOfTarget, longWaitMultiple);
             if (missesItsTarget && achievedInterval * 0.5f >= LongWait)
             {
                 return LineVerdict.LongWaits;

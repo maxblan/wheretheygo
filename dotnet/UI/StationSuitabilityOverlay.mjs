@@ -274,6 +274,40 @@ function LineHealth({ raw, plan, planFor }) {
             })));
 }
 
+// How much observed history the verdicts and the suggestions rest on.
+//
+// Every percentage in this panel is a mean over a rolling 24 game-hour window, and a
+// mean over twenty minutes looks exactly like a mean over a full day once it is a
+// number on screen. The window fills as the city runs, so the panel says how far in
+// it has got rather than leaving the player to assume it is complete.
+function DataCoverage({ raw }) {
+    const t = useTranslate();
+    const parts = (raw || "").split("|");
+    const hours = parts[0] || "0";
+    const readings = parseInt(parts[1], 10) || 0;
+    const window = parts[2] || "24";
+
+    if (!readings) {
+        return h("div", { className: "sso-coverage" },
+            h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
+            h("div", { className: "sso-coverage-empty" },
+                t("DataBasisEmpty", "nothing logged yet — run the city for a minute")));
+    }
+
+    // Bar rather than only a number: the point is how much of the window is filled,
+    // and a fraction is read faster as a length than as two figures to divide.
+    const filled = Math.max(0, Math.min(100, (parseFloat(hours) / parseFloat(window)) * 100));
+    return h("div", { className: "sso-coverage" },
+        h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
+        h("div", { className: "sso-coverage-value" },
+            t("DataBasisValue", "{0} h of {1} h · {2} readings")
+                .replace("{0}", hours)
+                .replace("{1}", window)
+                .replace("{2}", String(readings))),
+        h("div", { className: "sso-coverage-track" },
+            h("div", { className: "sso-coverage-fill", style: { width: filled + "%" } })));
+}
+
 function Panel() {
     const t = useTranslate();
     const visible = useBound("visible", false);
@@ -286,6 +320,7 @@ function Panel() {
     const foreignInfoview = useBound("foreignInfoview", false);
     const heatmap = useBound("heatmap", true);
     const lineHealth = useBound("lineHealth", "");
+    const dataCoverage = useBound("dataCoverage", "");
     const improvePlan = useBound("improvePlan", "");
     const improvedLine = useBound("improvedLine", -1);
 
@@ -333,6 +368,8 @@ function Panel() {
 
         h("div", { className: "sso-body" },
         h("div", { className: "sso-column" },
+
+        h(DataCoverage, { raw: dataCoverage }),
 
         h(Choice, {
             label: t("Mode", "Mode"),
