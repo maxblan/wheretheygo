@@ -31,7 +31,16 @@ namespace StationSuitabilityOverlay
         public int m_TargetVehicles;
         public int m_Passengers;
         public int m_Capacity;
+        // Share of fleet capacity in use: the mean over the rolling window once enough
+        // readings back it, otherwise the reading at collection. m_Passengers and
+        // m_Capacity stay the instantaneous counts, so the two do not divide into each
+        // other and anything showing both must say which is which.
         public float m_Usage;
+        // How many readings the verdict rests on and how much game time they span.
+        // Zero samples means the verdict came from a single reading.
+        public int m_WindowSamples;
+        public float m_WindowGameHours;
+        public float m_PeakUsage;
         // Half the achieved headway: what a rider turning up at random waits.
         public float m_TypicalWait;
         public float m_LengthKm;

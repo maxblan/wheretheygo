@@ -237,6 +237,17 @@ function LineHealth({ raw, plan, planFor }) {
                     .replace("{0}", parts[4] || "0")
                     .replace("{1}", parts[5] || "0")
                     .replace("{2}", parts[6] || "0");
+                // What the verdict rests on. The percentage above is a mean over the
+                // rolling window once enough readings back it, and a single reading
+                // catches a one-boat ferry mid-crossing at nobody aboard — so the row
+                // says which of the two the player is looking at.
+                const samples = parseInt(parts[7], 10) || 0;
+                const basis = samples > 0
+                    ? t("Basis", "average over {0} h, {1} readings, peak {2}%")
+                        .replace("{0}", parts[8] || "0")
+                        .replace("{1}", String(samples))
+                        .replace("{2}", parts[9] || "0")
+                    : t("BasisSingle", "single reading so far");
                 return h("div", { className: "sso-health", key: index },
                     h("div", { className: "sso-health-head" },
                         h("div", {
@@ -246,6 +257,7 @@ function LineHealth({ raw, plan, planFor }) {
                         h("div", { className: "sso-line-name" }, parts[1] || "Line"),
                         h("div", { className: "sso-route-meta" }, meta)),
                     h("div", { className: "sso-health-note" }, note),
+                    h("div", { className: "sso-health-basis" }, basis),
                     healthy ? null : h("button", {
                         className: "sso-improve",
                         onClick: () => trigger("improveLine", index),

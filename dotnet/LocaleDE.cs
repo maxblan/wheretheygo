@@ -155,6 +155,8 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Verbesserter Vorschlag" },
                 { "StationSuitabilityOverlay.Panel[ImprovedPlanHint]", "Die weiß gestrichelte Linie auf der Karte ist die neu geführte Route." },
                 { "StationSuitabilityOverlay.Panel[Meta]", "{0} % ausgelastet, {1} Fz., {2} Haltestellen" },
+                { "StationSuitabilityOverlay.Panel[Basis]", "Mittel über {0} h, {1} Messungen, Spitze {2} %" },
+                { "StationSuitabilityOverlay.Panel[BasisSingle]", "bisher nur eine Messung" },
                 { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },
                 { "StationSuitabilityOverlay.Panel[Mode.Tram]", "Straßenbahn" },
                 { "StationSuitabilityOverlay.Panel[Mode.Metro]", "U-Bahn" },

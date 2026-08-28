@@ -10,7 +10,15 @@ namespace StationSuitabilityOverlay
         public readonly List<float2> Path = new List<float2>();
         public readonly List<float2> Stops = new List<float2>();
         public Setting.ModePreset Mode;
+        // Length-weighted MEAN edge flow along the corridor (SuitabilityGraphMath's
+        // GrowCorridor). Comparable to the network's mean positive edge flow, which is
+        // what the mode floors are a multiple of.
         public float CapturedFlow;
+        // Total journey weight this line would put onto the network, summed over every
+        // zone pair it makes routable. A city-wide SUM, so it is one to two orders of
+        // magnitude larger than CapturedFlow and the two must never be compared,
+        // combined, or substituted for one another.
+        public float EnabledDemand;
         public float Length;
         // Which network traced this alignment, and therefore which modes could
         // actually run on it. A tunnel path cannot host a bus.
@@ -23,6 +31,7 @@ namespace StationSuitabilityOverlay
             Path.Clear();
             Stops.Clear();
             CapturedFlow = 0f;
+            EnabledDemand = 0f;
             Length = 0f;
         }
     }

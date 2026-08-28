@@ -52,6 +52,34 @@ namespace StationSuitabilityOverlay
         public float m_WaitAccumulator;
         public bool m_RequireVehicles;
         public bool m_NotEnoughVehicles;
+
+        // What the line looked like across the last game day, filled in from
+        // LineHistory. Everything above is the reading at the instant of collection;
+        // these are what a verdict is drawn from once enough readings exist, because a
+        // single reading catches a one-boat ferry mid-crossing at zero passengers.
+        // m_WindowSamples of 0 means there is no window yet and the instantaneous
+        // reading is all there is.
+        public float m_WindowUsage;
+        public float m_WindowPeakUsage;
+        public float m_WindowInterval;
+        public int m_WindowSamples;
+        public float m_WindowGameHours;
+
+        // Share of fleet capacity in use: the window mean once enough readings back
+        // it, otherwise the reading taken at collection. One accessor so the city
+        // median and each line's own usage are always measured the same way — the
+        // "nearly empty" threshold is a fraction of that median, and mixing the two
+        // would compare a windowed line against an instantaneous city.
+        public float Usage => m_WindowSamples >= LineHistory.MinSamplesForVerdict
+            ? m_WindowUsage
+            : (m_Capacity > 0 ? m_Passengers / (float)m_Capacity : 0f);
+
+        // The headway a verdict should judge, on the same footing as Usage.
+        public float JudgedInterval => m_WindowSamples >= LineHistory.MinSamplesForVerdict
+            ? m_WindowInterval
+            : m_VehicleInterval;
+
+        public bool HasWindow => m_WindowSamples >= LineHistory.MinSamplesForVerdict;
     }
 
     // Reads the existing transit system: which lines exist, which stops they serve in
@@ -141,8 +169,16 @@ namespace StationSuitabilityOverlay
                 }
 
                 line.m_TargetInterval = targetInterval;
+                // Vanilla's PathUtils.GetTransportStopSpecification takes
+                // max(interval / 2, WaitingPassengers.m_AverageWaitingTime), but that
+                // second term is deliberately NOT passed here: it is the pathfinder's
+                // accumulator in game units, not seconds, and one stranded rider drives
+                // it into the thousands — the same reason SuitabilityLineHealth.LongWait
+                // refuses to read it. Feeding it in as seconds let it beat the real
+                // headway on some lines and not others, so the router's wait cost was in
+                // mixed units and journeys were compared on incomparable numbers.
                 line.m_ExpectedWait = SuitabilityTransit.ExpectedWait(
-                    transportLine.m_VehicleInterval, line.m_WaitAccumulator, dwell);
+                    transportLine.m_VehicleInterval, 0f, dwell);
 
                 TransportLineFlags flags = transportLine.m_Flags;
                 line.m_RequireVehicles = (flags & TransportLineFlags.RequireVehicles) != 0;
@@ -387,7 +423,7 @@ namespace StationSuitabilityOverlay
             for (int i = 0; i < lines.Count; i++)
             {
                 ExistingLine line = lines[i];
-                usages.Add(line.m_Capacity > 0 ? (float)line.m_Passengers / line.m_Capacity : 0f);
+                usages.Add(line.Usage);
             }
 
             usages.Sort();
@@ -413,7 +449,7 @@ namespace StationSuitabilityOverlay
             for (int i = 0; i < lines.Count; i++)
             {
                 ExistingLine line = lines[i];
-                float usage = line.m_Capacity > 0 ? (float)line.m_Passengers / line.m_Capacity : 0f;
+                float usage = line.Usage;
 
                 // Exactly TransportLineSystem.CalculateVehicleCount(targetInterval,
                 // stableDuration) — the game's own formula, against the same inputs the
@@ -424,7 +460,7 @@ namespace StationSuitabilityOverlay
                     : math.max(1, line.m_Vehicles);
 
                 LineVerdict verdict = SuitabilityLineHealth.Judge(
-                    usage, line.m_VehicleInterval, line.m_Vehicles, target,
+                    usage, line.JudgedInterval, line.m_Vehicles, target,
                     line.m_RequireVehicles, line.m_NotEnoughVehicles, emptyThreshold, out int addVehicles);
 
                 health.Add(new LineHealth
@@ -438,7 +474,10 @@ namespace StationSuitabilityOverlay
                     m_Passengers = line.m_Passengers,
                     m_Capacity = line.m_Capacity,
                     m_Usage = usage,
-                    m_TypicalWait = line.m_VehicleInterval * 0.5f,
+                    m_WindowSamples = line.HasWindow ? line.m_WindowSamples : 0,
+                    m_WindowGameHours = line.m_WindowGameHours,
+                    m_PeakUsage = line.HasWindow ? line.m_WindowPeakUsage : usage,
+                    m_TypicalWait = line.JudgedInterval * 0.5f,
                     m_LengthKm = line.m_LengthMetres / 1000f,
                     m_Stops = line.m_StopIndices.Count,
                     m_Verdict = verdict,
@@ -457,7 +496,14 @@ namespace StationSuitabilityOverlay
                     $"expectedWait={(line.m_ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"waitAccumulator={(line.m_WaitAccumulator).ToString("F0", CultureInfo.InvariantCulture)} (game units, not seconds), " +
                     $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)}, " +
-                    $"aboard={(line.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(line.m_Capacity).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"aboard={(line.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(line.m_Capacity).ToString(CultureInfo.InvariantCulture)} " +
+                    $"({((line.m_Capacity > 0 ? line.m_Passengers * 100f / line.m_Capacity : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% right now), " +
+                    $"window({(line.m_WindowSamples).ToString(CultureInfo.InvariantCulture)} readings over " +
+                    $"{(line.m_WindowGameHours).ToString("F1", CultureInfo.InvariantCulture)}h: " +
+                    $"mean {((line.m_WindowUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, " +
+                    $"peak {((line.m_WindowPeakUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, " +
+                    $"interval {(line.m_WindowInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
+                    $"judgedOn={(line.HasWindow ? "window" : "this reading only")}, " +
                     $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
             }
 

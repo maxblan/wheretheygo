@@ -49,7 +49,10 @@ namespace StationSuitabilityOverlay
         private const float RidershipSaveSeconds = 300f;
         // Travel demand extraction walks every citizen and runs many shortest-path
         // searches, so it is far slower than the per-tile scoring.
-        private const float DemandRefreshSeconds = 60f;
+        // Also the cadence at which each line is sampled into the rolling window, so
+        // shortening it both gets the first suggestions up sooner and doubles the
+        // number of readings a day's verdict rests on.
+        private const float DemandRefreshSeconds = 30f;
         private const int InfomodePriority = 200;
 
         // Demand, jobs and future demand are raw sums with unbounded scale; each is
@@ -277,6 +280,12 @@ namespace StationSuitabilityOverlay
         private TransitNetwork? m_TransitNetwork;
         private DijkstraWorkspace? m_TransitWorkspace;
         private int[]? m_ZoneStops;
+        // A game day of line readings. Judging a line on the single reading a refresh
+        // happens to land on condemned a one-boat ferry as empty whenever its boat was
+        // mid-crossing; the window is what a verdict rests on instead.
+        private readonly LineHistory m_LineHistory = new LineHistory(LineHistory.FramesPerGameDay);
+        private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
+        private uint m_LastHistoryFrame;
         private float[]? m_ZoneStopDistSq;
         private float[]? m_ZoneCentreX;
         private float[]? m_ZoneCentreZ;
@@ -2151,6 +2160,172 @@ namespace StationSuitabilityOverlay
                 $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)}, weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}, " +
                 $"assignedPairs={(assignedPairs).ToString(CultureInfo.InvariantCulture)}, assignedWeight={(assignedWeight).ToString("F0", CultureInfo.InvariantCulture)}, " +
                 $"crossWaterPairs={m_CrossWaterFlows.Count}, candidates={m_RouteCandidates.Count}, routes={m_Routes.Count}");
+            LogSanityChecks(totalWeight);
+        }
+
+        // A pass whose whole job is to disagree with the rest of the mod.
+        //
+        // The failure that matters here is not a crash — it is a plausible wrong number
+        // reaching the map, and every number below has a range it cannot leave without
+        // something upstream being broken. Each check states the invariant it is
+        // testing, so a warning names the defect rather than reporting a symptom.
+        // Anything this logs is a bug in the mod, not a property of the city.
+        private void LogSanityChecks(float totalZoneWeight)
+        {
+            int complaints = 0;
+
+            void Complain(string message)
+            {
+                complaints++;
+                Mod.Log.Warn($"  SANITY: {message}");
+            }
+
+            for (int i = 0; i < m_LineHealth.Count; i++)
+            {
+                LineHealth entry = m_LineHealth[i];
+                string line = $"line {entry.m_Name} ({entry.m_Mode})";
+
+                // Usage is a share of fleet capacity. Over 1 means passengers were
+                // counted against the wrong capacity, or a window mixed two fleets.
+                if (entry.m_Usage < 0f || entry.m_Usage > 1.5f || float.IsNaN(entry.m_Usage))
+                {
+                    Complain($"{line} usage {(entry.m_Usage).ToString("F2", CultureInfo.InvariantCulture)} is outside 0..1.5 — passengers are being divided by the wrong capacity");
+                }
+
+                if (entry.m_PeakUsage + 1e-3f < entry.m_Usage)
+                {
+                    Complain($"{line} peak usage {(entry.m_PeakUsage).ToString("F2", CultureInfo.InvariantCulture)} is below its mean {(entry.m_Usage).ToString("F2", CultureInfo.InvariantCulture)} — the window is not accumulating in order");
+                }
+
+                if (entry.m_Capacity > 0 && entry.m_Vehicles == 0)
+                {
+                    Complain($"{line} reports capacity {(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} with no vehicles");
+                }
+
+                // Half a headway. A wait past an hour means a non-seconds quantity has
+                // been read as seconds — the accumulator trap this mod has hit before.
+                if (entry.m_TypicalWait is > 3600f or < 0f)
+                {
+                    Complain($"{line} typical wait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}s is not a plausible headway — check the units feeding it");
+                }
+
+                if (entry.m_WindowGameHours > 24.5f)
+                {
+                    Complain($"{line} window spans {(entry.m_WindowGameHours).ToString("F1", CultureInfo.InvariantCulture)} game hours, past the 24 h it is supposed to hold — eviction is not running");
+                }
+            }
+
+            for (int i = 0; i < m_Routes.Count; i++)
+            {
+                SuggestedRoute route = m_Routes[i];
+                string label = $"route #{(i + 1).ToString(CultureInfo.InvariantCulture)} ({route.Mode})";
+
+                // Enabled demand is a share of the city's journeys. It cannot exceed
+                // the total weight those journeys carry.
+                if (totalZoneWeight > 0f && route.EnabledDemand > totalZoneWeight * 1.01f)
+                {
+                    Complain($"{label} enabled demand {(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} exceeds the city's total travel weight {(totalZoneWeight).ToString("F0", CultureInfo.InvariantCulture)} — journeys are being counted more than once");
+                }
+
+                if (route.Length < SuitabilityRoutes.MinLengthFor(route.Mode))
+                {
+                    Complain($"{label} is {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, under the {(SuitabilityRoutes.MinLengthFor(route.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for its mode — the length floor was not applied after stop placement");
+                }
+
+                if (route.Stops.Count < 2)
+                {
+                    Complain($"{label} has {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops — a line needs at least two");
+                }
+
+                if (route.Vehicles <= 0)
+                {
+                    Complain($"{label} would run with no vehicles");
+                }
+
+                // The stop spacing the mode asked for, against what it actually got.
+                // Wildly off means the stops were placed for a different mode — which
+                // is what happens when a mode change skips its restop.
+                if (route.Stops.Count >= 2)
+                {
+                    float spacing = route.Length / (route.Stops.Count - 1);
+                    float want = SuitabilityRoutes.StopSpacingFor(route.Mode);
+                    if (spacing > want * 2.5f || spacing < want * 0.4f)
+                    {
+                        Complain($"{label} averages {(spacing).ToString("F0", CultureInfo.InvariantCulture)}m between stops but {route.Mode} spacing is {(want).ToString("F0", CultureInfo.InvariantCulture)}m — the stops were probably placed for another mode");
+                    }
+                }
+            }
+
+            Mod.Log.Info(complaints == 0
+                ? "Sanity checks: all clear."
+                : $"Sanity checks: {(complaints).ToString(CultureInfo.InvariantCulture)} problem(s) above are defects in the mod, not properties of the city.");
+        }
+
+        // Folds this collection's readings into the rolling window and hands each line
+        // back its own averages.
+        //
+        // Stamped with SimulationSystem.frameIndex rather than the wall clock, because
+        // the window is 24 GAME hours: frames stop while the game is paused and run
+        // faster when the player fast forwards, and a real-time window would drain
+        // itself in the pause menu and cover a quarter of a day at 4x.
+        private void RecordLineWindow()
+        {
+            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
+            if (simulation is null)
+            {
+                return;
+            }
+
+            uint frame = simulation.frameIndex;
+
+            // A paused game keeps handing back the same frame. Recording it repeatedly
+            // would stack identical readings and let a pause decide the average.
+            bool advanced = frame != m_LastHistoryFrame;
+            if (advanced)
+            {
+                m_LastHistoryFrame = frame;
+                m_LiveLineIds.Clear();
+                for (int i = 0; i < m_ExistingLines.Count; i++)
+                {
+                    ExistingLine line = m_ExistingLines[i];
+                    _ = m_LiveLineIds.Add(line.m_Id);
+                    m_LineHistory.Record(line.m_Id, new LineObservation
+                    {
+                        m_Frame = frame,
+                        m_Passengers = line.m_Passengers,
+                        m_Capacity = line.m_Capacity,
+                        m_IntervalSeconds = line.m_VehicleInterval,
+                        m_Vehicles = line.m_Vehicles,
+                    });
+                }
+
+                m_LineHistory.RetainOnly(m_LiveLineIds);
+            }
+
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                ExistingLine line = m_ExistingLines[i];
+                if (!m_LineHistory.TryAverage(line.m_Id, out LineAverage average))
+                {
+                    line.m_WindowSamples = 0;
+                    continue;
+                }
+
+                line.m_WindowUsage = average.m_Usage;
+                line.m_WindowPeakUsage = average.m_PeakUsage;
+                line.m_WindowInterval = average.m_IntervalSeconds;
+                line.m_WindowSamples = average.m_Samples;
+                line.m_WindowGameHours = LineHistory.GameHours(average.m_SpanFrames);
+            }
+
+            Mod.Log.Info(
+                $"Line window: frame={(frame).ToString(CultureInfo.InvariantCulture)} (advanced={advanced}), " +
+                $"tracking {(m_LineHistory.TrackedLines).ToString(CultureInfo.InvariantCulture)} lines over " +
+                $"{(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} game hours, " +
+                $"{(LineHistory.MinSamplesForVerdict).ToString(CultureInfo.InvariantCulture)} readings needed before a verdict uses it, " +
+                $"evicted={(m_LineHistory.EvictedSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
+                $"droppedAtCap={(m_LineHistory.DroppedAtCapSinceLastReport).ToString(CultureInfo.InvariantCulture)}");
+            m_LineHistory.ClearCounters();
         }
 
         // Reads the existing transit system and turns it into a routable model, so a
@@ -2160,6 +2335,7 @@ namespace StationSuitabilityOverlay
         {
             SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
                 m_ExistingLines, m_TransitStops, m_StopIndices);
+            RecordLineWindow();
             SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
             UpdateLineHealthText();
 
@@ -2204,8 +2380,11 @@ namespace StationSuitabilityOverlay
                 LineHealth entry = m_LineHealth[i];
                 Mod.Log.Info(
                     $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
-                    $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard ({(entry.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture)}%), " +
-                    $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, typicalWait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard right now, " +
+                    $"judged at {(entry.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture)}% " +
+                    $"(peak {(entry.m_PeakUsage * 100f).ToString("F0", CultureInfo.InvariantCulture)}%) " +
+                    $"{(entry.m_WindowSamples > 0 ? $"from {entry.m_WindowSamples.ToString(CultureInfo.InvariantCulture)} readings over {entry.m_WindowGameHours.ToString("F1", CultureInfo.InvariantCulture)}h" : "from this reading alone")}, " +
+                    $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, typicalWait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"{(entry.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(entry.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km");
             }
         }
@@ -2538,12 +2717,16 @@ namespace StationSuitabilityOverlay
                     $"corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, enabledDemand={(enabled).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"routablePairs={(pairCount).ToString(CultureInfo.InvariantCulture)} (base {(m_PairCount).ToString(CultureInfo.InvariantCulture)})");
 
-                // Enabled demand governs, with only a small floor from corridor flow
-                // so a candidate the transit model cannot reach yet is not lost. The
-                // old max() kept raw corridor flow in charge, which is why a
-                // suggestion survived being built: once the line existed its enabled
-                // demand collapsed but its corridor flow did not.
-                candidate.CapturedFlow = math.max(enabled, candidate.CapturedFlow * 0.15f);
+                // Enabled demand is kept SEPARATE from corridor flow rather than
+                // replacing it. It governs the ranking — which is what makes a
+                // suggestion stop being offered once it is built, since its enabled
+                // demand collapses while its corridor flow does not — but the mode
+                // floors are multiples of the network's mean edge flow, and only
+                // CapturedFlow is on that scale. Folding the two into one field made
+                // ChooseMode compare a city-wide journey-weight sum against a per-edge
+                // mean and promote a 3.7 km corridor to Metro on a flow of 6545 against
+                // a floor of 3128 that a corridor flow of 648 never came close to.
+                candidate.EnabledDemand = enabled;
             }
         }
 
@@ -2747,6 +2930,16 @@ namespace StationSuitabilityOverlay
                 _ = builder.Append(health.m_Vehicles);
                 _ = builder.Append('|');
                 _ = builder.Append(health.m_Stops);
+                _ = builder.Append('|');
+                // How much evidence the verdict rests on. The percentage above is a
+                // mean over the rolling window once there are enough readings, and a
+                // player has no way to tell that from a single instantaneous count
+                // unless the panel says so.
+                _ = builder.Append(health.m_WindowSamples);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_WindowGameHours.ToString("F0", CultureInfo.InvariantCulture));
+                _ = builder.Append('|');
+                _ = builder.Append((health.m_PeakUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
             }
 
             s_LineHealthList = builder.ToString();
@@ -2754,8 +2947,9 @@ namespace StationSuitabilityOverlay
 
         // How far a rider will walk to reach or change service.
         private const float TransferWalkRadius = 250f;
-        // Enabled demand a candidate must carry to be worth drawing at all. Deliberately
-        // tiny: this rejects corridors with nothing on them, not weak ones.
+        // Corridor flow — NOT enabled demand — a candidate must carry to be worth
+        // drawing at all. Deliberately tiny: this rejects corridors with nothing on
+        // them, not weak ones.
         private const float MinCandidateFlow = 1f;
         // Journeys longer than this are not realistically made by transit.
         private const float MaxJourneySeconds = 3600f;
@@ -2998,9 +3192,17 @@ namespace StationSuitabilityOverlay
                 $"tram {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"metro {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}");
 
+            // Before scoring, corridor flow is all there is to rank by. Afterwards the
+            // enabled demand leads and corridor flow breaks ties, which also covers the
+            // candidates past the scoring cutoff and a city with no transit at all,
+            // where every enabled demand is zero.
             m_RouteCandidates.Sort(static (a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
             ScoreCandidatesWithTransfers(settings);
-            m_RouteCandidates.Sort(static (a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
+            m_RouteCandidates.Sort(static (a, b) =>
+            {
+                int byDemand = b.EnabledDemand.CompareTo(a.EnabledDemand);
+                return byDemand != 0 ? byDemand : b.CapturedFlow.CompareTo(a.CapturedFlow);
+            });
 
             SelectRoutes(settings, gridSize, grownTotal, shortTotal);
         }
@@ -3017,6 +3219,12 @@ namespace StationSuitabilityOverlay
             // justified. Judged against the ROAD network's mean flow so every mode is
             // measured on one city-wide scale rather than its own network's average.
             float reference = SuitabilityGraphMath.MeanPositiveFlow(m_RoadGraph.EdgeFlow, m_RoadGraph.EdgeCount);
+
+            Mod.Log.Info(
+                "Route scales: corridorFlow = mean demand per network edge along the corridor, and is what the mode " +
+                "floors below are multiples of; enabledDemand = total journey weight the line would put on the " +
+                "network, summed city-wide, and is what the ranking uses. They differ by one to two orders of " +
+                "magnitude and must never be compared with each other.");
 
             m_Routes.Clear();
             int rejected = 0;
@@ -3051,11 +3259,16 @@ namespace StationSuitabilityOverlay
                     {
                         rejected++;
                         Mod.Log.Info(
-                            $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m " +
+                            $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                            $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m " +
                             "— DROPPED, nothing justified and no road path between its ends");
                         continue;
                     }
 
+                    // Same journey, different alignment: the demand it would enable is
+                    // unchanged, and dropping it here would sink the retraced candidate
+                    // to the bottom of a ranking led by enabled demand.
+                    onRoad.EnabledDemand = candidate.EnabledDemand;
                     candidate = onRoad;
                     retraced++;
                 }
@@ -3063,8 +3276,9 @@ namespace StationSuitabilityOverlay
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: road, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, " +
-                        $"{candidate.Stops.Count} stops — DROPPED, below every floor");
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: road, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                        $"(tram floor {(reference * 1.5f).ToString("F0", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops — DROPPED, below every floor");
                     continue;
                 }
 
@@ -3074,7 +3288,8 @@ namespace StationSuitabilityOverlay
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
                         $"under the {(SuitabilityRoutes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
                     continue;
@@ -3087,7 +3302,8 @@ namespace StationSuitabilityOverlay
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, flow={(beforeFlow).ToString("F2", CultureInfo.InvariantCulture)}, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
+                        $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
                     continue;
                 }
@@ -3097,7 +3313,8 @@ namespace StationSuitabilityOverlay
                 {
                     duplicates++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"{candidate.Stops.Count} stops — DROPPED, already built");
                     continue;
                 }
@@ -3107,7 +3324,9 @@ namespace StationSuitabilityOverlay
                     SuggestedWaitFor(candidate.Mode) * 2f);
 
                 Mod.Log.Info(
-                    $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, flow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                    $"(floor {(reference * SuitabilityRoutes.MinFlowMultipleFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}), " +
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops, {(candidate.Vehicles).ToString(CultureInfo.InvariantCulture)} veh — KEPT");
 
                 m_Routes.Add(candidate);
@@ -3317,7 +3536,8 @@ namespace StationSuitabilityOverlay
                 float2 to = route.Stops.Count > 0 ? route.Stops[route.Stops.Count - 1] : float2.zero;
                 Mod.Log.Info(
                     $"Route #{(i + 1).ToString(CultureInfo.InvariantCulture)}: {route.Mode}, {(route.Length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km, {route.Stops.Count} stops, " +
-                    $"flow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
+                    $"corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"enabledDemand={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
                     $"({((int)from.x).ToString(CultureInfo.InvariantCulture)},{((int)from.y).ToString(CultureInfo.InvariantCulture)}) -> ({((int)to.x).ToString(CultureInfo.InvariantCulture)},{((int)to.y).ToString(CultureInfo.InvariantCulture)})");
             }
         }

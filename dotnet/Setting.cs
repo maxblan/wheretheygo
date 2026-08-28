@@ -605,6 +605,8 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Improved plan" },
                 { "StationSuitabilityOverlay.Panel[ImprovedPlanHint]", "The white dashed line on the map is the re-traced route." },
                 { "StationSuitabilityOverlay.Panel[Meta]", "{0}% full, {1} veh, {2} stops" },
+                { "StationSuitabilityOverlay.Panel[Basis]", "average over {0} h, {1} readings, peak {2}%" },
+                { "StationSuitabilityOverlay.Panel[BasisSingle]", "single reading so far" },
                 { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },
                 { "StationSuitabilityOverlay.Panel[Mode.Tram]", "Tram" },
                 { "StationSuitabilityOverlay.Panel[Mode.Metro]", "Metro" },

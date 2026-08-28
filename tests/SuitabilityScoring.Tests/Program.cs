@@ -74,6 +74,11 @@ namespace StationSuitabilityOverlay.Tests
             Run("Walking links nearby stops into one interchange", WalkLinksStops);
             Run("Vanilla wait model floors at zero", ExpectedWaitModel);
             Run("A proposed stop puts an unserved zone onto the network", RemapReachesUnservedZone);
+            Run("A line is judged over the window, not one reading", WindowAveragesLineReadings);
+            Run("Readings older than the window are evicted", WindowEvictsPastADay);
+            Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
+            Run("Loading another save restarts the window", WindowResetsWhenFramesRewind);
+            Run("A deleted line stops being tracked", WindowForgetsDeletedLines);
 
             Console.WriteLine();
             if (s_Failures == 0)
@@ -1148,6 +1153,133 @@ namespace StationSuitabilityOverlay.Tests
                 new[] { 100f }, new[] { 0f }, 1, 20, 500f, one);
 
             AssertTrue(stolen == 1 && one[0] == 20, "a nearer candidate stop takes the zone from a distant existing one");
+        }
+
+        // A ferry with one boat reads zero passengers whenever that boat is mid
+        // crossing. Judged on the reading the refresh happened to land on, the line
+        // is condemned as "nearly empty — reroute or remove"; judged over a day it is
+        // simply a small line that is busy some of the time.
+        private static void WindowAveragesLineReadings()
+        {
+            var history = new LineHistory(LineHistory.FramesPerGameDay);
+
+            // Six readings a few game hours apart: full, empty, full, empty, ...
+            int[] aboard = { 80, 0, 60, 0, 40, 0 };
+            for (int i = 0; i < aboard.Length; i++)
+            {
+                history.Record(7, new LineObservation
+                {
+                    m_Frame = (uint)(i * 10000),
+                    m_Passengers = aboard[i],
+                    m_Capacity = 100,
+                    m_IntervalSeconds = 300f,
+                    m_Vehicles = 1,
+                });
+            }
+
+            AssertTrue(history.TryAverage(7, out LineAverage average), "the line has history");
+            AssertTrue(average.m_Samples == 6, "every reading inside the window counts");
+            AssertEqual(30f, average.m_Passengers, 1e-3f, "mean passengers over the window");
+            AssertEqual(0.3f, average.m_Usage, 1e-3f, "mean usage, not the reading it landed on");
+            AssertEqual(0.8f, average.m_PeakUsage, 1e-3f, "the busiest sample is kept alongside the mean");
+            AssertEqual(300f, average.m_IntervalSeconds, 1e-3f, "interval averages too");
+
+            // The verdict must know how much of a day it is actually looking at.
+            AssertTrue(average.m_SpanFrames == 50000u, "the span covered is reported");
+            AssertTrue(LineHistory.GameHours(average.m_SpanFrames) < 24f, "under a full day of coverage");
+
+            AssertTrue(!history.TryAverage(99, out LineAverage _), "a line never seen has no history");
+        }
+
+        private static void WindowEvictsPastADay()
+        {
+            var history = new LineHistory(1000u);
+
+            // Three readings, then one a full window later: only the last survives
+            // together with anything inside the window behind it.
+            history.Record(1, Reading(0u, 10));
+            history.Record(1, Reading(700u, 20));
+            history.Record(1, Reading(900u, 30));
+            AssertTrue(history.TryAverage(1, out LineAverage before), "history exists");
+            AssertTrue(before.m_Samples == 3, "nothing evicted while inside the window");
+
+            // Window 1000, newest 1600, so the cutoff is 600 and only the reading at
+            // frame 0 falls out.
+            history.Record(1, Reading(1600u, 40));
+            AssertTrue(history.TryAverage(1, out LineAverage after), "history survives eviction");
+            AssertTrue(after.m_Samples == 3, "the reading older than the window is gone");
+            AssertEqual(30f, after.m_Passengers, 1e-3f, "the evicted reading no longer weighs on the mean");
+            AssertTrue(history.EvictedSinceLastReport == 1, "the eviction is counted so the log can say so");
+
+            // A window that has nothing left in it must not report a stale average.
+            history.Record(1, Reading(100000u, 5));
+            AssertTrue(history.TryAverage(1, out LineAverage far), "the newest reading is kept");
+            AssertTrue(far.m_Samples == 1, "everything a window older than the newest is dropped");
+            AssertEqual(5f, far.m_Passengers, 1e-3f, "only the surviving reading counts");
+        }
+
+        // A line whose fleet doubles mid-window: 10/100 then 90/200. A ratio of sums
+        // says 100/300 = 33%; the honest answer is the mean of 10% and 45%.
+        private static void WindowUsageIsPerSample()
+        {
+            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            history.Record(3, new LineObservation
+            {
+                m_Frame = 0u, m_Passengers = 10, m_Capacity = 100, m_IntervalSeconds = 120f, m_Vehicles = 1,
+            });
+            history.Record(3, new LineObservation
+            {
+                m_Frame = 5000u, m_Passengers = 90, m_Capacity = 200, m_IntervalSeconds = 60f, m_Vehicles = 2,
+            });
+
+            AssertTrue(history.TryAverage(3, out LineAverage average), "history exists");
+            AssertEqual(0.275f, average.m_Usage, 1e-4f, "mean of the per-sample usages");
+            AssertEqual(0.45f, average.m_PeakUsage, 1e-4f, "the fuller sample is the peak");
+            AssertEqual(1.5f, average.m_Vehicles, 1e-4f, "fleet size averages across the change");
+        }
+
+        // The simulation frame counts up within one city and rewinds when another
+        // save is loaded. Averaging the previous city's lines into this one would be
+        // worse than starting over.
+        private static void WindowResetsWhenFramesRewind()
+        {
+            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            history.Record(2, Reading(500000u, 80));
+            history.Record(2, Reading(500100u, 80));
+            AssertTrue(history.TryAverage(2, out LineAverage loaded), "the first city has history");
+            AssertEqual(80f, loaded.m_Passengers, 1e-3f, "from the first city");
+
+            history.Record(2, Reading(120u, 4));
+            AssertTrue(history.TryAverage(2, out LineAverage fresh), "the new city starts recording");
+            AssertTrue(fresh.m_Samples == 1, "the previous city's readings are gone");
+            AssertEqual(4f, fresh.m_Passengers, 1e-3f, "only this city's reading counts");
+        }
+
+        // Lines the player has deleted stop being tracked, so the history is bounded
+        // by the network that exists rather than by everything ever built.
+        private static void WindowForgetsDeletedLines()
+        {
+            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            history.Record(1, Reading(0u, 10));
+            history.Record(2, Reading(0u, 20));
+            AssertTrue(history.TrackedLines == 2, "both lines tracked");
+
+            history.RetainOnly(new System.Collections.Generic.HashSet<int> { 2 });
+            AssertTrue(history.TrackedLines == 1, "the deleted line is forgotten");
+            AssertTrue(!history.TryAverage(1, out LineAverage _), "and has no history left");
+            AssertTrue(history.TryAverage(2, out LineAverage _), "the surviving line keeps its history");
+        }
+
+        private static LineObservation Reading(uint frame, int passengers)
+        {
+            return new LineObservation
+            {
+                m_Frame = frame,
+                m_Passengers = passengers,
+                m_Capacity = 100,
+                m_IntervalSeconds = 120f,
+                m_Vehicles = 1,
+            };
         }
 
         // ---- harness --------------------------------------------------------
