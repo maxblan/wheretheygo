@@ -277,6 +277,17 @@ namespace StationSuitabilityOverlay
         private TransitNetwork? m_TransitNetwork;
         private DijkstraWorkspace? m_TransitWorkspace;
         private int[]? m_ZoneStops;
+        private float[]? m_ZoneStopDistSq;
+        private float[]? m_ZoneCentreX;
+        private float[]? m_ZoneCentreZ;
+        private int[]? m_ZoneStopsScratch;
+        private static readonly int[] s_NoPairs = Array.Empty<int>();
+        private static readonly float[] s_NoWeights = Array.Empty<float>();
+        private int[]? m_CandidateOrigins;
+        private int[]? m_CandidateDests;
+        private float[]? m_CandidateWeights;
+        private float[]? m_CandidateStopX;
+        private float[]? m_CandidateStopZ;
         private int[]? m_PairOrigins;
         private int[]? m_PairDests;
         private float[]? m_PairWeights;
@@ -2204,9 +2215,16 @@ namespace StationSuitabilityOverlay
         private void MapZonesToStops(float[] xs, float[] zs)
         {
             int zoneCount = m_ZoneGrid.x * m_ZoneGrid.y;
-            if (m_ZoneStops is null || m_ZoneStops.Length != zoneCount)
+            // Every co-allocated array is in the condition, or flow analysis only
+            // trusts the one that was tested.
+            if (m_ZoneStops is null || m_ZoneStopDistSq is null || m_ZoneCentreX is null
+                || m_ZoneCentreZ is null || m_ZoneStopsScratch is null || m_ZoneStops.Length != zoneCount)
             {
                 m_ZoneStops = new int[zoneCount];
+                m_ZoneStopDistSq = new float[zoneCount];
+                m_ZoneCentreX = new float[zoneCount];
+                m_ZoneCentreZ = new float[zoneCount];
+                m_ZoneStopsScratch = new int[zoneCount];
             }
 
             float radiusSq = TransferWalkRadius * TransferWalkRadius * 4f;
@@ -2228,6 +2246,11 @@ namespace StationSuitabilityOverlay
                 }
 
                 m_ZoneStops[zone] = best;
+                // Kept so a candidate's own stops can be judged against the incumbent
+                // rather than only filling in zones that had nothing.
+                m_ZoneStopDistSq[zone] = bestSq;
+                m_ZoneCentreX[zone] = centre.x;
+                m_ZoneCentreZ[zone] = centre.y;
             }
         }
 
@@ -2351,18 +2374,97 @@ namespace StationSuitabilityOverlay
         // carries almost nobody can still be the leg that unlocks hundreds of journeys
         // onto a trunk service. Each change of vehicle discounts the journey, so a
         // direct service still outranks a three-leg itinerary carrying the same people.
-        private void ScoreCandidatesWithTransfers(Setting settings)
+        // Zone-to-stop pairs for ONE candidate: the base mapping with the candidate's
+        // own stops folded in, flattened into the arrays the transit router takes.
+        // Returns the pair count, or 0 if the inputs are not ready.
+        // Hands the arrays back rather than leaving the caller to re-test the fields:
+        // the compiler discards a field's null-state across any intervening call.
+        private int BuildCandidatePairs(
+            SuggestedRoute candidate,
+            int baseStops,
+            out int[] origins,
+            out int[] dests,
+            out float[] weights)
         {
-            if (m_PairOrigins is null || m_PairDests is null || m_PairWeights is null)
+            origins = s_NoPairs;
+            dests = s_NoPairs;
+            weights = s_NoWeights;
+
+            if (m_ZoneStops is null || m_ZoneStopDistSq is null || m_ZoneCentreX is null
+                || m_ZoneCentreZ is null || m_ZoneStopsScratch is null)
             {
-                return;
+                return 0;
             }
 
-            int[] pairOrigins = m_PairOrigins;
-            int[] pairDests = m_PairDests;
-            float[] pairWeights = m_PairWeights;
+            int stopCount = candidate.Stops.Count;
+            EnsureCandidateBuffers(m_ZoneFlows.Count, stopCount);
+            if (m_CandidateStopX is null || m_CandidateStopZ is null || m_CandidateOrigins is null
+                || m_CandidateDests is null || m_CandidateWeights is null)
+            {
+                return 0;
+            }
 
-            if (m_TransitNetwork?.Graph is null || m_PairCount == 0 || m_RouteCandidates.Count == 0)
+            for (int i = 0; i < stopCount; i++)
+            {
+                m_CandidateStopX[i] = candidate.Stops[i].x;
+                m_CandidateStopZ[i] = candidate.Stops[i].y;
+            }
+
+            int[] zoneStops = m_ZoneStopsScratch;
+            _ = SuitabilityTransit.RemapZones(
+                m_ZoneCentreX, m_ZoneCentreZ, m_ZoneStops.Length,
+                m_ZoneStops, m_ZoneStopDistSq,
+                m_CandidateStopX, m_CandidateStopZ, stopCount,
+                baseStops, TransferWalkRadius * 2f, zoneStops);
+
+            origins = m_CandidateOrigins;
+            dests = m_CandidateDests;
+            weights = m_CandidateWeights;
+
+            int count = 0;
+            for (int i = 0; i < m_ZoneFlows.Count; i++)
+            {
+                ZoneFlow flow = m_ZoneFlows[i];
+                int origin = zoneStops[flow.m_Origin];
+                int destination = zoneStops[flow.m_Destination];
+                if (origin < 0 || destination < 0 || origin == destination)
+                {
+                    continue;
+                }
+
+                origins[count] = origin;
+                dests[count] = destination;
+                weights[count] = flow.m_Weight;
+                count++;
+            }
+
+            return count;
+        }
+
+        private void EnsureCandidateBuffers(int pairCapacity, int stopCapacity)
+        {
+            if (m_CandidateOrigins is null || m_CandidateDests is null || m_CandidateWeights is null
+                || m_CandidateOrigins.Length < pairCapacity)
+            {
+                m_CandidateOrigins = new int[pairCapacity];
+                m_CandidateDests = new int[pairCapacity];
+                m_CandidateWeights = new float[pairCapacity];
+            }
+
+            if (m_CandidateStopX is null || m_CandidateStopZ is null || m_CandidateStopX.Length < stopCapacity)
+            {
+                m_CandidateStopX = new float[stopCapacity];
+                m_CandidateStopZ = new float[stopCapacity];
+            }
+        }
+
+        private void ScoreCandidatesWithTransfers(Setting settings)
+        {
+            // Deliberately NOT guarded on the base pair arrays any more: each candidate
+            // now builds its own. Testing them here would refuse to score anything in a
+            // city with no existing stops within reach of a zone — the case where a
+            // suggestion is worth the most.
+            if (m_TransitNetwork?.Graph is null || m_RouteCandidates.Count == 0)
             {
                 return;
             }
@@ -2418,13 +2520,23 @@ namespace StationSuitabilityOverlay
                     xs, zs, total, lines, TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
                 var workspace = new DijkstraWorkspace(withCandidate.Graph.NodeCount);
 
-                float enabled = SuitabilityTransit.CreditLine(
-                    withCandidate, workspace, pairOrigins, pairDests, pairWeights, m_PairCount,
-                    lines.Count - 1, discount, MaxJourneySeconds, out float _);
+                // Re-map zones against the candidate's OWN stops before routing. The
+                // base mapping only knows the stops that exist today, so a journey
+                // starting where nothing runs yet had no origin stop at all and could
+                // never be credited — which made every candidate score zero enabled
+                // demand, for exactly the lines most worth building.
+                int pairCount = BuildCandidatePairs(candidate, baseStops,
+                    out int[] origins, out int[] dests, out float[] weights);
+                float enabled = pairCount > 0
+                    ? SuitabilityTransit.CreditLine(
+                        withCandidate, workspace, origins, dests, weights,
+                        pairCount, lines.Count - 1, discount, MaxJourneySeconds, out float _)
+                    : 0f;
 
                 Mod.Log.Info(
                     $"  transfer scoring {(c).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops, " +
-                    $"corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, enabledDemand={(enabled).ToString("F0", CultureInfo.InvariantCulture)}");
+                    $"corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, enabledDemand={(enabled).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"routablePairs={(pairCount).ToString(CultureInfo.InvariantCulture)} (base {(m_PairCount).ToString(CultureInfo.InvariantCulture)})");
 
                 // Enabled demand governs, with only a small floor from corridor flow
                 // so a candidate the transit model cannot reach yet is not lost. The

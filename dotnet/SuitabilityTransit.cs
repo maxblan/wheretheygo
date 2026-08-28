@@ -307,5 +307,70 @@ namespace StationSuitabilityOverlay
 
             return credited;
         }
+
+        // Re-assigns zones to the nearest stop once a PROPOSED line's stops are added
+        // to the network.
+        //
+        // The base mapping is built against the stops that exist today, so a zone with
+        // nothing within walking distance has no stop at all and its journeys cannot be
+        // routed. Scoring a candidate against that mapping asks "how much of the demand
+        // your existing network already reaches would this line carry" — which is zero
+        // for exactly the lines worth building, the ones going somewhere unserved.
+        //
+        // `baseIndex` is where the candidate's stops start in the combined stop array,
+        // so the indices written here address the same array the routing graph was
+        // built from. Returns how many zones the candidate captured.
+        public static int RemapZones(
+            float[] zoneX,
+            float[] zoneZ,
+            int zoneCount,
+            int[] zoneStop,
+            float[] zoneStopDistSq,
+            float[] newStopX,
+            float[] newStopZ,
+            int newStopCount,
+            int baseIndex,
+            float maxDistance,
+            int[] outZoneStop)
+        {
+            if (zoneX is null || zoneZ is null || zoneStop is null || zoneStopDistSq is null
+                || newStopX is null || newStopZ is null || outZoneStop is null)
+            {
+                return 0;
+            }
+
+            float maxSq = maxDistance * maxDistance;
+            int captured = 0;
+            for (int zone = 0; zone < zoneCount; zone++)
+            {
+                int best = zoneStop[zone];
+                // An unmapped zone has no distance to beat, so start from the radius.
+                float bestSq = best >= 0 ? zoneStopDistSq[zone] : maxSq;
+
+                float zx = zoneX[zone];
+                float zz = zoneZ[zone];
+                for (int i = 0; i < newStopCount; i++)
+                {
+                    float dx = newStopX[i] - zx;
+                    float dz = newStopZ[i] - zz;
+                    float distSq = (dx * dx) + (dz * dz);
+                    if (distSq < bestSq)
+                    {
+                        bestSq = distSq;
+                        best = baseIndex + i;
+                    }
+                }
+
+                if (best != zoneStop[zone])
+                {
+                    captured++;
+                }
+
+                outZoneStop[zone] = best;
+            }
+
+            return captured;
+        }
+
     }
 }

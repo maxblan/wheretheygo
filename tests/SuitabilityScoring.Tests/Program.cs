@@ -73,6 +73,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Transfer discount reduces credit per change", TransferDiscountApplies);
             Run("Walking links nearby stops into one interchange", WalkLinksStops);
             Run("Vanilla wait model floors at zero", ExpectedWaitModel);
+            Run("A proposed stop puts an unserved zone onto the network", RemapReachesUnservedZone);
 
             Console.WriteLine();
             if (s_Failures == 0)
@@ -1104,6 +1105,49 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             return novelty;
+        }
+
+        // A suggested line is scored by the demand it would ENABLE, which is measured
+        // by routing zone-to-zone journeys over the network with the candidate added.
+        // Those journeys enter as stop indices, and the mapping from zone to stop was
+        // built against the EXISTING stops only — so a zone with nothing nearby stayed
+        // unmapped and its journeys were invisible, no matter that the candidate put a
+        // stop right in it. Every candidate therefore scored zero enabled demand, which
+        // is precisely the case this mod exists to find.
+        private static void RemapReachesUnservedZone()
+        {
+            // Three zones on a line at x = 0, 1000, 2000.
+            var zoneX = new[] { 0f, 1000f, 2000f };
+            var zoneZ = new[] { 0f, 0f, 0f };
+
+            // Zone 0 already has stop 7 on top of it. Zones 1 and 2 have nothing.
+            var zoneStop = new[] { 7, -1, -1 };
+            var zoneDistSq = new[] { 0f, float.MaxValue, float.MaxValue };
+
+            // The candidate proposes two stops: one in zone 1, one 400 m from zone 2.
+            var newX = new[] { 1000f, 1600f };
+            var newZ = new[] { 0f, 0f };
+            var merged = new int[3];
+
+            int changed = SuitabilityTransit.RemapZones(
+                zoneX, zoneZ, 3, zoneStop, zoneDistSq,
+                newX, newZ, 2, 20, 500f, merged);
+
+            AssertTrue(changed == 2, "both zones the candidate reaches are remapped");
+            AssertTrue(merged[0] == 7, "a zone already served by a closer existing stop keeps it");
+            AssertTrue(merged[1] == 20, "the unserved zone now routes through the candidate's own stop");
+            AssertTrue(merged[2] == 21, "the zone within walking distance of the far stop is picked up too");
+
+            // A candidate stop that lands closer than the existing one wins it over:
+            // that is the feeder case, where the new line is the better way in.
+            var farStop = new[] { 7 };
+            var farDistSq = new[] { 400f * 400f };
+            var one = new int[1];
+            int stolen = SuitabilityTransit.RemapZones(
+                new[] { 0f }, new[] { 0f }, 1, farStop, farDistSq,
+                new[] { 100f }, new[] { 0f }, 1, 20, 500f, one);
+
+            AssertTrue(stolen == 1 && one[0] == 20, "a nearer candidate stop takes the zone from a distant existing one");
         }
 
         // ---- harness --------------------------------------------------------
