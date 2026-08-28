@@ -429,6 +429,9 @@ namespace StationSuitabilityOverlay
         //
         // Nodes are never revisited, so a corridor cannot fold back on itself, and
         // growth is deterministic: ties break on the lower edge index.
+        //
+        // A `seedNoveltyBias` of 0 seeds purely on flow, which is both the Ridership
+        // objective and the behaviour every caller had before it existed.
         public static bool GrowCorridor(
             CompactGraph graph,
             float[] edgeFlow,
@@ -440,8 +443,6 @@ namespace StationSuitabilityOverlay
             Corridor result,
             float[]? nodeDemand = null,
             float demandFloor = 0f,
-            // 0 seeds purely on flow, which is both the Ridership objective and the
-            // behaviour every caller had before this existed.
             float seedNoveltyBias = 0f)
         {
             result.Clear();

@@ -209,27 +209,48 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // Why no mode on an alignment was justified. One `false` from ChooseMode used
+        // to cover both, and the log always blamed demand: four corridors carrying
+        // 965-1488 against a tram floor of 938 were reported as "below every floor"
+        // when every one of them had failed on LENGTH. A wrong reason in the log sends
+        // the next person diagnosing this at the wrong half of the pipeline.
+        public enum ModeRejection
+        {
+            None = 0,
+            FlowTooLow = 1,
+            TooShort = 2,
+        }
+
         // Highest-capacity mode whose demand floor and minimum length this corridor
-        // actually meets. Returns false when nothing on this alignment is justified.
+        // actually meets. Returns false when nothing on this alignment is justified,
+        // and says which test did the rejecting.
         public static bool ChooseMode(
             RouteNetwork network,
             float flow,
             float length,
             float referenceFlow,
-            out Setting.ModePreset mode)
+            out Setting.ModePreset mode,
+            out ModeRejection rejection)
         {
             Setting.ModePreset[] options = ModesFor(network);
+            bool metSomeFloor = false;
             for (int i = 0; i < options.Length; i++)
             {
                 Setting.ModePreset option = options[i];
                 float floor = referenceFlow * MinFlowMultipleFor(option);
-                if (flow >= floor && length >= MinLengthFor(option))
+                bool hasFlow = flow >= floor;
+                metSomeFloor |= hasFlow;
+                if (hasFlow && length >= MinLengthFor(option))
                 {
                     mode = option;
+                    rejection = ModeRejection.None;
                     return true;
                 }
             }
 
+            // A corridor that cleared some mode's demand floor and still found nothing
+            // to run was rejected for being short, not for being quiet.
+            rejection = metSomeFloor ? ModeRejection.TooShort : ModeRejection.FlowTooLow;
             mode = options[options.Length - 1];
             return false;
         }
@@ -292,7 +313,8 @@ namespace StationSuitabilityOverlay
             route.Length = length;
             route.CapturedFlow = roads.FlowAlong(scratch);
 
-            if (!ChooseMode(RouteNetwork.Road, route.CapturedFlow, route.Length, referenceFlow, out Setting.ModePreset mode))
+            if (!ChooseMode(RouteNetwork.Road, route.CapturedFlow, route.Length, referenceFlow,
+                    out Setting.ModePreset mode, out ModeRejection _))
             {
                 return null;
             }
@@ -433,7 +455,20 @@ namespace StationSuitabilityOverlay
                 float at = math.min(target, total);
                 float best = at;
 
-                if (scoreAt is not null && search > 0f)
+                // The two termini are pinned. The nudge window is clamped to the
+                // polyline, so at distance 0 it can only search FORWARD and at the far
+                // end only BACKWARD — the end stops could therefore only ever move
+                // inward, and TrimPath then cut the line back to them. Every route lost
+                // up to two nudge windows of length (245 m for a bus) and died against
+                // the very length floor that had just approved it: corridors that
+                // passed the 500 m bus minimum came out at 309 m, 228 m, 391 m and were
+                // dropped, leaving whole refreshes with nothing to suggest.
+                //
+                // The ends are also the one place the search is least welcome: corridor
+                // growth chose them because that is where the demand is.
+                bool terminus = at <= 0f || at >= total;
+
+                if (scoreAt is not null && search > 0f && !terminus)
                 {
                     float bestScore = float.MinValue;
                     // Sample a handful of positions in the window; more would not

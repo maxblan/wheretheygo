@@ -1225,11 +1225,19 @@ namespace StationSuitabilityOverlay.Tests
             var history = new LineHistory(LineHistory.FramesPerGameDay);
             history.Record(3, new LineObservation
             {
-                m_Frame = 0u, m_Passengers = 10, m_Capacity = 100, m_IntervalSeconds = 120f, m_Vehicles = 1,
+                m_Frame = 0u,
+                m_Passengers = 10,
+                m_Capacity = 100,
+                m_IntervalSeconds = 120f,
+                m_Vehicles = 1,
             });
             history.Record(3, new LineObservation
             {
-                m_Frame = 5000u, m_Passengers = 90, m_Capacity = 200, m_IntervalSeconds = 60f, m_Vehicles = 2,
+                m_Frame = 5000u,
+                m_Passengers = 90,
+                m_Capacity = 200,
+                m_IntervalSeconds = 60f,
+                m_Vehicles = 2,
             });
 
             AssertTrue(history.TryAverage(3, out LineAverage average), "history exists");

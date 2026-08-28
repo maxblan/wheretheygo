@@ -79,15 +79,29 @@ namespace StationSuitabilityOverlay
         // carry. Without the relative test a fixed threshold flags most of a healthy
         // network, because usage is an instantaneous snapshot.
         public const float EmptyShareOfMedian = 0.35f;
-        // Wait past which service genuinely feels sparse, in the same units as the
-        // line's round trip. Measured as half the achieved headway.
+        // A line is running too infrequently when it is at least this many times its
+        // OWN target interval. The player sets the target; the game sizes the fleet
+        // from it. Two times means the line is achieving less than half the frequency
+        // it is being paid for, which is a fact about this line rather than a
+        // comparison against some other mode's timetable.
+        //
+        // An absolute threshold could not do this job. At a flat 150 s, a train with a
+        // 180 s target running at 356 s (2.0x) was flagged for "long waits" while a
+        // ferry with a 90 s target running at 293 s (3.3x) was called healthy — the
+        // line furthest from its own timetable was the one reported as fine. A 42 s
+        // bus and a 180 s train cannot share one bar.
+        public const float LongWaitMultipleOfTarget = 2f;
+
+        // Below this the wait is not worth mentioning however badly the line is
+        // missing its target: doubling a 20 s headway is not a problem a player needs
+        // telling about.
         //
         // NOT from WaitingPassengers.m_TypicalWaitingTime: that is an accumulator the
         // game keeps for its pathfinder — max(ongoing/waiting, concluded/boarded),
         // quantised to 5 — so a single stranded rider drives it to thousands. Read as
         // seconds it reported 45-minute waits on a line running every two minutes, and
         // flagged 8 of 18 lines on that basis.
-        public const float LongWait = 150f;
+        public const float LongWait = 60f;
 
         // `requireVehicles` and `notEnoughVehicles` come straight from
         // TransportLineFlags — the game already decides when a line is short of
@@ -95,6 +109,7 @@ namespace StationSuitabilityOverlay
         public static LineVerdict Judge(
             float usage,
             float achievedInterval,
+            float targetInterval,
             int vehicles,
             int targetVehicles,
             bool requireVehicles,
@@ -135,7 +150,14 @@ namespace StationSuitabilityOverlay
             // Long waits with room to spare means the service is too infrequent for
             // the demand pattern rather than too small. Only meaningful on a line that
             // is actually carrying people.
-            if (achievedInterval * 0.5f >= LongWait)
+            //
+            // Judged against the line's own target, so the verdict says "this line is
+            // running at less than half the frequency it is set to" rather than
+            // holding every mode to one stopwatch. A target of zero means the game has
+            // not given us one, and then there is nothing to be late against.
+            bool missesItsTarget = targetInterval > 0f
+                && achievedInterval >= targetInterval * LongWaitMultipleOfTarget;
+            if (missesItsTarget && achievedInterval * 0.5f >= LongWait)
             {
                 return LineVerdict.LongWaits;
             }

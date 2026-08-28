@@ -27,7 +27,9 @@ namespace StationSuitabilityOverlay
         public readonly List<int> m_StopIndices = new List<int>();
         public readonly List<float> m_RideSeconds = new List<float>();
         public readonly List<float2> m_Path = new List<float2>();
-        public float m_ExpectedWait;
+        // Dwell at each stop, from TransportLineData.m_StopDuration. Kept because the
+        // rider's wait is derived from it rather than stamped at collection.
+        public float m_StopDuration;
         // The line's own headway, as the game maintains it.
         public float m_VehicleInterval;
         public float m_LineDurationSeconds;
@@ -80,6 +82,25 @@ namespace StationSuitabilityOverlay
             : m_VehicleInterval;
 
         public bool HasWindow => m_WindowSamples >= LineHistory.MinSamplesForVerdict;
+
+        // What a rider turning up at random waits, in seconds — the cost the transit
+        // router charges for boarding this line.
+        //
+        // Derived from JudgedInterval, so the routing that decides which journeys are
+        // already served runs on the same windowed headway the verdicts do. Stamped
+        // from the instantaneous interval it inherited every bunching spike: the
+        // achieved interval is capped at 10x the target, so one bad moment made the
+        // line look unusable, the journeys through it looked unserved, and the
+        // suggestions moved.
+        //
+        // Vanilla's PathUtils.GetTransportStopSpecification takes
+        // max(interval / 2, WaitingPassengers.m_AverageWaitingTime), but that second
+        // term is deliberately dropped: it is the pathfinder's accumulator in game
+        // units, not seconds, and one stranded rider drives it into the thousands —
+        // the same reason SuitabilityLineHealth.LongWait refuses to read it. Passing it
+        // as seconds let it beat the real headway on some lines and not others, so the
+        // router's wait cost was in mixed units.
+        public float ExpectedWait => SuitabilityTransit.ExpectedWait(JudgedInterval, 0f, m_StopDuration);
     }
 
     // Reads the existing transit system: which lines exist, which stops they serve in
@@ -169,16 +190,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 line.m_TargetInterval = targetInterval;
-                // Vanilla's PathUtils.GetTransportStopSpecification takes
-                // max(interval / 2, WaitingPassengers.m_AverageWaitingTime), but that
-                // second term is deliberately NOT passed here: it is the pathfinder's
-                // accumulator in game units, not seconds, and one stranded rider drives
-                // it into the thousands — the same reason SuitabilityLineHealth.LongWait
-                // refuses to read it. Feeding it in as seconds let it beat the real
-                // headway on some lines and not others, so the router's wait cost was in
-                // mixed units and journeys were compared on incomparable numbers.
-                line.m_ExpectedWait = SuitabilityTransit.ExpectedWait(
-                    transportLine.m_VehicleInterval, 0f, dwell);
+                line.m_StopDuration = dwell;
 
                 TransportLineFlags flags = transportLine.m_Flags;
                 line.m_RequireVehicles = (flags & TransportLineFlags.RequireVehicles) != 0;
@@ -403,7 +415,7 @@ namespace StationSuitabilityOverlay
                 {
                     m_Stops = line.m_StopIndices.ToArray(),
                     m_RideSeconds = line.m_RideSeconds.ToArray(),
-                    m_ExpectedWait = line.m_ExpectedWait,
+                    m_ExpectedWait = line.ExpectedWait,
                     m_SpeedMetresPerSecond = 10f,
                 });
             }
@@ -460,7 +472,7 @@ namespace StationSuitabilityOverlay
                     : math.max(1, line.m_Vehicles);
 
                 LineVerdict verdict = SuitabilityLineHealth.Judge(
-                    usage, line.JudgedInterval, line.m_Vehicles, target,
+                    usage, line.JudgedInterval, line.m_TargetInterval, line.m_Vehicles, target,
                     line.m_RequireVehicles, line.m_NotEnoughVehicles, emptyThreshold, out int addVehicles);
 
                 health.Add(new LineHealth
@@ -493,7 +505,7 @@ namespace StationSuitabilityOverlay
                     $"len={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, ride={(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"roundTrip={(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"interval={(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s (target {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
-                    $"expectedWait={(line.m_ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"expectedWait={(line.ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s (from {(line.HasWindow ? "windowed" : "instantaneous")} headway {(line.JudgedInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"waitAccumulator={(line.m_WaitAccumulator).ToString("F0", CultureInfo.InvariantCulture)} (game units, not seconds), " +
                     $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)}, " +
                     $"aboard={(line.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(line.m_Capacity).ToString(CultureInfo.InvariantCulture)} " +

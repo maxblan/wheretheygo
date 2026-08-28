@@ -76,6 +76,8 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // Leaves m_City alone: clearing the samples does not change which city we are
+        // in, and RetargetTo sets it explicitly when it does.
         public void Clear()
         {
             m_Records.Clear();
@@ -96,12 +98,16 @@ namespace StationSuitabilityOverlay
         // One observation per served stop of the active mode. `sampleFeatures`
         // returns the normalized term values at a world position, or false if the
         // position is outside the computed grid.
+        // `waitSecondsAt` gives the expected rider wait in SECONDS at a stop position,
+        // or 0 when no known line serves it. It is supplied by the caller because it
+        // comes from the lines the overlay system has already collected and verified.
         public void Sample(
             EntityManager entityManager,
             EntityQuery stopQuery,
             Game.Prefabs.PrefabSystem prefabSystem,
             Setting.ModePreset mode,
-            Func<float2, float[], bool> sampleFeatures)
+            Func<float2, float[], bool> sampleFeatures,
+            Func<float2, float> waitSecondsAt)
         {
             using var entities = stopQuery.ToEntityArray(Allocator.Temp);
             using var transforms = stopQuery.ToComponentDataArray<Transform>(Allocator.Temp);
@@ -122,7 +128,7 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                if (!TryReadPassengers(entityManager, stop, routes, out float queue, out float wait))
+                if (!TryReadQueue(entityManager, stop, routes, out float queue))
                 {
                     continue;
                 }
@@ -131,6 +137,21 @@ namespace StationSuitabilityOverlay
                 var position = new float2(pos3.x, pos3.z);
                 if (!sampleFeatures(position, features))
                 {
+                    continue;
+                }
+
+                // Little's law needs a wait in SECONDS. WaitingPassengers'
+                // m_AverageWaitingTime is the pathfinder's accumulator in game units —
+                // the same field SuitabilityLineHealth refuses to read — so dividing a
+                // passenger count by it produced a target in no unit at all, which is
+                // why the fit came back with three of its four coefficients pinned at
+                // exactly zero. The wait now comes from the serving line's headway,
+                // the same quantity every other part of this mod uses.
+                float wait = waitSecondsAt(position);
+                if (wait <= 0f)
+                {
+                    // No line we know of serves this stop, so there is no headway to
+                    // divide by and no honest observation to record.
                     continue;
                 }
 
@@ -146,7 +167,8 @@ namespace StationSuitabilityOverlay
                     m_Records[key] = record;
                 }
 
-                // Little's law: arrival rate = queue length / average wait.
+                // Little's law: arrival rate = queue length / average wait, in riders
+                // per second.
                 float arrivalRate = queue / math.max(wait, 1f);
                 record.m_Samples++;
                 record.m_ArrivalRateSum += arrivalRate;
@@ -159,21 +181,25 @@ namespace StationSuitabilityOverlay
         // waypoints, matching how Game.UI.InGame.LinesSection totals them for the
         // stop panel. Average wait is taken as the maximum across those, since it is
         // already a smoothed per-queue estimate rather than something additive.
-        private static bool TryReadPassengers(
+        // Riders queued at a stop. m_Count is a straight passenger count and is read
+        // as one; the component's m_AverageWaitingTime is deliberately not touched
+        // here — see the note at the call site.
+        //
+        // ConnectedRoute is used only to enumerate the waypoints that belong to this
+        // stop, never to infer an order: the buffer is unordered and the game's own
+        // travel order lives on the line.
+        private static bool TryReadQueue(
             EntityManager entityManager,
             Entity stop,
             DynamicBuffer<ConnectedRoute> routes,
-            out float queue,
-            out float wait)
+            out float queue)
         {
             queue = 0f;
-            wait = 0f;
             bool any = false;
 
             if (entityManager.TryGetComponent(stop, out WaitingPassengers stopPassengers))
             {
                 queue += stopPassengers.m_Count;
-                wait = math.max(wait, stopPassengers.m_AverageWaitingTime);
                 any = true;
             }
 
@@ -182,7 +208,6 @@ namespace StationSuitabilityOverlay
                 if (entityManager.TryGetComponent(routes[i].m_Waypoint, out WaitingPassengers waypointPassengers))
                 {
                     queue += waypointPassengers.m_Count;
-                    wait = math.max(wait, waypointPassengers.m_AverageWaitingTime);
                     any = true;
                 }
             }
@@ -272,9 +297,41 @@ namespace StationSuitabilityOverlay
 
         // Compact CSV so the whole series survives in the settings file. One record
         // per stop, aggregates only — never raw samples.
+        // The city these records were gathered in.
+        //
+        // Records are keyed by WORLD POSITION and persist in a mod setting, not in the
+        // save — so without this, loading another city silently inherited the previous
+        // one's ridership at the same coordinates and fitted weights to stops that do
+        // not exist here. Nothing invalidated it but the manual reset button. The name
+        // is stamped into the serialized data and checked on load.
+        private string m_City = string.Empty;
+
+        public string City => m_City;
+
+        // Drops everything if this is a different city from the one the records came
+        // from. Returns true when that happened, so the caller can say so.
+        public bool RetargetTo(string city)
+        {
+            string next = city ?? string.Empty;
+            if (string.Equals(m_City, next, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            bool hadRecords = m_Records.Count > 0;
+            Clear();
+            m_City = next;
+            return hadRecords;
+        }
+
         public string Serialize()
         {
             var builder = new StringBuilder();
+            // Leading city stamp, delimited like a record so an older payload without
+            // one simply fails to parse as a record and is discarded.
+            _ = builder.Append("city=");
+            _ = builder.Append(m_City.Replace(';', ' ').Replace(':', ' '));
+            _ = builder.Append(';');
             foreach (KeyValuePair<long, StopRecord> pair in m_Records)
             {
                 StopRecord record = pair.Value;
@@ -311,6 +368,12 @@ namespace StationSuitabilityOverlay
             {
                 if (records[i].Length == 0)
                 {
+                    continue;
+                }
+
+                if (records[i].StartsWith("city=", StringComparison.Ordinal))
+                {
+                    m_City = records[i].Substring("city=".Length);
                     continue;
                 }
 
