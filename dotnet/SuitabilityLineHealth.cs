@@ -79,6 +79,11 @@ namespace StationSuitabilityOverlay
         // carry. Without the relative test a fixed threshold flags most of a healthy
         // network, because usage is an instantaneous snapshot.
         public const float EmptyShareOfMedian = 0.35f;
+        // How far above the empty threshold a line's BUSIEST reading may sit and still
+        // count as empty. A line that never reaches three times the bar even at its
+        // peak is genuinely carrying nobody; one that does has a demand pattern, and
+        // the answer to that is a timetable, not a demolition.
+        public const float EmptyPeakAllowance = 3f;
         // A line is running too infrequently when it is at least this many times its
         // OWN target interval. The player sets the target; the game sizes the fleet
         // from it. Two times means the line is achieving less than half the frequency
@@ -119,6 +124,7 @@ namespace StationSuitabilityOverlay
         // vehicles, so that signal is read rather than re-derived.
         public static LineVerdict Judge(
             float usage,
+            float peakUsage,
             float achievedInterval,
             float targetInterval,
             float longWaitMultiple,
@@ -154,7 +160,14 @@ namespace StationSuitabilityOverlay
             // Emptiness is checked BEFORE waits: a barely-used line is lightly used,
             // not badly timetabled, and reporting it as "long waits" told the player
             // to run more buses down an empty street.
-            if (usage <= emptyThreshold)
+            //
+            // Judged on the busiest moment as well as the average. "Reroute or remove"
+            // is the most destructive advice this mod gives, and a line that fills up
+            // twice a day and sits idle the rest of the time averages out looking dead
+            // — a ferry carrying twelve people at that moment, peaking at 12% against a
+            // city median of 7%, was being recommended for removal on a mean of 3%.
+            // A line is only empty if it is empty even at its best.
+            if (usage <= emptyThreshold && peakUsage <= emptyThreshold * EmptyPeakAllowance)
             {
                 return LineVerdict.NearlyEmpty;
             }

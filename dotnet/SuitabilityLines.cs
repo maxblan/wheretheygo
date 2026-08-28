@@ -498,7 +498,8 @@ namespace StationSuitabilityOverlay
                     : math.max(1, line.m_Vehicles);
 
                 LineVerdict verdict = SuitabilityLineHealth.Judge(
-                    usage, line.JudgedInterval, line.m_TargetInterval, longWaitMultiple, line.m_Vehicles, target,
+                    usage, line.HasWindow ? line.m_WindowPeakUsage : usage,
+                    line.JudgedInterval, line.m_TargetInterval, longWaitMultiple, line.m_Vehicles, target,
                     line.m_RequireVehicles, line.m_NotEnoughVehicles, emptyThreshold, out int addVehicles);
 
                 health.Add(new LineHealth
@@ -548,6 +549,9 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info(
                 $"Line health long-wait bar: a line is flagged past {(math.max(SuitabilityLineHealth.LongWaitMultipleOfTarget, longWaitMultiple)).ToString("F2", CultureInfo.InvariantCulture)}x its own target interval " +
                 $"(city median is {(MedianIntervalRatio(lines)).ToString("F2", CultureInfo.InvariantCulture)}x)");
+            Mod.Log.Info(
+                $"Line health empty bar: flagged only if the mean is under {((emptyThreshold * 100f)).ToString("F1", CultureInfo.InvariantCulture)}% " +
+                $"AND the peak under {((emptyThreshold * SuitabilityLineHealth.EmptyPeakAllowance * 100f)).ToString("F1", CultureInfo.InvariantCulture)}%");
             Mod.Log.Info(
                 $"Line health reference: medianUsage={(medianUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, " +
                 $"emptyBelow={(emptyThreshold * 100f).ToString("F1", CultureInfo.InvariantCulture)}% of fleet capacity");

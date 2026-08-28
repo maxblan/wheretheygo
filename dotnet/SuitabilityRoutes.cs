@@ -115,8 +115,18 @@ namespace StationSuitabilityOverlay
             // Grow more corridors than asked for: many are discarded for being too
             // short or too light, and stopping at maxRoutes attempts left the merged
             // set far thinner than the requested count.
+            //
+            // The budget is counted PER NETWORK, not against the shared output list.
+            // Testing output.Count made one shared allowance that whichever network ran
+            // first consumed: roads run first, and once their corridors grew long
+            // enough to survive the length floor they filled all ten slots, so train,
+            // metro and ferry growth was skipped entirely — not one attempt, not one
+            // rejected extension, no trains ever suggested however much demand there
+            // was for one.
             int attempts = maxRoutes * 4;
-            for (int r = 0; r < attempts && output.Count < maxRoutes * 2; r++)
+            int added = 0;
+            int budget = maxRoutes * 2;
+            for (int r = 0; r < attempts && added < budget; r++)
             {
                 if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight,
                         flowFloor, maxRouteLength, corridor, nodeDemand, demandFloor, seedNoveltyBias))
@@ -180,6 +190,7 @@ namespace StationSuitabilityOverlay
                     if (route.Stops.Count >= 2)
                     {
                         output.Add(route);
+                        added++;
                     }
                 }
 
@@ -201,7 +212,8 @@ namespace StationSuitabilityOverlay
                 $"belowFlowFloor={(blocked.m_Flow).ToString(CultureInfo.InvariantCulture)}, " +
                 $"wouldRevisit={(blocked.m_Visited).ToString(CultureInfo.InvariantCulture)}, " +
                 $"pastMaxLength={(blocked.m_Length).ToString(CultureInfo.InvariantCulture)}, " +
-                $"noDemandBeside={(blocked.m_Demand).ToString(CultureInfo.InvariantCulture)}");
+                $"noDemandBeside={(blocked.m_Demand).ToString(CultureInfo.InvariantCulture)}" +
+                $"{(added >= budget ? $"; STOPPED at this network's budget of {budget.ToString(CultureInfo.InvariantCulture)} candidates — there may be more worth having" : string.Empty)}");
         }
 
         // Minimum length of the least demanding mode this network can host.

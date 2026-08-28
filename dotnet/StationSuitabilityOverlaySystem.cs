@@ -2514,8 +2514,8 @@ namespace StationSuitabilityOverlay
                 Mod.Log.Info(
                     $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
                     $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard right now, " +
-                    $"judged at {(entry.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture)}% " +
-                    $"(peak {(entry.m_PeakUsage * 100f).ToString("F0", CultureInfo.InvariantCulture)}%) " +
+                    $"judged at {(entry.m_Usage * 100f).ToString("F1", CultureInfo.InvariantCulture)}% " +
+                    $"(peak {(entry.m_PeakUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%) " +
                     $"{(entry.m_WindowSamples > 0 ? $"from {entry.m_WindowSamples.ToString(CultureInfo.InvariantCulture)} readings over {entry.m_WindowGameHours.ToString("F1", CultureInfo.InvariantCulture)}h" : "from this reading alone")}, " +
                     $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, typicalWait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"{(entry.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(entry.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km");
@@ -2781,9 +2781,20 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            // Only the strongest candidates are worth this: each one needs its own
-            // routing pass over the whole matrix.
-            int evaluate = math.min(m_RouteCandidates.Count, settings.RouteCount * 2);
+            // Each candidate needs its own routing pass over the whole matrix, so this
+            // is bounded — but the bound has to cover every network, not just the
+            // busiest. Candidates arrive sorted by corridor flow, and a lattice
+            // corridor's flow is systematically lower than a street's, so a cap of
+            // RouteCount * 2 scored the road candidates and nothing else: every rail
+            // and water candidate kept an enabled demand of zero and sank to the
+            // bottom of a ranking led by exactly that number.
+            int evaluate = math.min(m_RouteCandidates.Count, settings.RouteCount * MaxScoredPerRoute);
+            if (m_RouteCandidates.Count > evaluate)
+            {
+                Mod.Log.Info(
+                    $"  transfer scoring capped at {(evaluate).ToString(CultureInfo.InvariantCulture)} of " +
+                    $"{m_RouteCandidates.Count} candidates; the rest keep an enabled demand of zero and rank on corridor flow alone");
+            }
             float discount = settings.TransferDiscount;
 
             var baseLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
@@ -3088,6 +3099,10 @@ namespace StationSuitabilityOverlay
         // Least a network's reference flow may be, as a share of the road network's.
         // Stops an empty lattice from justifying a line on noise.
         private const float MinNetworkReferenceShare = 0.25f;
+        // Candidates transfer-scored per requested route. Four networks each grow up
+        // to RouteCount * 2, so this covers all of them rather than only the network
+        // whose corridors happen to carry the most flow per edge.
+        private const int MaxScoredPerRoute = 8;
         // How close a sampled stop entity has to be to a collected line's stop to be
         // the same stop. Generous, because the two come from different game components
         // and their positions need not agree exactly.
