@@ -339,6 +339,14 @@ namespace StationSuitabilityOverlay
         // back to it without re-deriving the mapping the pass above already did.
         private int[]? m_PairFlow;
         private int m_PairCount;
+        // Carried journeys from the discount's first pass: which pair, and how long the
+        // existing network takes over it. Held so the ceiling can be derived from the
+        // whole set before any weight is touched.
+        private int[]? m_ServedPairs;
+        private float[]? m_ServedSeconds;
+        // A copy for the median, because selecting it reorders what it is given and the
+        // second pass still needs the travel times in journey order.
+        private float[]? m_ServedScratch;
 
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
@@ -346,6 +354,9 @@ namespace StationSuitabilityOverlay
         private float[]? m_DemandRaster;
         private int2 m_ZoneGrid;
         private float m_LastDemandRefresh;
+        // Total weight of every journey extracted this refresh. The denominator for a
+        // candidate's reach: "how much of this city's travel would the line unlock".
+        private float m_TotalTravelWeight;
         private bool m_GraphDirty = true;
         private RouteGoal m_LastObjective;
         private int m_LastRouteCount;
@@ -2237,6 +2248,7 @@ namespace StationSuitabilityOverlay
 
                 job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
                 totalWeight = SuitabilityTravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount);
+                m_TotalTravelWeight = totalWeight;
             }
             finally
             {
@@ -2758,8 +2770,21 @@ namespace StationSuitabilityOverlay
             int[] pairDests = m_PairDests;
             int[] pairFlow = m_PairFlow;
 
-            float weightBefore = 0f;
-            float weightAfter = 0f;
+            if (m_ServedPairs is null || m_ServedSeconds is null || m_ServedScratch is null
+                || m_ServedPairs.Length < m_PairCount)
+            {
+                m_ServedPairs = new int[m_PairCount];
+                m_ServedSeconds = new float[m_PairCount];
+                m_ServedScratch = new float[m_PairCount];
+            }
+
+            int[] servedPairIndex = m_ServedPairs;
+            float[] servedSeconds = m_ServedSeconds;
+            float[] medianScratch = m_ServedScratch;
+
+            // First pass: find out which journeys the network carries, and how long it
+            // takes over each. No weight is touched yet, because the ceiling the
+            // discount is measured against comes from this whole set.
             int servedPairs = 0;
             int currentOrigin = -1;
             for (int i = 0; i < m_PairCount; i++)
@@ -2785,21 +2810,35 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                // How much of the journey the existing network absorbs. A trip it
-                // carries in a few minutes drops out almost entirely; one that takes
-                // most of the hour ceiling barely moves, because it still deserves a
-                // better option. The search is capped at MaxJourneySeconds, so this
-                // ratio cannot leave 0..1.
-                ZoneFlow flow = m_ZoneFlows[pairFlow[i]];
-                weightBefore += flow.m_Weight;
-                flow.m_Weight *= SuitabilityScoring.Saturate(travelTime / MaxJourneySeconds);
-                weightAfter += flow.m_Weight;
+                servedPairIndex[servedPairs] = pairFlow[i];
+                servedSeconds[servedPairs] = travelTime;
                 servedPairs++;
-                m_ZoneFlows[pairFlow[i]] = flow;
+            }
+
+            Array.Copy(servedSeconds, medianScratch, servedPairs);
+            float ceiling = SuitabilityTransit.ServedCeiling(
+                medianScratch, servedPairs, ServedCeilingMultiple,
+                MaxJourneySeconds, MinPairsForServedMedian, out float medianSeconds);
+
+            // Second pass: how much of each carried journey the network absorbs. One it
+            // handles in a fraction of the city's typical transit journey drops out
+            // almost entirely; one taking three times that keeps its whole weight,
+            // because it still deserves a better option.
+            float weightBefore = 0f;
+            float weightAfter = 0f;
+            for (int i = 0; i < servedPairs; i++)
+            {
+                ZoneFlow flow = m_ZoneFlows[servedPairIndex[i]];
+                weightBefore += flow.m_Weight;
+                flow.m_Weight *= SuitabilityScoring.Saturate(servedSeconds[i] / ceiling);
+                weightAfter += flow.m_Weight;
+                m_ZoneFlows[servedPairIndex[i]] = flow;
             }
 
             Mod.Log.Info(
                 $"Served-demand discount: {(servedPairs).ToString(CultureInfo.InvariantCulture)} of {(m_PairCount).ToString(CultureInfo.InvariantCulture)} routable pairs already carried, " +
+                $"median carried journey {(medianSeconds).ToString("F0", CultureInfo.InvariantCulture)}s -> ceiling {(ceiling).ToString("F0", CultureInfo.InvariantCulture)}s " +
+                $"({(ceiling >= MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median, or a slow network" : $"{ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median")}); " +
                 $"weight {(weightBefore).ToString("F0", CultureInfo.InvariantCulture)} -> {(weightAfter).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"({((weightBefore > 0f ? (1f - weightAfter / weightBefore) * 100f : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% absorbed by existing lines)");
         }
@@ -3242,9 +3281,16 @@ namespace StationSuitabilityOverlay
         // Stops an empty lattice from justifying a line on noise.
         private const float MinNetworkReferenceShare = 0.25f;
         // Candidates transfer-scored per requested route. Four networks each grow up
-        // to RouteCount * 2, so this covers all of them rather than only the network
+        // to RouteCount * 4, so this covers all of them rather than only the network
         // whose corridors happen to carry the most flow per edge.
-        private const int MaxScoredPerRoute = 8;
+        //
+        // It has to rise with that budget. Candidates enter scoring sorted by corridor
+        // flow, and enabled demand does not follow flow at all — the best candidate in
+        // one refresh carried a corridor flow of 63 and unlocked more journeys than
+        // anything else in the run. A scoring window narrower than the candidate set
+        // would drop exactly that kind of line, unscored, to the bottom of a ranking
+        // led by the number it never got.
+        private const int MaxScoredPerRoute = 16;
         // How close a sampled stop entity has to be to a collected line's stop to be
         // the same stop. Generous, because the two come from different game components
         // and their positions need not agree exactly.
@@ -3259,8 +3305,16 @@ namespace StationSuitabilityOverlay
         // drawing at all. Deliberately tiny: this rejects corridors with nothing on
         // them, not weak ones.
         private const float MinCandidateFlow = 1f;
-        // Journeys longer than this are not realistically made by transit.
+        // Journeys longer than this are not realistically made by transit. Also the
+        // routing cap, and the fallback ceiling for the served-demand discount when
+        // the network carries too little for a median to mean anything.
         private const float MaxJourneySeconds = 3600f;
+        // A journey taking this many times the city's typical transit journey is not
+        // carried in any useful sense, so it keeps its whole weight.
+        private const float ServedCeilingMultiple = 3f;
+        // Below this many carried journeys the median is noise, and the fixed hour is
+        // the more honest reference.
+        private const int MinPairsForServedMedian = 20;
 
         // What each network's corridor growth is allowed to consider: the share of the
         // network's own mean edge flow an edge must carry to be eligible, and the
@@ -3279,7 +3333,13 @@ namespace StationSuitabilityOverlay
         // CONSIDERED rather than what may be suggested.
         private const float RoadFlowFraction = 0.1f;
         private const float RoadMaxRouteMetres = 12000f;
-        private const float TrainFlowFraction = 0.3f;
+        // Lowered from 0.3. The floor is a share of the network's OWN mean edge flow,
+        // and the train lattice's mean is high (96 against the metro lattice's 40)
+        // precisely because preferring existing track concentrates flow onto it — so
+        // the same fraction bit three times harder here. Corridors averaged 606 m
+        // against a 4000 m minimum for a train, and 166 extensions per refresh were
+        // refused by this floor alone: no train candidate ever reached scoring.
+        private const float TrainFlowFraction = 0.1f;
         private const float TrainMaxRouteMetres = 20000f;
         private const float MetroFlowFraction = 0.2f;
         private const float MetroMaxRouteMetres = 15000f;
@@ -3656,7 +3716,6 @@ namespace StationSuitabilityOverlay
             {
                 SuggestedRoute candidate = m_RouteCandidates[i];
 
-                float beforeFlow = candidate.CapturedFlow;
                 float networkReference = references.For(candidate.Network);
                 SuggestedRoute? resolved = ResolveCandidateMode(
                     candidate, i, gridSize, networkReference, roadReference, scratch, ref retraced);
@@ -3668,13 +3727,26 @@ namespace StationSuitabilityOverlay
 
                 candidate = resolved;
 
+                // From here the candidate is judged as it will actually RUN. A
+                // re-traced candidate is a road line now: its flow is the road path's
+                // and its floors are the road network's, while `corridorFlow` and the
+                // reference above still describe the lattice corridor it was grown as.
+                //
+                // Mixing the two put "corridorFlow=63 (floor 143)" on a KEPT tram in
+                // the log — a line reading as approved below its own floor, against a
+                // floor computed from a network it no longer runs on. The preamble two
+                // screens up says these quantities must never be compared with each
+                // other; this was the log doing it.
+                float corridorFlow = candidate.CapturedFlow;
+                networkReference = references.For(candidate.Network);
+
                 // Placing the stops trimmed the line back to its termini, which can
                 // leave it shorter than the floor ChooseMode approved it against.
                 if (!SuitabilityRoutes.KeepsItsFloor(candidate))
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
                         $"under the {(TransitModes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
@@ -3693,22 +3765,22 @@ namespace StationSuitabilityOverlay
                 // newly serve, corridor flow says people travel this way at all. A
                 // city with no transit yet has no enabled demand anywhere, so corridor
                 // flow has to be able to carry a suggestion on its own.
-                if (candidate.EnabledDemand <= 0f && beforeFlow < networkReference * MinFlowShareOfReference)
+                if (candidate.EnabledDemand <= 0f && corridorFlow < networkReference * MinFlowShareOfReference)
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
                         $"(needs {(networkReference * MinFlowShareOfReference).ToString("F0", CultureInfo.InvariantCulture)} without enabled demand), enabledDemand=0, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, too little travel on this corridor to justify a line");
                     continue;
                 }
 
                 // A corridor nobody travels at all is not a suggestion.
-                if (beforeFlow <= MinCandidateFlow)
+                if (corridorFlow <= MinCandidateFlow)
                 {
                     rejected++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
                         $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
                     continue;
@@ -3719,7 +3791,7 @@ namespace StationSuitabilityOverlay
                 {
                     duplicates++;
                     Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"{candidate.Stops.Count} stops — DROPPED, already built");
                     continue;
@@ -3730,7 +3802,7 @@ namespace StationSuitabilityOverlay
                     SuggestedWaitFor(candidate.Mode) * 2f);
 
                 Mod.Log.Info(
-                    $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                    $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
                     $"(floor {(networkReference * TransitModes.MinFlowMultipleFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}), " +
                     $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops, {(candidate.Vehicles).ToString(CultureInfo.InvariantCulture)} veh — KEPT");
@@ -3762,8 +3834,13 @@ namespace StationSuitabilityOverlay
             ref int retraced)
         {
             float beforeFlow = candidate.CapturedFlow;
-            if (SuitabilityRoutes.ChooseMode(candidate.Network, candidate.CapturedFlow, candidate.Length,
-                    networkReference, out ModePreset mode, out SuitabilityRoutes.ModeRejection why))
+            var evidence = new CorridorEvidence(
+                candidate.CapturedFlow,
+                candidate.Length,
+                m_TotalTravelWeight > 0f ? candidate.EnabledDemand / m_TotalTravelWeight : 0f,
+                TrackShareOf(candidate));
+            if (TransitModes.ChooseMode(candidate.Network, evidence, networkReference,
+                    out ModePreset mode, out ModeRejection why))
             {
                 // Spacing is mode-specific, so a changed mode needs its stops back.
                 if (mode != candidate.Mode)
@@ -3780,7 +3857,7 @@ namespace StationSuitabilityOverlay
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: road, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
                     $"(tram floor {(networkReference * TransitModes.MinFlowMultipleFor(ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops — DROPPED, " +
-                    $"{(why == SuitabilityRoutes.ModeRejection.TooShort ? $"too short: it clears a demand floor but not the {TransitModes.MinLengthFor(ModePreset.Bus).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a Bus" : "below every demand floor")}");
+                    $"{(why == ModeRejection.TooShort ? $"too short: it clears a demand bar but not the {TransitModes.MinLengthFor(ModePreset.Bus).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a Bus" : "below every demand bar")}");
                 return null;
             }
 
@@ -3797,7 +3874,9 @@ namespace StationSuitabilityOverlay
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, " +
                     $"networkReference={(networkReference).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, " +
-                    $"{(why == SuitabilityRoutes.ModeRejection.TooShort ? "too short for any mode this alignment carries" : "below every demand floor")} and no road path between its ends");
+                    $"{(why == ModeRejection.TooShort ? "too short for any mode this alignment carries" : "below every demand bar")} and no road path between its ends" +
+                    $" (reach {(evidence.EnabledDemandShare * 100f).ToString("F1", CultureInfo.InvariantCulture)}% of city travel, " +
+                    $"{(evidence.TrackShare * 100f).ToString("F0", CultureInfo.InvariantCulture)}% on existing track)");
                 return null;
             }
 
@@ -3844,6 +3923,44 @@ namespace StationSuitabilityOverlay
         // each stop sits. Previously this MOVED the stop to the best nearby tile,
         // which is why markers ended up sitting beside their own line instead of on
         // it; the route builder now only asks how good a point is.
+        // How much of a candidate runs along rail that already exists.
+        //
+        // The rail lattice already PREFERS existing track through its cost scale, but
+        // nothing measured whether the result actually used any. A train that extends
+        // the network the city has is cheaper to build and likelier to be wanted than
+        // one on fresh alignment, so ChooseMode lets it clear its reach bar on less
+        // demand — a preference, not a requirement.
+        //
+        // Zero for anything not grown on the rail lattice: a street or a ferry
+        // crossing has no rail alignment to follow.
+        private float TrackShareOf(SuggestedRoute route)
+        {
+            if (route.Network != RouteNetwork.Rail || m_TrackMask is null || route.Path.Count < 2)
+            {
+                return 0f;
+            }
+
+            int onTrack = 0;
+            int sampled = 0;
+            for (int i = 0; i < route.Path.Count; i++)
+            {
+                int2 cell = SuitabilityInputs.WorldToCell(route.Path[i], m_ScoreWorldMin, TileSize, m_IntensityGrid);
+                int index = cell.x + cell.y * m_IntensityGrid.x;
+                if (index < 0 || index >= m_TrackMask.Length)
+                {
+                    continue;
+                }
+
+                sampled++;
+                if (m_TrackMask[index] != 0)
+                {
+                    onTrack++;
+                }
+            }
+
+            return sampled > 0 ? onTrack / (float)sampled : 0f;
+        }
+
         private float ScoreAtWorld(float2 point, int2 gridSize)
         {
             if (m_Scores is null)

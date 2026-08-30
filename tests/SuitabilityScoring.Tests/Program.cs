@@ -96,6 +96,12 @@ namespace StationSuitabilityOverlay.Tests
             Run("A plan never asks for fewer vehicles than the game already wants", PlanRespectsTheGamesTarget);
             Run("A plan is sized from the peak, not from one reading", PlanSizesFromThePeak);
             Run("A plan quotes the interval that yields its fleet", PlanQuotesAnInterval);
+            Run("A train is justified by reach where flow alone never could", TrainJustifiedByReach);
+            Run("Reach cannot justify a mode that is still too short", ReachDoesNotExcuseLength);
+            Run("Following existing track lowers a train's reach bar", TrackFollowingEasesTheTrainBar);
+            Run("Only the train may be justified by reach", ReachIsTrainOnly);
+            Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
+            Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
 
             Console.WriteLine();
@@ -1522,6 +1528,153 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertEqual(expected, built.Count, 0, "exactly the pairs within the radius");
             AssertTrue(expected > 20, $"the fixture must actually produce interchanges, got {expected}");
+        }
+
+        // A train's value is the distance it spans, and a corridor spanning twenty
+        // kilometres necessarily spreads its flow thin over every one of its edges. On
+        // a real city the rail lattice's mean edge flow was 96, so the 8x multiple
+        // asked for 764 while the best rail corridor anywhere carried 131 — no train
+        // candidate ever reached scoring, and the log blamed length because that gate
+        // failed first.
+        private static void TrainJustifiedByReach()
+        {
+            const float reference = 96f;
+
+            // Long, thin, and unlocking 3% of the city's journeys.
+            var byReach = new CorridorEvidence(flow: 131f, length: 12000f, enabledDemandShare: 0.03f, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Rail, byReach, reference, out ModePreset mode, out ModeRejection why),
+                $"a long corridor unlocking real travel must justify something, got {why}");
+            AssertTrue(mode == ModePreset.Train, $"expected Train, got {mode}");
+
+            // The same corridor unlocking almost nothing still cannot.
+            var noReach = new CorridorEvidence(flow: 131f, length: 12000f, enabledDemandShare: 0.001f, trackShare: 0f);
+            AssertTrue(
+                !TransitModes.ChooseMode(RouteNetwork.Rail, noReach, reference, out _, out ModeRejection quiet),
+                "reach below the bar and flow below every floor justifies nothing");
+            AssertTrue(quiet == ModeRejection.DemandTooLow, $"expected DemandTooLow, got {quiet}");
+
+            // Sheer volume is still a way through, unchanged.
+            var byVolume = new CorridorEvidence(flow: reference * 9f, length: 12000f, enabledDemandShare: 0f, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Rail, byVolume, reference, out ModePreset heavy, out _),
+                "a corridor carrying nine times the typical edge still justifies a train");
+            AssertTrue(heavy == ModePreset.Train, $"expected Train, got {heavy}");
+        }
+
+        // Reach is a second way to clear the DEMAND bar, not a way past the length one.
+        private static void ReachDoesNotExcuseLength()
+        {
+            // 1500 m is under the 4000 m a train needs but over the 2000 m a metro does.
+            var evidence = new CorridorEvidence(flow: 1f, length: 1500f, enabledDemandShare: 0.5f, trackShare: 0f);
+            AssertTrue(
+                !TransitModes.ChooseMode(RouteNetwork.Rail, evidence, 96f, out _, out ModeRejection why),
+                "a short corridor cannot become a train however much it would unlock");
+            AssertTrue(why == ModeRejection.TooShort,
+                $"and the rejection must name length, not demand — got {why}");
+        }
+
+        // A train running along track the city already has is an extension rather than
+        // a new alignment: cheaper to build, likelier to be wanted, so it clears the
+        // reach bar on half the demand. A preference, not a requirement.
+        private static void TrackFollowingEasesTheTrainBar()
+        {
+            float bar = TransitModes.MinEnabledDemandShareFor(ModePreset.Train);
+            float between = bar * 0.75f;
+
+            var offTrack = new CorridorEvidence(flow: 1f, length: 12000f, enabledDemandShare: between, trackShare: 0f);
+            AssertTrue(
+                !TransitModes.ChooseMode(RouteNetwork.Rail, offTrack, 96f, out _, out _),
+                "below the full bar on fresh alignment, this is not a train");
+
+            var onTrack = new CorridorEvidence(
+                flow: 1f, length: 12000f, enabledDemandShare: between,
+                trackShare: TransitModes.MostlyOnTrackShare);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Rail, onTrack, 96f, out ModePreset mode, out _),
+                "the same corridor along existing track is an extension and does qualify");
+            AssertTrue(mode == ModePreset.Train, $"expected Train, got {mode}");
+        }
+
+        // Density is what justifies every other mode. Letting reach speak for them too
+        // would put a tram on a street nobody travels because the line happens to touch
+        // a busy interchange.
+        private static void ReachIsTrainOnly()
+        {
+            foreach (ModePreset mode in TransitModes.All)
+            {
+                float bar = TransitModes.MinEnabledDemandShareFor(mode);
+                if (mode == ModePreset.Train)
+                {
+                    AssertTrue(bar > 0f, "a train must have a reach bar");
+                    continue;
+                }
+
+                AssertEqual(0f, bar, 0f, $"{mode} must not be justifiable by reach alone");
+            }
+
+            // A quiet, long road corridor unlocking a great deal is still only a bus,
+            // which is the mode with no demand floor at all.
+            var evidence = new CorridorEvidence(flow: 1f, length: 12000f, enabledDemandShare: 0.5f, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Road, evidence, 140f, out ModePreset road, out _),
+                "a road corridor always yields something");
+            AssertTrue(road == ModePreset.Bus, $"expected Bus, not a tram bought with reach — got {road}");
+        }
+
+        // "Already served" has to mean slow FOR HERE. Against a fixed hour a ten-minute
+        // trip kept a sixth of its weight whether the city was three kilometres across
+        // or thirty, so a compact well-served city absorbed 94% of all its travel.
+        private static void ServedCeilingScalesToTheCity()
+        {
+            // A brisk city: journeys carried in about three minutes.
+            var brisk = new float[40];
+            for (int i = 0; i < brisk.Length; i++)
+            {
+                brisk[i] = 180f + i;
+            }
+
+            float ceiling = SuitabilityTransit.ServedCeiling(
+                brisk, brisk.Length, multiple: 3f, fallback: 3600f, minSamples: 20, out float median);
+            AssertEqual(200f, median, 20f, "the median of the carried journeys");
+            AssertEqual(median * 3f, ceiling, 1e-3f, "the ceiling is a multiple of it");
+            AssertTrue(ceiling < 3600f, "and well inside the fixed hour");
+
+            // The same journey is discounted far less here than against the fixed hour.
+            float keptNow = 180f / ceiling;
+            float keptBefore = 180f / 3600f;
+            AssertTrue(keptNow > keptBefore * 3f,
+                $"a typical journey must keep meaningfully more of its weight ({keptNow} vs {keptBefore})");
+
+            // A slow city's ceiling is capped at the point a trip stops being transit.
+            var slow = new float[40];
+            for (int i = 0; i < slow.Length; i++)
+            {
+                slow[i] = 2000f;
+            }
+
+            float slowCeiling = SuitabilityTransit.ServedCeiling(
+                slow, slow.Length, multiple: 3f, fallback: 3600f, minSamples: 20, out _);
+            AssertEqual(3600f, slowCeiling, 1e-3f, "never past the router's own horizon");
+        }
+
+        // A median over a handful of journeys is noise, which is the risk this approach
+        // carries on a thin network.
+        private static void ServedCeilingFallsBack()
+        {
+            var few = new[] { 100f, 120f, 140f };
+            AssertEqual(
+                3600f,
+                SuitabilityTransit.ServedCeiling(few, few.Length, 3f, 3600f, minSamples: 20, out float median),
+                1e-3f,
+                "too few carried journeys falls back to the fixed hour");
+            AssertEqual(0f, median, 0f, "and reports no median, rather than a misleading one");
+
+            AssertEqual(
+                3600f,
+                SuitabilityTransit.ServedCeiling(new float[0], 0, 3f, 3600f, 20, out _),
+                1e-3f,
+                "a network carrying nothing falls back too");
         }
 
         private static float[] NewNovelty(int nodes)

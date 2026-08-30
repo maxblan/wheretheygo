@@ -3,19 +3,6 @@ using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
 {
-    // Which network a mode's routes are traced over.
-    internal enum RouteNetwork
-    {
-        // Streets: buses and trams have to use the road network.
-        Road = 0,
-        // Land lattice blended with existing rail. Trains prefer to reuse track that
-        // already exists and only strike out on new alignment when they must; metros
-        // are the other way round, since a tunnel goes wherever it likes.
-        Rail = 1,
-        // Open water, for ferries.
-        Water = 2,
-    }
-
     // A free-form graph laid over the map on a regular grid, for modes that are not
     // bound to the road network. Nodes exist only where the mask allows, and
     // 8-connected neighbours are joined so diagonals are available.

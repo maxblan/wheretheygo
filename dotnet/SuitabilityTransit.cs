@@ -449,6 +449,54 @@ namespace StationSuitabilityOverlay
             return credited;
         }
 
+        // The travel time past which a journey counts as not carried at all, taken from
+        // the city's OWN typical transit journey rather than from a fixed hour.
+        //
+        // The discount asks "how much of this journey does the existing network already
+        // absorb", and answering it against an absolute ceiling made the answer depend
+        // on the size of the map. A ten-minute trip kept a sixth of its weight whether
+        // the city was three kilometres across or thirty, so on a compact, well-served
+        // city almost every journey read as fully served — 94% of all travel weight
+        // absorbed, leaving the suggestions to be driven by the remainder.
+        //
+        // Scaled to the median, "slow" means slow for here. This is how the mod already
+        // sets its other bars: the nearly-empty threshold is a share of the city's
+        // median line usage and the long-wait bar a multiple of its median interval.
+        //
+        // `travelTimes` is REORDERED in place — it is a scratch buffer, and must not be
+        // the array the caller still needs in journey order. `median` is handed back so
+        // the caller can report the figure the ceiling came from without running the
+        // selection again over a buffer that is now shuffled.
+        //
+        // Falls back when too few journeys are carried for a median to mean anything,
+        // which is exactly the risk this approach carries on a thin network.
+        public static float ServedCeiling(
+            float[] travelTimes,
+            int count,
+            float multiple,
+            float fallback,
+            int minSamples,
+            out float median)
+        {
+            median = 0f;
+            if (travelTimes is null || count < minSamples || count <= 0 || multiple <= 0f)
+            {
+                return fallback;
+            }
+
+            median = SuitabilityScoring.SelectKth(travelTimes, count, count / 2);
+            if (median <= 0f)
+            {
+                return fallback;
+            }
+
+            // Never past the point where a journey stops being a transit trip at all:
+            // the router itself refuses to look further, so a larger ceiling would only
+            // mean nothing is ever counted as fully carried.
+            float ceiling = median * multiple;
+            return ceiling > fallback ? fallback : ceiling;
+        }
+
         // Re-assigns zones to the nearest stop once a PROPOSED line's stops are added
         // to the network.
         //

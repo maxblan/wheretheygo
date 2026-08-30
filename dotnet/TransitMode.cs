@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿using System;
+using System.Globalization;
 
 namespace StationSuitabilityOverlay
 {
@@ -26,6 +27,61 @@ namespace StationSuitabilityOverlay
         Tram = 2,
         Train = 3,
         Ferry = 4,
+    }
+
+    // Which network a mode's routes are traced over. Here rather than beside the
+    // lattice that builds one, because which alignment a mode may use is a fact about
+    // the mode.
+    internal enum RouteNetwork
+    {
+        // Streets: buses and trams have to use the road network.
+        Road = 0,
+        // Land lattice blended with existing rail. Trains prefer to reuse track that
+        // already exists and only strike out on new alignment when they must; metros
+        // are the other way round, since a tunnel goes wherever it likes.
+        Rail = 1,
+        // Open water, for ferries.
+        Water = 2,
+    }
+
+    // Why no mode on an alignment was justified. One `false` from ChooseMode used to
+    // cover both, and the log always blamed demand: four corridors carrying 965-1488
+    // against a tram floor of 938 were reported as "below every floor" when every one
+    // of them had failed on LENGTH. A wrong reason in the log sends the next person
+    // diagnosing this at the wrong half of the pipeline.
+    internal enum ModeRejection
+    {
+        None = 0,
+        DemandTooLow = 1,
+        TooShort = 2,
+    }
+
+    // What is known about a grown corridor when its mode is chosen.
+    //
+    // Passed as one value because the decision consumes them together: a mode is
+    // justified by evidence, and which evidence counts differs by mode.
+    internal readonly struct CorridorEvidence
+    {
+        public CorridorEvidence(float flow, float length, float enabledDemandShare, float trackShare)
+        {
+            Flow = flow;
+            Length = length;
+            EnabledDemandShare = enabledDemandShare;
+            TrackShare = trackShare;
+        }
+
+        // Length-weighted mean demand per network edge along the corridor.
+        public float Flow { get; }
+
+        public float Length { get; }
+
+        // Share of the city's whole travel weight this line would put on the network,
+        // counting journeys it forms any leg of. Zero before transfer scoring has run.
+        public float EnabledDemandShare { get; }
+
+        // Share of the corridor that runs along rail that already exists. Only
+        // meaningful on the rail lattice; zero everywhere else.
+        public float TrackShare { get; }
     }
 
     // What a suggested route is grown to maximise.
@@ -148,6 +204,114 @@ namespace StationSuitabilityOverlay
                 case ModePreset.Ferry: return 1f;
                 default: return 0f;
             }
+        }
+
+        // Modes a given alignment can carry, best capacity first. Choosing among these
+        // is what lets an under-used rail corridor come back as something feasible
+        // instead of being dropped for not justifying a metro.
+        public static ModePreset[] ModesFor(RouteNetwork network)
+        {
+            switch (network)
+            {
+                case RouteNetwork.Rail:
+                    return new[] { ModePreset.Train, ModePreset.Metro };
+                case RouteNetwork.Water:
+                    return new[] { ModePreset.Ferry };
+                default:
+                    // Streets can host either, and a bus has no capacity floor, so a
+                    // road corridor always yields a usable suggestion.
+                    return new[] { ModePreset.Tram, ModePreset.Bus };
+            }
+        }
+
+        // Minimum length of the least demanding mode this network can host.
+        public static float ShortestModeLength(RouteNetwork network)
+        {
+            ModePreset[] options = ModesFor(network);
+            float shortest = float.MaxValue;
+            for (int i = 0; i < options.Length; i++)
+            {
+                shortest = Math.Min(shortest, MinLengthFor(options[i]));
+            }
+
+            return shortest;
+        }
+
+        // Share of the city's whole travel weight a line must unlock before its REACH
+        // alone can justify the mode, with no demand floor met on any single edge.
+        //
+        // Only a train has one. A tram or a metro is justified by density — enough
+        // people on one corridor to fill a big vehicle often — and MinFlowMultipleFor
+        // is the right bar for that. A train is justified by DISTANCE: its value is
+        // connecting places far enough apart that nothing else can keep to time, and a
+        // corridor spanning twenty kilometres of a city necessarily spreads its flow
+        // thin over every one of its edges.
+        //
+        // Judging a train on flow alone made it unreachable. On a real city the rail
+        // lattice's mean edge flow was 96, so the 8x multiple asked for 764 while the
+        // best rail corridor anywhere carried 131 — no train candidate ever reached
+        // scoring, and the log blamed length because that gate failed first.
+        //
+        // Zero means "this mode cannot be justified by reach", which is the answer for
+        // every mode but the train.
+        public static float MinEnabledDemandShareFor(ModePreset mode)
+        {
+            switch (mode)
+            {
+                case ModePreset.Train: return 0.02f;
+                default: return 0f;
+            }
+        }
+
+        // How much of the corridor has to run along existing track before it counts as
+        // extending the rail network rather than laying a new one.
+        public const float MostlyOnTrackShare = 0.6f;
+
+        // What that earns: a train following track the city already has is an
+        // extension, which is cheaper to build and likelier to be wanted, so it clears
+        // the reach bar on half the demand. A preference, not a gate — a genuinely
+        // good alignment across fresh ground is still allowed to justify itself.
+        public const float OnTrackReachRelief = 0.5f;
+
+        // Highest-capacity mode whose evidence and minimum length this corridor
+        // actually meets. Returns false when nothing on this alignment is justified,
+        // and says which test did the rejecting.
+        public static bool ChooseMode(
+            RouteNetwork network,
+            CorridorEvidence evidence,
+            float referenceFlow,
+            out ModePreset mode,
+            out ModeRejection rejection)
+        {
+            ModePreset[] options = ModesFor(network);
+            bool metSomeBar = false;
+            for (int i = 0; i < options.Length; i++)
+            {
+                ModePreset option = options[i];
+                bool byFlow = evidence.Flow >= referenceFlow * MinFlowMultipleFor(option);
+
+                float reachBar = MinEnabledDemandShareFor(option);
+                if (reachBar > 0f && evidence.TrackShare >= MostlyOnTrackShare)
+                {
+                    reachBar *= OnTrackReachRelief;
+                }
+
+                bool byReach = reachBar > 0f && evidence.EnabledDemandShare >= reachBar;
+
+                metSomeBar |= byFlow || byReach;
+                if ((byFlow || byReach) && evidence.Length >= MinLengthFor(option))
+                {
+                    mode = option;
+                    rejection = ModeRejection.None;
+                    return true;
+                }
+            }
+
+            // A corridor that cleared some mode's bar and still found nothing to run
+            // was rejected for being short, not for carrying nobody.
+            rejection = metSomeBar ? ModeRejection.TooShort : ModeRejection.DemandTooLow;
+            mode = options[options.Length - 1];
+            return false;
         }
 
         // The mode a struggling line should grow into. Ordered by capacity, so a bus

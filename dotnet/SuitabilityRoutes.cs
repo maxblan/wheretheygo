@@ -135,6 +135,10 @@ namespace StationSuitabilityOverlay
             // short or too light, and stopping at maxRoutes attempts left the merged
             // set far thinner than the requested count.
             //
+            // Four per requested route, not two. On a real city the road network — the
+            // one every surviving suggestion came from — hit the old budget every
+            // refresh and said so, while the lattices never came close to theirs.
+            //
             // The budget is counted PER NETWORK, not against the shared output list.
             // Testing output.Count made one shared allowance that whichever network ran
             // first consumed: roads run first, and once their corridors grew long
@@ -142,9 +146,9 @@ namespace StationSuitabilityOverlay
             // metro and ferry growth was skipped entirely — not one attempt, not one
             // rejected extension, no trains ever suggested however much demand there
             // was for one.
-            int attempts = maxRoutes * 4;
+            int attempts = maxRoutes * 8;
             int added = 0;
-            int budget = maxRoutes * 2;
+            int budget = maxRoutes * 4;
             for (int r = 0; r < attempts && added < budget; r++)
             {
                 if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight,
@@ -247,7 +251,7 @@ namespace StationSuitabilityOverlay
                 Simplify(route.Path, SimplifyTolerance);
             }
 
-            if (route.Length < ShortestModeLength(network.Network))
+            if (route.Length < TransitModes.ShortestModeLength(network.Network))
             {
                 shorterThanAnyMode = true;
                 return null;
@@ -257,19 +261,6 @@ namespace StationSuitabilityOverlay
             return route.Stops.Count >= 2 ? route : null;
         }
 
-        // Minimum length of the least demanding mode this network can host.
-        private static float ShortestModeLength(RouteNetwork network)
-        {
-            ModePreset[] options = ModesFor(network);
-            float shortest = float.MaxValue;
-            for (int i = 0; i < options.Length; i++)
-            {
-                shortest = math.min(shortest, TransitModes.MinLengthFor(options[i]));
-            }
-
-            return shortest;
-        }
-
         // On the street network the only choice is how heavy the corridor is, and the
         // bar is the tram's own capacity floor rather than a second copy of it.
         private static ModePreset ClassifyStreetMode(float corridorFlow, float meanFlow)
@@ -277,70 +268,6 @@ namespace StationSuitabilityOverlay
             return corridorFlow >= meanFlow * TransitModes.MinFlowMultipleFor(ModePreset.Tram)
                 ? ModePreset.Tram
                 : ModePreset.Bus;
-        }
-
-        // Modes a given alignment can carry, best capacity first. Choosing among these
-        // is what lets an under-used rail corridor come back as something feasible
-        // instead of being dropped for not justifying a metro.
-        public static ModePreset[] ModesFor(RouteNetwork network)
-        {
-            switch (network)
-            {
-                case RouteNetwork.Rail:
-                    return new[] { ModePreset.Train, ModePreset.Metro };
-                case RouteNetwork.Water:
-                    return new[] { ModePreset.Ferry };
-                default:
-                    // Streets can host either, and a bus has no capacity floor, so a
-                    // road corridor always yields a usable suggestion.
-                    return new[] { ModePreset.Tram, ModePreset.Bus };
-            }
-        }
-
-        // Why no mode on an alignment was justified. One `false` from ChooseMode used
-        // to cover both, and the log always blamed demand: four corridors carrying
-        // 965-1488 against a tram floor of 938 were reported as "below every floor"
-        // when every one of them had failed on LENGTH. A wrong reason in the log sends
-        // the next person diagnosing this at the wrong half of the pipeline.
-        public enum ModeRejection
-        {
-            None = 0,
-            FlowTooLow = 1,
-            TooShort = 2,
-        }
-
-        // Highest-capacity mode whose demand floor and minimum length this corridor
-        // actually meets. Returns false when nothing on this alignment is justified,
-        // and says which test did the rejecting.
-        public static bool ChooseMode(
-            RouteNetwork network,
-            float flow,
-            float length,
-            float referenceFlow,
-            out ModePreset mode,
-            out ModeRejection rejection)
-        {
-            ModePreset[] options = ModesFor(network);
-            bool metSomeFloor = false;
-            for (int i = 0; i < options.Length; i++)
-            {
-                ModePreset option = options[i];
-                float floor = referenceFlow * TransitModes.MinFlowMultipleFor(option);
-                bool hasFlow = flow >= floor;
-                metSomeFloor |= hasFlow;
-                if (hasFlow && length >= TransitModes.MinLengthFor(option))
-                {
-                    mode = option;
-                    rejection = ModeRejection.None;
-                    return true;
-                }
-            }
-
-            // A corridor that cleared some mode's demand floor and still found nothing
-            // to run was rejected for being short, not for being quiet.
-            rejection = metSomeFloor ? ModeRejection.TooShort : ModeRejection.FlowTooLow;
-            mode = options[options.Length - 1];
-            return false;
         }
 
         // Fleet needed to hold the mode's assumed headway around the whole line.
@@ -389,7 +316,10 @@ namespace StationSuitabilityOverlay
             route.Length = length;
             route.CapturedFlow = roads.FlowAlong(scratch);
 
-            if (!ChooseMode(RouteNetwork.Road, route.CapturedFlow, route.Length, referenceFlow,
+            // No track share and no enabled demand: a road re-trace is judged on flow,
+            // which is the only evidence a street corridor ever had.
+            var evidence = new CorridorEvidence(route.CapturedFlow, route.Length, 0f, 0f);
+            if (!TransitModes.ChooseMode(RouteNetwork.Road, evidence, referenceFlow,
                     out ModePreset mode, out ModeRejection why))
             {
                 Mod.Log.Info(
