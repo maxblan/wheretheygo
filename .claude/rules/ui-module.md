@@ -23,6 +23,11 @@ Nothing type-checks this file, so the guard rails are explicit.
 - **The binding payloads are delimited strings** (`|` between fields, `\n` between rows). Anything
   interpolated into them — a line name the player typed, most obviously — must be sanitised of both
   delimiters on the C# side before it is appended.
+- **Anything the C# side already knows, the C# side sends.** The mode and objective names, the
+  slider bounds and the mode colours all arrive over bindings. They used to be copied into the
+  `.mjs` and kept in step by comment, and the mode list had drifted to `Bus, Tram, Metro` while the
+  enum reads `Bus, Metro, Tram` — so picking Tram selected Metro. If you are about to write a
+  table here that mirrors one in C#, add a binding instead.
 - **Key list rows by a stable identity, never by position.** The line-health list is re-sorted
   worst-first on every refresh, and both the React key and the improvement trigger use the line's own
   id for that reason. A positional index pointed at whichever line had drifted into that slot.

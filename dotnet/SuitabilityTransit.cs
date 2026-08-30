@@ -29,8 +29,6 @@ namespace StationSuitabilityOverlay
         // Per edge, parallel to Graph's edge arrays.
         public TransitEdgeKind[] EdgeKind = Array.Empty<TransitEdgeKind>();
         public int[] EdgeLine = Array.Empty<int>();
-
-        public bool IsStopNode(int node) => node >= 0 && node < StopCount;
     }
 
     // One line as the router needs it: the stops it calls at in travel order, how long
@@ -96,23 +94,7 @@ namespace StationSuitabilityOverlay
 
             // Walking between nearby stops. This is what turns a bus stop beside a
             // metro entrance into one interchange rather than two unrelated stops.
-            float walkRadiusSq = walkRadius * walkRadius;
-            for (int a = 0; a < stopCount; a++)
-            {
-                for (int b = a + 1; b < stopCount; b++)
-                {
-                    float dx = stopX[a] - stopX[b];
-                    float dz = stopZ[a] - stopZ[b];
-                    float distSq = dx * dx + dz * dz;
-                    if (distSq > walkRadiusSq)
-                    {
-                        continue;
-                    }
-
-                    float distance = (float)Math.Sqrt(distSq);
-                    AddEdge(a, b, distance / WalkSpeed, TransitEdgeKind.Walk, -1);
-                }
-            }
+            AddWalkEdges(stopX, stopZ, stopCount, walkRadius, AddEdge);
 
             for (int l = 0; l < lines.Count; l++)
             {
@@ -176,6 +158,165 @@ namespace StationSuitabilityOverlay
                 EdgeKind = kinds.ToArray(),
                 EdgeLine = edgeLines.ToArray(),
             };
+        }
+
+        // Joins every pair of stops within walking distance.
+        //
+        // Bucketed on a grid of the walk radius rather than swept exhaustively. Route
+        // scoring rebuilds this network once per candidate line — up to ninety-six
+        // times per refresh — and an all-pairs sweep over a city's five hundred stops
+        // is a hundred and twenty-five thousand distance tests each time, on the main
+        // thread.
+        //
+        // Pairs are still emitted in ascending (a, b) order, so the edge list is
+        // identical to the sweep it replaces and nothing downstream can tell them
+        // apart.
+        private static void AddWalkEdges(
+            float[] stopX,
+            float[] stopZ,
+            int stopCount,
+            float walkRadius,
+            Action<int, int, float, TransitEdgeKind, int> addEdge)
+        {
+            if (stopCount <= 1 || walkRadius <= 0f)
+            {
+                return;
+            }
+
+            StopGrid grid = StopGrid.Build(stopX, stopZ, stopCount, walkRadius);
+            float walkRadiusSq = walkRadius * walkRadius;
+            var neighbours = new List<int>();
+            for (int a = 0; a < stopCount; a++)
+            {
+                neighbours.Clear();
+                grid.CollectNeighboursAfter(a, stopX, stopZ, walkRadiusSq, neighbours);
+
+                // Ascending, so the edge list is the one the exhaustive sweep produced.
+                neighbours.Sort();
+                for (int n = 0; n < neighbours.Count; n++)
+                {
+                    int b = neighbours[n];
+                    float dx = stopX[a] - stopX[b];
+                    float dz = stopZ[a] - stopZ[b];
+                    float distance = (float)Math.Sqrt((dx * dx) + (dz * dz));
+                    addEdge(a, b, distance / WalkSpeed, TransitEdgeKind.Walk, -1);
+                }
+            }
+        }
+
+        // Stops bucketed onto a grid of the walk radius, so a stop only has to be
+        // compared with the stops in its own cell and the eight around it.
+        private readonly struct StopGrid
+        {
+            private readonly int m_Cols;
+            private readonly int m_Rows;
+            private readonly int[] m_CellOf;
+            private readonly int[] m_Offsets;
+            private readonly int[] m_ByCell;
+
+            private StopGrid(int cols, int rows, int[] cellOf, int[] offsets, int[] byCell)
+            {
+                m_Cols = cols;
+                m_Rows = rows;
+                m_CellOf = cellOf;
+                m_Offsets = offsets;
+                m_ByCell = byCell;
+            }
+
+            // Count, prefix-sum, fill — the same shape the scoring job's buckets use,
+            // and no per-cell list to allocate.
+            public static StopGrid Build(float[] stopX, float[] stopZ, int stopCount, float cellSize)
+            {
+                float minX = stopX[0];
+                float minZ = stopZ[0];
+                float maxX = minX;
+                float maxZ = minZ;
+                for (int i = 1; i < stopCount; i++)
+                {
+                    minX = Math.Min(minX, stopX[i]);
+                    minZ = Math.Min(minZ, stopZ[i]);
+                    maxX = Math.Max(maxX, stopX[i]);
+                    maxZ = Math.Max(maxZ, stopZ[i]);
+                }
+
+                int cols = Math.Max(1, (int)((maxX - minX) / cellSize) + 1);
+                int rows = Math.Max(1, (int)((maxZ - minZ) / cellSize) + 1);
+
+                var counts = new int[cols * rows];
+                var cellOf = new int[stopCount];
+                for (int i = 0; i < stopCount; i++)
+                {
+                    int cx = SuitabilityScoring.ClampInt((int)((stopX[i] - minX) / cellSize), 0, cols - 1);
+                    int cz = SuitabilityScoring.ClampInt((int)((stopZ[i] - minZ) / cellSize), 0, rows - 1);
+                    cellOf[i] = cx + cz * cols;
+                    counts[cellOf[i]]++;
+                }
+
+                var offsets = new int[counts.Length + 1];
+                int running = 0;
+                for (int c = 0; c < counts.Length; c++)
+                {
+                    offsets[c] = running;
+                    running += counts[c];
+                }
+                offsets[counts.Length] = running;
+
+                var cursor = new int[counts.Length];
+                Array.Copy(offsets, cursor, counts.Length);
+                var byCell = new int[stopCount];
+                for (int i = 0; i < stopCount; i++)
+                {
+                    byCell[cursor[cellOf[i]]++] = i;
+                }
+
+                return new StopGrid(cols, rows, cellOf, offsets, byCell);
+            }
+
+            // Every stop after `stop` in index order that is within the radius of it.
+            public void CollectNeighboursAfter(
+                int stop,
+                float[] stopX,
+                float[] stopZ,
+                float radiusSq,
+                List<int> into)
+            {
+                int ax = m_CellOf[stop] % m_Cols;
+                int az = m_CellOf[stop] / m_Cols;
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    int nz = az + dz;
+                    if (nz < 0 || nz >= m_Rows)
+                    {
+                        continue;
+                    }
+
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int nx = ax + dx;
+                        if (nx < 0 || nx >= m_Cols)
+                        {
+                            continue;
+                        }
+
+                        int cell = nx + (nz * m_Cols);
+                        for (int k = m_Offsets[cell]; k < m_Offsets[cell + 1]; k++)
+                        {
+                            int other = m_ByCell[k];
+                            if (other <= stop)
+                            {
+                                continue;
+                            }
+
+                            float sx = stopX[stop] - stopX[other];
+                            float sz = stopZ[stop] - stopZ[other];
+                            if ((sx * sx) + (sz * sz) <= radiusSq)
+                            {
+                                into.Add(other);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Walks the shortest itinerary back from `destStop`, reporting how many times

@@ -19,14 +19,12 @@ namespace StationSuitabilityOverlay
     // to draw it.
     internal sealed class ExistingLine
     {
-        public Entity m_Entity;
-        public Setting.ModePreset m_Mode;
+        public ModePreset m_Mode;
         // The name the game shows for this line, so the panel and the Transportation
         // Overview agree instead of the mod inventing its own numbering.
         public string m_Name = string.Empty;
         public readonly List<int> m_StopIndices = new List<int>();
         public readonly List<float> m_RideSeconds = new List<float>();
-        public readonly List<float2> m_Path = new List<float2>();
         // Dwell at each stop, from TransportLineData.m_StopDuration. Kept because the
         // rider's wait is derived from it rather than stamped at collection.
         public float m_StopDuration;
@@ -43,7 +41,8 @@ namespace StationSuitabilityOverlay
         public float m_TargetInterval;
         // Stable identity: the position in a worst-first list is not one, and using it
         // meant "Suggest improvement" pointed at whichever line had drifted into that
-        // slot when the list was last sorted.
+        // slot when the list was last sorted. See SuitabilityLines.IdentityOf for why
+        // it is not simply the entity's index either.
         public int m_Id;
         public float m_LengthMetres;
         public int m_Vehicles;
@@ -158,8 +157,7 @@ namespace StationSuitabilityOverlay
 
                 var line = new ExistingLine
                 {
-                    m_Entity = lineEntity,
-                    m_Id = lineEntity.Index,
+                    m_Id = IdentityOf(lineEntity),
                     m_Mode = ModeOf(lineData.m_TransportType),
                     m_Name = ResolveName(entityManager, nameSystem, prefabSystem, lineEntity, lineData.m_TransportType),
                 };
@@ -200,6 +198,23 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // A line identity that survives its neighbours being deleted.
+        //
+        // Entity.Index alone does NOT: the ECS hands a freed index to the next entity
+        // created, so deleting a line and laying another could put the new one on the
+        // old one's index. LineHistory.RetainOnly then saw a live id and kept the
+        // series, and the new line's verdict, mean usage, peak and "N readings over
+        // M h" were all drawn from a line that no longer existed — with nothing in the
+        // log to say so. Version is exactly what distinguishes the two.
+        //
+        // Packed into one int because the panel round-trips this value through a
+        // binding and back through the improveLine trigger. 24 bits is far more index
+        // than a city's entity count reaches.
+        private static int IdentityOf(Entity line)
+        {
+            return (line.Index & 0xFFFFFF) | ((line.Version & 0xFF) << 24);
+        }
+
         // Walks the line's waypoints in travel order. Not every waypoint is a stop —
         // shaping waypoints have no TransportStop behind them — but the segment
         // buffer is index-aligned with the waypoints, so hop durations accumulate
@@ -219,11 +234,6 @@ namespace StationSuitabilityOverlay
             for (int w = 0; w < waypoints.Length; w++)
             {
                 Entity waypoint = waypoints[w].m_Waypoint;
-
-                if (entityManager.TryGetComponent(waypoint, out Game.Routes.Position position))
-                {
-                    line.m_Path.Add(new float2(position.m_Position.x, position.m_Position.z));
-                }
 
                 if (entityManager.TryGetComponent(waypoint, out WaitingPassengers waiting))
                 {
@@ -391,16 +401,16 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        public static Setting.ModePreset ModeOf(TransportType type)
+        public static ModePreset ModeOf(TransportType type)
         {
             switch (type)
             {
-                case TransportType.Bus: return Setting.ModePreset.Bus;
-                case TransportType.Tram: return Setting.ModePreset.Tram;
-                case TransportType.Subway: return Setting.ModePreset.Metro;
-                case TransportType.Train: return Setting.ModePreset.Train;
-                case TransportType.Ferry: return Setting.ModePreset.Ferry;
-                default: return Setting.ModePreset.Bus;
+                case TransportType.Bus: return ModePreset.Bus;
+                case TransportType.Tram: return ModePreset.Tram;
+                case TransportType.Subway: return ModePreset.Metro;
+                case TransportType.Train: return ModePreset.Train;
+                case TransportType.Ferry: return ModePreset.Ferry;
+                default: return ModePreset.Bus;
             }
         }
 
@@ -416,7 +426,11 @@ namespace StationSuitabilityOverlay
                     m_Stops = line.m_StopIndices.ToArray(),
                     m_RideSeconds = line.m_RideSeconds.ToArray(),
                     m_ExpectedWait = line.ExpectedWait,
-                    m_SpeedMetresPerSecond = 10f,
+                    // Per mode rather than a flat 10 m/s for everything: this is the
+                    // fallback when a route segment carries no pathfound duration, and
+                    // a train covering ground at a bus's speed made its rides look
+                    // three times longer than they are.
+                    m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(line.m_Mode),
                 });
             }
 

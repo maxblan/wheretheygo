@@ -50,11 +50,17 @@ other `Run(...)` calls at the top of `Program.cs`.
 
 ## Strictness
 
-`Directory.Build.props` turns C# up as far as it goes and the build is expected to stay at **zero
-warnings**: `Nullable=enable`, `TreatWarningsAsErrors`, `AnalysisLevel=latest-all`,
-`EnforceCodeStyleInBuild`, `AllowUnsafeBlocks=false`, plus `Meziantou.Analyzer` in
-`all-errors` mode. `MA0191` makes the null-forgiving `!` operator an error, so "trust me" is not
-available — a nullable value has to be narrowed or guarded.
+`Directory.Build.props` turns C# up as far as it goes: `Nullable=enable`,
+`TreatWarningsAsErrors`, `AnalysisLevel=latest-all`, `EnforceCodeStyleInBuild`,
+`AllowUnsafeBlocks=false`, plus `Meziantou.Analyzer` in `all-errors` mode. `MA0191` makes the
+null-forgiving `!` operator an error, so "trust me" is not available — a nullable value has to be
+narrowed or guarded.
+
+`TreatWarningsAsErrors` is a **ratchet, not a clean slate**: `WarningsNotAsErrors` lists a
+pre-existing backlog (nullability, `CA1822`, `CA1814`, `CA1305`, `CA1044`, `CA1067`, `CA1825`,
+`CA1716`, `CA1062`, `CA1031`) that is meant to shrink and never to grow. Anything outside that list
+fails the build, so no NEW class of warning can be introduced. The build today reports **zero
+warnings and zero errors**, which is the state to keep it in.
 
 Two deliberate asymmetries:
 
@@ -62,9 +68,17 @@ Two deliberate asymmetries:
   `ExtractTripsJob` are Burst-compiled and run per cell over ~200k tiles; Burst cannot throw, so an
   overflow check there is either a compile failure or an abort. The test project keeps it on, and
   the pure math files compile into *both*, so overflow is still checked where it is reachable.
-- **The test project relaxes exactly three rules** (`CA1303`, `CA5394`, `CA1861`) under a
+- **The test project relaxes four rules.** Three (`CA1303`, `CA5394`, `CA1861`) sit under a
   `[tests/**/*.cs]` section: it is a console harness with no localization, no security surface and
-  no hot path.
+  no hot path. The fourth, `CA1515`, is in the csproj's `NoWarn` rather than `.editorconfig`,
+  because it fires on the shared files the harness LINKS — `ModePreset` and `RouteGoal` are public
+  so the game's Options UI can bind to them by reflection, a reason that does not exist here.
+
+The `(count).ToString(CultureInfo.InvariantCulture)` wrappers all over the log statements are
+**required, not noise**: `MA0076` forbids an implicit culture-sensitive `ToString` in an
+interpolated string, and `FormattableString.Invariant` cannot replace them because C# 9 has no way
+to concatenate two interpolated strings into one `FormattableString`, which is how every multi-line
+log message here is built. Removing them fails the build in 94 places.
 
 `.editorconfig` disables a rule only where the rule is wrong *for this codebase*, and every one
 carries its reason inline — Unity's `IJobChunk` signature, game enums with no zero-valued member,
@@ -73,14 +87,17 @@ name being fixed by the toolchain, `partial` being required on `SystemBase` by t
 generator (found the hard way: removing it fails the build with EA0007). Volume alone is not a
 reason — read the comment before adding another.
 
-`MA0051` (method length) is **ratcheted, not disabled**: the limits sit just above today's worst
-offender so no method may grow. The seven over 60 lines are known debt —
-`StationSuitabilityOverlaySystem.OnCreate/StartCompute/BuildRoutes`,
-`SuitabilityRouteRenderer.OnUpdate`,
-`SuitabilityScoring.FindTopSites/AccumulateWalkDistance`.
-`SuitabilityPanelUISystem.OnCreate` has since been split into it plus
-`AddTriggerBindings`, which is what let the limit come down from 150 to 147. Lower the numbers as they are split;
-never raise them.
+`MA0051` (method length) is **ratcheted, not disabled**: the limits sit exactly at today's worst
+offender so no method may grow. Both ceilings are `SuitabilityGraphMath.GrowCorridor` — 138 lines
+and 61 statements as MA0051 counts them.
+
+Roughly forty methods sit over 60 lines and sixteen over 100; the longest are
+`SuitabilityGraphMath.GrowCorridor`, `SuitabilityRoutes.BuildForNetwork`,
+`StationSuitabilityOverlaySystem.OnCreate/OnUpdate/StartCompute/ScoreCandidatesWithTransfers`,
+`SuitabilityScoring.FindTopSites` and `SuitabilityRouteRenderer.OnUpdate`. Splitting them is a
+refactor rather than a fix and must not be done blind, which is what the ratchet is holding the line
+for. **Lower the numbers as methods are split; never raise them** — and check the real figure with a
+build rather than by counting, because MA0051 counts statements differently from a reader.
 
 ### Nullability conventions
 
@@ -130,20 +147,33 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project: `SuitabilityScoring.cs` (percentiles, site selection, geodesic catchment, weight fitting),
-`SuitabilityGraphMath.cs` (CSR graph, Dijkstra, corridor growth, RDP), `SuitabilityTransit.cs`
-(transit routing and boarding counts). Anything touching Unity or ECS types is untestable here, so
-**keep algorithms out of the ECS systems**. Several silent bugs — double-counted demand, summed
-instead of averaged corridor flow, free transfers — were only caught because the math was reachable
-from a test.
+project. Six files are on that side, and `SuitabilityScoring.Tests.csproj` links all six:
 
-`SuitabilityLineHealth.cs` is pure except for a `Setting.ModePreset` reference, which is why its
-thresholds are *not* currently under test.
+- `SuitabilityScoring.cs` — percentiles, site selection, geodesic catchment, weight fitting
+- `SuitabilityGraphMath.cs` — CSR graph, Dijkstra, corridor growth, RDP
+- `SuitabilityTransit.cs` — transit routing and boarding counts
+- `SuitabilityLineHistory.cs` — the rolling window of line readings
+- `SuitabilityLineHealth.cs` — verdicts and improvement plans
+- `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
+
+Anything touching Unity or ECS types is untestable here, so **keep algorithms out of the ECS
+systems**. Several silent bugs — double-counted demand, summed instead of averaged corridor flow,
+free transfers, a corridor's node walk starting from a node that was not on the line — were only
+caught because the math was reachable from a test.
+
+`TransitMode.cs` is why the last two are testable at all. Everything true of a mode is keyed on
+`ModePreset`, and while that enum was nested inside `Setting` — which imports Colossal, Game.Modding,
+Game.Settings and Game.UI — no Unity-free file could own a per-mode table, so five of them grew
+separate copies across separate files and a sixth in the panel's JavaScript. **A new per-mode fact
+goes in `TransitMode.cs`**, as one more `switch` beside the others.
 
 ### Data flow
 
-`StationSuitabilityOverlaySystem.cs` (~3000 lines) orchestrates everything and is where most work
-lands:
+`StationSuitabilityOverlaySystem.cs` (~4100 lines) orchestrates everything and is where most work
+lands. It is a god class and known to be one: the heatmap pipeline, travel-demand extraction, route
+growth and selection, line health, ridership calibration, infomode registration, reflection into the
+terrain texture and every UI payload all live in it. The pipeline stages have clean seams
+(`UpdateTravelDemand` → `BuildTransitModel` → `BuildRoutes` → `SelectRoutes`) if it is ever split.
 
 1. **Heatmap** — terrain/water masks (`SuitabilityMasks.cs`) → a Burst job emitting seven raw terms
    per cell (`SuitabilityJob.cs`) → per-term percentile normalization → intensities written into a
@@ -199,7 +229,7 @@ Hard-won facts worth not rediscovering:
 ## The `.claude/` directory
 
 - `rules/engineering-baseline.md` — always-on defaults, retargeted to this repo.
-- `rules/pure-math.md` — scoped to the three Unity-free files and the test project: the purity rule,
+- `rules/pure-math.md` — scoped to the six Unity-free files and the test project: the purity rule,
   why it exists, and the bugs that hid without it.
 - `rules/ecs-systems.md` — scoped to the game-facing systems: decompile before using an API, mirror
   the game's own formulas, log every decision, respect the update phases, and the specific traps

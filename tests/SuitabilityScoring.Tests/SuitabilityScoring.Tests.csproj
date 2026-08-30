@@ -12,7 +12,10 @@
     <!-- CS0649: TransitLine.m_RideSeconds is assigned in SuitabilityLines.cs, which is
          part of the mod and deliberately not linked here (it needs Unity types). Inside
          this project alone the field looks write-free. -->
-    <NoWarn>CS0649</NoWarn>
+    <!-- CA1515: ModePreset and RouteGoal are public because Setting exposes them
+         through public properties the game's Options UI binds to by reflection. That
+         reason does not exist in this console harness, which links the same file. -->
+    <NoWarn>CS0649;CA1515</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +26,8 @@
     <Compile Include="../../dotnet/SuitabilityGraphMath.cs" Link="SuitabilityGraphMath.cs" />
     <Compile Include="../../dotnet/SuitabilityTransit.cs" Link="SuitabilityTransit.cs" />
     <Compile Include="../../dotnet/SuitabilityLineHistory.cs" Link="SuitabilityLineHistory.cs" />
+    <Compile Include="../../dotnet/TransitMode.cs" Link="TransitMode.cs" />
+    <Compile Include="../../dotnet/SuitabilityLineHealth.cs" Link="SuitabilityLineHealth.cs" />
   </ItemGroup>
 
 </Project>

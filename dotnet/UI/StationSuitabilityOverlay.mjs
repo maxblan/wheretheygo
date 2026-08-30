@@ -31,30 +31,41 @@ function useTranslate() {
     }, [loc]);
 }
 
-// Mode and objective names are indexed by the enum value the binding carries, so the
-// order here is Setting.ModePreset / Setting.RouteGoal and must not be re-sorted.
-const MODES = ["Bus", "Tram", "Metro", "Train", "Ferry"];
-
-// Must match ColorFor() in SuitabilityRouteRenderer.cs — this is the key that lets
-// you read a line's mode off the map.
-const MODE_COLORS = {
-    Bus: "rgb(38, 140, 255)",
-    Tram: "rgb(255, 115, 26)",
-    Metro: "rgb(153, 64, 242)",
-    Train: "rgb(26, 191, 89)",
-    Ferry: "rgb(26, 217, 242)",
-};
-const OBJECTIVES = ["Ridership", "Balanced", "Coverage"];
-
-// Matches Setting.cs; the panel must not offer values the C# side would clamp.
+// The mode and objective names, the slider bounds and every mode colour all arrive
+// from C#. They used to be copied here and kept in step by comment, and two of the
+// three had already drifted: the mode list read Bus, Tram, Metro while the enum is
+// Bus, Metro, Tram, so picking Tram selected Metro and picking Metro selected Tram.
+//
+// The slider KEYS stay here, because each one names its own C# trigger and because
+// useBound is a hook — a list whose length could change at runtime would change the
+// number of hooks a render makes. Only the bounds come over the wire.
 const SLIDERS = [
-    { key: "catchment", label: "Catchment", min: 150, max: 1000, step: 25, unit: " m" },
-    { key: "access", label: "Road access", min: 50, max: 300, step: 10, unit: " m" },
-    { key: "highlight", label: "Highlight", min: 1, max: 20, step: 1, unit: "%" },
-    { key: "slope", label: "Max slope", min: 3, max: 45, step: 1, unit: "°" },
-    { key: "sites", label: "Sites", min: 1, max: 20, step: 1, unit: "" },
-    { key: "routes", label: "Routes", min: 1, max: 12, step: 1, unit: "" },
+    { key: "catchment", label: "Catchment", unit: " m" },
+    { key: "access", label: "Road access", unit: " m" },
+    { key: "highlight", label: "Highlight", unit: "%" },
+    { key: "slope", label: "Max slope", unit: "°" },
+    { key: "sites", label: "Sites", unit: "" },
+    { key: "routes", label: "Routes", unit: "" },
 ];
+
+// Used only until the first binding value arrives.
+const FALLBACK_BOUNDS = { min: 0, max: 100, step: 1 };
+
+function parseNames(raw, fallback) {
+    const names = (raw || "").split("|").filter(Boolean);
+    return names.length ? names : fallback;
+}
+
+function parseBounds(raw) {
+    const bounds = {};
+    (raw || "").split("\n").filter(Boolean).forEach((row) => {
+        const p = row.split("|");
+        if (p.length >= 4) {
+            bounds[p[0]] = { min: Number(p[1]), max: Number(p[2]), step: Number(p[3]) };
+        }
+    });
+    return bounds;
+}
 
 const bindings = {};
 
@@ -138,25 +149,32 @@ function Legend() {
             h("div", { className: "sso-legend-end" }, t("LegendHigh", "High"))));
 }
 
+// Rows arrive as "mode|km|stops|vehicles|colour", best first. The colour comes with
+// the row so this file holds no copy of the mode palette.
 function RouteList({ raw }) {
     const t = useTranslate();
-    const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
+    const rows = (raw || "").split("\n").filter(Boolean);
     if (!rows.length) {
         return null;
     }
 
     return h("div", { className: "sso-routes" },
         h("div", { className: "sso-section" }, t("SuggestedLines", "Suggested lines")),
-        rows.map((parts, i) => {
+        rows.map((row) => {
+            const parts = row.split("|");
             const mode = parts[0] || "Bus";
-            return h("div", { className: "sso-route", key: i },
+            // Keyed by the row's own content rather than its position: the list is
+            // re-ranked on every refresh, and a positional key re-seats the rows.
+            return h("div", { className: "sso-route", key: row },
                 h("div", {
                     className: "sso-swatch",
-                    style: { backgroundColor: MODE_COLORS[mode] || "rgb(200,200,200)" },
+                    style: { backgroundColor: parts[4] || "rgb(200, 200, 200)" },
                 }),
                 h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
                 h("div", { className: "sso-route-meta" },
-                    (parts[1] || "?") + " " + t("Km", "km") + " · " + (parts[2] || "?") + " " + t("Stops", "stops")));
+                    (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
+                    + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
+                    + (parts[3] || "?") + " " + t("Vehicles", "veh")));
         }));
 }
 
@@ -164,7 +182,9 @@ function RouteList({ raw }) {
 // numbers and tokens only, so the sentence can be assembled in the player's language.
 function describePlan(t, raw) {
     const p = (raw || "").split("|");
-    if (p.length < 5) {
+    // Seven fields, as PlanPayload writes them. A short payload used to pass this
+    // guard and render "NaN" and "undefined" into the player's language.
+    if (p.length < 7) {
         return raw || "";
     }
 
@@ -198,6 +218,16 @@ function describePlan(t, raw) {
     }
 }
 
+// Every other t(...) call in this file carries its English inline so a key missing
+// from a locale degrades to English rather than to a blank line. These did not.
+const VERDICT_FALLBACKS = {
+    AtModeCapacity: "at capacity \u2014 upgrade to {0}",
+    Overcrowded: "overcrowded \u2014 add {0} vehicle(s)",
+    LongWaits: "long waits with spare room \u2014 shorten the route or run more often",
+    NearlyEmpty: "nearly empty \u2014 reroute or remove",
+    Healthy: "healthy",
+};
+
 const VERDICT_COLORS = {
     AtModeCapacity: "rgb(230, 60, 50)",
     Overcrowded: "rgb(240, 140, 40)",
@@ -206,12 +236,11 @@ const VERDICT_COLORS = {
     Healthy: "rgb(80, 190, 120)",
 };
 
-// Existing lines, worst first, with the numbers the verdict came from — a remedy
-// you cannot check is not worth much.
-// Existing lines, worst first, each with a button that works out a concrete
-// improvement. Lives in its own scrolling column so a city with twenty lines does
+// Existing lines, worst first, each with the numbers its verdict came from and a
+// button that works out a concrete improvement — a remedy you cannot check is not
+// worth much. Lives in its own scrolling column so a city with twenty lines does
 // not push the controls off the screen.
-function LineHealth({ raw, plan, planFor }) {
+function LineHealth({ raw, plan, planFor, planDrawn }) {
     const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
     if (!rows.length) {
@@ -231,7 +260,7 @@ function LineHealth({ raw, plan, planFor }) {
                 // Two verdicts carry an argument (vehicles to add, mode to upgrade to)
                 // and have their own key, so the placeholder never shows up bare.
                 const arg = parts[3] || "";
-                const note = t("Verdict." + verdict + (arg ? ".Arg" : ""), "")
+                const note = t("Verdict." + verdict + (arg ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
                     .replace("{0}", verdict === "AtModeCapacity" ? t("Mode." + arg, arg) : arg);
                 const meta = t("Meta", "{0}% full, {1} veh, {2} stops")
                     .replace("{0}", parts[4] || "0")
@@ -268,8 +297,13 @@ function LineHealth({ raw, plan, planFor }) {
                         ? h("div", { className: "sso-plan" },
                             h("div", { className: "sso-plan-title" }, t("ImprovedPlan", "Improved plan")),
                             h("div", {}, describePlan(t, plan)),
-                            h("div", { className: "sso-plan-hint" },
-                                t("ImprovedPlanHint", "The white dashed line on the map is the re-traced route.")))
+                            // Only when an alignment was actually traced. There are
+                            // three ways for the re-trace to come back with nothing,
+                            // and the panel used to promise a map line regardless.
+                            planDrawn
+                                ? h("div", { className: "sso-plan-hint" },
+                                    t("ImprovedPlanHint", "The white dashed line on the map is the re-traced route."))
+                                : null)
                         : null);
             })));
 }
@@ -285,7 +319,9 @@ function DataCoverage({ raw }) {
     const parts = (raw || "").split("|");
     const hours = parts[0] || "0";
     const readings = parseInt(parts[1], 10) || 0;
-    const window = parts[2] || "24";
+    // Not `window`: that shadows the global this module reads React and the binding
+    // API off. The length of the window is C#'s to state, not this file's.
+    const windowHours = parts[2] || "24";
 
     if (!readings) {
         return h("div", { className: "sso-coverage" },
@@ -296,13 +332,13 @@ function DataCoverage({ raw }) {
 
     // Bar rather than only a number: the point is how much of the window is filled,
     // and a fraction is read faster as a length than as two figures to divide.
-    const filled = Math.max(0, Math.min(100, (parseFloat(hours) / parseFloat(window)) * 100));
+    const filled = Math.max(0, Math.min(100, (parseFloat(hours) / parseFloat(windowHours)) * 100));
     return h("div", { className: "sso-coverage" },
         h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
         h("div", { className: "sso-coverage-value" },
             t("DataBasisValue", "{0} h of {1} h · {2} readings")
                 .replace("{0}", hours)
-                .replace("{1}", window)
+                .replace("{1}", windowHours)
                 .replace("{2}", String(readings))),
         h("div", { className: "sso-coverage-track" },
             h("div", { className: "sso-coverage-fill", style: { width: filled + "%" } })));
@@ -323,6 +359,12 @@ function Panel() {
     const dataCoverage = useBound("dataCoverage", "");
     const improvePlan = useBound("improvePlan", "");
     const improvedLine = useBound("improvedLine", -1);
+    const improvedRouteDrawn = useBound("improvedRouteDrawn", false);
+
+    // The panel's static shape, from the side that owns it.
+    const modes = parseNames(useBound("modes", ""), ["Bus", "Metro", "Tram", "Train", "Ferry"]);
+    const objectives = parseNames(useBound("objectives", ""), ["Ridership", "Balanced", "Coverage"]);
+    const bounds = parseBounds(useBound("sliderBounds", ""));
 
     // Suppress the vanilla infoview legend while ours is showing; a class on the
     // document root is the only hook a plain CSS file can key off.
@@ -345,8 +387,9 @@ function Panel() {
     }, [visible, foreignInfoview]);
 
     // Hooks must run unconditionally, so the slider values are read before the
-    // visibility check rather than inside it.
-    const sliderValues = SLIDERS.map((slider) => useBound(slider.key, slider.min));
+    // visibility check rather than inside it. SLIDERS is a module constant of fixed
+    // length, which is what keeps the number of hooks the same on every render.
+    const sliderValues = SLIDERS.map((slider) => useBound(slider.key, 0));
 
     if (!visible) {
         return null;
@@ -373,7 +416,7 @@ function Panel() {
 
         h(Choice, {
             label: t("Mode", "Mode"),
-            options: MODES,
+            options: modes,
             optionKey: "Mode",
             value: mode,
             onPick: (index) => trigger("setMode", index),
@@ -396,7 +439,7 @@ function Panel() {
 
         h(Choice, {
             label: t("Objective", "Objective"),
-            options: OBJECTIVES,
+            options: objectives,
             optionKey: "Objective",
             value: objective,
             onPick: (index) => trigger("setObjective", index),
@@ -410,21 +453,28 @@ function Panel() {
 
         h("div", { className: "sso-section" }, t("Tuning", "Tuning")),
 
-        SLIDERS.map((slider, i) =>
-            h(Stepper, {
+        SLIDERS.map((slider, i) => {
+            const b = bounds[slider.key] || FALLBACK_BOUNDS;
+            return h(Stepper, {
                 key: slider.key,
                 label: t("Slider." + slider.key, slider.label),
                 value: sliderValues[i],
-                min: slider.min,
-                max: slider.max,
-                step: slider.step,
+                min: b.min,
+                max: b.max,
+                step: b.step,
                 unit: slider.unit,
                 onSet: (value) => trigger("set" + slider.key.charAt(0).toUpperCase() + slider.key.slice(1), value),
-            })),
+            });
+        }),
 
         h(RouteList, { raw: routeList })),
 
-        h(LineHealth, { raw: lineHealth, plan: improvePlan, planFor: improvedLine })));
+        h(LineHealth, {
+            raw: lineHealth,
+            plan: improvePlan,
+            planFor: improvedLine,
+            planDrawn: improvedRouteDrawn,
+        })));
 }
 
 // Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their
@@ -473,15 +523,34 @@ function HideInfoviewMenuEntry() {
         hide();
         // The menu is built and rebuilt as the player opens it, so one pass is not
         // enough; this watches for it appearing rather than polling on a timer.
+        //
+        // Coalesced onto an animation frame. hide() queries the whole document and
+        // itself mutates it, and the game's UI changes on almost every frame, so
+        // running it once per mutation record meant a full-document query several
+        // times a frame.
         let observer = null;
+        let queued = 0;
         if (typeof MutationObserver !== "undefined") {
-            observer = new MutationObserver(hide);
+            observer = new MutationObserver(() => {
+                if (queued) {
+                    return;
+                }
+
+                queued = requestAnimationFrame(() => {
+                    queued = 0;
+                    hide();
+                });
+            });
             observer.observe(document.body, { childList: true, subtree: true });
         }
 
         return () => {
             if (observer) {
                 observer.disconnect();
+            }
+
+            if (queued) {
+                cancelAnimationFrame(queued);
             }
         };
     }, []);

@@ -37,6 +37,14 @@ namespace StationSuitabilityOverlay
         public float[] NodePositionsZ = Array.Empty<float>();
         public float[] EdgeFlow = Array.Empty<float>();
 
+        // Per edge: true where a transit line could not call at a stop. Highways carry
+        // real traffic and belong in the graph so journeys route over them, but a
+        // corridor grown ALONG one is useless as a line — and highways are by
+        // construction the heaviest-flow edges on the road graph, so they are exactly
+        // what corridor growth reaches for first. Null on a lattice, which has no
+        // road class at all.
+        public bool[]? EdgeCannotHostStops;
+
         // Interior points of each edge's actual centreline, in A->B order. Without
         // these a traced route is a chord between intersections, which visibly leaves
         // the street on anything curved — the reason suggested bus and tram lines
@@ -45,6 +53,13 @@ namespace StationSuitabilityOverlay
         public float[]? EdgeShapeZ;
         public int[]? EdgeShapeStart;
         public int[]? EdgeShapeCount;
+
+        // Zone -> nearest node, cached because it is a bucketed sweep over every node
+        // and only the graph itself can change the answer. Build and Adopt are the two
+        // things that do, and both drop it.
+        private int[]? m_ZoneNodes;
+        private int2 m_ZoneNodeGrid;
+        private float2 m_ZoneNodeWorldMin;
 
         private readonly Dictionary<Entity, int> m_NodeIndices = new Dictionary<Entity, int>();
         private readonly List<int> m_EdgeA = new List<int>();
@@ -63,11 +78,13 @@ namespace StationSuitabilityOverlay
             // straight over water and through buildings.
             Network = network;
             Graph = graph;
+            m_ZoneNodes = null;
             NodePositionsX = nodeX;
             NodePositionsZ = nodeZ;
             EdgeFlow = new float[graph.EdgeCount];
             m_Workspace = new DijkstraWorkspace(graph.NodeCount);
-            // A lattice has no real centreline to follow.
+            // A lattice has no real centreline to follow, and no road class either.
+            EdgeCannotHostStops = null;
             EdgeShapeX = null;
             EdgeShapeZ = null;
             EdgeShapeStart = null;
@@ -141,10 +158,10 @@ namespace StationSuitabilityOverlay
             ComponentLookup<Node> nodeLookup,
             ComponentLookup<Curve> curveLookup,
             ComponentLookup<PrefabRef> prefabRefLookup,
-            ComponentLookup<RoadData> roadDataLookup,
-            bool useTravelTime)
+            ComponentLookup<RoadData> roadDataLookup)
         {
             Network = RouteNetwork.Road;
+            m_ZoneNodes = null;
             m_NodeIndices.Clear();
             m_EdgeA.Clear();
             m_EdgeB.Clear();
@@ -156,6 +173,7 @@ namespace StationSuitabilityOverlay
             var shapeZ = new List<float>();
             var shapeStart = new List<int>();
             var shapeCount = new List<int>();
+            var noStops = new List<bool>();
 
             using var edges = roadEdgeQuery.ToEntityArray(Allocator.Temp);
             using var edgeData = roadEdgeQuery.ToComponentDataArray<Edge>(Allocator.Temp);
@@ -189,17 +207,11 @@ namespace StationSuitabilityOverlay
                 // distance cost is exact rather than a midpoint approximation.
                 Curve curve = curveLookup[edgeEntity];
                 float length = math.max(1f, curve.m_Length);
-                float cost = length;
-
-                if (useTravelTime)
-                {
-                    float speed = ResolveSpeed(entityManager, edgeEntity, prefabRefLookup, roadDataLookup);
-                    cost = length / math.max(1f, speed);
-                }
 
                 m_EdgeA.Add(a);
                 m_EdgeB.Add(b);
-                m_EdgeCost.Add(cost);
+                m_EdgeCost.Add(length);
+                noStops.Add(IsHighway(edgeEntity, prefabRefLookup, roadDataLookup));
 
                 shapeStart.Add(shapeX.Count);
                 shapeCount.Add(SampleCurve(curve, shapeX, shapeZ));
@@ -207,6 +219,7 @@ namespace StationSuitabilityOverlay
 
             NodePositionsX = positionsX.ToArray();
             NodePositionsZ = positionsZ.ToArray();
+            EdgeCannotHostStops = noStops.ToArray();
             EdgeShapeX = shapeX.ToArray();
             EdgeShapeZ = shapeZ.ToArray();
             EdgeShapeStart = shapeStart.ToArray();
@@ -270,31 +283,9 @@ namespace StationSuitabilityOverlay
             return false;
         }
 
-        private static float ResolveSpeed(
-            EntityManager entityManager,
-            Entity edge,
-            ComponentLookup<PrefabRef> prefabRefLookup,
-            ComponentLookup<RoadData> roadDataLookup)
-        {
-            if (prefabRefLookup.HasComponent(edge))
-            {
-                Entity prefab = prefabRefLookup[edge].m_Prefab;
-                if (roadDataLookup.HasComponent(prefab))
-                {
-                    float speed = roadDataLookup[prefab].m_SpeedLimit;
-                    if (speed > 0f)
-                    {
-                        return speed;
-                    }
-                }
-            }
-
-            return 1f;
-        }
-
         // Highways carry traffic but cannot host stops, so a corridor that runs
         // along one is useless as a transit line even though the flow is real.
-        public static bool IsHighway(
+        private static bool IsHighway(
             Entity edge,
             ComponentLookup<PrefabRef> prefabRefLookup,
             ComponentLookup<RoadData> roadDataLookup)
@@ -313,14 +304,8 @@ namespace StationSuitabilityOverlay
             return (roadDataLookup[prefab].m_Flags & Game.Prefabs.RoadFlags.UseHighwayRules) != 0;
         }
 
-        // Nearest graph node to each zone centre, or -1 where the zone has no node
-        // near it.
-        //
-        // Bucketed rather than scanned: a linear scan is zones x nodes, which on a
-        // lattice network is tens of millions of distance tests per rebuild and was
-        // the visible stall when the overlay opened.
-        // Nearest node to a world position. Linear, but only called a handful of
-        // times when a corridor is re-traced.
+        // Nearest node to a world position. Linear, but only called a handful of times
+        // when a corridor is re-traced or an existing line is re-planned.
         public int NearestNode(float2 position, float maxDistance)
         {
             int best = -1;
@@ -340,8 +325,6 @@ namespace StationSuitabilityOverlay
             return best;
         }
 
-        // Shortest path between two nodes as a list of node indices, for re-tracing a
-        // corridor on a different network.
         // Interior samples of one edge's centreline, appended in A->B order. Straight
         // edges get none: the chord already IS the street, and every extra vertex
         // costs a draw call and a joint dot.
@@ -437,6 +420,8 @@ namespace StationSuitabilityOverlay
             return best;
         }
 
+        // Shortest path between two nodes as a list of node indices, for re-tracing a
+        // corridor on a different network.
         public bool TracePath(int fromNode, int toNode, float maxCost, List<int> nodes)
         {
             nodes.Clear();
@@ -503,8 +488,19 @@ namespace StationSuitabilityOverlay
             return length > 0f ? weighted / length : 0f;
         }
 
+        // Nearest graph node to each zone centre, or -1 where the zone has no node
+        // near it.
+        //
+        // Bucketed rather than scanned: a linear sweep is zones x nodes, which on a
+        // lattice network is tens of millions of distance tests per rebuild and was
+        // the visible stall when the overlay opened.
         public int[] MapZonesToNodes(int2 zoneGrid, float2 worldMin)
         {
+            if (m_ZoneNodes is not null && m_ZoneNodeGrid.Equals(zoneGrid) && m_ZoneNodeWorldMin.Equals(worldMin))
+            {
+                return m_ZoneNodes;
+            }
+
             int zoneCount = zoneGrid.x * zoneGrid.y;
             var mapping = new int[zoneCount];
             for (int i = 0; i < zoneCount; i++)
@@ -512,6 +508,9 @@ namespace StationSuitabilityOverlay
                 mapping[i] = -1;
             }
 
+            m_ZoneNodes = mapping;
+            m_ZoneNodeGrid = zoneGrid;
+            m_ZoneNodeWorldMin = worldMin;
             if (NodeCount == 0)
             {
                 return mapping;

@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 
 namespace StationSuitabilityOverlay
 {
@@ -12,7 +11,10 @@ namespace StationSuitabilityOverlay
     // System.Math with explicit float casts.
     internal static class SuitabilityScoring
     {
-        public const int SiteFeatureCount = 4;
+        // Ceiling on the 3x3 local maxima FindTopSites will consider. A real city
+        // produces far fewer; a noisy score field could produce far more, and a
+        // truncated sweep is biased towards low grid indices, so callers are told.
+        private const int MaxSiteCandidates = 65536;
 
         public static int ClampInt(int value, int min, int max)
         {
@@ -129,7 +131,14 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            Array.Clear(intensities, 0, Math.Min(length, intensities.Length));
+            // The loop below writes both arrays up to `length`. Clamping only the
+            // clear made a short output array look handled and then indexed past it.
+            if (scores.Length < length || intensities.Length < length)
+            {
+                return;
+            }
+
+            Array.Clear(intensities, 0, length);
 
             float cap = PositivePercentile(scores, length, 1f - highlightShare, scratch);
             if (cap <= 0f)
@@ -192,24 +201,35 @@ namespace StationSuitabilityOverlay
             // Collect 3x3 local maxima with a positive score. The budget is well
             // above the count a real city produces, but a noisy score field could
             // exceed it, so overflow is reported rather than hidden.
-            var candidateIndices = new int[Math.Min(cells, 65536)];
+            //
+            // Grown into rather than allocated at the bound: starting at the cap meant
+            // half a megabyte of candidate buffer on every recompute, whatever the map
+            // actually held.
+            int cap = Math.Min(cells, MaxSiteCandidates);
+            var candidateIndices = new int[Math.Min(cap, 1024)];
             var candidateScores = new float[candidateIndices.Length];
             int candidates = 0;
 
             for (int y = 0; y < height; y++)
             {
-                if (candidates >= candidateIndices.Length)
+                if (truncated)
                 {
-                    truncated = true;
                     break;
                 }
 
                 for (int x = 0; x < width; x++)
                 {
-                    if (candidates >= candidateIndices.Length)
+                    if (candidates == candidateIndices.Length)
                     {
-                        truncated = true;
-                        break;
+                        if (candidates >= cap)
+                        {
+                            truncated = true;
+                            break;
+                        }
+
+                        int grown = Math.Min(cap, candidateIndices.Length * 2);
+                        Array.Resize(ref candidateIndices, grown);
+                        Array.Resize(ref candidateScores, grown);
                     }
 
                     int index = x + y * width;
@@ -389,28 +409,15 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            var frontier = new List<int>(128);
+            var frontier = new TileFrontier(distanceScratch, (maxX - minX + 1) * (maxY - minY + 1));
             distanceScratch[siteIndex] = 0f;
-            frontier.Add(siteIndex);
+            frontier.Push(siteIndex);
 
             float diagonal = (float)Math.Sqrt(2.0) * tileSize;
 
-            while (frontier.Count > 0)
+            while (!frontier.IsEmpty)
             {
-                int bestSlot = 0;
-                float bestDistance = distanceScratch[frontier[0]];
-                for (int i = 1; i < frontier.Count; i++)
-                {
-                    float candidate = distanceScratch[frontier[i]];
-                    if (candidate < bestDistance)
-                    {
-                        bestDistance = candidate;
-                        bestSlot = i;
-                    }
-                }
-
-                int current = frontier[bestSlot];
-                frontier.RemoveAt(bestSlot);
+                int current = frontier.Pop();
 
                 // Stale duplicate of an already-settled tile.
                 if (visitedScratch[current] != 0)
@@ -420,11 +427,9 @@ namespace StationSuitabilityOverlay
 
                 visitedScratch[current] = 1;
 
-                if (bestDistance > radius)
-                {
-                    continue;
-                }
-
+                // Nothing past the radius is ever pushed, so a tile that settles is
+                // always in range and its weight is always positive.
+                float bestDistance = distanceScratch[current];
                 float weight = 1f - bestDistance / radius;
                 reachedDemand += tileDemand[current] * weight;
                 reachedJobs += tileJobs[current] * weight;
@@ -466,12 +471,98 @@ namespace StationSuitabilityOverlay
                         }
 
                         distanceScratch[neighbour] = candidate;
-                        frontier.Add(neighbour);
+                        frontier.Push(neighbour);
                     }
                 }
             }
 
             return (reachedDemand * demandWeight) + (reachedJobs * jobsWeight);
+        }
+
+        // Lazy binary min-heap over tile indices, ordered by the caller's live
+        // distance array. Same shape as DijkstraWorkspace's heap, and for the same
+        // reason: a tile is reachable by many paths and therefore enters the frontier
+        // many times, so stale entries have to be cheap to skip. A distance only ever
+        // decreases, which can misplace a stale entry downward but never the live
+        // minimum, so a pop still settles tiles in distance order.
+        //
+        // Replaces a List scanned linearly for its minimum and then RemoveAt-ed, both
+        // O(n) per pop: over a 1000 m catchment the window is roughly 67x67 tiles, so
+        // a single site cost on the order of ten million operations.
+        private sealed class TileFrontier
+        {
+            private readonly float[] m_Distance;
+            private int[] m_Heap;
+            private int m_Count;
+
+            public TileFrontier(float[] distance, int capacity)
+            {
+                m_Distance = distance;
+                m_Heap = new int[Math.Max(8, capacity) + 1];
+            }
+
+            public bool IsEmpty => m_Count == 0;
+
+            public void Push(int tile)
+            {
+                if (m_Count + 1 >= m_Heap.Length)
+                {
+                    Array.Resize(ref m_Heap, m_Heap.Length * 2);
+                }
+
+                m_Heap[++m_Count] = tile;
+                int slot = m_Count;
+                while (slot > 1)
+                {
+                    int parent = slot >> 1;
+                    if (m_Distance[m_Heap[parent]] <= m_Distance[m_Heap[slot]])
+                    {
+                        break;
+                    }
+
+                    Swap(parent, slot);
+                    slot = parent;
+                }
+            }
+
+            public int Pop()
+            {
+                int top = m_Heap[1];
+                m_Heap[1] = m_Heap[m_Count--];
+                int slot = 1;
+                while (true)
+                {
+                    int left = slot << 1;
+                    if (left > m_Count)
+                    {
+                        break;
+                    }
+
+                    int best = left;
+                    int right = left + 1;
+                    if (right <= m_Count && m_Distance[m_Heap[right]] < m_Distance[m_Heap[left]])
+                    {
+                        best = right;
+                    }
+
+                    if (m_Distance[m_Heap[slot]] <= m_Distance[m_Heap[best]])
+                    {
+                        break;
+                    }
+
+                    Swap(slot, best);
+                    slot = best;
+                }
+
+                return top;
+            }
+
+            private void Swap(int a, int b)
+            {
+                int tmp = m_Heap[a];
+                m_Heap[a] = m_Heap[b];
+                m_Heap[b] = tmp;
+            }
         }
 
         // Least-squares fit of `target` against `features` with all coefficients
@@ -660,21 +751,24 @@ namespace StationSuitabilityOverlay
             return true;
         }
 
-        // Coefficient of determination of the fitted weights against the target.
-        // Returns 0 when the target has no variance to explain.
+        // How much of the target the fitted weights account for, measured ABOUT ZERO
+        // rather than about the mean.
+        //
+        // FitNonNegativeLeastSquares has no intercept column, and for a model with no
+        // intercept the familiar mean-centred R² is the wrong measure: its denominator
+        // describes a model the fit cannot express, so the result is unbounded below
+        // and the Options page could show the player "R² -3.10" as a model quality.
+        // Against zero the comparison is one the fit CAN make — every weight at zero
+        // predicts zero — so the value lands in 0..1, with 0 meaning "no better than
+        // predicting nothing" and 1 an exact fit.
+        //
+        // Returns 0 when the target is all zeros, where there is nothing to explain.
         public static float RSquared(float[,] features, float[] target, int rows, int cols, float[] weights)
         {
             if (features is null || target is null || weights is null || rows <= 0 || cols <= 0)
             {
                 return 0f;
             }
-
-            double mean = 0.0;
-            for (int r = 0; r < rows; r++)
-            {
-                mean += target[r];
-            }
-            mean /= rows;
 
             double residual = 0.0;
             double total = 0.0;
@@ -688,8 +782,7 @@ namespace StationSuitabilityOverlay
 
                 double error = target[r] - predicted;
                 residual += error * error;
-                double spread = target[r] - mean;
-                total += spread * spread;
+                total += (double)target[r] * target[r];
             }
 
             if (total <= 1e-9)

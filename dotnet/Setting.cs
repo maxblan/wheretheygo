@@ -27,8 +27,10 @@ namespace StationSuitabilityOverlay
         public const float kWeightMax = 2f;
         public const int kCatchmentMin = 150;
         public const int kCatchmentMax = 1000;
+        public const int kCatchmentStep = 25;
         public const int kAccessMin = 50;
         public const int kAccessMax = 300;
+        public const int kAccessStep = 10;
         public const int kHighlightMin = 1;
         public const int kHighlightMax = 20;
         public const int kHighlightDefault = 5;
@@ -41,26 +43,12 @@ namespace StationSuitabilityOverlay
         public const int kRouteCountMin = 1;
         public const int kRouteCountMax = 12;
         public const int kRouteCountDefault = 5;
+        public const int kTransferPenaltyMin = 0;
+        public const int kTransferPenaltyMax = 80;
+        public const int kTransferPenaltyDefault = 40;
 
-        // What a suggested route is grown to maximise.
-        public enum RouteGoal
-        {
-            Ridership = 0,
-            Balanced = 1,
-            Coverage = 2,
-        }
-
-        public enum ModePreset
-        {
-            // Bus and Metro keep their original numeric values so settings files
-            // written by earlier versions still resolve to the same mode.
-            Bus = 0,
-            Metro = 1,
-            Tram = 2,
-            Train = 3,
-            Ferry = 4,
-        }
-
+        // ModePreset and RouteGoal live in TransitMode.cs, beside everything that is
+        // true of a mode — see the note there for why they are not nested here.
         private ModePreset m_Mode;
         private float m_W1;
         private float m_W2;
@@ -78,7 +66,7 @@ namespace StationSuitabilityOverlay
         private RouteGoal m_Objective;
         private int m_RouteCount;
         private bool m_ShowRoutes = true;
-        private int m_TransferPenalty = 40;
+        private int m_TransferPenalty = kTransferPenaltyDefault;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -158,7 +146,7 @@ namespace StationSuitabilityOverlay
             set => m_W7 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kCatchmentMin, max = kCatchmentMax, step = 25, scalarMultiplier = 1, unit = Unit.kLength)]
+        [SettingsUISlider(min = kCatchmentMin, max = kCatchmentMax, step = kCatchmentStep, scalarMultiplier = 1, unit = Unit.kLength)]
         [SettingsUISection(kSection, kTuningGroup)]
         public int CatchmentRadius
         {
@@ -166,7 +154,7 @@ namespace StationSuitabilityOverlay
             set => m_CatchmentRadius = ClampInt(value, kCatchmentMin, kCatchmentMax);
         }
 
-        [SettingsUISlider(min = kAccessMin, max = kAccessMax, step = 10, scalarMultiplier = 1, unit = Unit.kLength)]
+        [SettingsUISlider(min = kAccessMin, max = kAccessMax, step = kAccessStep, scalarMultiplier = 1, unit = Unit.kLength)]
         [SettingsUISection(kSection, kTuningGroup)]
         public int AccessRadius
         {
@@ -220,12 +208,12 @@ namespace StationSuitabilityOverlay
             set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
         }
 
-        [SettingsUISlider(min = 0, max = 80, step = 5, scalarMultiplier = 1, unit = Unit.kPercentage)]
+        [SettingsUISlider(min = kTransferPenaltyMin, max = kTransferPenaltyMax, step = 5, scalarMultiplier = 1, unit = Unit.kPercentage)]
         [SettingsUISection(kSection, kRoutesGroup)]
         public int TransferPenalty
         {
             get => m_TransferPenalty;
-            set => m_TransferPenalty = ClampInt(value, 0, 80);
+            set => m_TransferPenalty = ClampInt(value, kTransferPenaltyMin, kTransferPenaltyMax);
         }
 
         // Multiplier applied per change of vehicle when crediting a suggested line.
@@ -292,6 +280,7 @@ namespace StationSuitabilityOverlay
             m_Objective = RouteGoal.Balanced;
             m_RouteCount = kRouteCountDefault;
             m_ShowRoutes = true;
+            m_TransferPenalty = kTransferPenaltyDefault;
             ApplyPreset(m_Mode);
         }
 
@@ -299,27 +288,35 @@ namespace StationSuitabilityOverlay
         {
             m_Mode = mode;
             (m_CatchmentRadius, m_AccessRadius) = PresetRadii(mode);
+            float[] weights = PresetWeights(mode);
+            m_W1 = weights[0];
+            m_W2 = weights[1];
+            m_W3 = weights[2];
+            m_W4 = weights[3];
+            m_W5 = weights[4];
+            m_W6 = weights[5];
+            m_W7 = weights[6];
+        }
+
+        // The recommended weights for a mode, W1..W7 in order.
+        //
+        // ONE table. ApplyPreset wants all seven; ClampAll wants individual ones to
+        // fill in a weight that a pre-1.1 settings file never had. Those were two
+        // switch statements with a comment promising they were "kept in step by hand",
+        // which is a promise rather than a mechanism.
+        private static float[] PresetWeights(ModePreset mode)
+        {
             switch (mode)
             {
-                case ModePreset.Bus:
-                    m_W1 = 1.0f; m_W2 = 0.8f; m_W3 = 1.2f; m_W4 = 0.6f; m_W5 = 0.3f; m_W6 = 0.9f; m_W7 = 0.4f;
-                    break;
-                case ModePreset.Tram:
-                    m_W1 = 1.0f; m_W2 = 0.9f; m_W3 = 1.3f; m_W4 = 0.7f; m_W5 = 0.35f; m_W6 = 0.8f; m_W7 = 0.45f;
-                    break;
-                case ModePreset.Metro:
-                    m_W1 = 0.9f; m_W2 = 1.0f; m_W3 = 1.4f; m_W4 = 0.8f; m_W5 = 0.4f; m_W6 = 0.6f; m_W7 = 0.5f;
-                    break;
-                case ModePreset.Train:
-                    // Regional scale: jobs and long-range coverage dominate, and
-                    // local street density matters less than for street modes.
-                    m_W1 = 0.8f; m_W2 = 1.1f; m_W3 = 1.5f; m_W4 = 0.5f; m_W5 = 0.5f; m_W6 = 0.5f; m_W7 = 0.6f;
-                    break;
-                case ModePreset.Ferry:
-                    // Shoreline-constrained, so accessibility is mostly decided by
-                    // the geography rather than by road density.
-                    m_W1 = 1.0f; m_W2 = 0.7f; m_W3 = 1.2f; m_W4 = 0.4f; m_W5 = 0.25f; m_W6 = 0.7f; m_W7 = 0.3f;
-                    break;
+                case ModePreset.Tram: return new[] { 1.0f, 0.9f, 1.3f, 0.7f, 0.35f, 0.8f, 0.45f };
+                case ModePreset.Metro: return new[] { 0.9f, 1.0f, 1.4f, 0.8f, 0.4f, 0.6f, 0.5f };
+                // Regional scale: jobs and long-range coverage dominate, and local
+                // street density matters less than for street modes.
+                case ModePreset.Train: return new[] { 0.8f, 1.1f, 1.5f, 0.5f, 0.5f, 0.5f, 0.6f };
+                // Shoreline-constrained, so accessibility is mostly decided by the
+                // geography rather than by road density.
+                case ModePreset.Ferry: return new[] { 1.0f, 0.7f, 1.2f, 0.4f, 0.25f, 0.7f, 0.3f };
+                default: return new[] { 1.0f, 0.8f, 1.2f, 0.6f, 0.3f, 0.9f, 0.4f };
             }
         }
 
@@ -371,47 +368,12 @@ namespace StationSuitabilityOverlay
             m_SiteCount = m_SiteCount == 0 ? kSiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
             m_RouteCount = m_RouteCount == 0 ? kRouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
             m_Objective = ValidObjective(m_Objective);
-            m_W5 = m_W5 < 0f ? PresetWeight(m_Mode, 5) : ClampWeight(m_W5);
-            m_W6 = m_W6 < 0f ? PresetWeight(m_Mode, 6) : ClampWeight(m_W6);
-            m_W7 = m_W7 < 0f ? PresetWeight(m_Mode, 7) : ClampWeight(m_W7);
+            m_TransferPenalty = ClampInt(m_TransferPenalty, kTransferPenaltyMin, kTransferPenaltyMax);
+            float[] preset = PresetWeights(m_Mode);
+            m_W5 = m_W5 < 0f ? preset[4] : ClampWeight(m_W5);
+            m_W6 = m_W6 < 0f ? preset[5] : ClampWeight(m_W6);
+            m_W7 = m_W7 < 0f ? preset[6] : ClampWeight(m_W7);
             m_RidershipData ??= string.Empty;
-        }
-
-        // Default for a weight that was absent from an older settings file. Kept in
-        // step with ApplyPreset by hand — ModSetting has no parameterless base
-        // constructor, so a throwaway instance cannot be used to read the presets.
-        private static float PresetWeight(ModePreset mode, int index)
-        {
-            switch (index)
-            {
-                case 5:
-                    switch (mode)
-                    {
-                        case ModePreset.Tram: return 0.35f;
-                        case ModePreset.Metro: return 0.4f;
-                        case ModePreset.Train: return 0.5f;
-                        case ModePreset.Ferry: return 0.25f;
-                        default: return 0.3f;
-                    }
-                case 6:
-                    switch (mode)
-                    {
-                        case ModePreset.Tram: return 0.8f;
-                        case ModePreset.Metro: return 0.6f;
-                        case ModePreset.Train: return 0.5f;
-                        case ModePreset.Ferry: return 0.7f;
-                        default: return 0.9f;
-                    }
-                default:
-                    switch (mode)
-                    {
-                        case ModePreset.Tram: return 0.45f;
-                        case ModePreset.Metro: return 0.5f;
-                        case ModePreset.Train: return 0.6f;
-                        case ModePreset.Ferry: return 0.3f;
-                        default: return 0.4f;
-                    }
-            }
         }
 
         private static RouteGoal ValidObjective(RouteGoal goal)
@@ -476,11 +438,11 @@ namespace StationSuitabilityOverlay
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Mode)), "Mode preset" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Mode)), "Transit mode the overlay evaluates. Determines which existing stops count as coverage." },
-                { m_Setting.GetEnumValueLocaleID(Setting.ModePreset.Bus), "Bus" },
-                { m_Setting.GetEnumValueLocaleID(Setting.ModePreset.Tram), "Tram" },
-                { m_Setting.GetEnumValueLocaleID(Setting.ModePreset.Metro), "Metro" },
-                { m_Setting.GetEnumValueLocaleID(Setting.ModePreset.Train), "Train" },
-                { m_Setting.GetEnumValueLocaleID(Setting.ModePreset.Ferry), "Ferry" },
+                { m_Setting.GetEnumValueLocaleID(ModePreset.Bus), "Bus" },
+                { m_Setting.GetEnumValueLocaleID(ModePreset.Tram), "Tram" },
+                { m_Setting.GetEnumValueLocaleID(ModePreset.Metro), "Metro" },
+                { m_Setting.GetEnumValueLocaleID(ModePreset.Train), "Train" },
+                { m_Setting.GetEnumValueLocaleID(ModePreset.Ferry), "Ferry" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyPresetWeights)), "Apply preset weights" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyPresetWeights)), "Reset the weights and radii below to the recommended values for the selected mode." },
@@ -517,9 +479,9 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowRoutes)), "Draw the suggested lines and their stops on the map while this infoview is open." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Objective)), "Route objective" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Objective)), "What a suggested line is grown to achieve. Maximum ridership follows the busiest journeys; maximum coverage spreads out to reach more districts even where demand is thin; balanced does both." },
-                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Ridership), "Maximum ridership" },
-                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Balanced), "Balanced" },
-                { m_Setting.GetEnumValueLocaleID(Setting.RouteGoal.Coverage), "Maximum coverage" },
+                { m_Setting.GetEnumValueLocaleID(RouteGoal.Ridership), "Maximum ridership" },
+                { m_Setting.GetEnumValueLocaleID(RouteGoal.Balanced), "Balanced" },
+                { m_Setting.GetEnumValueLocaleID(RouteGoal.Coverage), "Maximum coverage" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.TransferPenalty)), "Transfer penalty" },
@@ -600,6 +562,7 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[SuggestedLines]", "Suggested lines" },
                 { "StationSuitabilityOverlay.Panel[Km]", "km" },
                 { "StationSuitabilityOverlay.Panel[Stops]", "stops" },
+                { "StationSuitabilityOverlay.Panel[Vehicles]", "veh" },
                 { "StationSuitabilityOverlay.Panel[LineHealth]", "Line health" },
                 { "StationSuitabilityOverlay.Panel[SuggestImprovement]", "Suggest improvement" },
                 { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Improved plan" },

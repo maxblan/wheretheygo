@@ -5,7 +5,7 @@ using Unity.Mathematics;
 
 namespace StationSuitabilityOverlay
 {
-    // Emits the five raw score terms per cell. The managed combine pass normalizes
+    // Emits the seven raw score terms per cell. The managed combine pass normalizes
     // and weights them, so changing a weight never re-runs this job.
     //
     // Catchment sums are gated on the barrier component label: a cell only

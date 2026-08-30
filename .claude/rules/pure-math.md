@@ -3,6 +3,9 @@ paths:
   - "dotnet/SuitabilityScoring.cs"
   - "dotnet/SuitabilityGraphMath.cs"
   - "dotnet/SuitabilityTransit.cs"
+  - "dotnet/SuitabilityLineHistory.cs"
+  - "dotnet/SuitabilityLineHealth.cs"
+  - "dotnet/TransitMode.cs"
   - "tests/SuitabilityScoring.Tests/**"
 ---
 
@@ -16,6 +19,10 @@ is the whole reason they exist as separate files.
   `EntityManager`, not `math.*`, not even in a signature. `float2Like` in
   `SuitabilityGraphMath.cs` exists precisely because `Unity.Mathematics.float2` may not appear.
   A single such reference breaks the test project for every algorithm in the file.
+- **A per-mode fact belongs in `TransitMode.cs`**, as one more `switch` beside the others. That
+  file exists because `ModePreset` used to be nested inside `Setting`, which drags in Colossal and
+  Game: with no Unity-free home for a mode table, five of them grew separate copies in separate
+  files — two byte-for-byte identical — and a sixth in the panel's JavaScript.
 - **Algorithms belong here, not in the ECS systems.** If you are about to write a loop with real
   arithmetic in `StationSuitabilityOverlaySystem.cs`, `SuitabilityRoutes.cs` or
   `SuitabilityLines.cs`, ask whether it can be expressed against plain arrays and moved here

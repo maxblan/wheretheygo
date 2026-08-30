@@ -26,7 +26,6 @@ namespace StationSuitabilityOverlay.Tests
     internal static class Program
     {
         private static int s_Failures;
-        private static string s_Current = "(none)";
 
         private static int Main()
         {
@@ -38,6 +37,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Highlight share controls how much reaches the top", HighlightShareControlsTop);
             Run("Normalization clears output when no positive scores", NormalizationClearsWhenEmpty);
             Run("Gamma lifts the low end without changing the cap", GammaLiftsLowEnd);
+            Run("Normalization refuses an output shorter than the score field", NormalizationRejectsShortOutput);
             Run("FindTopSites respects separation and count", TopSitesRespectSeparationAndCount);
             Run("FindTopSites returns descending scores", TopSitesDescending);
             Run("FindTopSites ignores non-positive fields", TopSitesIgnoresEmptyField);
@@ -69,12 +69,18 @@ namespace StationSuitabilityOverlay.Tests
             Run("Growth records why a corridor stopped", CorridorRecordsWhyItStopped);
             Run("A corridor crosses a quiet gap between busy districts", CorridorBridgesQuietGap);
             Run("A corridor never ends in the quiet gap it crossed", CorridorDoesNotEndInEmptiness);
+            Run("A discarded head-side bridge leaves a connected node walk", CorridorNodeWalkSurvivesDiscardedBridge);
+            Run("Hitting the length limit is reported after a bridge is handed back", CorridorReportsItsLimitAfterDiscard);
+            Run("Growth works without a novelty array on every objective", CorridorGrowsWithoutNovelty);
+            Run("Side capture decays a chord once, not once per end", PeelingDecaysAChordOnce);
+            Run("Workspace reuse survives the graph changing size", DijkstraWorkspaceResize);
 
             Run("Direct service beats an equal-time transfer", DirectBeatsTransfer);
             Run("Each change of vehicle costs a boarding", TransfersCostBoardings);
             Run("A feeder line is credited for journeys it only starts", FeederGetsCredit);
             Run("Transfer discount reduces credit per change", TransferDiscountApplies);
             Run("Walking links nearby stops into one interchange", WalkLinksStops);
+            Run("Bucketed walk edges match an exhaustive sweep", WalkEdgesMatchAnExhaustiveSweep);
             Run("Vanilla wait model floors at zero", ExpectedWaitModel);
             Run("A proposed stop puts an unserved zone onto the network", RemapReachesUnservedZone);
             Run("A line is judged over the window, not one reading", WindowAveragesLineReadings);
@@ -82,6 +88,15 @@ namespace StationSuitabilityOverlay.Tests
             Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
             Run("Loading another save restarts the window", WindowResetsWhenFramesRewind);
             Run("A deleted line stops being tracked", WindowForgetsDeletedLines);
+
+            Run("The game asking for vehicles is taken at its word", VerdictFollowsTheGamesFlags);
+            Run("A full line already at its fleet target is at mode capacity", VerdictAtModeCapacity);
+            Run("A line that fills up at its peak is not \"nearly empty\"", VerdictEmptyNeedsALowPeakToo);
+            Run("Long waits are judged against the line's own target", VerdictLongWaitsAreRelative);
+            Run("A plan never asks for fewer vehicles than the game already wants", PlanRespectsTheGamesTarget);
+            Run("A plan is sized from the peak, not from one reading", PlanSizesFromThePeak);
+            Run("A plan quotes the interval that yields its fleet", PlanQuotesAnInterval);
+            Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
 
             Console.WriteLine();
             if (s_Failures == 0)
@@ -235,6 +250,22 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertTrue(lifted[0] > linear[0], $"gamma < 1 must lift the low end ({lifted[0]} vs {linear[0]})");
             AssertEqual(linear[2], lifted[2], 0, "the top of the gradient must be unaffected by gamma");
+        }
+
+        // The write loop addresses the output up to `length`, so a shorter array is a
+        // caller error and not something to half-fill: clamping only the clear made it
+        // look handled and then indexed past the end.
+        private static void NormalizationRejectsShortOutput()
+        {
+            var scores = new[] { 1f, 2f, 3f, 4f };
+            var tooSmall = new byte[2];
+            SuitabilityScoring.NormalizeIntensities(scores, 4, 0.25f, 0.6f, tooSmall, new float[4]);
+            AssertEqual(0, tooSmall[0] + tooSmall[1], 0, "a short output must be left alone, not partly written");
+
+            // The same call with a correctly sized output still works.
+            var sized = new byte[4];
+            SuitabilityScoring.NormalizeIntensities(scores, 4, 0.25f, 0.6f, sized, new float[4]);
+            AssertTrue(sized[3] > 0, "a correctly sized output is still filled");
         }
 
         private static void TopSitesRespectSeparationAndCount()
@@ -555,13 +586,29 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertEqual(1f, SuitabilityScoring.RSquared(features, target, rows, 1, new float[] { 2f }), 1e-5f, "exact");
 
-            // No variance in the target leaves nothing to explain.
+            // An all-zero target leaves nothing to explain.
+            AssertEqual(0f, SuitabilityScoring.RSquared(features, new float[rows], rows, 1, new float[] { 0f }), 0f, "nothing to explain");
+
+            // The fit has no intercept column, so the measure is taken about zero
+            // rather than about the mean: all-weights-zero predicts zero, which is the
+            // worst the fit can do, and that pins the floor at 0. Measured about the
+            // mean instead, this same case returned a large negative that reached the
+            // player as a "model quality".
             var flat = new float[rows];
             for (int r = 0; r < rows; r++)
             {
                 flat[r] = 5f;
             }
-            AssertEqual(0f, SuitabilityScoring.RSquared(features, flat, rows, 1, new float[] { 0f }), 0f, "no variance");
+            AssertEqual(0f, SuitabilityScoring.RSquared(features, flat, rows, 1, new float[] { 0f }), 1e-5f, "no weight explains nothing");
+
+            // The floor holds for the weights the FIT produces, which is the only way
+            // the player ever sees this number: all-weights-zero is always available
+            // to a non-negative least squares, so it can never do worse than zero.
+            var fitted = new float[1];
+            AssertTrue(SuitabilityScoring.FitNonNegativeLeastSquares(features, flat, rows, 1, fitted), "fit a poorly explained target");
+            float quality = SuitabilityScoring.RSquared(features, flat, rows, 1, fitted);
+            AssertTrue(quality is >= 0f and <= 1f,
+                $"a fitted model quality must land in 0..1, got {quality}");
         }
 
         // ---- graph / routing tests ------------------------------------------
@@ -1104,6 +1151,379 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(0f, SuitabilityTransit.ExpectedWait(10f, 0f, 100f), 0f, "never negative");
         }
 
+        // The corridor's own head node is where GROWTH continues from, which while it
+        // is out on an unproven crossing is not a node on the finished line. Emitting
+        // the node walk from there put a discarded bridge's far end at the front of
+        // the polyline and dropped the real terminus off the back, so the drawn route
+        // began out in the empty land the discard exists to cut off and reached it by
+        // a chord across the gap.
+        private static void CorridorNodeWalkSurvivesDiscardedBridge()
+        {
+            // Chain 0-1-2-3-4. The seed is e2, the strongest edge; growing towards
+            // node 0 crosses two demand-free nodes and never comes out, so that run is
+            // handed back and the line is 2-3-4.
+            var a = new[] { 0, 1, 2, 3 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var flow = new[] { 10f, 10f, 100f, 10f };
+            var demand = new[] { 0f, 0f, 1f, 1f, 1f };
+
+            var corridor = new Corridor();
+            AssertTrue(
+                SuitabilityGraphMath.GrowCorridor(
+                    graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor, demand, 0.5f),
+                "corridor should grow");
+
+            AssertTrue(!corridor.Nodes.Contains(0) && !corridor.Nodes.Contains(1),
+                $"the handed-back crossing must not appear in the node walk, got [{string.Join(",", corridor.Nodes)}]");
+            AssertTrue(corridor.Nodes.Contains(4),
+                $"the real terminus must be in the node walk, got [{string.Join(",", corridor.Nodes)}]");
+            AssertNodeWalkMatchesEdges(graph, corridor);
+        }
+
+        // Growth stops when the length limit is reached; handing a crossing back
+        // afterwards shortens the corridor but does not change why it stopped.
+        private static void CorridorReportsItsLimitAfterDiscard()
+        {
+            // Chain 0-1-2-3 at 100 m an edge against a 300 m limit. Growth seeds on
+            // e0, crosses two demand-free nodes, and stops because it has spent its
+            // whole allowance; the crossing is then handed back, leaving 100 m.
+            var a = new[] { 0, 1, 2 };
+            var b = new[] { 1, 2, 3 };
+            var cost = new[] { 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(4, a, b, cost, 3);
+            var flow = new[] { 50f, 50f, 50f };
+            var demand = new[] { 1f, 1f, 0f, 0f };
+
+            var corridor = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                graph, flow, new bool[3], NewNovelty(4), 0f, 1f, 300f, corridor, demand, 0.5f);
+
+            AssertEqual(100f, corridor.Length, 1e-3f, "the two crossing edges are handed back");
+            AssertTrue(corridor.Blocks.m_HitMaxLength,
+                "growth stopped at the length limit, and the discard must not rewrite that as running out of edges");
+        }
+
+        // Ridership passes no novelty bias and Coverage passes a full one, so a null
+        // novelty array used to be harmless on one objective and fatal on the others.
+        private static void CorridorGrowsWithoutNovelty()
+        {
+            var a = new[] { 0, 1 };
+            var b = new[] { 1, 2 };
+            var cost = new[] { 10f, 10f };
+            CompactGraph graph = CompactGraph.Build(3, a, b, cost, 2);
+
+            foreach (RouteObjective objective in new[] { RouteObjective.Ridership, RouteObjective.Balanced, RouteObjective.Coverage })
+            {
+                var corridor = new Corridor();
+                AssertTrue(
+                    SuitabilityGraphMath.GrowCorridor(
+                        graph, new[] { 5f, 5f }, new bool[2], nodeNovelty: null, noveltyWeight: 0f,
+                        flowFloor: 1f, maxLength: 1000f, result: corridor, nodeDemand: null, demandFloor: 0f,
+                        seedNoveltyBias: SuitabilityGraphMath.SeedNoveltyBias(objective)),
+                    $"{objective} must grow a corridor without a novelty array");
+                AssertNodeWalkMatchesEdges(graph, corridor);
+            }
+        }
+
+        // Side capture exists to suppress the parallel street one block over. An edge
+        // joining two of the corridor's OWN nodes is incident to both, and decaying it
+        // as each node was visited compounded the capture to (1 - s)^2.
+        private static void PeelingDecaysAChordOnce()
+        {
+            // Corridor 0-1-2, plus a chord 0-2 that is not part of it.
+            var a = new[] { 0, 1, 0 };
+            var b = new[] { 1, 2, 2 };
+            var cost = new[] { 10f, 10f, 25f };
+            CompactGraph graph = CompactGraph.Build(3, a, b, cost, 3);
+
+            var corridor = new Corridor();
+            corridor.Edges.Add(0);
+            corridor.Edges.Add(1);
+            corridor.Nodes.Add(0);
+            corridor.Nodes.Add(1);
+            corridor.Nodes.Add(2);
+
+            var flow = new[] { 100f, 100f, 100f };
+            SuitabilityGraphMath.PeelFlow(graph, corridor, flow, new bool[3], 0.85f);
+
+            // sideCapture is half the capture, so one application leaves 57.5.
+            AssertEqual(57.5f, flow[2], 1e-3f, "the chord must lose exactly one side capture");
+        }
+
+        // Resize replaces every array the touched list addresses, so its count has to
+        // go with them; carrying it over made the next search index past the new ones.
+        private static void DijkstraWorkspaceResize()
+        {
+            CompactGraph big = BuildChain(out _);
+            var ws = new DijkstraWorkspace(big.NodeCount);
+            ws.Run(big, 0, 1000f);
+
+            var a = new[] { 0, 1 };
+            var b = new[] { 1, 2 };
+            var cost = new[] { 3f, 4f };
+            CompactGraph small = CompactGraph.Build(3, a, b, cost, 2);
+            ws.Run(small, 0, 1000f);
+            AssertEqual(7f, ws.Dist[2], 1e-4f, "a reused workspace must give the fresh answer on a smaller graph");
+
+            var fresh = new DijkstraWorkspace(small.NodeCount);
+            fresh.Run(small, 0, 1000f);
+            AssertEqual(fresh.Dist[2], ws.Dist[2], 0f, "reuse must match a fresh instance");
+
+            // And back up again, including the degenerate empty graph.
+            ws.Run(new CompactGraph(), 0, 1000f);
+            ws.Run(big, 0, 1000f);
+            AssertEqual(5f, ws.Dist[5], 1e-4f, "the workspace must still be usable after an empty graph");
+        }
+
+        // Every node in the walk must be joined to the next by the edge in that slot,
+        // which is what makes the corridor drawable as a polyline.
+        private static void AssertNodeWalkMatchesEdges(CompactGraph graph, Corridor corridor)
+        {
+            AssertEqual(corridor.Edges.Count + 1, corridor.Nodes.Count, 0, "node count must be edge count + 1");
+            for (int i = 0; i < corridor.Edges.Count; i++)
+            {
+                int edge = corridor.Edges[i];
+                int from = corridor.Nodes[i];
+                int to = corridor.Nodes[i + 1];
+                bool joins = (graph.EdgeA[edge] == from && graph.EdgeB[edge] == to)
+                    || (graph.EdgeB[edge] == from && graph.EdgeA[edge] == to);
+                AssertTrue(joins, $"edge {edge} must join nodes {from} and {to}");
+            }
+        }
+
+        // Judging a line: the thresholds below were all moved off fixed values after
+        // they flagged most of a healthy network, so each test pins the relative rule
+        // rather than the number it happens to produce.
+        private static LineHealth Line(
+            float usage,
+            float peakUsage,
+            int vehicles,
+            int targetVehicles,
+            int capacity = 100,
+            ModePreset mode = ModePreset.Bus)
+        {
+            return new LineHealth
+            {
+                m_Mode = mode,
+                m_Vehicles = vehicles,
+                m_TargetVehicles = targetVehicles,
+                m_Capacity = capacity,
+                m_Passengers = (int)(usage * capacity),
+                m_Usage = usage,
+                m_PeakUsage = peakUsage,
+                m_Stops = 10,
+            };
+        }
+
+        // TransportLineFlags already says when the game wants more vehicles, so that
+        // signal is read rather than re-derived.
+        private static void VerdictFollowsTheGamesFlags()
+        {
+            LineVerdict verdict = SuitabilityLineHealth.Judge(
+                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 60f, targetInterval: 60f,
+                longWaitMultiple: 2f, vehicles: 3, targetVehicles: 6,
+                requireVehicles: false, notEnoughVehicles: true, emptyThreshold: 0.05f,
+                out int addVehicles);
+
+            AssertTrue(verdict == LineVerdict.Overcrowded, $"expected Overcrowded, got {verdict}");
+            AssertEqual(3, addVehicles, 0, "the shortfall against the game's own target");
+        }
+
+        // Full AND already running the fleet the interval calls for: more vehicles are
+        // not available, so the mode itself is the ceiling.
+        private static void VerdictAtModeCapacity()
+        {
+            LineVerdict atCapacity = SuitabilityLineHealth.Judge(
+                usage: 0.9f, peakUsage: 0.95f, achievedInterval: 60f, targetInterval: 60f,
+                longWaitMultiple: 2f, vehicles: 6, targetVehicles: 6,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out _);
+            AssertTrue(atCapacity == LineVerdict.AtModeCapacity, $"expected AtModeCapacity, got {atCapacity}");
+
+            // The same load with room in the fleet is a service problem, not a mode one.
+            LineVerdict crowded = SuitabilityLineHealth.Judge(
+                usage: 0.9f, peakUsage: 0.95f, achievedInterval: 60f, targetInterval: 60f,
+                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 6,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out int addVehicles);
+            AssertTrue(crowded == LineVerdict.Overcrowded, $"expected Overcrowded, got {crowded}");
+            AssertEqual(2, addVehicles, 0, "vehicles to add");
+        }
+
+        // "Reroute or remove" is the most destructive advice the mod gives. A line
+        // that fills twice a day and idles the rest averages out looking dead, so the
+        // peak has to be low too.
+        private static void VerdictEmptyNeedsALowPeakToo()
+        {
+            LineVerdict peaky = SuitabilityLineHealth.Judge(
+                usage: 0.03f, peakUsage: 0.30f, achievedInterval: 60f, targetInterval: 60f,
+                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out _);
+            AssertTrue(peaky != LineVerdict.NearlyEmpty,
+                $"a line that fills at its peak must not be called empty, got {peaky}");
+
+            LineVerdict dead = SuitabilityLineHealth.Judge(
+                usage: 0.03f, peakUsage: 0.04f, achievedInterval: 60f, targetInterval: 60f,
+                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out _);
+            AssertTrue(dead == LineVerdict.NearlyEmpty, $"expected NearlyEmpty, got {dead}");
+        }
+
+        // A 42 s bus and a 180 s train cannot share one stopwatch: the bar is a
+        // multiple of the line's OWN target, and a wait too short to notice is never
+        // worth reporting however badly the target is missed.
+        private static void VerdictLongWaitsAreRelative()
+        {
+            LineVerdict late = SuitabilityLineHealth.Judge(
+                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 400f, targetInterval: 120f,
+                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out _);
+            AssertTrue(late == LineVerdict.LongWaits, $"expected LongWaits, got {late}");
+
+            // Three times a 20 s target is still only a 30 s wait.
+            LineVerdict brisk = SuitabilityLineHealth.Judge(
+                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 60f, targetInterval: 20f,
+                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out _);
+            AssertTrue(brisk == LineVerdict.Healthy,
+                $"doubling a short headway is not worth reporting, got {brisk}");
+
+            // A line missing a target the game never set has nothing to be late against.
+            LineVerdict noTarget = SuitabilityLineHealth.Judge(
+                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 900f, targetInterval: 0f,
+                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
+                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
+                out _);
+            AssertTrue(noTarget == LineVerdict.Healthy, $"expected Healthy, got {noTarget}");
+        }
+
+        // Recommending fewer vehicles than the game is already asking for produced
+        // "overcrowded — add 1 vehicle" beside "run it with 1 vehicle (-3)".
+        private static void PlanRespectsTheGamesTarget()
+        {
+            LineHealth health = Line(usage: 0.9f, peakUsage: 0.95f, vehicles: 2, targetVehicles: 9);
+            health.m_Verdict = LineVerdict.AtModeCapacity;
+
+            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
+                health, lengthMetres: 6000f, roundTripSeconds: 1800f, capacityPerVehicle: 50, targetLoad: 0.7f);
+
+            AssertTrue(plan.m_Vehicles >= 9, $"plan asks for {plan.m_Vehicles}, below the game's target of 9");
+            AssertTrue(plan.m_VehicleDelta > 0, "a line short of vehicles is not told to shrink");
+        }
+
+        // Sizing from the instantaneous count condemned a ferry whose only boat was
+        // mid-crossing to a fleet for nobody, even though the window said it was full.
+        private static void PlanSizesFromThePeak()
+        {
+            LineHealth health = Line(usage: 0.8f, peakUsage: 0.9f, vehicles: 2, targetVehicles: 2, capacity: 200);
+            health.m_Passengers = 0;   // caught between arrivals
+            health.m_Verdict = LineVerdict.Overcrowded;
+
+            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
+                health, lengthMetres: 4000f, roundTripSeconds: 600f, capacityPerVehicle: 100, targetLoad: 0.7f);
+
+            // 0.9 * 200 = 180 riders at a 70% fill over 100-seat vehicles is 3.
+            AssertTrue(plan.m_Vehicles >= 3,
+                $"plan must carry the window's peak load, got {plan.m_Vehicles} vehicles");
+        }
+
+        // The player cannot set a vehicle count in Cities: Skylines II, so the
+        // actionable number is the interval that produces the fleet.
+        private static void PlanQuotesAnInterval()
+        {
+            LineHealth health = Line(usage: 0.5f, peakUsage: 0.6f, vehicles: 4, targetVehicles: 4);
+            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
+                health, lengthMetres: 5000f, roundTripSeconds: 1200f, capacityPerVehicle: 60, targetLoad: 0.7f);
+
+            AssertTrue(plan.m_IntervalSeconds > 0, "an interval must be quoted when the round trip is known");
+            AssertEqual(1200f / plan.m_Vehicles, plan.m_IntervalSeconds, 1f,
+                "the interval must be the one that yields the recommended fleet");
+
+            // With no round trip there is no honest number to quote.
+            SuitabilityLineHealth.ImprovePlan unknown = SuitabilityLineHealth.Plan(
+                health, lengthMetres: 5000f, roundTripSeconds: 0f, capacityPerVehicle: 60, targetLoad: 0.7f);
+            AssertTrue(unknown.m_IntervalSeconds < 0, "an unknown round trip is reported as such, not as zero");
+        }
+
+        // The panel assembles its sentence from these fields, so a payload short of
+        // them renders "NaN" and "undefined" into the player's language.
+        private static void PlanPayloadIsComplete()
+        {
+            LineHealth health = Line(usage: 0.5f, peakUsage: 0.6f, vehicles: 4, targetVehicles: 4);
+            health.m_Stops = 30;
+            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
+                health, lengthMetres: 3000f, roundTripSeconds: 900f, capacityPerVehicle: 60, targetLoad: 0.7f);
+
+            string[] parts = SuitabilityLineHealth.PlanPayload(plan).Split('|');
+            AssertEqual(7, parts.Length, 0, "the panel reads mode|vehicles|delta|interval|shape|value|spacing");
+            AssertTrue(parts[0] == plan.m_Mode.ToString(), "field 0 is the mode token");
+            AssertTrue(parts[4] == plan.m_Shape.ToString(), "field 4 is the shape token");
+            for (int i = 0; i < parts.Length; i++)
+            {
+                AssertTrue(parts[i].Length > 0, $"field {i} must not be empty");
+            }
+        }
+
+        // The walk pass is bucketed because route scoring rebuilds this network once per
+        // candidate. A bucket that drops a pair silently un-links an interchange, so
+        // the result is checked against the exhaustive sweep it replaced.
+        private static void WalkEdgesMatchAnExhaustiveSweep()
+        {
+            var random = new Random(11);
+            const int stops = 120;
+            const float radius = 250f;
+            var xs = new float[stops];
+            var zs = new float[stops];
+            for (int i = 0; i < stops; i++)
+            {
+                xs[i] = (float)(random.NextDouble() * 3000.0);
+                zs[i] = (float)(random.NextDouble() * 3000.0);
+            }
+
+            TransitNetwork net = SuitabilityTransit.Build(
+                xs, zs, stops, new List<TransitLine>(), radius, SuitabilityTransit.DefaultBoardPenaltySeconds);
+
+            var built = new HashSet<long>();
+            for (int e = 0; e < net.Graph.EdgeCount; e++)
+            {
+                if (net.EdgeKind[e] != TransitEdgeKind.Walk)
+                {
+                    continue;
+                }
+
+                int a = Math.Min(net.Graph.EdgeA[e], net.Graph.EdgeB[e]);
+                int b = Math.Max(net.Graph.EdgeA[e], net.Graph.EdgeB[e]);
+                AssertTrue(built.Add(((long)a << 32) | (uint)b), $"pair {a}-{b} must be joined once");
+            }
+
+            int expected = 0;
+            for (int a = 0; a < stops; a++)
+            {
+                for (int b = a + 1; b < stops; b++)
+                {
+                    float dx = xs[a] - xs[b];
+                    float dz = zs[a] - zs[b];
+                    if ((dx * dx) + (dz * dz) > radius * radius)
+                    {
+                        AssertTrue(!built.Contains(((long)a << 32) | (uint)b), $"pair {a}-{b} is out of range");
+                        continue;
+                    }
+
+                    expected++;
+                    AssertTrue(built.Contains(((long)a << 32) | (uint)b), $"pair {a}-{b} is within range and must be joined");
+                }
+            }
+
+            AssertEqual(expected, built.Count, 0, "exactly the pairs within the radius");
+            AssertTrue(expected > 20, $"the fixture must actually produce interchanges, got {expected}");
+        }
+
         private static float[] NewNovelty(int nodes)
         {
             var novelty = new float[nodes];
@@ -1408,17 +1828,25 @@ namespace StationSuitabilityOverlay.Tests
                 "would let one unexpected exception abort the whole suite.")]
         private static void Run(string name, Action test)
         {
-            s_Current = name;
             try
             {
                 test();
                 Console.WriteLine($"  PASS  {name}");
             }
-            catch (Exception ex)
+            catch (TestFailedException failure)
             {
                 s_Failures++;
                 Console.WriteLine($"  FAIL  {name}");
-                Console.WriteLine($"        {ex.Message}");
+                Console.WriteLine($"        {failure.Message}");
+            }
+            catch (Exception ex)
+            {
+                // Distinguished from an assertion failure on purpose: a crash in the
+                // code under test is a different problem from a property not holding,
+                // and printing them identically hid which one had happened.
+                s_Failures++;
+                Console.WriteLine($"  CRASH {name}");
+                Console.WriteLine($"        {ex.GetType().Name}: {ex.Message}");
             }
         }
 

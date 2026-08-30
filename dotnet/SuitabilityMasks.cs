@@ -28,7 +28,7 @@ namespace StationSuitabilityOverlay
         public static void Build(
             TerrainSystem terrainSystem,
             WaterSystem waterSystem,
-            Setting.ModePreset mode,
+            ModePreset mode,
             float maxSlopeDegrees,
             int2 gridSize,
             float2 worldMin,
@@ -50,7 +50,7 @@ namespace StationSuitabilityOverlay
             // Sampling on the main thread, so the producing jobs must be finished.
             waterDeps.Complete();
 
-            bool ferry = mode == Setting.ModePreset.Ferry;
+            bool ferry = mode == ModePreset.Ferry;
             float minNormalY = math.cos(math.radians(math.clamp(maxSlopeDegrees, 1f, 89f)));
 
             // Pass 1: classify each tile as land (for connectivity) and buildable
@@ -72,16 +72,13 @@ namespace StationSuitabilityOverlay
                     bool gentle = normal.y >= minNormalY;
 
                     land[index] = isLand ? (byte)1 : (byte)0;
-                    buildable[index] = (isLand && gentle) ? (byte)1 : (byte)0;
 
-                    if (ferry)
-                    {
-                        // Ferries need water access, so keep shallow water and defer
-                        // the shoreline test to pass 2 (it needs neighbours).
-                        buildable[index] = (isLand && gentle) || depth <= FerryShorelineDepth + WaterDepthThreshold
-                            ? (byte)1
-                            : (byte)0;
-                    }
+                    // Ferries need water access, so they also keep shallow water; the
+                    // shoreline test itself needs neighbours and waits for pass 2.
+                    bool placeable = ferry
+                        ? (isLand && gentle) || depth <= FerryShorelineDepth + WaterDepthThreshold
+                        : isLand && gentle;
+                    buildable[index] = placeable ? (byte)1 : (byte)0;
                 }
             }
 
@@ -90,10 +87,16 @@ namespace StationSuitabilityOverlay
                 RestrictToShoreline(gridSize, land, buildable);
             }
 
-            // Pass 2: label connected landmasses over 4-connectivity. Connectivity
-            // follows `land`, not `buildable`: a steep hillside still connects the
-            // valleys either side of it for the purpose of "same landmass", whereas
-            // water genuinely separates them.
+            // Pass 2: label connected landmasses. Connectivity follows `land`, not
+            // `buildable`: a steep hillside still connects the valleys either side of
+            // it for the purpose of "same landmass", whereas water genuinely separates
+            // them.
+            //
+            // 8-connected, to agree with SuitabilityScoring.AccumulateWalkDistance,
+            // which walks diagonals. Labelled over 4-connectivity the two models
+            // disagreed about a diagonal land bridge: the heat map treated it as a
+            // barrier while the walk-distance refinement of the same site walked
+            // straight across it.
             LabelComponents(gridSize, land, components, out componentCount);
         }
 
@@ -172,10 +175,16 @@ namespace StationSuitabilityOverlay
                     int cx = current % gridSize.x;
                     int cy = current / gridSize.x;
 
-                    PushNeighbour(stack, land, components, gridSize, cx - 1, cy, label);
-                    PushNeighbour(stack, land, components, gridSize, cx + 1, cy, label);
-                    PushNeighbour(stack, land, components, gridSize, cx, cy - 1, label);
-                    PushNeighbour(stack, land, components, gridSize, cx, cy + 1, label);
+                    for (int dy = -1; dy <= 1; dy++)
+                    {
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            if (dx != 0 || dy != 0)
+                            {
+                                PushNeighbour(stack, land, components, gridSize, cx + dx, cy + dy, label);
+                            }
+                        }
+                    }
                 }
             }
 

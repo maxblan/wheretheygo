@@ -134,7 +134,10 @@ namespace StationSuitabilityOverlay
                 m_Dropped++;
             }
 
-            Evict();
+            // Only this line's list. Every live line is recorded on every refresh, so
+            // each one is trimmed as it is written; sweeping all of them on every
+            // Record made one refresh of N lines cost N squared list scans.
+            Evict(samples);
         }
 
         // Forgets lines that no longer exist, so a city where the player keeps
@@ -234,7 +237,7 @@ namespace StationSuitabilityOverlay
             return frames / (float)FramesPerGameDay * 24f;
         }
 
-        private void Evict()
+        private void Evict(List<LineObservation> samples)
         {
             // Subtracting on unsigned would wrap in the opening frames of a city,
             // where the newest frame is smaller than the window itself.
@@ -244,20 +247,16 @@ namespace StationSuitabilityOverlay
             }
 
             uint cutoff = m_NewestFrame - m_WindowFrames;
-            foreach (KeyValuePair<int, List<LineObservation>> entry in m_ByLine)
+            int keepFrom = 0;
+            while (keepFrom < samples.Count && samples[keepFrom].m_Frame < cutoff)
             {
-                List<LineObservation> samples = entry.Value;
-                int keepFrom = 0;
-                while (keepFrom < samples.Count && samples[keepFrom].m_Frame < cutoff)
-                {
-                    keepFrom++;
-                }
+                keepFrom++;
+            }
 
-                if (keepFrom > 0)
-                {
-                    samples.RemoveRange(0, keepFrom);
-                    m_Evicted += keepFrom;
-                }
+            if (keepFrom > 0)
+            {
+                samples.RemoveRange(0, keepFrom);
+                m_Evicted += keepFrom;
             }
         }
     }

@@ -27,7 +27,7 @@
     <!-- A ratchet, not a switch. Any warning that is NOT in WarningsNotAsErrors below
          fails the build, so no NEW class of warning can be introduced. The listed rules
          are the pre-existing backlog measured when strictness was turned on; the list is
-         meant to shrink and never to grow. `make warnings` prints the current counts. -->
+         meant to shrink and never to grow. `make strict` fails on anything outside it. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningsNotAsErrors>
       <!-- Nullability backlog. Most of these are ECS/gathered data classes whose fields

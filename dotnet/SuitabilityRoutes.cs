@@ -10,7 +10,7 @@ namespace StationSuitabilityOverlay
     {
         public readonly List<float2> Path = new List<float2>();
         public readonly List<float2> Stops = new List<float2>();
-        public Setting.ModePreset Mode;
+        public ModePreset Mode;
         // Length-weighted MEAN edge flow along the corridor (SuitabilityGraphMath's
         // GrowCorridor). Comparable to the network's mean positive edge flow, which is
         // what the mode floors are a multiple of.
@@ -26,15 +26,6 @@ namespace StationSuitabilityOverlay
         public RouteNetwork Network;
         // Fleet the line would need to hold its assumed headway.
         public int Vehicles;
-
-        public void Clear()
-        {
-            Path.Clear();
-            Stops.Clear();
-            CapturedFlow = 0f;
-            EnabledDemand = 0f;
-            Length = 0f;
-        }
     }
 
     internal static class SuitabilityRoutes
@@ -47,16 +38,26 @@ namespace StationSuitabilityOverlay
         private const int NoveltyHops = 3;
         private const float NoveltyFactor = 0.15f;
 
-        // Mode thresholds. Flow is in trips per aggregation window, so these are
-        // relative rather than absolute passenger counts — calibrated against the
-        // mean corridor flow so they hold on a town and a metropolis alike.
-        private const float MediumFlowMultiple = 1.5f;
         // Corners closer than this to the straight line between their neighbours are
         // lattice artefacts rather than real alignment.
         private const float SimplifyTolerance = 120f;
         // How far along the line a stop may be nudged to find a better score,
         // as a fraction of the spacing. It never leaves the line.
         private const float StopSearchFraction = 0.35f;
+        // Two stops closer than this are the same stop: the along-line search can land
+        // consecutive placements on nearly the same spot.
+        private const float MinStopSeparationMetres = 20f;
+        // How far a line's endpoint may be from a road node when re-tracing it, and how
+        // long the re-traced path may be.
+        private const float RetraceSnapMetres = 600f;
+        private const float RetraceMaxPathMetres = 30000f;
+        // Dwell at each stop when estimating a fleet, in seconds, and the shortest
+        // headway worth planning around.
+        private const float StopDwellSeconds = 15f;
+        private const float MinPlannedHeadwaySeconds = 30f;
+        // Share of a candidate's stops that must already have service on the same
+        // alignment before it counts as a line the player has already built.
+        private const float DuplicateStopShare = 0.75f;
 
         // Grows corridors on ONE network and appends them as candidates. Each
         // network carries its own mode family, because the alignment a mode can use
@@ -70,7 +71,7 @@ namespace StationSuitabilityOverlay
             float maxRouteLength,
             float[]? nodeDemand,
             float demandFloor,
-            Setting.ModePreset? forcedMode,
+            ModePreset? forcedMode,
             List<SuggestedRoute> output,
             System.Func<float2, float> scoreAt,
             out int grown,
@@ -87,7 +88,25 @@ namespace StationSuitabilityOverlay
             // Work on a copy: peeling is destructive and the assigned flow is reused
             // by the demand layer.
             var flow = (float[])network.EdgeFlow.Clone();
+
+            // Edges a line could not call at start out spent. They stay in the graph
+            // so journeys still route over them and their flow still counts towards
+            // the network's mean, but no corridor may be seeded on or extended along
+            // one — a bus route down a motorway serves nobody.
             var used = new bool[graph.EdgeCount];
+            int unstoppable = 0;
+            bool[]? noStopEdges = network.EdgeCannotHostStops;
+            if (noStopEdges is not null)
+            {
+                for (int e = 0; e < graph.EdgeCount && e < noStopEdges.Length; e++)
+                {
+                    if (noStopEdges[e])
+                    {
+                        used[e] = true;
+                        unstoppable++;
+                    }
+                }
+            }
             var novelty = new float[graph.NodeCount];
             for (int n = 0; n < graph.NodeCount; n++)
             {
@@ -154,44 +173,17 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                var route = new SuggestedRoute
-                {
-                    CapturedFlow = corridor.CapturedFlow,
-                    Length = corridor.Length,
-                    Network = network.Network,
-                };
-
-                // Follow each edge's real centreline where there is one, so a street
-                // route stays on the street instead of cutting every corner.
-                network.MaterialisePath(corridor.Nodes, route.Path);
-
-                route.Mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
-
-                // Lattice corridors are 8-connected staircases; straighten them
-                // before measuring or drawing so a tunnel does not zig-zag.
-                if (route.Mode is not (Setting.ModePreset.Bus or Setting.ModePreset.Tram))
-                {
-                    Simplify(route.Path, SimplifyTolerance);
-                }
-
-                // Judged against the SHORTEST mode this alignment can host, not the
-                // mode first guessed from flow. A busy 800 m street was classified Tram,
-                // failed the 1200 m tram floor and was thrown away, when it was a
-                // perfectly good bus route — which is why road candidates kept coming
-                // out as "grown=8 tooShort=8".
                 grown++;
-                if (route.Length < ShortestModeLength(network.Network))
+                SuggestedRoute? candidate = BuildCandidate(
+                    network, corridor, meanFlow, forcedMode, scoreAt, out bool shorterThanAnyMode);
+                if (candidate is not null)
+                {
+                    output.Add(candidate);
+                    added++;
+                }
+                else if (shorterThanAnyMode)
                 {
                     tooShort++;
-                }
-                else
-                {
-                    PlaceStops(route, StopSpacingFor(route.Mode), scoreAt);
-                    if (route.Stops.Count >= 2)
-                    {
-                        output.Add(route);
-                        added++;
-                    }
                 }
 
                 SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, CaptureFraction);
@@ -207,7 +199,8 @@ namespace StationSuitabilityOverlay
                 $"Corridor growth on {network.Network}: {(lengthCount).ToString(CultureInfo.InvariantCulture)} grown, " +
                 $"mean length {((lengthCount > 0 ? lengthSum / lengthCount : 0f)).ToString("F0", CultureInfo.InvariantCulture)}m, " +
                 $"{(hitMaxLength).ToString(CultureInfo.InvariantCulture)} reached the {(maxRouteLength).ToString("F0", CultureInfo.InvariantCulture)}m limit; " +
-                $"meanEdgeFlow={(meanFlow).ToString("F0", CultureInfo.InvariantCulture)}, flowFloor={(flowFloor).ToString("F0", CultureInfo.InvariantCulture)}; " +
+                $"meanEdgeFlow={(meanFlow).ToString("F0", CultureInfo.InvariantCulture)}, flowFloor={(flowFloor).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                $"{(unstoppable).ToString(CultureInfo.InvariantCulture)} edge(s) excluded as unable to host a stop; " +
                 $"extensions refused — alreadyUsed={(blocked.m_Used).ToString(CultureInfo.InvariantCulture)}, " +
                 $"belowFlowFloor={(blocked.m_Flow).ToString(CultureInfo.InvariantCulture)}, " +
                 $"wouldRevisit={(blocked.m_Visited).ToString(CultureInfo.InvariantCulture)}, " +
@@ -216,42 +209,91 @@ namespace StationSuitabilityOverlay
                 $"{(added >= budget ? $"; STOPPED at this network's budget of {budget.ToString(CultureInfo.InvariantCulture)} candidates — there may be more worth having" : string.Empty)}");
         }
 
+        // Turns one grown corridor into a candidate line: its drawn alignment, the mode
+        // its flow suggests, and its stops.
+        //
+        // Returns null when the corridor cannot become a line, with
+        // `shorterThanAnyMode` telling the two rejections apart for the diagnostics.
+        // Length is judged against the SHORTEST mode this alignment can host, not the
+        // mode first guessed from flow: a busy 800 m street classified Tram failed the
+        // 1200 m tram floor and was thrown away when it was a perfectly good bus
+        // route, which is why road candidates kept coming out as "grown=8 tooShort=8".
+        private static SuggestedRoute? BuildCandidate(
+            SuitabilityRoadGraph network,
+            Corridor corridor,
+            float meanFlow,
+            ModePreset? forcedMode,
+            System.Func<float2, float> scoreAt,
+            out bool shorterThanAnyMode)
+        {
+            shorterThanAnyMode = false;
+            var route = new SuggestedRoute
+            {
+                CapturedFlow = corridor.CapturedFlow,
+                Length = corridor.Length,
+                Network = network.Network,
+            };
+
+            // Follow each edge's real centreline where there is one, so a street
+            // route stays on the street instead of cutting every corner.
+            network.MaterialisePath(corridor.Nodes, route.Path);
+
+            route.Mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
+
+            // Lattice corridors are 8-connected staircases; straighten them before
+            // measuring or drawing so a tunnel does not zig-zag.
+            if (route.Mode is not (ModePreset.Bus or ModePreset.Tram))
+            {
+                Simplify(route.Path, SimplifyTolerance);
+            }
+
+            if (route.Length < ShortestModeLength(network.Network))
+            {
+                shorterThanAnyMode = true;
+                return null;
+            }
+
+            PlaceStops(route, TransitModes.StopSpacingFor(route.Mode), scoreAt);
+            return route.Stops.Count >= 2 ? route : null;
+        }
+
         // Minimum length of the least demanding mode this network can host.
         private static float ShortestModeLength(RouteNetwork network)
         {
-            Setting.ModePreset[] options = ModesFor(network);
+            ModePreset[] options = ModesFor(network);
             float shortest = float.MaxValue;
             for (int i = 0; i < options.Length; i++)
             {
-                shortest = math.min(shortest, MinLengthFor(options[i]));
+                shortest = math.min(shortest, TransitModes.MinLengthFor(options[i]));
             }
 
             return shortest;
         }
 
-        // On the street network the only choice is how heavy the corridor is.
-        private static Setting.ModePreset ClassifyStreetMode(float corridorFlow, float meanFlow)
+        // On the street network the only choice is how heavy the corridor is, and the
+        // bar is the tram's own capacity floor rather than a second copy of it.
+        private static ModePreset ClassifyStreetMode(float corridorFlow, float meanFlow)
         {
-            return corridorFlow >= meanFlow * MediumFlowMultiple
-                ? Setting.ModePreset.Tram
-                : Setting.ModePreset.Bus;
+            return corridorFlow >= meanFlow * TransitModes.MinFlowMultipleFor(ModePreset.Tram)
+                ? ModePreset.Tram
+                : ModePreset.Bus;
         }
 
         // Modes a given alignment can carry, best capacity first. Choosing among these
         // is what lets an under-used rail corridor come back as something feasible
         // instead of being dropped for not justifying a metro.
-        public static Setting.ModePreset[] ModesFor(RouteNetwork network)
+        public static ModePreset[] ModesFor(RouteNetwork network)
         {
             switch (network)
             {
                 case RouteNetwork.Rail:
-                    return new[] { Setting.ModePreset.Train, Setting.ModePreset.Metro };
+                    return new[] { ModePreset.Train, ModePreset.Metro };
                 case RouteNetwork.Water:
-                    return new[] { Setting.ModePreset.Ferry };
+                    return new[] { ModePreset.Ferry };
                 default:
                     // Streets can host either, and a bus has no capacity floor, so a
                     // road corridor always yields a usable suggestion.
-                    return new[] { Setting.ModePreset.Tram, Setting.ModePreset.Bus };
+                    return new[] { ModePreset.Tram, ModePreset.Bus };
             }
         }
 
@@ -275,18 +317,18 @@ namespace StationSuitabilityOverlay
             float flow,
             float length,
             float referenceFlow,
-            out Setting.ModePreset mode,
+            out ModePreset mode,
             out ModeRejection rejection)
         {
-            Setting.ModePreset[] options = ModesFor(network);
+            ModePreset[] options = ModesFor(network);
             bool metSomeFloor = false;
             for (int i = 0; i < options.Length; i++)
             {
-                Setting.ModePreset option = options[i];
-                float floor = referenceFlow * MinFlowMultipleFor(option);
+                ModePreset option = options[i];
+                float floor = referenceFlow * TransitModes.MinFlowMultipleFor(option);
                 bool hasFlow = flow >= floor;
                 metSomeFloor |= hasFlow;
-                if (hasFlow && length >= MinLengthFor(option))
+                if (hasFlow && length >= TransitModes.MinLengthFor(option))
                 {
                     mode = option;
                     rejection = ModeRejection.None;
@@ -302,24 +344,12 @@ namespace StationSuitabilityOverlay
         }
 
         // Fleet needed to hold the mode's assumed headway around the whole line.
-        public static int EstimateVehicles(Setting.ModePreset mode, float lengthMetres, int stops, float headwaySeconds)
+        public static int EstimateVehicles(ModePreset mode, float lengthMetres, int stops, float headwaySeconds)
         {
-            float speed = CruiseSpeedFor(mode);
-            float dwell = 15f;
-            float roundTrip = (lengthMetres * 2f) / math.max(1f, speed) + stops * 2 * dwell;
-            return math.max(1, (int)math.round(roundTrip / math.max(30f, headwaySeconds)));
-        }
-
-        public static float CruiseSpeedFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Tram: return 12f;
-                case Setting.ModePreset.Metro: return 18f;
-                case Setting.ModePreset.Train: return 28f;
-                case Setting.ModePreset.Ferry: return 10f;
-                default: return 9f;
-            }
+            float speed = TransitModes.CruiseSpeedFor(mode);
+            // Out and back, dwelling at every stop in each direction.
+            float roundTrip = ((lengthMetres * 2f) / math.max(1f, speed)) + (stops * 2 * StopDwellSeconds);
+            return math.max(1, (int)math.round(roundTrip / math.max(MinPlannedHeadwaySeconds, headwaySeconds)));
         }
 
         // Re-traces a corridor on the ROAD network between the same endpoints.
@@ -340,9 +370,9 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            int fromNode = roads.NearestNode(from, 600f);
-            int toNode = roads.NearestNode(to, 600f);
-            if (fromNode < 0 || toNode < 0 || !roads.TracePath(fromNode, toNode, 30000f, scratch))
+            int fromNode = roads.NearestNode(from, RetraceSnapMetres);
+            int toNode = roads.NearestNode(to, RetraceSnapMetres);
+            if (fromNode < 0 || toNode < 0 || !roads.TracePath(fromNode, toNode, RetraceMaxPathMetres, scratch))
             {
                 return null;
             }
@@ -360,8 +390,13 @@ namespace StationSuitabilityOverlay
             route.CapturedFlow = roads.FlowAlong(scratch);
 
             if (!ChooseMode(RouteNetwork.Road, route.CapturedFlow, route.Length, referenceFlow,
-                    out Setting.ModePreset mode, out ModeRejection _))
+                    out ModePreset mode, out ModeRejection why))
             {
+                Mod.Log.Info(
+                    $"Re-trace on road found a {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m path " +
+                    $"carrying {(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)} against a reference of " +
+                    $"{(referenceFlow).ToString("F0", CultureInfo.InvariantCulture)}, but no road mode is justified: " +
+                    $"{(why == ModeRejection.TooShort ? "too short for any road mode" : "below every demand floor")}.");
                 return null;
             }
 
@@ -380,14 +415,14 @@ namespace StationSuitabilityOverlay
         {
             return route is not null
                 && route.Stops.Count >= 2
-                && route.Length >= MinLengthFor(route.Mode);
+                && route.Length >= TransitModes.MinLengthFor(route.Mode);
         }
 
         // Re-places stops after a mode change, since spacing is mode-specific.
-        public static void Restop(SuggestedRoute route, Setting.ModePreset mode, System.Func<float2, float> scoreAt)
+        public static void Restop(SuggestedRoute route, ModePreset mode, System.Func<float2, float> scoreAt)
         {
             route.Mode = mode;
-            PlaceStops(route, StopSpacingFor(mode), scoreAt);
+            PlaceStops(route, TransitModes.StopSpacingFor(mode), scoreAt);
         }
 
         // True when this candidate essentially retraces a line that already exists.
@@ -395,12 +430,9 @@ namespace StationSuitabilityOverlay
         // mod asked for and the same suggestion kept being offered.
         public static bool DuplicatesExisting(SuggestedRoute route, List<ExistingLine> existing, List<float2> stopPositions, float matchRadius)
         {
-            if (route.Stops.Count == 0 || existing is null)
-            {
-                return false;
-            }
-
-            if (route.Stops.Count < 3)
+            // Below three stops a candidate trivially matches most of something on a
+            // dense network and was thrown away as "already built" when it was not.
+            if (existing is null || route.Stops.Count < 3)
             {
                 return false;
             }
@@ -429,44 +461,13 @@ namespace StationSuitabilityOverlay
                 }
 
                 // Most of the suggestion already has service on the same alignment.
-                // Requires a real line's worth of stops: on a dense network a two-stop
-                // candidate trivially matched 60% of something and was thrown away as
-                // "already built" when it was not.
-                if (route.Stops.Count >= 3 && matched >= (int)math.ceil(route.Stops.Count * 0.75f))
+                if (matched >= (int)math.ceil(route.Stops.Count * DuplicateStopShare))
                 {
                     return true;
                 }
             }
 
             return false;
-        }
-
-        // Below these lengths the mode is not worth building, whatever the demand.
-        public static float MinLengthFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                // Lowered after a run where 51 of 53 grown corridors died here and
-                // nothing at all was suggested. Corridors on a real street grid come
-                // out shorter than these originally assumed.
-                case Setting.ModePreset.Tram: return 1200f;
-                case Setting.ModePreset.Metro: return 2000f;
-                case Setting.ModePreset.Train: return 4000f;
-                case Setting.ModePreset.Ferry: return 1200f;
-                default: return 500f;
-            }
-        }
-
-        public static float StopSpacingFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Tram: return 450f;
-                case Setting.ModePreset.Metro: return 800f;
-                case Setting.ModePreset.Train: return 2000f;
-                case Setting.ModePreset.Ferry: return 1200f;
-                default: return 350f;
-            }
         }
 
         // Walks the polyline dropping a stop every `spacing` metres. At each one it
@@ -650,10 +651,10 @@ namespace StationSuitabilityOverlay
 
         private static bool AddStop(SuggestedRoute route, float2 placed)
         {
-            // The along-line search can land two stops on nearly the same spot.
+            float minSeparationSq = MinStopSeparationMetres * MinStopSeparationMetres;
             for (int i = 0; i < route.Stops.Count; i++)
             {
-                if (math.distancesq(route.Stops[i], placed) < 400f)
+                if (math.distancesq(route.Stops[i], placed) < minSeparationSq)
                 {
                     return false;
                 }
@@ -663,20 +664,5 @@ namespace StationSuitabilityOverlay
             return true;
         }
 
-        // Absolute capacity floors, expressed against a city-wide reference flow so
-        // they hold on any size of city. Each network hands out its own mode, but a
-        // corridor only justifies that mode if it actually carries enough: a metro
-        // built for 361 trips while a tram carries 1633 is the wrong way round.
-        public static float MinFlowMultipleFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Tram: return 1.5f;
-                case Setting.ModePreset.Metro: return 5f;
-                case Setting.ModePreset.Train: return 8f;
-                case Setting.ModePreset.Ferry: return 1f;
-                default: return 0f;
-            }
-        }
     }
 }

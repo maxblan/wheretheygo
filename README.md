@@ -4,8 +4,7 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
 
 ## Features
 
-- **Station Suitability infoview** in the game's infoview menu, with standard gradient legends
-- **Ten toggleable map layers** — the combined score, the recommended sites, travel demand, and one layer per scoring term (demand, jobs, existing coverage, accessibility, future demand, interchange potential, cross-mode overlap) so you can see *why* a tile scores the way it does. The terrain overlay has four channels, so up to four layers can be shown at once; a fifth is skipped with a note in the log.
+- **Station Suitability infoview**, with a standard gradient legend. The mod presents itself through its own panel rather than a row of infoview toggles, so the combined score is the one layer offered. The per-term layers (demand, jobs, existing coverage, accessibility, future demand, interchange potential, cross-mode overlap, travel demand) are still defined and one line away in `SuitabilityLayers.All`; the terrain overlay has four channels, so up to four could be shown at once.
 - **Ranked site recommendations** — instead of only a gradient, the best distinct locations are marked as discrete spots, spaced at least one catchment apart and re-scored by true walking distance
 - **Catchment-based scoring** over five criteria, each normalized to a comparable 0–1 scale before weighting:
   - Demand — residents within the catchment (weight W1)
@@ -104,20 +103,19 @@ or `dotnet build dotnet/StationSuitabilityOverlay.csproj -c Release`. The build 
 
 ## Tests
 
-The scoring math (percentile normalization, site selection, weight fitting) is free of Unity types so it can be tested directly:
+The scoring math (percentile normalization, site selection, corridor growth, transit routing, weight fitting and the line-health thresholds) is free of Unity types so it can be tested directly:
 
 ```bash
 dotnet run --project tests/SuitabilityScoring.Tests
 ```
 
-No packages to restore; a non-zero exit code means a failure. This project is intentionally not part of the solution so the mod toolchain build is unaffected.
+No packages to restore; a non-zero exit code counts the failures. This project is intentionally not part of the solution so the mod toolchain build is unaffected. It links the six Unity-free files — scoring, graph math, transit routing, the line-reading window, line health and the per-mode tables — so the thresholds behind a verdict are testable too.
 
 ## Usage
 
 1. Load a city and open the infoview menu (the ⓘ button), then select **Station Suitability**.
-2. The brightest tiles are the best locations for a new stop; enable **Recommended sites** for discrete ranked suggestions.
-3. Turn on individual term layers to understand a surprising result.
-4. Tune mode preset, weights and radii under Options → Station Suitability Overlay; the overlay recalculates automatically.
+2. The brightest tiles are the best locations for a new stop. The ranked recommended sites, with the walk-distance score behind each, are written to the mod log.
+3. Tune the mode, objective and radii in the mod's own panel, or under Options → Station Suitability Overlay for the full set including weights; the overlay recalculates automatically.
 
 ## License
 

@@ -26,7 +26,7 @@ namespace StationSuitabilityOverlay
         public int m_Id;
         // The game's own display name for the line.
         public string m_Name;
-        public Setting.ModePreset m_Mode;
+        public ModePreset m_Mode;
         public int m_Vehicles;
         public int m_TargetVehicles;
         public int m_Passengers;
@@ -190,20 +190,6 @@ namespace StationSuitabilityOverlay
             return LineVerdict.Healthy;
         }
 
-        // The mode a struggling line should grow into. Ordered by capacity, so a bus
-        // becomes a tram before it becomes a metro — suggesting the largest possible
-        // jump would rarely be actionable.
-        public static Setting.ModePreset NextModeUp(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Bus: return Setting.ModePreset.Tram;
-                case Setting.ModePreset.Tram: return Setting.ModePreset.Metro;
-                case Setting.ModePreset.Metro: return Setting.ModePreset.Train;
-                default: return mode;
-            }
-        }
-
         // A concrete improvement for one line: what to run it with, how many, and what
         // to do about its shape. Every number is derived from the line's own
         // measurements so the player can check the reasoning.
@@ -211,7 +197,7 @@ namespace StationSuitabilityOverlay
         // every stop. The fleet follows from it exactly as TransportLineSystem derives
         // it, so the recommendation is one the game can actually produce.
         // What is wrong with a line's SHAPE, as a token the panel can translate.
-        public enum PlanShape
+        internal enum PlanShape
         {
             Fine = 0,
             Split = 1,
@@ -222,9 +208,9 @@ namespace StationSuitabilityOverlay
         // A remedy, as numbers and tokens rather than a sentence. Improve() renders the
         // English version for the log; the panel renders the player's language from the
         // same values, so the two can never drift.
-        public struct ImprovePlan
+        internal struct ImprovePlan
         {
-            public Setting.ModePreset m_Mode;
+            public ModePreset m_Mode;
             public int m_Vehicles;
             // Signed change against the fleet running today; 0 means leave it alone.
             public int m_VehicleDelta;
@@ -248,22 +234,31 @@ namespace StationSuitabilityOverlay
 
             // Mode: grow when the vehicles themselves are the ceiling, shrink when the
             // line cannot fill what it already runs.
-            Setting.ModePreset mode = health.m_Mode;
+            ModePreset mode = health.m_Mode;
             if (health.m_Verdict == LineVerdict.AtModeCapacity)
             {
-                mode = NextModeUp(health.m_Mode);
+                mode = TransitModes.NextModeUp(health.m_Mode);
             }
             else if (health.m_Verdict == LineVerdict.NearlyEmpty)
             {
-                mode = NextModeDown(health.m_Mode);
+                mode = TransitModes.NextModeDown(health.m_Mode);
             }
 
             // Fleet: enough capacity to carry the observed load at a comfortable fill,
             // and enough vehicles to hold a sensible headway around the line.
+            //
+            // The load comes from the BUSIEST reading in the window, not the count at
+            // the instant of collection. The verdict that sent us here was drawn from
+            // the window, and sizing its remedy from one reading handed a ferry caught
+            // mid-crossing a fleet for nobody. m_Passengers and m_Capacity are
+            // deliberately kept as instantaneous counts that do not divide into a
+            // windowed share, so the peak share is multiplied back up by capacity to
+            // get a rider count on the same footing as the verdict.
             int perVehicle = Math.Max(1, capacityPerVehicle);
-            int forLoad = (int)Math.Ceiling(health.m_Passengers / Math.Max(0.2f, targetLoad) / perVehicle);
+            float peakRiders = health.m_PeakUsage * health.m_Capacity;
+            int forLoad = (int)Math.Ceiling(peakRiders / Math.Max(0.2f, targetLoad) / perVehicle);
             int forHeadway = roundTripSeconds > 0f
-                ? (int)Math.Round(roundTripSeconds / TargetHeadwayFor(mode), MidpointRounding.AwayFromZero)
+                ? (int)Math.Round(roundTripSeconds / TransitModes.TargetHeadwayFor(mode), MidpointRounding.AwayFromZero)
                 : health.m_Vehicles;
             int vehicles = Math.Max(1, Math.Max(forLoad, forHeadway));
 
@@ -291,9 +286,9 @@ namespace StationSuitabilityOverlay
 
             // Shape: the two failures worth calling out are a line too long to keep a
             // headway, and one making far more stops than its mode wants.
-            float maxLength = MaxSensibleLength(mode);
+            float maxLength = TransitModes.MaxSensibleLength(mode);
             float spacing = health.m_Stops > 1 ? lengthMetres / (health.m_Stops - 1) : lengthMetres;
-            float wantedSpacing = TargetSpacingFor(mode);
+            float wantedSpacing = TransitModes.StopSpacingFor(mode);
 
             if (lengthMetres > maxLength)
             {
@@ -391,53 +386,6 @@ namespace StationSuitabilityOverlay
             });
         }
 
-        public static Setting.ModePreset NextModeDown(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Train: return Setting.ModePreset.Metro;
-                case Setting.ModePreset.Metro: return Setting.ModePreset.Tram;
-                case Setting.ModePreset.Tram: return Setting.ModePreset.Bus;
-                default: return mode;
-            }
-        }
-
-        private static float TargetHeadwayFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Tram: return 240f;
-                case Setting.ModePreset.Metro: return 200f;
-                case Setting.ModePreset.Train: return 480f;
-                case Setting.ModePreset.Ferry: return 600f;
-                default: return 300f;
-            }
-        }
-
-        private static float TargetSpacingFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Tram: return 450f;
-                case Setting.ModePreset.Metro: return 800f;
-                case Setting.ModePreset.Train: return 2000f;
-                case Setting.ModePreset.Ferry: return 1200f;
-                default: return 350f;
-            }
-        }
-
-        private static float MaxSensibleLength(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Tram: return 12000f;
-                case Setting.ModePreset.Metro: return 20000f;
-                case Setting.ModePreset.Train: return 60000f;
-                case Setting.ModePreset.Ferry: return 20000f;
-                default: return 9000f;
-            }
-        }
-
         // The one variable piece of a verdict: how many vehicles to add, or the mode
         // to upgrade to. Empty when the verdict takes no argument. Kept apart from
         // Describe so the panel can substitute it into a TRANSLATED sentence instead
@@ -451,7 +399,7 @@ namespace StationSuitabilityOverlay
                         ? health.m_AddVehicles.ToString(CultureInfo.InvariantCulture)
                         : string.Empty;
                 case LineVerdict.AtModeCapacity:
-                    Setting.ModePreset upgrade = NextModeUp(health.m_Mode);
+                    ModePreset upgrade = TransitModes.NextModeUp(health.m_Mode);
                     return upgrade != health.m_Mode ? upgrade.ToString() : string.Empty;
                 default:
                     return string.Empty;
@@ -469,7 +417,7 @@ namespace StationSuitabilityOverlay
                         ? $"overcrowded — add {(health.m_AddVehicles).ToString(CultureInfo.InvariantCulture)} vehicle(s)"
                         : "overcrowded — increase service";
                 case LineVerdict.AtModeCapacity:
-                    Setting.ModePreset next = NextModeUp(health.m_Mode);
+                    ModePreset next = TransitModes.NextModeUp(health.m_Mode);
                     return next != health.m_Mode
                         ? $"at capacity — upgrade to {next}"
                         : "at capacity — split the route";

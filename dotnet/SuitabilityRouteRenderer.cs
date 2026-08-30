@@ -24,45 +24,40 @@ namespace StationSuitabilityOverlay
         // Width, dash and marker size all vary by mode: colour alone is not enough
         // to tell a bus line from a metro at a glance, especially against a
         // multi-coloured heatmap.
-        private static float LineWidthFor(Setting.ModePreset mode)
+        private static float LineWidthFor(ModePreset mode)
         {
             switch (mode)
             {
-                case Setting.ModePreset.Tram: return 14f;
-                case Setting.ModePreset.Metro: return 16f;
-                case Setting.ModePreset.Train: return 20f;
-                case Setting.ModePreset.Ferry: return 10f;
+                case ModePreset.Tram: return 14f;
+                case ModePreset.Metro: return 16f;
+                case ModePreset.Train: return 20f;
+                case ModePreset.Ferry: return 10f;
                 default: return 10f;
             }
         }
 
-        private static float StopDiameterFor(Setting.ModePreset mode)
+        private static float StopDiameterFor(ModePreset mode)
         {
             switch (mode)
             {
-                case Setting.ModePreset.Tram: return 26f;
-                case Setting.ModePreset.Metro: return 34f;
-                case Setting.ModePreset.Train: return 42f;
-                case Setting.ModePreset.Ferry: return 30f;
+                case ModePreset.Tram: return 26f;
+                case ModePreset.Metro: return 34f;
+                case ModePreset.Train: return 42f;
+                case ModePreset.Ferry: return 30f;
                 default: return 20f;
             }
         }
         private const float TerrainOffset = 4f;
 
-        // Coloured by MODE, not by rank: rank is already visible in the ordered
-        // options readout and the log, whereas which vehicle a line is for cannot be
-        // read off the map any other way. Roughly follows transit-map convention.
-        private static Color ColorFor(Setting.ModePreset mode)
+
+        // Opacity of a drawn route. The colour itself belongs to the mode and lives
+        // in TransitModes, so the map and the panel cannot disagree about it.
+        private const float RouteOpacity = 0.9f;
+
+        private static Color ColorFor(ModePreset mode)
         {
-            switch (mode)
-            {
-                case Setting.ModePreset.Bus: return new Color(0.15f, 0.55f, 1f, 0.9f);
-                case Setting.ModePreset.Tram: return new Color(1f, 0.45f, 0.1f, 0.9f);
-                case Setting.ModePreset.Metro: return new Color(0.6f, 0.25f, 0.95f, 0.9f);
-                case Setting.ModePreset.Train: return new Color(0.1f, 0.75f, 0.35f, 0.9f);
-                case Setting.ModePreset.Ferry: return new Color(0.1f, 0.85f, 0.95f, 0.9f);
-                default: return new Color(0.9f, 0.9f, 0.9f, 0.9f);
-            }
+            TransitModes.ColorFor(mode, out byte red, out byte green, out byte blue);
+            return new Color(red / 255f, green / 255f, blue / 255f, RouteOpacity);
         }
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
@@ -151,16 +146,16 @@ namespace StationSuitabilityOverlay
                     float width = LineWidthFor(route.Mode);
                     switch (route.Mode)
                     {
-                        case Setting.ModePreset.Bus:
-                        case Setting.ModePreset.Tram:
+                        case ModePreset.Bus:
+                        case ModePreset.Tram:
                             // DrawLine builds the straight curve internally, so there
                             // is no need to construct a Bezier here.
                             buffer.DrawLine(color, new Line3.Segment(from, to), width);
                             break;
-                        case Setting.ModePreset.Metro:
+                        case ModePreset.Metro:
                             buffer.DrawDashedLine(color, new Line3.Segment(from, to), width, 70f, 30f);
                             break;
-                        case Setting.ModePreset.Train:
+                        case ModePreset.Train:
                             buffer.DrawDashedLine(color, new Line3.Segment(from, to), width, 140f, 60f);
                             break;
                         default:

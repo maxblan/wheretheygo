@@ -213,9 +213,26 @@ namespace StationSuitabilityOverlay
                 });
             }
 
-            // Grouped by origin so the flow assignment can run one search per origin
-            // zone rather than one per pair.
-            flows.Sort(static (a, b) => a.m_Origin.CompareTo(b.m_Origin));
+            // A TOTAL order, not merely grouped by origin.
+            //
+            // Grouping is what lets the flow assignment run one search per origin zone
+            // rather than one per pair. But the trips arrive from a PARALLEL job
+            // through a NativeQueue, so the dequeue order depends on thread
+            // scheduling; that became the insertion order of `totals`, then its
+            // enumeration order, and List.Sort is not stable, so pairs sharing an
+            // origin kept whatever order the dictionary happened to yield.
+            //
+            // Float addition is not associative, so AssignFlow then accumulated
+            // slightly different edge flows on every run, and GrowCorridor seeds on a
+            // strict `score > seedScore` — a last-bit difference between two
+            // near-equal edges flipped which corridor was grown first, and peeling and
+            // novelty decay carried that through every later suggestion. Sorting on
+            // the destination too makes the whole pipeline a function of the save.
+            flows.Sort(static (a, b) =>
+            {
+                int byOrigin = a.m_Origin.CompareTo(b.m_Origin);
+                return byOrigin != 0 ? byOrigin : a.m_Destination.CompareTo(b.m_Destination);
+            });
             return totalWeight;
         }
 

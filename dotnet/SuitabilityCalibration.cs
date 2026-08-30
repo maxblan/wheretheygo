@@ -41,6 +41,13 @@ namespace StationSuitabilityOverlay
             public int m_Samples;
             public double m_ArrivalRateSum;
             public double m_WaitSum;
+            // A running MEAN of the term values at this stop, not the latest reading.
+            // The regression target is a mean over the whole series, and overwriting
+            // the predictors on every sample related a half-hour mean arrival rate to
+            // the demand, jobs, access and future values as they stood in the last
+            // sixty seconds — two different cities once a district built out during
+            // collection. Kept as a mean rather than a sum so the persisted format is
+            // unchanged and an older file's snapshot reads as a valid starting mean.
             public float[] m_Features = new float[FeatureCount];
         }
 
@@ -49,6 +56,9 @@ namespace StationSuitabilityOverlay
         private bool m_HasFit;
         private float m_RSquared;
         private int m_FittedStops;
+        // Said once rather than every minute: the cap is a backstop, and a player who
+        // has more stops than it holds should hear about it, but only once.
+        private bool m_CapReported;
 
         public bool HasFit => m_HasFit;
         public float RSquared => m_RSquared;
@@ -58,6 +68,26 @@ namespace StationSuitabilityOverlay
         public float FittedJobs => m_Fitted[1];
         public float FittedAccess => m_Fitted[2];
         public float FittedFuture => m_Fitted[3];
+
+        // Mean rider wait across the tracked stops, in seconds. Logged beside the fit
+        // because the whole Little's-law derivation rests on this being seconds: the
+        // first version divided by the pathfinder's accumulator instead and produced a
+        // target in no unit at all, which pinned three of four coefficients at zero.
+        public float MeanWaitSeconds
+        {
+            get
+            {
+                double waits = 0.0;
+                long samples = 0;
+                foreach (StopRecord record in m_Records.Values)
+                {
+                    waits += record.m_WaitSum;
+                    samples += record.m_Samples;
+                }
+
+                return samples > 0 ? (float)(waits / samples) : 0f;
+            }
+        }
 
         public int ReadyStops
         {
@@ -84,6 +114,7 @@ namespace StationSuitabilityOverlay
             m_HasFit = false;
             m_RSquared = 0f;
             m_FittedStops = 0;
+            m_CapReported = false;
         }
 
         private static long KeyOf(float2 position)
@@ -105,7 +136,7 @@ namespace StationSuitabilityOverlay
             EntityManager entityManager,
             EntityQuery stopQuery,
             Game.Prefabs.PrefabSystem prefabSystem,
-            Setting.ModePreset mode,
+            ModePreset mode,
             Func<float2, float[], bool> sampleFeatures,
             Func<float2, float> waitSecondsAt)
         {
@@ -160,6 +191,16 @@ namespace StationSuitabilityOverlay
                 {
                     if (m_Records.Count >= MaxTrackedStops)
                     {
+                        // A bound that truncates silently reads as "covered
+                        // everything" when it did not.
+                        if (!m_CapReported)
+                        {
+                            m_CapReported = true;
+                            Mod.Log.Warn(
+                                $"Ridership sampling is at its cap of {MaxTrackedStops.ToString(CultureInfo.InvariantCulture)} stops; " +
+                                "further stops of this mode are not being tracked and cannot influence the fit.");
+                        }
+
                         continue;
                     }
 
@@ -173,7 +214,15 @@ namespace StationSuitabilityOverlay
                 record.m_Samples++;
                 record.m_ArrivalRateSum += arrivalRate;
                 record.m_WaitSum += wait;
-                Array.Copy(features, record.m_Features, FeatureCount);
+
+                // Incremental mean, so the predictors describe the same stretch of
+                // play the target does. Accumulated in double and stored back as float
+                // to keep the persisted format as it was.
+                for (int c = 0; c < FeatureCount; c++)
+                {
+                    double previous = record.m_Features[c];
+                    record.m_Features[c] = (float)(previous + ((features[c] - previous) / record.m_Samples));
+                }
             }
         }
 
@@ -220,9 +269,16 @@ namespace StationSuitabilityOverlay
         // observations cannot be mistaken for a calibrated model.
         public bool TryFit()
         {
+            // Ordered by key rather than by however the dictionary enumerates: the row
+            // order decides the summation order of the normal equations, and the
+            // fitted weights reach the player's sliders.
+            var keys = new List<long>(m_Records.Keys);
+            keys.Sort();
+
             var usable = new List<StopRecord>();
-            foreach (StopRecord record in m_Records.Values)
+            for (int i = 0; i < keys.Count; i++)
             {
+                StopRecord record = m_Records[keys[i]];
                 if (record.m_Samples >= MinSamplesPerStop)
                 {
                     usable.Add(record);
@@ -332,10 +388,16 @@ namespace StationSuitabilityOverlay
             _ = builder.Append("city=");
             _ = builder.Append(m_City.Replace(';', ' ').Replace(':', ' '));
             _ = builder.Append(';');
-            foreach (KeyValuePair<long, StopRecord> pair in m_Records)
+
+            // Sorted so the same series always writes the same bytes: the settings
+            // file is rewritten every few minutes, and dictionary order made it churn
+            // for no reason.
+            var keys = new List<long>(m_Records.Keys);
+            keys.Sort();
+            for (int i = 0; i < keys.Count; i++)
             {
-                StopRecord record = pair.Value;
-                _ = builder.Append(pair.Key.ToString(CultureInfo.InvariantCulture));
+                StopRecord record = m_Records[keys[i]];
+                _ = builder.Append(keys[i].ToString(CultureInfo.InvariantCulture));
                 _ = builder.Append(':');
                 _ = builder.Append(record.m_Samples.ToString(CultureInfo.InvariantCulture));
                 _ = builder.Append(':');
@@ -358,11 +420,14 @@ namespace StationSuitabilityOverlay
         {
             m_Records.Clear();
             m_HasFit = false;
+            m_CapReported = false;
             if (string.IsNullOrEmpty(data))
             {
                 return;
             }
 
+            int malformed = 0;
+            int overCap = 0;
             string[] records = data.Split(';');
             for (int i = 0; i < records.Length; i++)
             {
@@ -380,6 +445,7 @@ namespace StationSuitabilityOverlay
                 string[] parts = records[i].Split(':');
                 if (parts.Length < 4 + FeatureCount)
                 {
+                    malformed++;
                     continue;
                 }
 
@@ -388,6 +454,7 @@ namespace StationSuitabilityOverlay
                     !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double rateSum) ||
                     !double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double waitSum))
                 {
+                    malformed++;
                     continue;
                 }
 
@@ -410,10 +477,28 @@ namespace StationSuitabilityOverlay
                     record.m_Features[c] = value;
                 }
 
-                if (ok && m_Records.Count < MaxTrackedStops)
+                if (!ok)
+                {
+                    malformed++;
+                }
+                else if (m_Records.Count >= MaxTrackedStops)
+                {
+                    overCap++;
+                }
+                else
                 {
                     m_Records[key] = record;
                 }
+            }
+
+            // A payload that half-loads must say so: "collecting..." with no
+            // explanation looks exactly like a fresh start.
+            if (malformed > 0 || overCap > 0)
+            {
+                Mod.Log.Warn(
+                    $"Ridership data loaded with losses: {malformed.ToString(CultureInfo.InvariantCulture)} record(s) unreadable, " +
+                    $"{overCap.ToString(CultureInfo.InvariantCulture)} past the cap of {MaxTrackedStops.ToString(CultureInfo.InvariantCulture)}. " +
+                    $"{m_Records.Count.ToString(CultureInfo.InvariantCulture)} stop(s) restored.");
             }
         }
     }

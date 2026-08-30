@@ -215,13 +215,6 @@
     background-color: rgba(70, 95, 125, 0.95);
 }
 
-.sso-summary {
-    margin-top: 8rem;
-    padding-top: 5rem;
-    border-top: 1rem solid rgba(140, 170, 200, 0.25);
-    color: #b9cbdc;
-    font-size: 10rem;
-}
 
 /* The mod's own legend, replacing the vanilla infoview panel on the left. Stops
    match LowColor / MediumColor / HighColor in SuitabilityInfomodePrefab.cs. */

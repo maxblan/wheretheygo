@@ -126,7 +126,6 @@ namespace StationSuitabilityOverlay
         public float[] Dist = Array.Empty<float>();
         public int[] PrevEdge = Array.Empty<int>();
         private int[] m_Heap = Array.Empty<int>();
-        private int[] m_HeapIndex = Array.Empty<int>();
         private int m_HeapCount;
         // Touched nodes, so a search over a small neighbourhood does not pay to
         // clear a city-sized distance array.
@@ -148,14 +147,18 @@ namespace StationSuitabilityOverlay
             Dist = new float[nodeCount];
             PrevEdge = new int[nodeCount];
             m_Heap = new int[nodeCount + 1];
-            m_HeapIndex = new int[nodeCount];
             m_Touched = new int[nodeCount];
+
+            // The touched list addresses the arrays that were just replaced, so its
+            // count must go with them: carrying it across a reallocation made the
+            // next ClearTouched read past the end of a shorter m_Touched.
+            m_TouchedCount = 0;
+            m_HeapCount = 0;
 
             for (int i = 0; i < nodeCount; i++)
             {
                 Dist[i] = float.MaxValue;
                 PrevEdge[i] = -1;
-                m_HeapIndex[i] = 0;
             }
         }
 
@@ -213,9 +216,12 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // A node enters the touched list exactly once, on the relaxation that first
+        // gives it a finite distance. Every caller of this sets Dist[node] to a
+        // finite value immediately afterwards, which is what keeps that true.
         private void Touch(int node)
         {
-            if (m_HeapIndex[node] != 0 || Dist[node] != float.MaxValue)
+            if (Dist[node] != float.MaxValue)
             {
                 return;
             }
@@ -230,7 +236,6 @@ namespace StationSuitabilityOverlay
                 int node = m_Touched[i];
                 Dist[node] = float.MaxValue;
                 PrevEdge[node] = -1;
-                m_HeapIndex[node] = 0;
             }
 
             m_TouchedCount = 0;
@@ -496,7 +501,7 @@ namespace StationSuitabilityOverlay
             CompactGraph graph,
             float[] edgeFlow,
             bool[] edgeUsed,
-            float[] nodeNovelty,
+            float[]? nodeNovelty,
             float noveltyWeight,
             float flowFloor,
             float maxLength,
@@ -512,33 +517,7 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            int seed = -1;
-            float seedScore = 0f;
-            for (int e = 0; e < graph.EdgeCount; e++)
-            {
-                if (edgeUsed[e] || edgeFlow[e] < flowFloor)
-                {
-                    continue;
-                }
-
-                // Eligibility stays on raw flow, so no objective can seed a corridor
-                // on a street nobody travels; the bias only reorders what is eligible.
-                float score = edgeFlow[e];
-                if (seedNoveltyBias > 0f)
-                {
-                    float ends = Math.Min(
-                        NoveltyAt(nodeNovelty, graph.EdgeA[e]),
-                        NoveltyAt(nodeNovelty, graph.EdgeB[e]));
-                    score *= (1f - seedNoveltyBias) + (seedNoveltyBias * ends);
-                }
-
-                if (score > seedScore)
-                {
-                    seedScore = score;
-                    seed = e;
-                }
-            }
-
+            int seed = SelectSeed(graph, edgeFlow, edgeUsed, nodeNovelty, flowFloor, seedNoveltyBias);
             if (seed < 0)
             {
                 return false;
@@ -557,6 +536,15 @@ namespace StationSuitabilityOverlay
 
             int headNode = graph.EdgeA[seed];
             int tailNode = graph.EdgeB[seed];
+            // The head node growth continues from is NOT the head node of the finished
+            // line: while the corridor is out on a bridge those edges are only
+            // provisional, and a run that is never redeemed is handed back below. This
+            // is the outermost node on the front side that is actually on the line, and
+            // it is where BuildNodeSequence has to start its walk. Starting from
+            // headNode instead put a discarded bridge's far end at the front of the
+            // polyline, joined to the real corridor by a chord across the very
+            // emptiness the discard exists to cut off.
+            int frontTerminus = headNode;
             _ = visited.Add(headNode);
             _ = visited.Add(tailNode);
             float length = graph.EdgeCost[seed];
@@ -607,6 +595,7 @@ namespace StationSuitabilityOverlay
                         front.AddRange(frontBridge);
                         frontBridge.Clear();
                         front.Add(bestEdge);
+                        frontTerminus = bestNext;
                     }
 
                     headNode = bestNext;
@@ -628,12 +617,18 @@ namespace StationSuitabilityOverlay
                 }
             }
 
+            // Read before the discard below: a corridor that grew until it hit the
+            // limit and then handed back a crossing is still a corridor that hit the
+            // limit, and reporting it as one that ran out of edges is exactly the
+            // confusion CorridorBlocks exists to remove.
+            bool hitMaxLength = length >= maxLength;
+
             // Growth ended mid-crossing: the corridor was heading into emptiness and
             // never came out, so those edges are not part of the line.
             length -= DiscardBridge(graph, edgeFlow, frontBridge, ref weightedFlow);
             length -= DiscardBridge(graph, edgeFlow, backBridge, ref weightedFlow);
 
-            blocks.m_HitMaxLength = length >= maxLength;
+            blocks.m_HitMaxLength = hitMaxLength;
             result.Blocks = blocks;
 
             // Emit front-to-back so the result is a drawable polyline.
@@ -647,23 +642,76 @@ namespace StationSuitabilityOverlay
                 result.Edges.Add(back[i]);
             }
 
-            BuildNodeSequence(graph, result, headNode);
+            BuildNodeSequence(graph, result, frontTerminus);
 
             result.CapturedFlow = length > 0f ? weightedFlow / length : 0f;
             result.Length = length;
             return true;
         }
 
-        private static float NoveltyAt(float[] nodeNovelty, int node)
+        // The one place a novelty value is read. Both call sites used to guard
+        // differently — the seed loop dereferenced the array unconditionally while the
+        // extension loop null-checked it — so a Balanced or Coverage objective with no
+        // novelty array threw where Ridership did not.
+        // Where the next corridor starts: the strongest edge still available, pulled
+        // towards untouched ground by the objective's seed bias.
+        //
+        // Eligibility stays on RAW flow, so no objective can seed a corridor on a
+        // street nobody travels; the bias only reorders what is already eligible.
+        // Novelty is uniform while the first corridor grows, so an objective that
+        // reached only the extension choice could not change a thing until something
+        // had been chosen — which is why all three objectives once produced identical
+        // suggestions on a real city.
+        //
+        // Returns -1 when nothing is eligible. Ties break on the lower edge index.
+        private static int SelectSeed(
+            CompactGraph graph,
+            float[] edgeFlow,
+            bool[] edgeUsed,
+            float[]? nodeNovelty,
+            float flowFloor,
+            float seedNoveltyBias)
         {
-            return node >= 0 && node < nodeNovelty.Length ? nodeNovelty[node] : 1f;
+            int seed = -1;
+            float seedScore = 0f;
+            for (int e = 0; e < graph.EdgeCount; e++)
+            {
+                if (edgeUsed[e] || edgeFlow[e] < flowFloor)
+                {
+                    continue;
+                }
+
+                float score = edgeFlow[e];
+                if (seedNoveltyBias > 0f)
+                {
+                    float ends = Math.Min(
+                        NoveltyAt(nodeNovelty, graph.EdgeA[e]),
+                        NoveltyAt(nodeNovelty, graph.EdgeB[e]));
+                    score *= (1f - seedNoveltyBias) + (seedNoveltyBias * ends);
+                }
+
+                if (score > seedScore)
+                {
+                    seedScore = score;
+                    seed = e;
+                }
+            }
+
+            return seed;
+        }
+
+        private static float NoveltyAt(float[]? nodeNovelty, int node)
+        {
+            return nodeNovelty is not null && node >= 0 && node < nodeNovelty.Length
+                ? nodeNovelty[node]
+                : 1f;
         }
 
         private static void FindExtension(
             CompactGraph graph,
             float[] edgeFlow,
             bool[] edgeUsed,
-            float[] nodeNovelty,
+            float[]? nodeNovelty,
             float noveltyWeight,
             float flowFloor,
             HashSet<int> visited,
@@ -733,8 +781,7 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                float novelty = nodeNovelty is not null && next < nodeNovelty.Length ? nodeNovelty[next] : 1f;
-                float score = edgeFlow[edge] + noveltyWeight * novelty;
+                float score = edgeFlow[edge] + noveltyWeight * NoveltyAt(nodeNovelty, next);
 
                 // Crossing emptiness is a last resort, never a preference: any node
                 // with people beside it outranks a bridge out of the same junction.
@@ -796,16 +843,27 @@ namespace StationSuitabilityOverlay
                 edgeUsed[edge] = true;
             }
 
+            // Once per edge, not once per incidence. A chord between two of the
+            // corridor's own nodes is incident to both, so decaying it as each node is
+            // visited compounded the capture to (1 - s)^2 — a 0.85 capture left a
+            // parallel street at 33% of its flow where the intended figure was 58%.
+            // Any edge shared with an already-processed node has had its share.
+            var processed = new HashSet<int>();
             float sideCapture = capture * 0.5f;
             for (int i = 0; i < corridor.Nodes.Count; i++)
             {
                 int node = corridor.Nodes[i];
+                if (!processed.Add(node))
+                {
+                    continue;
+                }
+
                 int start = graph.NodeOffsets[node];
                 int end = graph.NodeOffsets[node + 1];
                 for (int a = start; a < end; a++)
                 {
                     int edge = graph.AdjEdge[a];
-                    if (edgeUsed[edge])
+                    if (edgeUsed[edge] || processed.Contains(graph.AdjOther[a]))
                     {
                         continue;
                     }

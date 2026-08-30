@@ -80,15 +80,18 @@ namespace StationSuitabilityOverlay
         private static int s_ImproveRequest = -1;
         private static string s_ImprovePlan = string.Empty;
         private static int s_ImprovedLine = -1;
+        private static bool s_ImprovedRouteDrawn;
 
         public static string CalibrationStatusText =>
             string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
 
         public static string RouteSummaryText => s_RouteSummary;
 
-        // One route per line as "mode|km|stops", for the panel to render as a
-        // colour-keyed list. A compact string avoids hand-rolling a JSON writer for
-        // what is at most a dozen rows.
+        // One route per line as "mode|km|stops|vehicles|colour", for the panel to
+        // render as a colour-keyed list. A compact string avoids hand-rolling a JSON
+        // writer for what is at most a dozen rows. The colour travels with the row
+        // because the panel used to carry its own copy of the mode palette, kept in
+        // step with the renderer's by a comment.
         public static string RouteListText => s_RouteList;
 
         // One line per existing route as "mode|verdict|detail", for the panel.
@@ -104,8 +107,9 @@ namespace StationSuitabilityOverlay
 
         public static void RequestResetCalibration() => s_ResetCalibrationRequested = true;
 
-        // The panel asks for one line's improvement plan by its displayed index.
-        public static void RequestImprovement(int lineIndex) => s_ImproveRequest = lineIndex;
+        // The panel asks for one line's improvement plan by the line's own id — never
+        // by its position, since the list is re-sorted worst-first on every refresh.
+        public static void RequestImprovement(int lineId) => s_ImproveRequest = lineId;
 
         public static string ImprovePlanText => s_ImprovePlan;
 
@@ -115,6 +119,11 @@ namespace StationSuitabilityOverlay
 
         // The re-traced alignment for that line, drawn on the map.
         internal SuggestedRoute? ImprovedRoute => m_ImprovedRoute;
+
+        // Whether that alignment exists. The panel's plan carries a line saying the
+        // white dashed route is on the map, and BuildImprovedRoute has three ways to
+        // come back with nothing — so the panel has to be told which it got.
+        public static bool ImprovedRouteDrawn => s_ImprovedRouteDrawn;
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
@@ -163,7 +172,14 @@ namespace StationSuitabilityOverlay
         private long m_ExpandedSignature = -1;
         private int2 m_IntensityGrid;
 
-        private static MethodInfo? s_GetTerrainTextureData;
+        // Bound once rather than invoked reflectively every frame: InjectOverlay runs
+        // on the render path while the overlay is on screen, and MethodInfo.Invoke
+        // there allocated an object[], boxed the int2 argument and boxed the returned
+        // NativeArray sixty times a second. Binding a typed delegate also checks the
+        // signature the reflection lookup could not — GetMethod matches on parameters
+        // only, so a changed return type would have surfaced as a per-frame cast
+        // exception instead of the one-shot diagnostic below.
+        private static Func<OverlayInfomodeSystem, int2, NativeArray<byte>>? s_GetTerrainTextureData;
         private static FieldInfo? s_TerrainTextureField;
         private static bool s_ReflectionChecked;
 
@@ -202,7 +218,12 @@ namespace StationSuitabilityOverlay
         private int m_PendingJobSiteCount;
         private int m_PendingZonedCount;
         private int m_PendingOtherStopCount;
-        private int2 m_GridAtCompute;
+        // The PLAYABLE-AREA grid as of the last compute. Deliberately not the grid the
+        // compute ran on — that one comes from the population map's own extent — and
+        // named for what it holds, because "the grid at compute" invited the reader to
+        // assume the two were the same. It exists only to notice the playable area
+        // changing, which is a reason to recompute.
+        private int2 m_PlayableGridAtCompute;
 
         // Cached raw terms from the last compute, plus everything derived from them.
         private SuitabilityCell[]? m_RawTerms;
@@ -225,7 +246,7 @@ namespace StationSuitabilityOverlay
         private NativeArray<int> m_Components;
         private int2 m_MaskGrid;
         private bool m_MaskDirty = true;
-        private Setting.ModePreset m_MaskMode;
+        private ModePreset m_MaskMode;
         private int m_MaskSlope;
 
         // Cached input collections.
@@ -297,6 +318,10 @@ namespace StationSuitabilityOverlay
         private float m_LastLineSample;
         // Where last refresh's suggestions ran between, so churn can be measured.
         private readonly List<RouteEnds> m_PreviousRouteEnds = new List<RouteEnds>();
+        // What LogRoutes last printed, so an unchanged list is not re-printed every
+        // refresh. Separate from m_PreviousRouteEnds, which measures churn between
+        // refreshes and is reset by that measurement.
+        private readonly List<RouteEnds> m_LoggedRouteEnds = new List<RouteEnds>();
         private float[]? m_ZoneStopDistSq;
         private float[]? m_ZoneCentreX;
         private float[]? m_ZoneCentreZ;
@@ -310,11 +335,11 @@ namespace StationSuitabilityOverlay
         private float[]? m_CandidateStopZ;
         private int[]? m_PairOrigins;
         private int[]? m_PairDests;
-        private float[]? m_PairWeights;
+        // Which zone flow each pair came from, so the served-demand discount can write
+        // back to it without re-deriving the mapping the pass above already did.
+        private int[]? m_PairFlow;
         private int m_PairCount;
 
-        internal List<ExistingLine> ExistingLines => m_ExistingLines;
-        internal List<LineHealth> LineHealthList => m_LineHealth;
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
         private int[]? m_ZoneNodes;
@@ -322,7 +347,7 @@ namespace StationSuitabilityOverlay
         private int2 m_ZoneGrid;
         private float m_LastDemandRefresh;
         private bool m_GraphDirty = true;
-        private Setting.RouteGoal m_LastObjective;
+        private RouteGoal m_LastObjective;
         private int m_LastRouteCount;
 
         internal List<SuggestedRoute> SuggestedRoutes => m_Routes;
@@ -375,7 +400,7 @@ namespace StationSuitabilityOverlay
 
         private struct ComputeSnapshot : IEquatable<ComputeSnapshot>
         {
-            public Setting.ModePreset Mode;
+            public ModePreset Mode;
             public int CatchmentRadius;
             public int AccessRadius;
             public int MaxSlope;
@@ -630,6 +655,19 @@ namespace StationSuitabilityOverlay
             m_Land = null;
             m_ExpandedCache = null;
             m_VanillaPlaceableInfoviews = null;
+
+            // Leaving a city must not leave its numbers on the panel. LineHistory
+            // already guards its own series against a save change; these strings had
+            // no such guard and were shown against the next city until its first
+            // refresh landed.
+            s_RouteSummary = "No route suggestions yet.";
+            s_RouteList = string.Empty;
+            s_LineHealthList = string.Empty;
+            s_DataCoverage = string.Empty;
+            s_ImprovePlan = string.Empty;
+            s_ImprovedLine = -1;
+            s_ImprovedRouteDrawn = false;
+            s_ImproveRequest = -1;
             base.OnDestroy();
         }
 
@@ -734,7 +772,7 @@ namespace StationSuitabilityOverlay
             }
 
             int2 currentSize = GetGridSize();
-            if (active && !m_JobPending && (m_RawTerms is null || !m_GridAtCompute.Equals(currentSize)))
+            if (active && !m_JobPending && (m_RawTerms is null || !m_PlayableGridAtCompute.Equals(currentSize)))
             {
                 ScheduleRecompute(0f);
             }
@@ -763,11 +801,6 @@ namespace StationSuitabilityOverlay
             MaybeUpdateTravelDemand(settings, active, now);
             SampleRidership(settings, now);
             ApplyOverlayState(active, signature);
-        }
-
-        public void RequestRecompute()
-        {
-            ScheduleRecompute(0f);
         }
 
         // The demand pipeline needs the per-tile terms to exist (for the served
@@ -1246,11 +1279,11 @@ namespace StationSuitabilityOverlay
         {
             if (s_ReflectionChecked)
             {
-                return s_GetTerrainTextureData != null && s_TerrainTextureField != null;
+                return s_GetTerrainTextureData is not null && s_TerrainTextureField != null;
             }
 
             s_ReflectionChecked = true;
-            s_GetTerrainTextureData = typeof(OverlayInfomodeSystem).GetMethod(
+            MethodInfo? getter = typeof(OverlayInfomodeSystem).GetMethod(
                 "GetTerrainTextureData",
                 BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null,
@@ -1260,7 +1293,15 @@ namespace StationSuitabilityOverlay
                 "m_TerrainTexture",
                 BindingFlags.Instance | BindingFlags.NonPublic);
 
-            if (s_GetTerrainTextureData != null && s_TerrainTextureField != null)
+            if (getter != null)
+            {
+                s_GetTerrainTextureData = Delegate.CreateDelegate(
+                    typeof(Func<OverlayInfomodeSystem, int2, NativeArray<byte>>),
+                    getter,
+                    throwOnBindFailure: false) as Func<OverlayInfomodeSystem, int2, NativeArray<byte>>;
+            }
+
+            if (s_GetTerrainTextureData is not null && s_TerrainTextureField != null)
             {
                 return true;
             }
@@ -1279,7 +1320,8 @@ namespace StationSuitabilityOverlay
                 "The overlay cannot draw: this game version moved the internals it renders through " +
                 $"(game {version}). The mod needs an update.";
             Mod.Log.Error(
-                $"OverlayInfomodeSystem internals not found (GetTerrainTextureData={s_GetTerrainTextureData != null}, " +
+                "OverlayInfomodeSystem internals not found or the wrong shape " +
+                $"(GetTerrainTextureData bound={s_GetTerrainTextureData is not null}, " +
                 $"m_TerrainTexture={s_TerrainTextureField != null}) on game {version}; the overlay cannot render.");
             return false;
         }
@@ -1330,13 +1372,13 @@ namespace StationSuitabilityOverlay
         // because the vanilla system clears the override at the start of each frame.
         private bool InjectOverlay()
         {
-            // CheckPipeline resolves both reflected members before anything calls this.
+            // CheckPipeline binds both reflected members before anything calls this.
             if (s_GetTerrainTextureData is null || s_TerrainTextureField is null)
             {
                 return false;
             }
 
-            var data = (NativeArray<byte>)s_GetTerrainTextureData.Invoke(m_OverlayInfomodeSystem, new object[] { m_IntensityGrid });
+            NativeArray<byte> data = s_GetTerrainTextureData(m_OverlayInfomodeSystem, m_IntensityGrid);
             m_OverlayInfomodeSystem.ApplyOverlay();
 
             int expected = m_IntensityGrid.x * m_IntensityGrid.y * 4;
@@ -1345,8 +1387,15 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
+            // Pattern-matched rather than cast: the texture is only created once the
+            // game has sized it, and an unguarded cast turned "not ready yet" into an
+            // exception on the render path.
+            if (s_TerrainTextureField.GetValue(m_OverlayInfomodeSystem) is not Texture2D texture)
+            {
+                return false;
+            }
+
             data.CopyFrom(m_ExpandedCache);
-            var texture = (Texture2D)s_TerrainTextureField.GetValue(m_OverlayInfomodeSystem);
             texture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
             return true;
         }
@@ -1472,7 +1521,7 @@ namespace StationSuitabilityOverlay
             m_PendingZonedCount = m_FutureHomePositions.Count + m_FutureJobPositions.Count;
             m_PendingOtherStopCount = m_OtherStopPositions.Count;
             m_JobPending = true;
-            m_GridAtCompute = GetGridSize();
+            m_PlayableGridAtCompute = GetGridSize();
             return true;
         }
 
@@ -1698,13 +1747,26 @@ namespace StationSuitabilityOverlay
             float invJobs = m_JobsCap > 0f ? 1f / m_JobsCap : 0f;
             float invFuture = m_FutureCap > 0f ? 1f / m_FutureCap : 0f;
 
-            byte[] demandLayer = m_LayerIntensities[(int)SuitabilityLayer.TravelDemand];
-            byte[] jobsLayer = m_LayerIntensities[(int)SuitabilityLayer.Jobs];
-            byte[] coverageLayer = m_LayerIntensities[(int)SuitabilityLayer.Coverage];
-            byte[] accessLayer = m_LayerIntensities[(int)SuitabilityLayer.Access];
-            byte[] futureLayer = m_LayerIntensities[(int)SuitabilityLayer.Future];
-            byte[] interchangeLayer = m_LayerIntensities[(int)SuitabilityLayer.Interchange];
-            byte[] crossLayer = m_LayerIntensities[(int)SuitabilityLayer.CrossCoverage];
+            // Each of these is null unless its layer is actually registered as an
+            // infomode, because only a registered layer can ever reach a terrain
+            // channel — and filling seven of them is seven passes of rounding and
+            // clamping over every cell on the map, on every recompute.
+            //
+            // The demand layer used to bind SuitabilityLayer.TravelDemand, so the
+            // residents term was written into the travel-demand channel and
+            // SuitabilityLayer.Demand was never written at all; BuildDemandLayer then
+            // overwrote the same buffer with the desire-line raster and whichever pass
+            // ran last decided what the channel held.
+            byte[]? demandLayer = TermLayer(SuitabilityLayer.Demand);
+            byte[]? jobsLayer = TermLayer(SuitabilityLayer.Jobs);
+            byte[]? coverageLayer = TermLayer(SuitabilityLayer.Coverage);
+            byte[]? accessLayer = TermLayer(SuitabilityLayer.Access);
+            byte[]? futureLayer = TermLayer(SuitabilityLayer.Future);
+            byte[]? interchangeLayer = TermLayer(SuitabilityLayer.Interchange);
+            byte[]? crossLayer = TermLayer(SuitabilityLayer.CrossCoverage);
+            bool anyTermLayer = demandLayer is not null || jobsLayer is not null
+                || coverageLayer is not null || accessLayer is not null || futureLayer is not null
+                || interchangeLayer is not null || crossLayer is not null;
 
             // Both cross-mode terms are expressed RELATIVE to the mode being placed,
             // so a bus gains a lot from sitting at a metro station while a metro
@@ -1736,13 +1798,16 @@ namespace StationSuitabilityOverlay
 
                 // The per-term layers show the raw inputs, unweighted, so they stay
                 // meaningful when a weight is set to zero.
-                demandLayer[i] = ToByte(demand);
-                jobsLayer[i] = ToByte(jobs);
-                coverageLayer[i] = ToByte(coverage);
-                accessLayer[i] = ToByte(access);
-                futureLayer[i] = ToByte(future);
-                interchangeLayer[i] = ToByte(interchange);
-                crossLayer[i] = ToByte(crossCoverage);
+                if (anyTermLayer)
+                {
+                    WriteTerm(demandLayer, i, demand);
+                    WriteTerm(jobsLayer, i, jobs);
+                    WriteTerm(coverageLayer, i, coverage);
+                    WriteTerm(accessLayer, i, access);
+                    WriteTerm(futureLayer, i, future);
+                    WriteTerm(interchangeLayer, i, interchange);
+                    WriteTerm(crossLayer, i, crossCoverage);
+                }
             }
 
             SuitabilityScoring.NormalizeIntensities(
@@ -1831,6 +1896,22 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // The intensity buffer for a layer, or null when that layer is not registered
+        // as an infomode and therefore cannot be drawn. SuitabilityLayers.All decides
+        // which are; EnsurePrefabs registers exactly those.
+        private byte[]? TermLayer(SuitabilityLayer layer)
+        {
+            return m_LayerPrefabs.ContainsKey(layer) ? m_LayerIntensities[(int)layer] : null;
+        }
+
+        private static void WriteTerm(byte[]? layer, int index, float normalized)
+        {
+            if (layer is not null)
+            {
+                layer[index] = ToByte(normalized);
+            }
+        }
+
         private static byte ToByte(float normalized)
         {
             float clamped = SuitabilityScoring.Saturate(normalized);
@@ -1880,8 +1961,12 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            byte[] sitesLayer = m_LayerIntensities[(int)SuitabilityLayer.Sites];
-            Array.Clear(sitesLayer, 0, sitesLayer.Length);
+            byte[]? sitesLayer = TermLayer(SuitabilityLayer.Sites);
+            if (sitesLayer is not null)
+            {
+                Array.Clear(sitesLayer, 0, sitesLayer.Length);
+            }
+
             m_SiteCount = 0;
 
             int width = m_IntensityGrid.x;
@@ -1914,9 +1999,15 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
+            if (sitesLayer is null)
+            {
+                LogSites();
+                return;
+            }
+
             // Paint each site as a small disc, brightest for the best rank, so the
             // layer reads as discrete markers rather than a gradient.
-            int radius = 2;
+            const int radius = 2;
             for (int s = 0; s < m_SiteCount; s++)
             {
                 int index = m_SiteIndices[s];
@@ -1984,13 +2075,14 @@ namespace StationSuitabilityOverlay
                     out float _);
             }
 
-            // Re-rank on the walk-distance score, keeping the arrays aligned.
+            // Re-rank on the walk-distance score, carrying the indices with it. The
+            // reported scores are then the refined ones: swapping m_SiteScores in
+            // lockstep here was dead work, since the whole array is overwritten below.
             for (int i = 1; i < m_SiteCount; i++)
             {
                 for (int j = i; j > 0 && refined[j] > refined[j - 1]; j--)
                 {
                     Swap(refined, j, j - 1);
-                    Swap(m_SiteScores, j, j - 1);
                     int tmp = m_SiteIndices[j];
                     m_SiteIndices[j] = m_SiteIndices[j - 1];
                     m_SiteIndices[j - 1] = tmp;
@@ -2091,9 +2183,11 @@ namespace StationSuitabilityOverlay
 
                 _ = builder.Append('#');
                 _ = builder.Append(s + 1);
-                _ = builder.Append(" (");
+                // float2 carries (x, z) in world space throughout this mod; the log
+                // said "(x, y)" and invited the reader to look up the wrong axis.
+                _ = builder.Append(" (x ");
                 _ = builder.Append(((int)world.x).ToString(CultureInfo.InvariantCulture));
-                _ = builder.Append(", ");
+                _ = builder.Append(", z ");
                 _ = builder.Append(((int)world.y).ToString(CultureInfo.InvariantCulture));
                 _ = builder.Append(") score ");
                 _ = builder.Append(m_SiteScores[s].ToString("F1", CultureInfo.InvariantCulture));
@@ -2303,9 +2397,9 @@ namespace StationSuitabilityOverlay
                     Complain($"{label} is only {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m yet is credited with enabling {((route.EnabledDemand / totalZoneWeight) * 100f).ToString("F0", CultureInfo.InvariantCulture)}% of the city's travel — a line this short cannot carry that, so the zone-to-stop remap is attaching journeys it does not serve");
                 }
 
-                if (route.Length < SuitabilityRoutes.MinLengthFor(route.Mode))
+                if (route.Length < TransitModes.MinLengthFor(route.Mode))
                 {
-                    Complain($"{label} is {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, under the {(SuitabilityRoutes.MinLengthFor(route.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for its mode — the length floor was not applied after stop placement");
+                    Complain($"{label} is {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, under the {(TransitModes.MinLengthFor(route.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for its mode — the length floor was not applied after stop placement");
                 }
 
                 if (route.Stops.Count < 2)
@@ -2324,7 +2418,7 @@ namespace StationSuitabilityOverlay
                 if (route.Stops.Count >= 2)
                 {
                     float spacing = route.Length / (route.Stops.Count - 1);
-                    float want = SuitabilityRoutes.StopSpacingFor(route.Mode);
+                    float want = TransitModes.StopSpacingFor(route.Mode);
                     if (spacing > want * 2.5f || spacing < want * 0.4f)
                     {
                         Complain($"{label} averages {(spacing).ToString("F0", CultureInfo.InvariantCulture)}m between stops but {route.Mode} spacing is {(want).ToString("F0", CultureInfo.InvariantCulture)}m — the stops were probably placed for another mode");
@@ -2523,7 +2617,8 @@ namespace StationSuitabilityOverlay
             List<TransitLine> transitLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
             m_TransitNetwork = SuitabilityTransit.Build(xs, zs, m_TransitStops.Count, transitLines,
                 TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
-            m_TransitWorkspace = new DijkstraWorkspace(m_TransitNetwork.Graph.NodeCount);
+            m_TransitWorkspace ??= new DijkstraWorkspace(0);
+            m_TransitWorkspace.Resize(m_TransitNetwork.Graph.NodeCount);
 
             MapZonesToStops(xs, zs);
             BuildPairArrays();
@@ -2573,7 +2668,7 @@ namespace StationSuitabilityOverlay
                 m_ZoneStopsScratch = new int[zoneCount];
             }
 
-            float radiusSq = TransferWalkRadius * TransferWalkRadius * 4f;
+            float radiusSq = ZoneStopReachMetres * ZoneStopReachMetres;
             for (int zone = 0; zone < zoneCount; zone++)
             {
                 float2 centre = SuitabilityTravelDemand.ZoneCentre(zone, m_ScoreWorldMin, m_ZoneGrid);
@@ -2611,12 +2706,12 @@ namespace StationSuitabilityOverlay
 
             int[] zoneStops = m_ZoneStops;
             int count = m_ZoneFlows.Count;
-            if (m_PairOrigins is null || m_PairDests is null || m_PairWeights is null
+            if (m_PairOrigins is null || m_PairDests is null || m_PairFlow is null
                 || m_PairOrigins.Length < count)
             {
                 m_PairOrigins = new int[count];
                 m_PairDests = new int[count];
-                m_PairWeights = new float[count];
+                m_PairFlow = new int[count];
             }
 
             m_PairCount = 0;
@@ -2632,7 +2727,7 @@ namespace StationSuitabilityOverlay
 
                 m_PairOrigins[m_PairCount] = origin;
                 m_PairDests[m_PairCount] = destination;
-                m_PairWeights[m_PairCount] = flow.m_Weight;
+                m_PairFlow[m_PairCount] = i;
                 m_PairCount++;
             }
         }
@@ -2651,35 +2746,28 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            if (m_TransitNetwork is null || m_TransitWorkspace is null || m_ZoneStops is null
-                || m_PairOrigins is null || m_PairDests is null || m_PairWeights is null)
+            if (m_TransitNetwork is null || m_TransitWorkspace is null
+                || m_PairOrigins is null || m_PairDests is null || m_PairFlow is null)
             {
                 return;
             }
 
             TransitNetwork network = m_TransitNetwork;
             DijkstraWorkspace workspace = m_TransitWorkspace;
-            int[] zoneStops = m_ZoneStops;
             int[] pairOrigins = m_PairOrigins;
             int[] pairDests = m_PairDests;
-            float[] pairWeights = m_PairWeights;
+            int[] pairFlow = m_PairFlow;
 
             float weightBefore = 0f;
             float weightAfter = 0f;
             int servedPairs = 0;
             int currentOrigin = -1;
-            int pair = 0;
-            for (int i = 0; i < m_ZoneFlows.Count && pair < m_PairCount; i++)
+            for (int i = 0; i < m_PairCount; i++)
             {
-                ZoneFlow flow = m_ZoneFlows[i];
-                int origin = zoneStops[flow.m_Origin];
-                int destination = zoneStops[flow.m_Destination];
-                if (origin < 0 || destination < 0 || origin == destination)
-                {
-                    continue;
-                }
+                int origin = pairOrigins[i];
+                int destination = pairDests[i];
 
-                pair++;
+                // Pairs arrive grouped by origin, so one search serves a run of them.
                 if (origin != currentOrigin)
                 {
                     currentOrigin = origin;
@@ -2692,19 +2780,22 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                if (boardings <= 0 || travelTime > MaxJourneySeconds)
+                if (boardings <= 0)
                 {
                     continue;
                 }
 
-                // Fully served journeys drop out; a slow, transfer-heavy itinerary is
-                // only partly served and still deserves a better option.
-                float quality = 1f - SuitabilityScoring.Saturate(travelTime / MaxJourneySeconds);
+                // How much of the journey the existing network absorbs. A trip it
+                // carries in a few minutes drops out almost entirely; one that takes
+                // most of the hour ceiling barely moves, because it still deserves a
+                // better option. The search is capped at MaxJourneySeconds, so this
+                // ratio cannot leave 0..1.
+                ZoneFlow flow = m_ZoneFlows[pairFlow[i]];
                 weightBefore += flow.m_Weight;
-                flow.m_Weight *= 1f - SuitabilityScoring.Saturate(quality);
+                flow.m_Weight *= SuitabilityScoring.Saturate(travelTime / MaxJourneySeconds);
                 weightAfter += flow.m_Weight;
                 servedPairs++;
-                m_ZoneFlows[i] = flow;
+                m_ZoneFlows[pairFlow[i]] = flow;
             }
 
             Mod.Log.Info(
@@ -2761,7 +2852,7 @@ namespace StationSuitabilityOverlay
                 m_ZoneCentreX, m_ZoneCentreZ, m_ZoneStops.Length,
                 m_ZoneStops, m_ZoneStopDistSq,
                 m_CandidateStopX, m_CandidateStopZ, stopCount,
-                baseStops, TransferWalkRadius * 2f, zoneStops);
+                baseStops, ZoneStopReachMetres, zoneStops);
 
             origins = m_CandidateOrigins;
             dests = m_CandidateDests;
@@ -2834,6 +2925,30 @@ namespace StationSuitabilityOverlay
             var baseLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
             int baseStops = m_TransitStops.Count;
 
+            // Everything that does not vary between candidates is built once. The base
+            // stop positions are identical every time, the line list only ever gains
+            // one entry at the end, and DijkstraWorkspace.Resize exists to be reused —
+            // a fresh position array, line list and workspace per candidate meant
+            // rebuilding the whole city's transit graph up to ninety-six times per
+            // refresh, on the main thread.
+            int widest = 0;
+            for (int c = 0; c < evaluate; c++)
+            {
+                widest = math.max(widest, m_RouteCandidates[c].Stops.Count);
+            }
+
+            var xs = new float[baseStops + widest];
+            var zs = new float[baseStops + widest];
+            for (int i = 0; i < baseStops; i++)
+            {
+                xs[i] = m_TransitStops[i].x;
+                zs[i] = m_TransitStops[i].y;
+            }
+
+            var lines = new List<TransitLine>(baseLines) { default };
+            int candidateLine = lines.Count - 1;
+            var workspace = new DijkstraWorkspace(0);
+
             for (int c = 0; c < evaluate; c++)
             {
                 SuggestedRoute candidate = m_RouteCandidates[c];
@@ -2846,14 +2961,6 @@ namespace StationSuitabilityOverlay
                 // connect them to whatever is already nearby, which is exactly how a
                 // new line becomes an interchange.
                 int total = baseStops + candidate.Stops.Count;
-                var xs = new float[total];
-                var zs = new float[total];
-                for (int i = 0; i < baseStops; i++)
-                {
-                    xs[i] = m_TransitStops[i].x;
-                    zs[i] = m_TransitStops[i].y;
-                }
-
                 var stops = new int[candidate.Stops.Count];
                 for (int i = 0; i < candidate.Stops.Count; i++)
                 {
@@ -2863,19 +2970,16 @@ namespace StationSuitabilityOverlay
                     stops[i] = index;
                 }
 
-                var lines = new List<TransitLine>(baseLines)
+                lines[candidateLine] = new TransitLine
                 {
-                    new TransitLine
-                    {
-                        m_Stops = stops,
-                        m_ExpectedWait = SuggestedWaitFor(candidate.Mode),
-                        m_SpeedMetresPerSecond = SuggestedSpeedFor(candidate.Mode),
-                    },
+                    m_Stops = stops,
+                    m_ExpectedWait = SuggestedWaitFor(candidate.Mode),
+                    m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(candidate.Mode),
                 };
 
                 TransitNetwork withCandidate = SuitabilityTransit.Build(
                     xs, zs, total, lines, TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
-                var workspace = new DijkstraWorkspace(withCandidate.Graph.NodeCount);
+                workspace.Resize(withCandidate.Graph.NodeCount);
 
                 // Re-map zones against the candidate's OWN stops before routing. The
                 // base mapping only knows the stops that exist today, so a journey
@@ -2887,7 +2991,7 @@ namespace StationSuitabilityOverlay
                 float enabled = pairCount > 0
                     ? SuitabilityTransit.CreditLine(
                         withCandidate, workspace, origins, dests, weights,
-                        pairCount, lines.Count - 1, discount, MaxJourneySeconds, out float _)
+                        pairCount, candidateLine, discount, MaxJourneySeconds, out float _)
                     : 0f;
 
                 Mod.Log.Info(
@@ -2910,27 +3014,15 @@ namespace StationSuitabilityOverlay
 
         // A proposed line has no fleet yet, so its service level is assumed from its
         // mode rather than measured.
-        private static float SuggestedWaitFor(Setting.ModePreset mode)
+        private static float SuggestedWaitFor(ModePreset mode)
         {
             switch (mode)
             {
-                case Setting.ModePreset.Metro: return 150f;
-                case Setting.ModePreset.Train: return 300f;
-                case Setting.ModePreset.Tram: return 180f;
-                case Setting.ModePreset.Ferry: return 400f;
+                case ModePreset.Metro: return 150f;
+                case ModePreset.Train: return 300f;
+                case ModePreset.Tram: return 180f;
+                case ModePreset.Ferry: return 400f;
                 default: return 200f;
-            }
-        }
-
-        private static float SuggestedSpeedFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Metro: return 18f;
-                case Setting.ModePreset.Train: return 28f;
-                case Setting.ModePreset.Tram: return 12f;
-                case Setting.ModePreset.Ferry: return 10f;
-                default: return 9f;
             }
         }
 
@@ -3001,13 +3093,13 @@ namespace StationSuitabilityOverlay
 
         // The alignment a mode may run on. Buses and trams are stuck with streets,
         // metro and train lay their own, ferries need water.
-        private SuitabilityRoadGraph NetworkForMode(Setting.ModePreset mode)
+        private SuitabilityRoadGraph NetworkForMode(ModePreset mode)
         {
             switch (mode)
             {
-                case Setting.ModePreset.Train: return m_TrainNetwork;
-                case Setting.ModePreset.Metro: return m_MetroNetwork;
-                case Setting.ModePreset.Ferry: return m_WaterNetwork;
+                case ModePreset.Train: return m_TrainNetwork;
+                case ModePreset.Metro: return m_MetroNetwork;
+                case ModePreset.Ferry: return m_WaterNetwork;
                 default: return m_RoadGraph;
             }
         }
@@ -3018,6 +3110,7 @@ namespace StationSuitabilityOverlay
         private void BuildImprovedRoute(LineHealth health, ExistingLine line)
         {
             m_ImprovedRoute = null;
+            s_ImprovedRouteDrawn = false;
             if (line.m_StopIndices.Count < 2)
             {
                 return;
@@ -3025,15 +3118,18 @@ namespace StationSuitabilityOverlay
 
             int firstStop = line.m_StopIndices[0];
             int lastStop = line.m_StopIndices[line.m_StopIndices.Count - 1];
-            if (firstStop >= m_TransitStops.Count || lastStop >= m_TransitStops.Count)
+            // Both ends of the range, as every other stop-index guard in this file
+            // checks: a negative index reads off the front of the list just as surely.
+            if (firstStop < 0 || lastStop < 0
+                || firstStop >= m_TransitStops.Count || lastStop >= m_TransitStops.Count)
             {
                 return;
             }
 
-            Setting.ModePreset mode = health.m_Verdict == LineVerdict.AtModeCapacity
-                ? SuitabilityLineHealth.NextModeUp(health.m_Mode)
+            ModePreset mode = health.m_Verdict == LineVerdict.AtModeCapacity
+                ? TransitModes.NextModeUp(health.m_Mode)
                 : health.m_Verdict == LineVerdict.NearlyEmpty
-                    ? SuitabilityLineHealth.NextModeDown(health.m_Mode)
+                    ? TransitModes.NextModeDown(health.m_Mode)
                     : health.m_Mode;
 
             // Re-trace on the network the recommended mode can actually use. Tracing a
@@ -3047,9 +3143,9 @@ namespace StationSuitabilityOverlay
             }
 
             var scratch = new List<int>();
-            int from = graph.NearestNode(m_TransitStops[firstStop], 600f);
-            int to = graph.NearestNode(m_TransitStops[lastStop], 600f);
-            if (from < 0 || to < 0 || !graph.TracePath(from, to, 60000f, scratch))
+            int from = graph.NearestNode(m_TransitStops[firstStop], ReplanSnapMetres);
+            int to = graph.NearestNode(m_TransitStops[lastStop], ReplanSnapMetres);
+            if (from < 0 || to < 0 || !graph.TracePath(from, to, ReplanMaxPathMetres, scratch))
             {
                 Mod.Log.Info(
                     $"Improved route for \"{health.m_Name}\": no {graph.Network} path between its endpoints " +
@@ -3073,10 +3169,11 @@ namespace StationSuitabilityOverlay
                 SuggestedWaitFor(mode) * 2f);
 
             m_ImprovedRoute = route.Stops.Count >= 2 ? route : null;
+            s_ImprovedRouteDrawn = m_ImprovedRoute is not null;
 
             Mod.Log.Info(
                 $"Improved route for \"{health.m_Name}\": {mode}, {(length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km " +
-                $"(was {(health.m_LengthKm).ToString("F2", CultureInfo.InvariantCulture)}), {route.Stops.Count} stops (was {(health.m_Stops).ToString(CultureInfo.InvariantCulture)}), " +
+                $"(was {(health.m_LengthKm).ToString("F2", CultureInfo.InvariantCulture)}), {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops (was {(health.m_Stops).ToString(CultureInfo.InvariantCulture)}), " +
                 $"{(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles (was {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}), corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}");
         }
 
@@ -3125,6 +3222,17 @@ namespace StationSuitabilityOverlay
 
         // How far a rider will walk to reach or change service.
         private const float TransferWalkRadius = 250f;
+        // How far a zone's centre may be from a stop for that stop to serve it. A zone
+        // is 256 m across, so its centre is further from a stop than its edges are, and
+        // the plain transfer radius left most zones unserved.
+        private const float ZoneStopReachMetres = TransferWalkRadius * 2f;
+        // How close a candidate's stops must be to an existing line's for the two to
+        // count as the same alignment.
+        private const float DuplicateLineMatchMetres = 150f;
+        // How far an existing line's endpoint may be from a node when re-planning it,
+        // and how long the replacement path may be.
+        private const float ReplanSnapMetres = 600f;
+        private const float ReplanMaxPathMetres = 60000f;
         // Share of its own network's mean edge flow a candidate must carry when it has
         // no enabled demand to show for itself. A quarter of the typical edge is a low
         // bar deliberately — it rejects the empty-country stub, not a genuinely quiet
@@ -3154,25 +3262,46 @@ namespace StationSuitabilityOverlay
         // Journeys longer than this are not realistically made by transit.
         private const float MaxJourneySeconds = 3600f;
 
-        private float CoverageAt(float2 position, int2 gridSize)
-        {
-            if (m_RawTerms is null)
-            {
-                return 0f;
-            }
+        // What each network's corridor growth is allowed to consider: the share of the
+        // network's own mean edge flow an edge must carry to be eligible, and the
+        // longest corridor that may be grown on it.
+        //
+        // The lattice fractions were once far too high for a lattice to produce a line
+        // at all, which the growth diagnostics finally made visible: at 0.6 the train
+        // floor stood at 256 against a mean edge flow of 426, and 226 of the refused
+        // extensions were refused by that floor alone. Train corridors averaged 414 m
+        // and every one of the fifteen died against the 4000 m minimum for a train.
+        // Metro at 0.4 fared little better — 1684 m average against a 2000 m minimum,
+        // so 15 of 19 were thrown away.
+        //
+        // The demand gate, the length floors and ChooseMode's own multiples of the
+        // network reference all still apply downstream, so these widen what may be
+        // CONSIDERED rather than what may be suggested.
+        private const float RoadFlowFraction = 0.1f;
+        private const float RoadMaxRouteMetres = 12000f;
+        private const float TrainFlowFraction = 0.3f;
+        private const float TrainMaxRouteMetres = 20000f;
+        private const float MetroFlowFraction = 0.2f;
+        private const float MetroMaxRouteMetres = 15000f;
+        private const float FerryFlowFraction = 0.5f;
+        private const float FerryMaxRouteMetres = 20000f;
 
-            int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
-            int index = cell.x + cell.y * gridSize.x;
-            if (index < 0 || index >= m_RawTerms.Length)
-            {
-                return 0f;
-            }
-
-            return m_RawTerms[index].m_Coverage / SuitabilityJob.MaxPenalty;
-        }
+        // Normalized demand a corridor's next node must have beside it. Corridors must
+        // serve somebody along their length, not merely carry through-traffic — that is
+        // what stopped routes looping into empty land. Loosened from 0.02, where the
+        // gate truncated corridors at the first thin block and made almost every one
+        // too short to suggest.
+        private const float CorridorDemandFloor = 0.005f;
 
         private void BuildDemandLayer(Setting settings, int2 gridSize, float2 worldMin)
         {
+            // Rasterising and normalising a layer no infomode can select is a pass over
+            // every cell on the map for nothing.
+            if (TermLayer(SuitabilityLayer.TravelDemand) is null)
+            {
+                return;
+            }
+
             int cells = gridSize.x * gridSize.y;
             if (m_DemandRaster is null || m_DemandRaster.Length != cells)
             {
@@ -3201,7 +3330,7 @@ namespace StationSuitabilityOverlay
             m_RoadDataLookup.Update(this);
 
             m_RoadGraph.Build(EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
-                m_PrefabRefLookup, m_RoadDataLookup, useTravelTime: false);
+                m_PrefabRefLookup, m_RoadDataLookup);
             m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
 
             int cells = gridSize.x * gridSize.y;
@@ -3218,12 +3347,12 @@ namespace StationSuitabilityOverlay
             bool OnTrack(int tile) => m_TrackMask is not null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
 
             CompactGraph trainGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
-                tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Train, OnTrack(tile)),
+                tile => SuitabilityLattice.RailCostScale(ModePreset.Train, OnTrack(tile)),
                 out float[] trainX, out float[] trainZ);
             m_TrainNetwork.Adopt(trainGraph, trainX, trainZ, RouteNetwork.Rail);
 
             CompactGraph metroGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
-                tile => SuitabilityLattice.RailCostScale(Setting.ModePreset.Metro, OnTrack(tile)),
+                tile => SuitabilityLattice.RailCostScale(ModePreset.Metro, OnTrack(tile)),
                 out float[] metroX, out float[] metroZ);
             m_MetroNetwork.Adopt(metroGraph, metroX, metroZ, RouteNetwork.Rail);
 
@@ -3354,17 +3483,13 @@ namespace StationSuitabilityOverlay
             float[]? trainDemand = BuildNodeDemand(m_TrainNetwork, gridSize);
             float[]? metroDemand = BuildNodeDemand(m_MetroNetwork, gridSize);
 
-            // Corridors must serve somebody along their length, not merely carry
-            // through-traffic — that is what stopped routes looping into empty land.
-            // Loosened: at 0.02 the gate truncated corridors at the first thin block,
-            // which is what made almost every corridor too short to suggest.
-            float demandFloor = 0.005f;
+            const float demandFloor = CorridorDemandFloor;
 
             int grownTotal = 0;
             int shortTotal = 0;
 
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
-                0.1f, 12000f, roadDemand, demandFloor, forcedMode: null, m_RouteCandidates,
+                RoadFlowFraction, RoadMaxRouteMetres, roadDemand, demandFloor, forcedMode: null, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g1, out int s1);
 
             // The lattice flow fractions were far too high for the lattices to ever
@@ -3380,18 +3505,18 @@ namespace StationSuitabilityOverlay
             // multiples of the network reference all still apply downstream, so this
             // widens what may be considered rather than what may be suggested.
             SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
-                0.3f, 20000f, trainDemand, demandFloor, Setting.ModePreset.Train, m_RouteCandidates,
+                TrainFlowFraction, TrainMaxRouteMetres, trainDemand, demandFloor, ModePreset.Train, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g2, out int s2);
 
             SuitabilityRoutes.BuildForNetwork(m_MetroNetwork, objective, settings.RouteCount,
-                0.2f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
+                MetroFlowFraction, MetroMaxRouteMetres, metroDemand, demandFloor, ModePreset.Metro, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g3, out int s3);
 
             // Water is gated on the demand of the land beside it, so a ferry cannot
             // wander down an empty coast.
             SuitabilityRoutes.BuildForNetwork(m_WaterNetwork, objective, settings.RouteCount,
-                0.5f, 20000f, BuildWaterNodeDemand(m_WaterNetwork, gridSize), demandFloor,
-                Setting.ModePreset.Ferry, m_RouteCandidates, point => ShorelineScoreAt(point, gridSize),
+                FerryFlowFraction, FerryMaxRouteMetres, BuildWaterNodeDemand(m_WaterNetwork, gridSize), demandFloor,
+                ModePreset.Ferry, m_RouteCandidates, point => ShorelineScoreAt(point, gridSize),
                 out int g4, out int s4);
 
             grownTotal = g1 + g2 + g3 + g4;
@@ -3400,9 +3525,9 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info(
                 $"Candidates by network: road grown={(g1).ToString(CultureInfo.InvariantCulture)} tooShort={(s1).ToString(CultureInfo.InvariantCulture)}, train grown={(g2).ToString(CultureInfo.InvariantCulture)} tooShort={(s2).ToString(CultureInfo.InvariantCulture)}, " +
                 $"metro grown={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, ferry grown={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
-                $"minLengths: bus {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Bus)).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"tram {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"metro {(SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}");
+                $"minLengths: bus {(TransitModes.MinLengthFor(ModePreset.Bus)).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"tram {(TransitModes.MinLengthFor(ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"metro {(TransitModes.MinLengthFor(ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}");
 
             // Before scoring, corridor flow is all there is to rank by. Afterwards the
             // enabled demand leads and corridor flow breaks ties, which also covers the
@@ -3473,9 +3598,9 @@ namespace StationSuitabilityOverlay
                     $"referenceFlow(road {(Road).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"rail {(math.max(Train, Metro)).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"water {(Water).ToString("F0", CultureInfo.InvariantCulture)}) " +
-                    $"(road floors: tram {(Road * 1.5f).ToString("F0", CultureInfo.InvariantCulture)}; " +
-                    $"rail floors: metro {(math.max(Train, Metro) * 5f).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"train {(math.max(Train, Metro) * 8f).ToString("F0", CultureInfo.InvariantCulture)})";
+                    $"(road floors: tram {(Road * TransitModes.MinFlowMultipleFor(ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)}; " +
+                    $"rail floors: metro {(math.max(Train, Metro) * TransitModes.MinFlowMultipleFor(ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"train {(math.max(Train, Metro) * TransitModes.MinFlowMultipleFor(ModePreset.Train)).ToString("F0", CultureInfo.InvariantCulture)})";
             }
         }
 
@@ -3533,52 +3658,15 @@ namespace StationSuitabilityOverlay
 
                 float beforeFlow = candidate.CapturedFlow;
                 float networkReference = references.For(candidate.Network);
-                if (SuitabilityRoutes.ChooseMode(candidate.Network, candidate.CapturedFlow, candidate.Length,
-                        networkReference, out Setting.ModePreset mode, out SuitabilityRoutes.ModeRejection why))
-                {
-                    // Spacing is mode-specific, so a changed mode needs its stops back.
-                    if (mode != candidate.Mode)
-                    {
-                        SuitabilityRoutes.Restop(candidate, mode, point => ScoreAtWorld(point, gridSize));
-                    }
-                }
-                else if (candidate.Network != RouteNetwork.Road && candidate.Stops.Count >= 2)
-                {
-                    // Nothing this alignment can carry is justified — a tunnel for a
-                    // handful of riders. Re-trace the same journey along streets, where
-                    // a bus or tram can actually run it.
-                    SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
-                        m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1],
-                        roadReference, point => ScoreAtWorld(point, gridSize), scratch);
-
-                    if (onRoad is null)
-                    {
-                        rejected++;
-                        Mod.Log.Info(
-                            $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                            $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, " +
-                            $"networkReference={(networkReference).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, " +
-                            $"{(why == SuitabilityRoutes.ModeRejection.TooShort ? "too short for any mode this alignment carries" : "below every demand floor")} and no road path between its ends");
-                        continue;
-                    }
-
-                    // Same journey, different alignment: the demand it would enable is
-                    // unchanged, and dropping it here would sink the retraced candidate
-                    // to the bottom of a ranking led by enabled demand.
-                    onRoad.EnabledDemand = candidate.EnabledDemand;
-                    candidate = onRoad;
-                    retraced++;
-                }
-                else
+                SuggestedRoute? resolved = ResolveCandidateMode(
+                    candidate, i, gridSize, networkReference, roadReference, scratch, ref retraced);
+                if (resolved is null)
                 {
                     rejected++;
-                    Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: road, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
-                        $"(tram floor {(networkReference * 1.5f).ToString("F0", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops — DROPPED, " +
-                        $"{(why == SuitabilityRoutes.ModeRejection.TooShort ? $"too short: it clears a demand floor but not the {SuitabilityRoutes.MinLengthFor(Setting.ModePreset.Bus).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a Bus" : "below every demand floor")}");
                     continue;
                 }
+
+                candidate = resolved;
 
                 // Placing the stops trimmed the line back to its termini, which can
                 // leave it shorter than the floor ChooseMode approved it against.
@@ -3589,7 +3677,7 @@ namespace StationSuitabilityOverlay
                         $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
-                        $"under the {(SuitabilityRoutes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
+                        $"under the {(TransitModes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
                     continue;
                 }
 
@@ -3627,7 +3715,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 // A suggestion the player has already built should stop being offered.
-                if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, 150f))
+                if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
                 {
                     duplicates++;
                     Mod.Log.Info(
@@ -3643,7 +3731,7 @@ namespace StationSuitabilityOverlay
 
                 Mod.Log.Info(
                     $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
-                    $"(floor {(networkReference * SuitabilityRoutes.MinFlowMultipleFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}), " +
+                    $"(floor {(networkReference * TransitModes.MinFlowMultipleFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}), " +
                     $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops, {(candidate.Vehicles).ToString(CultureInfo.InvariantCulture)} veh — KEPT");
 
@@ -3654,6 +3742,71 @@ namespace StationSuitabilityOverlay
                 $"Route suggestions: grown={(grownTotal).ToString(CultureInfo.InvariantCulture)}, tooShort={(shortTotal).ToString(CultureInfo.InvariantCulture)}, " +
                 $"candidates={m_RouteCandidates.Count}, unjustified={(rejected).ToString(CultureInfo.InvariantCulture)}, retracedOnRoad={(retraced).ToString(CultureInfo.InvariantCulture)}, " +
                 $"alreadyBuilt={(duplicates).ToString(CultureInfo.InvariantCulture)}, kept={m_Routes.Count}, {references.Describe()}");
+        }
+
+        // Settles what mode a candidate would run as, and on what alignment.
+        //
+        // Returns null when nothing is justified — logging which of the two tests did
+        // the rejecting, because "below every demand floor" and "too short for any
+        // mode this alignment carries" call for opposite responses and the log used to
+        // blame demand for both. A non-road candidate whose own alignment cannot be
+        // justified is re-traced along streets rather than relabelled: a metro corridor
+        // is a tunnel path, and a bus cannot drive it.
+        private SuggestedRoute? ResolveCandidateMode(
+            SuggestedRoute candidate,
+            int index,
+            int2 gridSize,
+            float networkReference,
+            float roadReference,
+            List<int> scratch,
+            ref int retraced)
+        {
+            float beforeFlow = candidate.CapturedFlow;
+            if (SuitabilityRoutes.ChooseMode(candidate.Network, candidate.CapturedFlow, candidate.Length,
+                    networkReference, out ModePreset mode, out SuitabilityRoutes.ModeRejection why))
+            {
+                // Spacing is mode-specific, so a changed mode needs its stops back.
+                if (mode != candidate.Mode)
+                {
+                    SuitabilityRoutes.Restop(candidate, mode, point => ScoreAtWorld(point, gridSize));
+                }
+
+                return candidate;
+            }
+
+            if (candidate.Network == RouteNetwork.Road || candidate.Stops.Count < 2)
+            {
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: road, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                    $"(tram floor {(networkReference * TransitModes.MinFlowMultipleFor(ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops — DROPPED, " +
+                    $"{(why == SuitabilityRoutes.ModeRejection.TooShort ? $"too short: it clears a demand floor but not the {TransitModes.MinLengthFor(ModePreset.Bus).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a Bus" : "below every demand floor")}");
+                return null;
+            }
+
+            // Nothing this alignment can carry is justified — a tunnel for a handful of
+            // riders. Re-trace the same journey along streets, where a bus or tram can
+            // actually run it.
+            SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
+                m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1],
+                roadReference, point => ScoreAtWorld(point, gridSize), scratch);
+
+            if (onRoad is null)
+            {
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, corridorFlow={(beforeFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, " +
+                    $"networkReference={(networkReference).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, " +
+                    $"{(why == SuitabilityRoutes.ModeRejection.TooShort ? "too short for any mode this alignment carries" : "below every demand floor")} and no road path between its ends");
+                return null;
+            }
+
+            // Same journey, different alignment: the demand it would enable is
+            // unchanged, and dropping it here would sink the retraced candidate to the
+            // bottom of a ranking led by enabled demand.
+            onRoad.EnabledDemand = candidate.EnabledDemand;
+            retraced++;
+            return onRoad;
         }
 
         // Demand near each network node, so corridor growth can tell a street with
@@ -3755,28 +3908,6 @@ namespace StationSuitabilityOverlay
             return touchesLand ? best + 1f : 0f;
         }
 
-        private bool SegmentCrossesWater(float2 a, float2 b, int2 gridSize)
-        {
-            if (m_Land is null)
-            {
-                return false;
-            }
-
-            int steps = (int)math.ceil(math.distance(a, b) / TileSize);
-            for (int i = 0; i <= steps; i++)
-            {
-                float2 point = math.lerp(a, b, steps == 0 ? 0f : (float)i / steps);
-                int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
-                int index = cell.x + cell.y * gridSize.x;
-                if (index >= 0 && index < m_Land.Length && m_Land[index] == 0)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private void UpdateRouteSummary(int tripCount, int assignedPairs)
         {
             if (m_Routes.Count == 0)
@@ -3814,6 +3945,8 @@ namespace StationSuitabilityOverlay
                 _ = list.Append(r.Stops.Count);
                 _ = list.Append('|');
                 _ = list.Append(r.Vehicles);
+                _ = list.Append('|');
+                _ = list.Append(TransitModes.ColorCssFor(r.Mode));
             }
             s_RouteList = list.ToString();
 
@@ -3844,18 +3977,66 @@ namespace StationSuitabilityOverlay
             s_RouteSummary = builder.ToString();
         }
 
+        // Only when the list actually moved. LogSites is gated the same way and for the
+        // same reason: a refresh every thirty seconds that re-prints an unchanged list
+        // buries the one that changed.
         private void LogRoutes()
         {
+            if (!SuggestionsChanged())
+            {
+                return;
+            }
+
             for (int i = 0; i < m_Routes.Count; i++)
             {
                 SuggestedRoute route = m_Routes[i];
                 float2 from = route.Stops.Count > 0 ? route.Stops[0] : float2.zero;
                 float2 to = route.Stops.Count > 0 ? route.Stops[route.Stops.Count - 1] : float2.zero;
                 Mod.Log.Info(
-                    $"Route #{(i + 1).ToString(CultureInfo.InvariantCulture)}: {route.Mode}, {(route.Length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km, {route.Stops.Count} stops, " +
+                    $"Route #{(i + 1).ToString(CultureInfo.InvariantCulture)}: {route.Mode}, {(route.Length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km, {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops, " +
                     $"corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"enabledDemand={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
                     $"({((int)from.x).ToString(CultureInfo.InvariantCulture)},{((int)from.y).ToString(CultureInfo.InvariantCulture)}) -> ({((int)to.x).ToString(CultureInfo.InvariantCulture)},{((int)to.y).ToString(CultureInfo.InvariantCulture)})");
+            }
+        }
+
+        // Whether the suggestion list differs from the one last logged, by mode and by
+        // where each line runs between.
+        private bool SuggestionsChanged()
+        {
+            if (m_LoggedRouteEnds.Count != m_Routes.Count)
+            {
+                Refresh();
+                return true;
+            }
+
+            for (int i = 0; i < m_Routes.Count; i++)
+            {
+                SuggestedRoute route = m_Routes[i];
+                RouteEnds logged = m_LoggedRouteEnds[i];
+                if (route.Stops.Count < 2
+                    || math.distancesq(logged.m_From, route.Stops[0]) > RouteSameEndsRadiusSq
+                    || math.distancesq(logged.m_To, route.Stops[route.Stops.Count - 1]) > RouteSameEndsRadiusSq)
+                {
+                    Refresh();
+                    return true;
+                }
+            }
+
+            return false;
+
+            void Refresh()
+            {
+                m_LoggedRouteEnds.Clear();
+                for (int i = 0; i < m_Routes.Count; i++)
+                {
+                    SuggestedRoute route = m_Routes[i];
+                    m_LoggedRouteEnds.Add(new RouteEnds
+                    {
+                        m_From = route.Stops.Count > 0 ? route.Stops[0] : float2.zero,
+                        m_To = route.Stops.Count > 0 ? route.Stops[route.Stops.Count - 1] : float2.zero,
+                    });
+                }
             }
         }
 
@@ -3899,7 +4080,8 @@ namespace StationSuitabilityOverlay
             {
                 Mod.Log.Info(
                     $"Ridership fit: R²={(m_Calibration.RSquared).ToString("F3", CultureInfo.InvariantCulture)}, demand={(m_Calibration.FittedDemand).ToString("F2", CultureInfo.InvariantCulture)}, " +
-                    $"jobs={(m_Calibration.FittedJobs).ToString("F2", CultureInfo.InvariantCulture)}, access={(m_Calibration.FittedAccess).ToString("F2", CultureInfo.InvariantCulture)}, future={(m_Calibration.FittedFuture).ToString("F2", CultureInfo.InvariantCulture)}");
+                    $"jobs={(m_Calibration.FittedJobs).ToString("F2", CultureInfo.InvariantCulture)}, access={(m_Calibration.FittedAccess).ToString("F2", CultureInfo.InvariantCulture)}, future={(m_Calibration.FittedFuture).ToString("F2", CultureInfo.InvariantCulture)}, " +
+                    $"meanWait={(m_Calibration.MeanWaitSeconds).ToString("F0", CultureInfo.InvariantCulture)}s (the divisor in Little's law; a value in the thousands means an accumulator is being read as seconds)");
             }
 
             settings.RidershipData = m_Calibration.Serialize();

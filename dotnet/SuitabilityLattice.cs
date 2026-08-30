@@ -73,6 +73,7 @@ namespace StationSuitabilityOverlay
             var edgeB = new List<int>();
             var edgeCost = new List<float>();
             float diagonal = Spacing * 1.41421356f;
+            var build = new LatticeBuild(index, cols, rows, xs, zs, edgeA, edgeB, edgeCost, worldMin, tileSize, tileGrid, tileCostScale);
 
             for (int gy = 0; gy < rows; gy++)
             {
@@ -85,10 +86,10 @@ namespace StationSuitabilityOverlay
                     }
 
                     // Only forward neighbours, so each edge is added once.
-                    TryLink(index, cols, rows, gx, gy, gx + 1, gy, from, Spacing, edgeA, edgeB, edgeCost, xs, zs, worldMin, tileSize, tileGrid, tileCostScale);
-                    TryLink(index, cols, rows, gx, gy, gx, gy + 1, from, Spacing, edgeA, edgeB, edgeCost, xs, zs, worldMin, tileSize, tileGrid, tileCostScale);
-                    TryLink(index, cols, rows, gx, gy, gx + 1, gy + 1, from, diagonal, edgeA, edgeB, edgeCost, xs, zs, worldMin, tileSize, tileGrid, tileCostScale);
-                    TryLink(index, cols, rows, gx, gy, gx + 1, gy - 1, from, diagonal, edgeA, edgeB, edgeCost, xs, zs, worldMin, tileSize, tileGrid, tileCostScale);
+                    TryLink(in build, gx + 1, gy, from, Spacing);
+                    TryLink(in build, gx, gy + 1, from, Spacing);
+                    TryLink(in build, gx + 1, gy + 1, from, diagonal);
+                    TryLink(in build, gx + 1, gy - 1, from, diagonal);
                 }
             }
 
@@ -97,53 +98,96 @@ namespace StationSuitabilityOverlay
             return CompactGraph.Build(xs.Count, edgeA.ToArray(), edgeB.ToArray(), edgeCost.ToArray(), edgeA.Count);
         }
 
-        private static void TryLink(
-            int[] index,
-            int cols,
-            int rows,
-            int gx,
-            int gy,
-            int nx,
-            int ny,
-            int from,
-            float baseCost,
-            List<int> edgeA,
-            List<int> edgeB,
-            List<float> edgeCost,
-            List<float> xs,
-            List<float> zs,
-            float2 worldMin,
-            float tileSize,
-            int2 tileGrid,
-            System.Func<int, float>? tileCostScale)
+        // Everything a link needs that does not change from one link to the next.
+        // Passed one argument at a time this made TryLink a seventeen-parameter call
+        // whose arguments could only be checked by counting — and two of them, the
+        // source cell's own coordinates, were never read.
+        private readonly struct LatticeBuild
         {
-            if (nx < 0 || nx >= cols || ny < 0 || ny >= rows)
+            public LatticeBuild(
+                int[] index,
+                int cols,
+                int rows,
+                List<float> nodeX,
+                List<float> nodeZ,
+                List<int> edgeA,
+                List<int> edgeB,
+                List<float> edgeCost,
+                float2 worldMin,
+                float tileSize,
+                int2 tileGrid,
+                System.Func<int, float>? tileCostScale)
+            {
+                Index = index;
+                Cols = cols;
+                Rows = rows;
+                NodeX = nodeX;
+                NodeZ = nodeZ;
+                EdgeA = edgeA;
+                EdgeB = edgeB;
+                EdgeCost = edgeCost;
+                WorldMin = worldMin;
+                TileSize = tileSize;
+                TileGrid = tileGrid;
+                TileCostScale = tileCostScale;
+            }
+
+            public int[] Index { get; }
+
+            public int Cols { get; }
+
+            public int Rows { get; }
+
+            public List<float> NodeX { get; }
+
+            public List<float> NodeZ { get; }
+
+            public List<int> EdgeA { get; }
+
+            public List<int> EdgeB { get; }
+
+            public List<float> EdgeCost { get; }
+
+            public float2 WorldMin { get; }
+
+            public float TileSize { get; }
+
+            public int2 TileGrid { get; }
+
+            public System.Func<int, float>? TileCostScale { get; }
+        }
+
+        private static void TryLink(in LatticeBuild build, int nx, int ny, int from, float baseCost)
+        {
+            if (nx < 0 || nx >= build.Cols || ny < 0 || ny >= build.Rows)
             {
                 return;
             }
 
-            int to = index[nx + ny * cols];
+            int to = build.Index[nx + ny * build.Cols];
             if (to < 0)
             {
                 return;
             }
 
             float cost = baseCost;
-            if (tileCostScale is not null)
+            if (build.TileCostScale is not null)
             {
                 // Scale by the midpoint's tile, so an edge running along existing
                 // track is cheap even though its endpoints straddle the grid.
-                var mid = new float2((xs[from] + xs[to]) * 0.5f, (zs[from] + zs[to]) * 0.5f);
-                int tile = TileOf(mid, worldMin, tileSize, tileGrid);
+                var mid = new float2(
+                    (build.NodeX[from] + build.NodeX[to]) * 0.5f,
+                    (build.NodeZ[from] + build.NodeZ[to]) * 0.5f);
+                int tile = TileOf(mid, build.WorldMin, build.TileSize, build.TileGrid);
                 if (tile >= 0)
                 {
-                    cost *= math.max(0.05f, tileCostScale(tile));
+                    cost *= math.max(0.05f, build.TileCostScale(tile));
                 }
             }
 
-            edgeA.Add(from);
-            edgeB.Add(to);
-            edgeCost.Add(cost);
+            build.EdgeA.Add(from);
+            build.EdgeB.Add(to);
+            build.EdgeCost.Add(cost);
         }
 
         private static int TileOf(float2 world, float2 worldMin, float tileSize, int2 tileGrid)
@@ -171,6 +215,13 @@ namespace StationSuitabilityOverlay
             }
 
             System.Array.Clear(trackMask, 0, trackMask.Length);
+
+            if (trackStarts.Count != trackEnds.Count)
+            {
+                Mod.Log.Warn(
+                    $"Track segments came back mismatched ({trackStarts.Count} starts, {trackEnds.Count} ends); " +
+                    "rail reuse will be judged on the shorter list.");
+            }
 
             for (int i = 0; i < trackStarts.Count && i < trackEnds.Count; i++)
             {
@@ -221,29 +272,15 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        public static RouteNetwork NetworkFor(Setting.ModePreset mode)
-        {
-            switch (mode)
-            {
-                case Setting.ModePreset.Metro:
-                case Setting.ModePreset.Train:
-                    return RouteNetwork.Rail;
-                case Setting.ModePreset.Ferry:
-                    return RouteNetwork.Water;
-                default:
-                    return RouteNetwork.Road;
-            }
-        }
-
         // Cost multiplier for a lattice edge, given whether existing rail runs there.
         //
         // Train reuses track wherever possible because new heavy rail is expensive to
         // acquire, but will strike out on fresh alignment when it has to. Metro is the
         // other way round: tunnelling is its normal mode, and existing track is merely
         // an option. Both stay usable on either.
-        public static float RailCostScale(Setting.ModePreset mode, bool onExistingTrack)
+        public static float RailCostScale(ModePreset mode, bool onExistingTrack)
         {
-            if (mode == Setting.ModePreset.Train)
+            if (mode == ModePreset.Train)
             {
                 return onExistingTrack ? 0.35f : 1.6f;
             }

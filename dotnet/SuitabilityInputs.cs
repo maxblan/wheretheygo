@@ -142,7 +142,7 @@ namespace StationSuitabilityOverlay
             EntityManager entityManager,
             PrefabSystem prefabSystem,
             EntityQuery stopQuery,
-            Setting.ModePreset mode,
+            ModePreset mode,
             List<float2> samePositions,
             List<float2> otherPositions,
             List<float> otherWeights,
@@ -241,19 +241,19 @@ namespace StationSuitabilityOverlay
                 && routes.Length > 0;
         }
 
-        public static bool IsStopOfMode(PrefabSystem prefabSystem, Entity prefab, Setting.ModePreset mode)
+        public static bool IsStopOfMode(PrefabSystem prefabSystem, Entity prefab, ModePreset mode)
         {
             return TryGetStopType(prefabSystem, prefab, out TransportType type) && type == TransportTypeOf(mode);
         }
 
-        public static TransportType TransportTypeOf(Setting.ModePreset mode)
+        public static TransportType TransportTypeOf(ModePreset mode)
         {
             switch (mode)
             {
-                case Setting.ModePreset.Tram: return TransportType.Tram;
-                case Setting.ModePreset.Metro: return TransportType.Subway;
-                case Setting.ModePreset.Train: return TransportType.Train;
-                case Setting.ModePreset.Ferry: return TransportType.Ferry;
+                case ModePreset.Tram: return TransportType.Tram;
+                case ModePreset.Metro: return TransportType.Subway;
+                case ModePreset.Train: return TransportType.Train;
+                case ModePreset.Ferry: return TransportType.Ferry;
                 default: return TransportType.Bus;
             }
         }
@@ -280,7 +280,13 @@ namespace StationSuitabilityOverlay
             }
 
             using var edges = roadEdgeQuery.ToComponentDataArray<Game.Net.Edge>(Allocator.Temp);
-            var roadNodes = new HashSet<Entity>();
+            // The set answers "seen already"; the list fixes the ORDER. Emitting
+            // straight out of the set put hash iteration order into the bucket
+            // contents the scoring job sums over, and float addition is not
+            // associative — the access term then differed in its last bits between
+            // two runs over an unchanged city.
+            var seen = new HashSet<Entity>();
+            var roadNodes = new List<Entity>();
             for (int i = 0; i < edges.Length; i++)
             {
                 Game.Net.Edge edge = edges[i];
@@ -291,13 +297,20 @@ namespace StationSuitabilityOverlay
 
                 float3 mid = (start + end) * 0.5f;
                 edgePositions.Add(new float2(mid.x, mid.z));
-                _ = roadNodes.Add(edge.m_Start);
-                _ = roadNodes.Add(edge.m_End);
+                if (seen.Add(edge.m_Start))
+                {
+                    roadNodes.Add(edge.m_Start);
+                }
+
+                if (seen.Add(edge.m_End))
+                {
+                    roadNodes.Add(edge.m_End);
+                }
             }
 
-            foreach (Entity node in roadNodes)
+            for (int i = 0; i < roadNodes.Count; i++)
             {
-                float3 pos = nodeMap[node];
+                float3 pos = nodeMap[roadNodes[i]];
                 nodePositions.Add(new float2(pos.x, pos.z));
             }
         }
