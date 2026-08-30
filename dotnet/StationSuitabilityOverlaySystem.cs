@@ -322,6 +322,11 @@ namespace StationSuitabilityOverlay
         private EntityQuery m_LineQuery;
         private readonly List<ExistingLine> m_ExistingLines = new List<ExistingLine>();
         private readonly List<float2> m_TransitStops = new List<float2>();
+
+        // Where a rider of a suggested line could change vehicle. Derived from the
+        // existing network and rebuilt by BuildTransitModel with everything else that
+        // depends on it — there is no separate invalidation to get wrong.
+        private InterchangeMap m_Interchanges;
         private readonly Dictionary<Entity, int> m_StopIndices = new Dictionary<Entity, int>();
         private readonly List<LineHealth> m_LineHealth = new List<LineHealth>();
         private SuggestedRoute? m_ImprovedRoute;
@@ -2666,6 +2671,7 @@ namespace StationSuitabilityOverlay
             if (m_TransitStops.Count == 0)
             {
                 m_TransitNetwork = null;
+                m_Interchanges = default;
                 return;
             }
 
@@ -2676,6 +2682,26 @@ namespace StationSuitabilityOverlay
                 xs[i] = m_TransitStops[i].x;
                 zs[i] = m_TransitStops[i].y;
             }
+
+            // Which modes serve each stop. A stop is in m_TransitStops only because a
+            // line calls there, so every entry here is service a rider can actually use.
+            var stopModes = new int[m_TransitStops.Count];
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                ExistingLine line = m_ExistingLines[i];
+                int bit = TransitModes.ModeBit(line.m_Mode);
+                for (int k = 0; k < line.m_StopIndices.Count; k++)
+                {
+                    int stop = line.m_StopIndices[k];
+                    if (stop >= 0 && stop < stopModes.Length)
+                    {
+                        stopModes[stop] |= bit;
+                    }
+                }
+            }
+
+            m_Interchanges = SuitabilityTransit.BuildInterchangeMap(
+                xs, zs, stopModes, m_TransitStops.Count, TransferWalkRadius);
 
             List<TransitLine> transitLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
             m_TransitNetwork = SuitabilityTransit.Build(xs, zs, m_TransitStops.Count, transitLines,
@@ -3712,17 +3738,20 @@ namespace StationSuitabilityOverlay
             SuitabilityRoutes.BuildDirectForNetwork(m_TrainNetwork, m_ZoneFlows,
                 m_TrainNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 TrainMaxRouteMetres, ModePreset.Train, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize), out int g2, out int s2);
+                point => ScoreAtWorld(point, gridSize), m_Interchanges,
+                out int g2, out int s2, out int h2);
 
             SuitabilityRoutes.BuildDirectForNetwork(m_MetroNetwork, m_ZoneFlows,
                 m_MetroNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 MetroMaxRouteMetres, ModePreset.Metro, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize), out int g3, out int s3);
+                point => ScoreAtWorld(point, gridSize), m_Interchanges,
+                out int g3, out int s3, out int h3);
 
             SuitabilityRoutes.BuildDirectForNetwork(m_WaterNetwork, m_CrossWaterFlows,
                 m_WaterNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 FerryMaxRouteMetres, ModePreset.Ferry, m_RouteCandidates,
-                point => ShorelineScoreAt(point, gridSize), out int g4, out int s4);
+                point => ShorelineScoreAt(point, gridSize), m_Interchanges,
+                out int g4, out int s4, out int h4);
 
             grownTotal = g1 + g2 + g3 + g4;
             shortTotal = s1 + s2 + s3 + s4;
@@ -3732,6 +3761,7 @@ namespace StationSuitabilityOverlay
                 $"train pairs tried={(g2).ToString(CultureInfo.InvariantCulture)} tooShort={(s2).ToString(CultureInfo.InvariantCulture)}, " +
                 $"metro pairs tried={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, " +
                 $"ferry pairs tried={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
+                $"termini aimed at an interchange={(h2 + h3 + h4).ToString(CultureInfo.InvariantCulture)} of {(m_Interchanges.Count).ToString(CultureInfo.InvariantCulture)} served stops, " +
                 $"minLengths: bus {(TransitModes.MinLengthFor(ModePreset.Bus)).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"tram {(TransitModes.MinLengthFor(ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"metro {(TransitModes.MinLengthFor(ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}");

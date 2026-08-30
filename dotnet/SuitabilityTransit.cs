@@ -48,6 +48,86 @@ namespace StationSuitabilityOverlay
         public float m_SpeedMetresPerSecond;
     }
 
+    // The served stops of the existing network, each carrying the set of modes a
+    // rider can reach on foot from it. Built by
+    // SuitabilityTransit.BuildInterchangeMap, which is where the union is explained.
+    internal readonly struct InterchangeMap
+    {
+        private readonly float[] m_StopX;
+        private readonly float[] m_StopZ;
+        private readonly int[] m_Reachable;
+        private readonly int m_Count;
+        private readonly float m_Radius;
+
+        public InterchangeMap(float[] stopX, float[] stopZ, int[] reachable, int count, float radius)
+        {
+            m_StopX = stopX;
+            m_StopZ = stopZ;
+            m_Reachable = reachable;
+            m_Count = count;
+            m_Radius = radius;
+        }
+
+        public int Count => m_Count;
+
+        // How far a rider will walk to change vehicle. The one owner of that distance:
+        // the walk edges in the transit graph, this map and anything aiming a line at
+        // an interchange all have to agree on it or a suggestion promises a transfer
+        // the routing will not credit.
+        public float Radius => m_Radius;
+
+        // The best place near (x, z) for a line of `ownMode` to call at: the one
+        // offering the most OTHER modes, nearest among equals. False when nothing
+        // within the walk radius offers a change of vehicle.
+        //
+        // Its own mode does not count. Two stops of one mode are duplicate service,
+        // not an interchange — the same rule the coverage and interchange scoring
+        // terms already draw between them.
+        public bool TryFindNear(ModePreset ownMode, float x, float z, out float hubX, out float hubZ)
+        {
+            hubX = 0f;
+            hubZ = 0f;
+            if (m_StopX is null || m_StopZ is null || m_Reachable is null)
+            {
+                return false;
+            }
+
+            int ownBit = TransitModes.ModeBit(ownMode);
+            float radiusSq = m_Radius * m_Radius;
+            int bestModes = 0;
+            float bestSq = 0f;
+            bool found = false;
+
+            for (int i = 0; i < m_Count; i++)
+            {
+                float dx = m_StopX[i] - x;
+                float dz = m_StopZ[i] - z;
+                float distanceSq = (dx * dx) + (dz * dz);
+                if (distanceSq > radiusSq)
+                {
+                    continue;
+                }
+
+                int modes = TransitModes.ModeCount(m_Reachable[i] & ~ownBit);
+                if (modes == 0)
+                {
+                    continue;
+                }
+
+                if (!found || modes > bestModes || (modes == bestModes && distanceSq < bestSq))
+                {
+                    found = true;
+                    bestModes = modes;
+                    bestSq = distanceSq;
+                    hubX = m_StopX[i];
+                    hubZ = m_StopZ[i];
+                }
+            }
+
+            return found;
+        }
+    }
+
     internal static class SuitabilityTransit
     {
         // Walking is slow enough that a long connection is worse than a detour by
@@ -317,6 +397,49 @@ namespace StationSuitabilityOverlay
                     }
                 }
             }
+        }
+
+        // Where a rider could change vehicle and carry on. Built from the served stops
+        // of the existing network, so a suggested line can be aimed at one.
+        //
+        // A hub in Cities: Skylines II is several stop entities a few metres apart —
+        // the train platform, the metro entrance below it, the bus stand out front —
+        // so what is on offer at one PLACE is only visible as a union over the stops
+        // within walking distance of it. Reading a single stop's own mode would call
+        // the city's biggest interchange a train station and nothing more.
+        public static InterchangeMap BuildInterchangeMap(
+            float[] stopX, float[] stopZ, int[] stopModes, int stopCount, float radius)
+        {
+            var reachable = new int[stopCount];
+            if (stopCount <= 0 || radius <= 0f)
+            {
+                return new InterchangeMap(stopX, stopZ, reachable, 0, radius);
+            }
+
+            Array.Copy(stopModes, reachable, stopCount);
+            if (stopCount > 1)
+            {
+                StopGrid grid = StopGrid.Build(stopX, stopZ, stopCount, radius);
+                float radiusSq = radius * radius;
+                var neighbours = new List<int>();
+                for (int a = 0; a < stopCount; a++)
+                {
+                    neighbours.Clear();
+                    grid.CollectNeighboursAfter(a, stopX, stopZ, radiusSq, neighbours);
+
+                    // CollectNeighboursAfter reports each pair once, so both directions
+                    // have to be unioned here or the lower-indexed stop of every pair
+                    // would never learn about the higher one.
+                    for (int n = 0; n < neighbours.Count; n++)
+                    {
+                        int b = neighbours[n];
+                        reachable[a] |= stopModes[b];
+                        reachable[b] |= stopModes[a];
+                    }
+                }
+            }
+
+            return new InterchangeMap(stopX, stopZ, reachable, stopCount, radius);
         }
 
         // Walks the shortest itinerary back from `destStop`, reporting how many times

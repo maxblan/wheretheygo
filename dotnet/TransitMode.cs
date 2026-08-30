@@ -122,6 +122,28 @@ namespace StationSuitabilityOverlay
         // Typical running speed in metres per second, used both to estimate a fleet
         // for a suggested line and to price a ride on one when no pathfound duration
         // is available.
+        // A mode as one bit, so "which modes meet here" is a set rather than a list.
+        // Every per-mode fact lives in this file; a second copy of this mapping beside
+        // the interchange code is exactly how five separate mode tables grew before.
+        public static int ModeBit(ModePreset mode)
+        {
+            return 1 << (int)mode;
+        }
+
+        // How many modes a mask holds. Used to rank one interchange against another:
+        // a place where three modes meet is a hub, one where two meet is a change.
+        public static int ModeCount(int modeMask)
+        {
+            int count = 0;
+            while (modeMask != 0)
+            {
+                modeMask &= modeMask - 1;
+                count++;
+            }
+
+            return count;
+        }
+
         public static float CruiseSpeedFor(ModePreset mode)
         {
             switch (mode)

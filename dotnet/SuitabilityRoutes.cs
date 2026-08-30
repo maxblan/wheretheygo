@@ -235,11 +235,14 @@ namespace StationSuitabilityOverlay
             ModePreset forcedMode,
             List<SuggestedRoute> output,
             System.Func<float2, float> scoreAt,
+            InterchangeMap hubs,
             out int considered,
-            out int tooShort)
+            out int tooShort,
+            out int atInterchange)
         {
             considered = 0;
             tooShort = 0;
+            atInterchange = 0;
             if (network?.Graph is null || zoneNodes is null || flows.Count == 0)
             {
                 return;
@@ -277,7 +280,21 @@ namespace StationSuitabilityOverlay
 
                 var fromPoint = new float2(network.NodePositionsX[from], network.NodePositionsZ[from]);
                 var toPoint = new float2(network.NodePositionsX[to], network.NodePositionsZ[to]);
-                if (AlreadyConnecting(takenFrom, takenTo, fromPoint, toPoint))
+
+                // Aim each end at an interchange if one is in reach. A terminus is
+                // where every rider must either finish or change vehicle, so it is the
+                // most valuable point on the line to put within walking distance of
+                // another mode — and CreditLine already pays a candidate for the
+                // journeys a transfer unlocks, it just had no way of being offered one.
+                int fromHub = SnapToInterchange(network, hubs, forcedMode, from, ref fromPoint);
+                int toHub = SnapToInterchange(network, hubs, forcedMode, to, ref toPoint);
+                atInterchange += (fromHub != from ? 1 : 0) + (toHub != to ? 1 : 0);
+                from = fromHub;
+                to = toHub;
+
+                // Both ends can snap to the same station when the two zones sit either
+                // side of one, which is a stop rather than a line.
+                if (from == to || AlreadyConnecting(takenFrom, takenTo, fromPoint, toPoint))
                 {
                     continue;
                 }
@@ -314,6 +331,31 @@ namespace StationSuitabilityOverlay
                 takenTo.Add(toPoint);
                 output.Add(route);
             }
+        }
+
+        // Moves a terminus onto the network node nearest a usable interchange, when one
+        // is within a walk of it. The search radius is the transfer walk radius, so the
+        // zone the line was drawn for is still served from the moved end — this buys a
+        // change of vehicle without giving up the demand that justified the line.
+        private static int SnapToInterchange(
+            SuitabilityRoadGraph network, InterchangeMap hubs, ModePreset mode, int node, ref float2 point)
+        {
+            if (hubs.Count == 0
+                || !hubs.TryFindNear(mode, point.x, point.y, out float hubX, out float hubZ))
+            {
+                return node;
+            }
+
+            // The lattice has a 128 m pitch, so the node nearest a station is not the
+            // station; anything further off than a transfer walk is not an interchange.
+            int snapped = network.NearestNode(new float2(hubX, hubZ), hubs.Radius);
+            if (snapped < 0)
+            {
+                return node;
+            }
+
+            point = new float2(network.NodePositionsX[snapped], network.NodePositionsZ[snapped]);
+            return snapped;
         }
 
         // Whether a line already proposed on this network runs between the same two

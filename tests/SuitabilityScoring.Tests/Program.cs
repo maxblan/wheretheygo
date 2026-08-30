@@ -109,6 +109,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("A corridor that comes back on itself is a ring", RingsAreNotRoutes);
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
+            Run("A hub is every mode within a walk, not one stop's own", AHubIsTheUnionOverAWalk);
+            Run("The bigger interchange beats the nearer one", TheBiggerInterchangeWins);
             Run("A line does not call where there is nothing", EmptyGroundGetsNoStop);
             Run("A line with nothing along it keeps all its stops", NothingScoringKeepsEveryStop);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
@@ -1683,6 +1685,85 @@ namespace StationSuitabilityOverlay.Tests
         // A line that stops fewer than about five times is a pair of stops, not a
         // service. These floors had been lowered until almost anything qualified, and
         // the result was a 659 m bus line looping around one residential block.
+        // A hub in this game is several stop entities a few metres apart — the train
+        // platform, the metro entrance below it, the bus stand out front. Reading one
+        // stop's own mode calls the city's biggest interchange a train station.
+        private static void AHubIsTheUnionOverAWalk()
+        {
+            // A train platform and a metro entrance 40 m apart, plus two lone bus stops
+            // far from everything.
+            var x = new float[] { 0f, 40f, 2000f, 0f };
+            var z = new float[] { 0f, 0f, 0f, 3000f };
+            var modes = new int[]
+            {
+                TransitModes.ModeBit(ModePreset.Train),
+                TransitModes.ModeBit(ModePreset.Metro),
+                TransitModes.ModeBit(ModePreset.Bus),
+                TransitModes.ModeBit(ModePreset.Bus),
+            };
+
+            InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
+            AssertTrue(map.Count == 4, $"every served stop is in the map, got {map.Count}");
+
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 10f, 0f, out float hubX, out float hubZ),
+                "a new bus line beside the station can change to something");
+            AssertTrue(hubX == 0f && hubZ == 0f, $"and it is aimed at the nearest of the pair, got ({hubX}, {hubZ})");
+
+            // Read on its own, the metro entrance is a metro stop and offers a new
+            // metro line nothing. The union is what makes it a place where that line's
+            // riders can reach a train — and the entrance itself is the nearest such
+            // place, which is exactly where the terminus should go.
+            AssertTrue(map.TryFindNear(ModePreset.Metro, 40f, 0f, out float trainX, out _),
+                "a new metro line there can change to the train beside it");
+            AssertTrue(trainX == 40f, $"aimed at the nearest place the train is reachable from, got {trainX}");
+
+            // Two stops of one mode are duplicate service, not an interchange.
+            AssertTrue(!map.TryFindNear(ModePreset.Bus, 2000f, 0f, out _, out _),
+                "a bus stop offers a bus line no change of vehicle");
+
+            AssertTrue(!map.TryFindNear(ModePreset.Bus, 5000f, 5000f, out _, out _),
+                "and nothing is in reach out in the fields");
+        }
+
+        // Ranking a hub against a lone stop. Nearest-wins would take the tram stop
+        // 40 m away over the interchange 180 m away that reaches three modes.
+        private static void TheBiggerInterchangeWins()
+        {
+            // The lone tram has to sit further than a walk from every hub member, or
+            // it is not lone — it joins the hub, which is the map working correctly.
+            var x = new float[] { 0f, 30f, 60f, 400f };
+            var z = new float[] { 0f, 0f, 0f, 0f };
+            var modes = new int[]
+            {
+                TransitModes.ModeBit(ModePreset.Train),
+                TransitModes.ModeBit(ModePreset.Metro),
+                TransitModes.ModeBit(ModePreset.Tram),
+                TransitModes.ModeBit(ModePreset.Tram),
+            };
+
+            InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 250f, 0f, out float hubX, out _),
+                "there is somewhere to change within a walk");
+            AssertTrue(hubX == 60f,
+                $"the three-mode interchange 190 m off wins over the lone tram stop 150 m off, got {hubX}");
+
+            // Among equals, distance decides.
+            var pairX = new float[] { 0f, 30f, 400f, 430f };
+            var pairZ = new float[] { 0f, 0f, 0f, 0f };
+            var pairModes = new int[]
+            {
+                TransitModes.ModeBit(ModePreset.Train),
+                TransitModes.ModeBit(ModePreset.Metro),
+                TransitModes.ModeBit(ModePreset.Train),
+                TransitModes.ModeBit(ModePreset.Metro),
+            };
+
+            InterchangeMap pairs = SuitabilityTransit.BuildInterchangeMap(pairX, pairZ, pairModes, 4, 250f);
+            AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, out float nearX, out _),
+                "both interchanges offer the same two modes");
+            AssertTrue(nearX == 400f, $"so the nearer one is chosen, got {nearX}");
+        }
+
         // The reported symptom: a suggested station standing on a solar power plant.
         // Spacing called for a stop and the window under it had nothing to serve, but
         // a stop was placed anyway because every interval got one.

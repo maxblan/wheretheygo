@@ -185,7 +185,10 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    `BuildForNetwork` grows a corridor with flow peeling and novelty decay on the road graph, where
    edge flow is a real measurement; `BuildDirectForNetwork` traces straight between the two ends of
    the heaviest unserved journey on the lattices, because a uniform grid has no flow ridge to grow
-   along — only Dijkstra's tie-breaking. Stops are then placed at mode spacing, skipping any window
+   along — only Dijkstra's tie-breaking. Both ends of a lattice alignment are first aimed at an
+   `InterchangeMap` entry within the transfer walk, so a suggestion can offer a change of vehicle;
+   the map unions modes over neighbouring stops because a CS2 hub is several stop entities metres
+   apart. Stops are then placed at mode spacing, skipping any window
    the suitability score says is not worth calling at (`SuitabilityScoring.SelectCallingPoints`);
    mode is chosen from flow against city-wide floors; and candidates are accepted in rounds, each
    one re-scored transfer-aware over a transit graph that already contains the ones above it.
