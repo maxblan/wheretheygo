@@ -114,6 +114,32 @@ namespace StationSuitabilityOverlay
             return SelectKth(scratch, count, k);
         }
 
+        // Which of a line's candidate stop windows are worth calling at, given the
+        // suitability score each one was chosen for. Sets `keep[i]` for every window
+        // clearing `floorShare` of the line's own POSITIVE median, and always for the
+        // two termini, which are what the line is for.
+        //
+        // Positive-median rather than plain median because the windows this exists to
+        // reject score zero: a line crossing water, a park or an industrial plot. Half
+        // a line's windows sitting at zero would drag a plain median to zero and the
+        // floor with it, so exactly the case that needs skipping would skip nothing.
+        // A line where nothing at all scores keeps every window instead of losing its
+        // stops entirely.
+        public static void SelectCallingPoints(
+            float[] scores, int count, float floorShare, float[] scratch, bool[] keep)
+        {
+            if (scores is null || keep is null || count <= 0)
+            {
+                return;
+            }
+
+            float floor = PositivePercentile(scores, count, 0.5f, scratch) * floorShare;
+            for (int i = 0; i < count; i++)
+            {
+                keep[i] = i == 0 || i == count - 1 || scores[i] >= floor;
+            }
+        }
+
         // Turns scores into 0..255 gradient intensities. `highlightShare` is the
         // fraction of built-up (positive-scoring) tiles that should reach the top of
         // the gradient; `gamma` below 1 lifts the low end so sparse areas stay

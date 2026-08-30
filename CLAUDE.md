@@ -181,9 +181,14 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
 2. **Travel demand** — real home→work/school journeys read from `Citizen`/`HouseholdMember`
    (`SuitabilityTravelDemand.cs`), aggregated into 256 m zones, discounted by whether the existing
    network can actually route them, then assigned to a network by shortest path.
-3. **Route suggestion** — corridor growth with flow peeling and novelty decay over a network
-   (`SuitabilityRoutes.cs`), stops placed at mode spacing, mode chosen from flow against city-wide
-   floors, then re-scored transfer-aware over the transit graph.
+3. **Route suggestion** — two alignment searches in `SuitabilityRoutes.cs`, picked by network:
+   `BuildForNetwork` grows a corridor with flow peeling and novelty decay on the road graph, where
+   edge flow is a real measurement; `BuildDirectForNetwork` traces straight between the two ends of
+   the heaviest unserved journey on the lattices, because a uniform grid has no flow ridge to grow
+   along — only Dijkstra's tie-breaking. Stops are then placed at mode spacing, skipping any window
+   the suitability score says is not worth calling at (`SuitabilityScoring.SelectCallingPoints`);
+   mode is chosen from flow against city-wide floors; and candidates are accepted in rounds, each
+   one re-scored transfer-aware over a transit graph that already contains the ones above it.
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
 

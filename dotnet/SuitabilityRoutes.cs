@@ -210,6 +210,141 @@ namespace StationSuitabilityOverlay
                 $"{(added >= budget ? $"; STOPPED at this network's budget of {budget.ToString(CultureInfo.InvariantCulture)} candidates — there may be more worth having" : string.Empty)}");
         }
 
+        // Candidates for a network whose alignment is FREE — metro, train, ferry.
+        //
+        // These are not grown along flow, and deliberately so. A lattice is a uniform
+        // grid, so the shortest path between two zones is degenerate: hundreds of
+        // staircases cost the same and which one Dijkstra picks falls out of the order
+        // its edges were added. The flow those paths accumulate is an artifact of the
+        // grid rather than a travel pattern, and following it produced corridors that
+        // wandered across the city and averaged 358 m — three tries at biasing the
+        // growth made them wander less without making them right.
+        //
+        // A metro is not a corridor that emerges from a flow field. It is a decision to
+        // connect two places. So take the heaviest demand the network still does not
+        // serve, and go straight there: the alignment is free, which is the whole reason
+        // this network exists.
+        //
+        // Roads keep growth. Street flow is real, and a bus has to follow the streets.
+        public static void BuildDirectForNetwork(
+            SuitabilityRoadGraph network,
+            List<ZoneFlow> flows,
+            int[] zoneNodes,
+            int maxRoutes,
+            float maxRouteLength,
+            ModePreset forcedMode,
+            List<SuggestedRoute> output,
+            System.Func<float2, float> scoreAt,
+            out int considered,
+            out int tooShort)
+        {
+            considered = 0;
+            tooShort = 0;
+            if (network?.Graph is null || zoneNodes is null || flows.Count == 0)
+            {
+                return;
+            }
+
+            // Heaviest unserved demand first. The weights have already had the existing
+            // network's share taken out of them, so this is what is going begging.
+            var order = new List<int>(flows.Count);
+            for (int i = 0; i < flows.Count; i++)
+            {
+                order.Add(i);
+            }
+
+            order.Sort((left, right) => flows[right].m_Weight.CompareTo(flows[left].m_Weight));
+
+            var scratch = new List<int>();
+            var takenFrom = new List<float2>();
+            var takenTo = new List<float2>();
+            int budget = maxRoutes * 4;
+
+            for (int slot = 0; slot < order.Count && output.Count < budget; slot++)
+            {
+                ZoneFlow flow = flows[order[slot]];
+                if (flow.m_Weight <= 0f)
+                {
+                    break;
+                }
+
+                int from = zoneNodes[flow.m_Origin];
+                int to = zoneNodes[flow.m_Destination];
+                if (from < 0 || to < 0 || from == to)
+                {
+                    continue;
+                }
+
+                var fromPoint = new float2(network.NodePositionsX[from], network.NodePositionsZ[from]);
+                var toPoint = new float2(network.NodePositionsX[to], network.NodePositionsZ[to]);
+                if (AlreadyConnecting(takenFrom, takenTo, fromPoint, toPoint))
+                {
+                    continue;
+                }
+
+                considered++;
+                if (!network.TracePath(from, to, maxRouteLength, scratch))
+                {
+                    continue;
+                }
+
+                var route = new SuggestedRoute { Network = network.Network, Mode = forcedMode };
+                network.MaterialisePath(scratch, route.Path);
+
+                // A shortest path on a uniform grid is a minimal staircase; straightening
+                // it leaves the near-straight alignment a tunnel or a crossing actually
+                // takes.
+                Simplify(route.Path, SimplifyTolerance);
+                route.Length = PathLength(route.Path);
+                route.CapturedFlow = network.FlowAlong(scratch);
+
+                if (route.Length < TransitModes.ShortestModeLength(network.Network))
+                {
+                    tooShort++;
+                    continue;
+                }
+
+                PlaceStops(route, TransitModes.StopSpacingFor(forcedMode), scoreAt);
+                if (route.Stops.Count < 2)
+                {
+                    continue;
+                }
+
+                takenFrom.Add(fromPoint);
+                takenTo.Add(toPoint);
+                output.Add(route);
+            }
+        }
+
+        // Whether a line already proposed on this network runs between the same two
+        // places. Zones are 256 m across, so anything inside that is the same pair.
+        private static bool AlreadyConnecting(List<float2> froms, List<float2> tos, float2 from, float2 to)
+        {
+            float sameSq = SuitabilityTravelDemand.ZoneSize * SuitabilityTravelDemand.ZoneSize;
+            for (int i = 0; i < froms.Count; i++)
+            {
+                bool sameWay = math.distancesq(froms[i], from) <= sameSq && math.distancesq(tos[i], to) <= sameSq;
+                bool otherWay = math.distancesq(froms[i], to) <= sameSq && math.distancesq(tos[i], from) <= sameSq;
+                if (sameWay || otherWay)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static float PathLength(List<float2> path)
+        {
+            float length = 0f;
+            for (int i = 1; i < path.Count; i++)
+            {
+                length += math.distance(path[i - 1], path[i]);
+            }
+
+            return length;
+        }
+
         // Edges a line could not call at start out spent. They stay in the graph so
         // journeys still route over them and their flow still counts towards the
         // network's mean, but no corridor may be seeded on or extended along one — a
@@ -437,6 +572,16 @@ namespace StationSuitabilityOverlay
             return false;
         }
 
+        // A window with nothing worth stopping at is skipped rather than served. The
+        // line still crosses the ground, it just does not call there — which is what a
+        // real metro does under a park. The bar is a share of the route's OWN median
+        // window, not an absolute score: a line through uniformly thin land keeps its
+        // stops, and only a genuine outlier is dropped. That is the case the player
+        // reported — a suggested station standing on a solar power plant, where the
+        // line had to cross open industrial ground and the spacing called for a stop
+        // regardless of there being nobody to serve.
+        private const float StopScoreFloorShare = 0.35f;
+
         // Walks the polyline dropping a stop every `spacing` metres. At each one it
         // searches a short way forwards and backwards ALONG the line for the
         // best-scoring position — so the flow still decides where the line runs and
@@ -450,24 +595,64 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            float total = 0f;
-            for (int i = 1; i < route.Path.Count; i++)
-            {
-                total += math.distance(route.Path[i - 1], route.Path[i]);
-            }
-
+            float total = PathLength(route.Path);
             if (total <= 0f)
             {
                 return;
             }
 
-            float search = spacing * StopSearchFraction;
+            int windows = (int)(total / spacing) + 2;
+            var offsets = new float[windows];
+            var scores = new float[windows];
+            int count = ScanStopWindows(route.Path, total, spacing, scoreAt, offsets, scores);
+
+            var keep = new bool[count];
+            SuitabilityScoring.SelectCallingPoints(scores, count, StopScoreFloorShare, new float[count], keep);
+
             float firstAt = -1f;
             float lastAt = -1f;
+            for (int i = 0; i < count; i++)
+            {
+                if (!keep[i] || !AddStop(route, PointAlong(route.Path, offsets[i])))
+                {
+                    continue;
+                }
+
+                if (firstAt < 0f)
+                {
+                    firstAt = offsets[i];
+                }
+
+                lastAt = offsets[i];
+            }
+
+            // The line is drawn between its termini. The nudge search can pull the end
+            // stops inward, and a rejected near-duplicate can drop the final one
+            // altogether, both of which left the polyline running on past the last stop
+            // marker with nothing to serve out there.
+            if (firstAt >= 0f && lastAt > firstAt)
+            {
+                TrimPath(route, firstAt, lastAt);
+            }
+        }
+
+        // One candidate position per spacing interval, with the score it was chosen
+        // for. Deciding which of them are worth a stop is the caller's job.
+        private static int ScanStopWindows(
+            List<float2> path,
+            float total,
+            float spacing,
+            System.Func<float2, float> scoreAt,
+            float[] offsets,
+            float[] scores)
+        {
+            int count = 0;
+            float search = spacing * StopSearchFraction;
             for (float target = 0f; target <= total + 1f; target += spacing)
             {
                 float at = math.min(target, total);
                 float best = at;
+                float bestScore = scoreAt is null ? 0f : scoreAt(PointAlong(path, at));
 
                 // A terminus is pinned where the corridor ends, and only moves if it
                 // cannot be used where it is.
@@ -492,17 +677,16 @@ namespace StationSuitabilityOverlay
                 // repair, not an optimisation — it moves only when staying is not an
                 // option, which is why it cannot bring back the systematic shortening.
                 bool terminus = at <= 0f || at >= total;
-                bool usable = scoreAt is null || scoreAt(PointAlong(route.Path, at)) > 0f;
 
-                if (scoreAt is not null && search > 0f && (!terminus || !usable))
+                if (scoreAt is not null && search > 0f && (!terminus || bestScore <= 0f))
                 {
-                    float bestScore = float.MinValue;
+                    bestScore = float.MinValue;
                     // Sample a handful of positions in the window; more would not
                     // change the outcome at 32 m tile resolution.
                     for (int step = -3; step <= 3; step++)
                     {
-                        float candidate = math.clamp(at + search * step / 3f, 0f, total);
-                        float score = scoreAt(PointAlong(route.Path, candidate));
+                        float candidate = math.clamp(at + (search * step / 3f), 0f, total);
+                        float score = scoreAt(PointAlong(path, candidate));
                         if (score > bestScore)
                         {
                             bestScore = score;
@@ -511,30 +695,17 @@ namespace StationSuitabilityOverlay
                     }
                 }
 
-                if (AddStop(route, PointAlong(route.Path, best)))
-                {
-                    if (firstAt < 0f)
-                    {
-                        firstAt = best;
-                    }
+                offsets[count] = best;
+                scores[count] = bestScore;
+                count++;
 
-                    lastAt = best;
-                }
-
-                if (at >= total)
+                if (at >= total || count >= offsets.Length)
                 {
                     break;
                 }
             }
 
-            // The line is drawn between its termini. The nudge search can pull the end
-            // stops inward, and a rejected near-duplicate can drop the final one
-            // altogether, both of which left the polyline running on past the last stop
-            // marker with nothing to serve out there.
-            if (firstAt >= 0f && lastAt > firstAt)
-            {
-                TrimPath(route, firstAt, lastAt);
-            }
+            return count;
         }
 
         // Keeps only the stretch of the polyline between two distances along it,

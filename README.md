@@ -70,14 +70,18 @@ Three details matter for reading it:
 
 Only modes the mod can actually plan are judged — bus, tram, metro, train and ferry. Air, ship and taxi lines are passenger transport too, but there is no alignment to suggest for them.
 
-**Route suggestions** are grown from that loaded network. The strongest corridor is grown outward along the heaviest remaining flow, stops are placed at mode-appropriate spacing and nudged onto the best-scoring nearby tile, and a mode is assigned from the corridor's flow intensity and length. The demand that line would carry is then removed from the pool before the next suggestion, so later lines complement earlier ones instead of stacking on the same street. Suggestions are drawn as coloured polylines with stop markers while the infoview is open.
+**Route suggestions** come from that loaded network, and the two halves of the city are searched differently because their networks are different things. On the streets, where flow is a real measurement, the strongest corridor is grown outward along the heaviest remaining traffic. Metro, train and ferry alignments have no street to follow — they are searched over a free-form lattice where every direction costs the same, and on a uniform grid the "busiest corridor" is an artifact of how the shortest-path search broke its ties, not a fact about the city. Those modes therefore take the heaviest journey the network still cannot carry and trace directly between its two ends.
+
+Either way, stops are then placed at mode-appropriate spacing along the whole alignment and nudged onto the best-scoring nearby tile: a metro at 800 m spacing calls about eight times over six kilometres, not twice. A stop window with nothing worth serving in it is skipped rather than filled — the line still crosses the ground, it just does not call there, which is what a real metro does under a park. A mode is assigned from the corridor's flow intensity, its length and how much of the city's travel it puts within reach.
+
+Suggestions are then ranked in rounds rather than scored once. The best candidate is accepted, added to the transit graph, and every remaining candidate is re-scored against a city that already has it. The list is therefore "the next best line given the ones above it", not a set of alternatives to the same corridor — a second metro shadowing the first is scored after the first exists, finds its journeys already carried, and falls down the list. Suggestions are drawn as coloured polylines with stop markers while the infoview is open.
 
 The **Route objective** setting changes what a line is grown for: maximum ridership follows the busiest journeys and may leave outlying districts unserved; maximum coverage spreads out to reach more districts even where demand is thin; balanced does both.
 
 Known limits, since these matter when reading the output:
 
-- Ferries are only suggested where a route detours a long way around water that a direct crossing would cut out. Ferry corridors are not searched over water, so a genuinely good ferry route across open water will not be found.
-- Corridor growth is greedy. Transit network design is NP-hard; these are suggestions, not optimal networks.
+- Ferries are only suggested for journeys whose two ends sit on different landmasses. A boat that would usefully shortcut a bay within one island is not searched for.
+- Selection is greedy. Transit network design is NP-hard; each round takes the best candidate given what has already been accepted and never revisits an earlier choice. These are suggestions, not optimal networks.
 
 ### Calibration
 

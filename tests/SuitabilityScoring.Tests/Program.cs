@@ -109,6 +109,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("A corridor that comes back on itself is a ring", RingsAreNotRoutes);
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
+            Run("A line does not call where there is nothing", EmptyGroundGetsNoStop);
+            Run("A line with nothing along it keeps all its stops", NothingScoringKeepsEveryStop);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
 
             Console.WriteLine();
@@ -1681,6 +1683,49 @@ namespace StationSuitabilityOverlay.Tests
         // A line that stops fewer than about five times is a pair of stops, not a
         // service. These floors had been lowered until almost anything qualified, and
         // the result was a 659 m bus line looping around one residential block.
+        // The reported symptom: a suggested station standing on a solar power plant.
+        // Spacing called for a stop and the window under it had nothing to serve, but
+        // a stop was placed anyway because every interval got one.
+        private static void EmptyGroundGetsNoStop()
+        {
+            // Six windows along a line. Two and three cross an industrial plot, and the
+            // far terminus is thin — under the floor, but still the end of the line.
+            var scores = new float[] { 0.8f, 0.9f, 0.02f, 0f, 0.7f, 0.1f };
+            var keep = new bool[scores.Length];
+            SuitabilityScoring.SelectCallingPoints(scores, scores.Length, 0.35f, new float[scores.Length], keep);
+
+            AssertTrue(!keep[2] && !keep[3], "neither window over the empty ground is worth a call");
+            AssertTrue(keep[1] && keep[4], "the windows on either side of it still are");
+            AssertTrue(keep[0] && keep[scores.Length - 1],
+                "and both termini survive, the thin one included — they are what the line is for");
+
+            // The case that separates a positive median from a plain one: a line MOSTLY
+            // over empty ground. A plain median sits at zero there and takes the floor
+            // with it, so precisely the line that needs skipping would skip nothing.
+            var mostlyEmpty = new float[] { 0.8f, 0f, 0f, 0.9f, 0f, 0f, 0.7f, 0f, 0f, 0.75f };
+            var emptyKeep = new bool[mostlyEmpty.Length];
+            SuitabilityScoring.SelectCallingPoints(
+                mostlyEmpty, mostlyEmpty.Length, 0.35f, new float[mostlyEmpty.Length], emptyKeep);
+            for (int i = 1; i < mostlyEmpty.Length - 1; i++)
+            {
+                AssertTrue(emptyKeep[i] == (mostlyEmpty[i] > 0f),
+                    $"window {i} scores {mostlyEmpty[i]} and must{(mostlyEmpty[i] > 0f ? "" : " not")} be called at");
+            }
+        }
+
+        // Degenerate input must not delete a line's stops: no scoring function, or a
+        // route where the whole alignment scores zero, keeps every window.
+        private static void NothingScoringKeepsEveryStop()
+        {
+            var flat = new float[6];
+            var keep = new bool[flat.Length];
+            SuitabilityScoring.SelectCallingPoints(flat, flat.Length, 0.35f, new float[flat.Length], keep);
+            for (int i = 0; i < flat.Length; i++)
+            {
+                AssertTrue(keep[i], $"window {i} must survive when nothing on the line scores at all");
+            }
+        }
+
         private static void ShortStubsAreNotLines()
         {
             var stub = new CorridorEvidence(flow: 804f, length: 659f, enabledDemandShare: 0.038f, trackShare: 0f);

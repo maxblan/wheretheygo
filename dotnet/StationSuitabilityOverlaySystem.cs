@@ -3082,6 +3082,13 @@ namespace StationSuitabilityOverlay
             // else: every rail and water candidate kept an enabled demand of zero and
             // sank to the bottom of a ranking led by exactly that number.
             int evaluate = math.min(m_RouteCandidates.Count, settings.RouteCount * MaxScoredPerRoute);
+            if (m_RouteCandidates.Count > evaluate)
+            {
+                Mod.Log.Info(
+                    $"  transfer scoring capped at {(evaluate).ToString(CultureInfo.InvariantCulture)} of " +
+                    $"{m_RouteCandidates.Count} candidates; the rest keep an enabled demand of zero and rank on corridor flow alone");
+            }
+
             float discount = settings.TransferDiscount;
 
             var baseLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
@@ -3181,6 +3188,21 @@ namespace StationSuitabilityOverlay
                         withCandidate, workspace, origins, dests, weights, access, baseline,
                         pairCount, candidateLine, discount, MaxJourneySeconds, SwitchMarginSeconds, out float _)
                     : 0f;
+
+                Mod.Log.Info(
+                    $"  transfer scoring {(c).ToString(CultureInfo.InvariantCulture)} (round {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)}): " +
+                    $"{candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops, " +
+                    $"corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"routablePairs={(pairCount).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"against {(m_AcceptedLines.Count).ToString(CultureInfo.InvariantCulture)} already accepted");
+
+                // Enabled demand is kept SEPARATE from corridor flow rather than
+                // replacing it. It governs the ranking — which is what makes a
+                // suggestion stop being offered once it is built — but the mode floors
+                // are multiples of the network's mean edge flow, and only CapturedFlow
+                // is on that scale. Folding the two into one field made ChooseMode
+                // compare a city-wide journey-weight sum against a per-edge mean.
             }
         }
 
@@ -3520,17 +3542,11 @@ namespace StationSuitabilityOverlay
         // CONSIDERED rather than what may be suggested.
         private const float RoadFlowFraction = 0.1f;
         private const float RoadMaxRouteMetres = 12000f;
-        // Lowered from 0.3. The floor is a share of the network's OWN mean edge flow,
-        // and the train lattice's mean is high (96 against the metro lattice's 40)
-        // precisely because preferring existing track concentrates flow onto it — so
-        // the same fraction bit three times harder here. Corridors averaged 606 m
-        // against a 4000 m minimum for a train, and 166 extensions per refresh were
-        // refused by this floor alone: no train candidate ever reached scoring.
-        private const float TrainFlowFraction = 0.1f;
+        // The lattice modes carry no flow fraction: BuildDirectForNetwork picks its
+        // endpoints from the zone-flow table rather than from a grown ridge, so there
+        // is no per-network mean edge flow to take a share of.
         private const float TrainMaxRouteMetres = 20000f;
-        private const float MetroFlowFraction = 0.2f;
         private const float MetroMaxRouteMetres = 15000f;
-        private const float FerryFlowFraction = 0.5f;
         private const float FerryMaxRouteMetres = 20000f;
 
         // Normalized demand a corridor's next node must have beside it. Corridors must
@@ -3659,65 +3675,6 @@ namespace StationSuitabilityOverlay
             return index >= 0 && index < m_Components.Length ? m_Components[index] : 0;
         }
 
-        // Demand reachable from a water node, sampled from the land around it. Open
-        // ocean scores nothing, which is what stops a ferry corridor crawling along
-        // an empty coastline.
-        private float[]? BuildWaterNodeDemand(SuitabilityRoadGraph network, int2 gridSize)
-        {
-            if (network.Graph is null || m_RawTerms is null || network.NodeCount == 0)
-            {
-                return null;
-            }
-
-            var demand = new float[network.NodeCount];
-            float invDemand = m_DemandCap > 0f ? 1f / m_DemandCap : 0f;
-            float invJobs = m_JobsCap > 0f ? 1f / m_JobsCap : 0f;
-            // A ferry pier serves the land within walking distance of it.
-            int span = math.max(2, (int)math.round(400f / TileSize));
-
-            for (int n = 0; n < network.NodeCount; n++)
-            {
-                var position = new float2(network.NodePositionsX[n], network.NodePositionsZ[n]);
-                int2 centre = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, gridSize);
-                float best = 0f;
-
-                for (int dy = -span; dy <= span; dy += 2)
-                {
-                    int y = centre.y + dy;
-                    if (y < 0 || y >= gridSize.y)
-                    {
-                        continue;
-                    }
-                    for (int dx = -span; dx <= span; dx += 2)
-                    {
-                        int x = centre.x + dx;
-                        if (x < 0 || x >= gridSize.x)
-                        {
-                            continue;
-                        }
-
-                        int index = x + y * gridSize.x;
-                        if (index >= m_RawTerms.Length)
-                        {
-                            continue;
-                        }
-
-                        SuitabilityCell terms = m_RawTerms[index];
-                        float local = SuitabilityScoring.Saturate(terms.m_Demand * invDemand)
-                            + SuitabilityScoring.Saturate(terms.m_Jobs * invJobs);
-                        if (local > best)
-                        {
-                            best = local;
-                        }
-                    }
-                }
-
-                demand[n] = best;
-            }
-
-            return demand;
-        }
-
         // Each network contributes candidates for the modes it can carry; the merged
         // set is ranked by trips carried and the best kept. Auto-assignment therefore
         // falls out of which network won, rather than being guessed after the fact.
@@ -3727,8 +3684,6 @@ namespace StationSuitabilityOverlay
             m_RouteCandidates.Clear();
 
             float[]? roadDemand = BuildNodeDemand(m_RoadGraph, gridSize);
-            float[]? trainDemand = BuildNodeDemand(m_TrainNetwork, gridSize);
-            float[]? metroDemand = BuildNodeDemand(m_MetroNetwork, gridSize);
 
             const float demandFloor = CorridorDemandFloor;
 
@@ -3751,27 +3706,32 @@ namespace StationSuitabilityOverlay
             // requires. The demand gate, the length floors and ChooseMode's own
             // multiples of the network reference all still apply downstream, so this
             // widens what may be considered rather than what may be suggested.
-            SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
-                TrainFlowFraction, TrainMaxRouteMetres, trainDemand, demandFloor, ModePreset.Train, m_RouteCandidates,
+            // The lattices connect two places rather than following a flow ridge — see
+            // BuildDirectForNetwork for why growth is the wrong instrument on a uniform
+            // grid. Ferries see only the journeys that actually cross water.
+            SuitabilityRoutes.BuildDirectForNetwork(m_TrainNetwork, m_ZoneFlows,
+                m_TrainNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
+                TrainMaxRouteMetres, ModePreset.Train, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g2, out int s2);
 
-            SuitabilityRoutes.BuildForNetwork(m_MetroNetwork, objective, settings.RouteCount,
-                MetroFlowFraction, MetroMaxRouteMetres, metroDemand, demandFloor, ModePreset.Metro, m_RouteCandidates,
+            SuitabilityRoutes.BuildDirectForNetwork(m_MetroNetwork, m_ZoneFlows,
+                m_MetroNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
+                MetroMaxRouteMetres, ModePreset.Metro, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g3, out int s3);
 
-            // Water is gated on the demand of the land beside it, so a ferry cannot
-            // wander down an empty coast.
-            SuitabilityRoutes.BuildForNetwork(m_WaterNetwork, objective, settings.RouteCount,
-                FerryFlowFraction, FerryMaxRouteMetres, BuildWaterNodeDemand(m_WaterNetwork, gridSize), demandFloor,
-                ModePreset.Ferry, m_RouteCandidates, point => ShorelineScoreAt(point, gridSize),
-                out int g4, out int s4);
+            SuitabilityRoutes.BuildDirectForNetwork(m_WaterNetwork, m_CrossWaterFlows,
+                m_WaterNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
+                FerryMaxRouteMetres, ModePreset.Ferry, m_RouteCandidates,
+                point => ShorelineScoreAt(point, gridSize), out int g4, out int s4);
 
             grownTotal = g1 + g2 + g3 + g4;
             shortTotal = s1 + s2 + s3 + s4;
 
             Mod.Log.Info(
-                $"Candidates by network: road grown={(g1).ToString(CultureInfo.InvariantCulture)} tooShort={(s1).ToString(CultureInfo.InvariantCulture)}, train grown={(g2).ToString(CultureInfo.InvariantCulture)} tooShort={(s2).ToString(CultureInfo.InvariantCulture)}, " +
-                $"metro grown={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, ferry grown={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
+                $"Candidates by network: road grown={(g1).ToString(CultureInfo.InvariantCulture)} tooShort={(s1).ToString(CultureInfo.InvariantCulture)}, " +
+                $"train pairs tried={(g2).ToString(CultureInfo.InvariantCulture)} tooShort={(s2).ToString(CultureInfo.InvariantCulture)}, " +
+                $"metro pairs tried={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, " +
+                $"ferry pairs tried={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
                 $"minLengths: bus {(TransitModes.MinLengthFor(ModePreset.Bus)).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"tram {(TransitModes.MinLengthFor(ModePreset.Tram)).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"metro {(TransitModes.MinLengthFor(ModePreset.Metro)).ToString("F0", CultureInfo.InvariantCulture)}");
