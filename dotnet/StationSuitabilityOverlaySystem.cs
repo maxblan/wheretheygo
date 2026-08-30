@@ -274,6 +274,22 @@ namespace StationSuitabilityOverlay
         private readonly List<float2> m_StopPositions = new List<float2>();
         private readonly List<float2> m_OtherStopPositions = new List<float2>();
         private readonly List<float> m_OtherStopWeights = new List<float>();
+
+        // Every served stop with its transport type, unsplit. The heatmap is built for
+        // one mode; stop placement has to score for the suggested line's mode, and
+        // these are what let it, without a second Burst pass per mode.
+        private readonly List<float2> m_AllStopPositions = new List<float2>();
+        private readonly List<int> m_AllStopTypes = new List<int>();
+
+        // What the score field in m_Scores was combined FOR. A query for any other mode
+        // has to undo this mode's stop-derived terms and put its own in their place.
+        private ModePreset m_ScoredMode;
+        private float m_ScoredInvSelf;
+        private float m_ScoredCoverageWeight;
+        private float m_ScoredInterchangeWeight;
+        private float m_ScoredCrossWeight;
+        private float m_ScoredCatchmentRadius;
+        private float m_ScoredInterchangeRadius;
         private readonly List<float2> m_NodePositions = new List<float2>();
         private readonly List<float2> m_EdgePositions = new List<float2>();
         private readonly List<float2> m_JobPositions = new List<float2>();
@@ -1731,6 +1747,8 @@ namespace StationSuitabilityOverlay
                 m_StopPositions,
                 m_OtherStopPositions,
                 m_OtherStopWeights,
+                m_AllStopPositions,
+                m_AllStopTypes,
                 out m_LastOrphanCount);
 
             if (rebuilt)
@@ -1842,6 +1860,17 @@ namespace StationSuitabilityOverlay
             float selfWeight = math.max(0.1f, SuitabilityInputs.ModeWeight(SuitabilityInputs.TransportTypeOf(settings.Mode)));
             float invSelf = 1f / selfWeight;
 
+            // Pinned here rather than read from `settings` at query time: a score is
+            // only comparable with the map it was combined into, and the panel's mode,
+            // weights and radii can all move between a compute and a suggestion.
+            m_ScoredMode = settings.Mode;
+            m_ScoredInvSelf = invSelf;
+            m_ScoredCoverageWeight = settings.W3;
+            m_ScoredInterchangeWeight = settings.W6;
+            m_ScoredCrossWeight = settings.W7;
+            m_ScoredCatchmentRadius = settings.CatchmentRadius;
+            m_ScoredInterchangeRadius = math.min(MaxInterchangeRadius, settings.CatchmentRadius);
+
             for (int i = 0; i < totalCells; i++)
             {
                 SuitabilityCell cell = m_RawTerms[i];
@@ -1857,9 +1886,9 @@ namespace StationSuitabilityOverlay
                     + (settings.W2 * jobs)
                     + (settings.W4 * access)
                     + (settings.W5 * future)
-                    + (settings.W6 * interchange)
-                    - (settings.W3 * coverage)
-                    - (settings.W7 * crossCoverage);
+                    + SuitabilityScoring.ModeTerms(
+                        coverage, cell.m_Interchange, cell.m_CrossCoverage, invSelf,
+                        settings.W3, settings.W6, settings.W7);
 
                 scores[i] = score * SuitabilityScoring.Saturate(access * RoadGateScale);
 
@@ -3433,7 +3462,7 @@ namespace StationSuitabilityOverlay
 
             route.Length = length;
             route.CapturedFlow = graph.FlowAlong(scratch);
-            SuitabilityRoutes.Restop(route, mode, point => ScoreAtWorld(point, m_IntensityGrid));
+            SuitabilityRoutes.Restop(route, mode, (point, forMode) => ScoreForMode(point, m_IntensityGrid, forMode), m_Interchanges);
             route.Vehicles = SuitabilityRoutes.EstimateVehicles(mode, length, route.Stops.Count,
                 SuggestedWaitFor(mode) * 2f);
 
@@ -3718,7 +3747,7 @@ namespace StationSuitabilityOverlay
 
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
                 RoadFlowFraction, RoadMaxRouteMetres, roadDemand, demandFloor, forcedMode: null, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize), out int g1, out int s1);
+                (point, mode) => ScoreForMode(point, gridSize, mode), m_Interchanges, out int g1, out int s1);
 
             // The lattice flow fractions were far too high for the lattices to ever
             // produce a line, which the growth diagnostics finally made visible: at
@@ -3738,19 +3767,19 @@ namespace StationSuitabilityOverlay
             SuitabilityRoutes.BuildDirectForNetwork(m_TrainNetwork, m_ZoneFlows,
                 m_TrainNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 TrainMaxRouteMetres, ModePreset.Train, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize), m_Interchanges,
+                (point, mode) => ScoreForMode(point, gridSize, mode), m_Interchanges,
                 out int g2, out int s2, out int h2);
 
             SuitabilityRoutes.BuildDirectForNetwork(m_MetroNetwork, m_ZoneFlows,
                 m_MetroNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 MetroMaxRouteMetres, ModePreset.Metro, m_RouteCandidates,
-                point => ScoreAtWorld(point, gridSize), m_Interchanges,
+                (point, mode) => ScoreForMode(point, gridSize, mode), m_Interchanges,
                 out int g3, out int s3, out int h3);
 
             SuitabilityRoutes.BuildDirectForNetwork(m_WaterNetwork, m_CrossWaterFlows,
                 m_WaterNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 FerryMaxRouteMetres, ModePreset.Ferry, m_RouteCandidates,
-                point => ShorelineScoreAt(point, gridSize), m_Interchanges,
+                (point, _) => ShorelineScoreAt(point, gridSize), m_Interchanges,
                 out int g4, out int s4, out int h4);
 
             grownTotal = g1 + g2 + g3 + g4;
@@ -3881,6 +3910,7 @@ namespace StationSuitabilityOverlay
             int rejected = 0;
             int retraced = 0;
             int duplicates = 0;
+            int belowDemandFloor = 0;
             var scratch = new List<int>();
             var settled = new bool[m_RouteCandidates.Count];
 
@@ -3893,7 +3923,7 @@ namespace StationSuitabilityOverlay
             {
                 ScoreCandidates(settings, settled);
                 if (!AcceptBestCandidate(settings, gridSize, references, roadReference, scratch, settled,
-                        ref rejected, ref retraced, ref duplicates))
+                        ref rejected, ref retraced, ref duplicates, ref belowDemandFloor))
                 {
                     break;
                 }
@@ -3902,27 +3932,15 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info(
                 $"Route suggestions: grown={(grownTotal).ToString(CultureInfo.InvariantCulture)}, tooShort={(shortTotal).ToString(CultureInfo.InvariantCulture)}, " +
                 $"candidates={m_RouteCandidates.Count}, unjustified={(rejected).ToString(CultureInfo.InvariantCulture)}, retracedOnRoad={(retraced).ToString(CultureInfo.InvariantCulture)}, " +
-                $"alreadyBuilt={(duplicates).ToString(CultureInfo.InvariantCulture)}, kept={m_Routes.Count}, {references.Describe()}");
+                $"alreadyBuilt={(duplicates).ToString(CultureInfo.InvariantCulture)}, improvedTooLittle={(belowDemandFloor).ToString(CultureInfo.InvariantCulture)}, " +
+                $"kept={m_Routes.Count}, {references.Describe()}");
         }
 
-        // Takes the best remaining candidate that survives every gate, and adds it to
-        // the network the next round measures against. Returns false when nothing is
-        // left worth suggesting.
-        private bool AcceptBestCandidate(
-            Setting settings,
-            int2 gridSize,
-            NetworkReferences references,
-            float roadReference,
-            List<int> scratch,
-            bool[] settled,
-            ref int rejected,
-            ref int retraced,
-            ref int duplicates)
+        // Best first: the share of unserved demand a candidate would newly improve, with
+        // corridor flow breaking ties — which covers the candidates past the scoring
+        // window, where enabled demand was never measured at all.
+        private List<int> OrderCandidates(bool[] settled)
         {
-            // Best first: the share of unserved demand it would newly improve, with
-            // corridor flow breaking ties — which also covers the candidates past the
-            // scoring window and a city with no transit at all, where every enabled
-            // demand is zero.
             var order = new List<int>(m_RouteCandidates.Count);
             for (int i = 0; i < m_RouteCandidates.Count; i++)
             {
@@ -3940,6 +3958,40 @@ namespace StationSuitabilityOverlay
                 return byDemand != 0 ? byDemand : b.CapturedFlow.CompareTo(a.CapturedFlow);
             });
 
+            return order;
+        }
+
+        // A suggestion has to make something better. Below this share of the travel the
+        // city still cannot carry, a line is noise rather than a recommendation.
+        //
+        // Measured, not guessed: over one session 37 of 101 accepted suggestions
+        // enabled exactly NOTHING, and the values that did appear fell into two groups
+        // with a clear gap between them — 0, 1, 2, 4, 6, 7, 8 against 38, 59, 84, 115,
+        // 291, 742 out of an unserved weight of 13709. This sits in that gap (0.06% to
+        // 0.28%) rather than on top of either group.
+        //
+        // It is also what makes the round-based rescoring mean anything. A candidate
+        // shadowing a line already accepted this round correctly rescores to zero
+        // enabled demand — that part worked. Nothing acted on it, so three trams along
+        // the same corridor were all offered, each claiming to unlock nothing.
+        private const float MinEnabledDemandShare = 0.001f;
+
+        // Takes the best remaining candidate that survives every gate, and adds it to
+        // the network the next round measures against. Returns false when nothing is
+        // left worth suggesting.
+        private bool AcceptBestCandidate(
+            Setting settings,
+            int2 gridSize,
+            NetworkReferences references,
+            float roadReference,
+            List<int> scratch,
+            bool[] settled,
+            ref int rejected,
+            ref int retraced,
+            ref int duplicates,
+            ref int belowDemandFloor)
+        {
+            List<int> order = OrderCandidates(settled);
             for (int slot = 0; slot < order.Count; slot++)
             {
                 int i = order[slot];
@@ -4016,6 +4068,24 @@ namespace StationSuitabilityOverlay
                         $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
                         $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                         $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
+                    continue;
+                }
+
+                // Only when the denominator is known. An unmeasured pool is not the
+                // same as an empty one, and rejecting against a zero would suppress
+                // every suggestion on the refresh before travel demand first lands.
+                float reachShare = m_UnservedTravelWeight > 0f
+                    ? candidate.EnabledDemand / m_UnservedTravelWeight
+                    : float.MaxValue;
+                if (reachShare < MinEnabledDemandShare)
+                {
+                    belowDemandFloor++;
+                    settled[i] = true;
+                    Mod.Log.Info(
+                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                        $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, would improve only " +
+                        $"{(reachShare * 100f).ToString("F2", CultureInfo.InvariantCulture)}% of unserved travel, under the " +
+                        $"{(MinEnabledDemandShare * 100f).ToString("F2", CultureInfo.InvariantCulture)}% a suggestion has to be worth");
                     continue;
                 }
 
@@ -4098,7 +4168,7 @@ namespace StationSuitabilityOverlay
                 // Spacing is mode-specific, so a changed mode needs its stops back.
                 if (mode != candidate.Mode)
                 {
-                    SuitabilityRoutes.Restop(candidate, mode, point => ScoreAtWorld(point, gridSize));
+                    SuitabilityRoutes.Restop(candidate, mode, (point, forMode) => ScoreForMode(point, gridSize, forMode), m_Interchanges);
                 }
 
                 return candidate;
@@ -4119,7 +4189,7 @@ namespace StationSuitabilityOverlay
             // actually run it.
             SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
                 m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1],
-                roadReference, point => ScoreAtWorld(point, gridSize), scratch);
+                roadReference, (point, mode) => ScoreForMode(point, gridSize, mode), m_Interchanges, scratch);
 
             if (onRoad is null)
             {
@@ -4231,6 +4301,68 @@ namespace StationSuitabilityOverlay
             return m_Scores[index];
         }
 
+        // The same tile, scored for a DIFFERENT mode than the map was built for.
+        //
+        // Only the stop-derived terms depend on the mode, so the four that do not —
+        // demand, jobs, access and future — are taken from the map unchanged and the
+        // mode-dependent part is swapped out. That is why this costs a scan of the
+        // served stops rather than another pass over 200k cells.
+        //
+        // It matters because the map is built for whatever mode the PANEL is showing,
+        // while a suggested line's mode is decided by flow and length. A tram was being
+        // placed against the bus map: penalised for sitting near bus stops, which is not
+        // its own service, and rewarded for sitting near trams, which is.
+        private float ScoreForMode(float2 point, int2 gridSize, ModePreset mode)
+        {
+            float baseScore = ScoreAtWorld(point, gridSize);
+            if (mode == m_ScoredMode || m_RawTerms is null)
+            {
+                return baseScore;
+            }
+
+            int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+            int index = cell.x + (cell.y * gridSize.x);
+            if (index < 0 || index >= m_RawTerms.Length)
+            {
+                return baseScore;
+            }
+
+            var self = (int)SuitabilityInputs.TransportTypeOf(mode);
+            float coverage = 0f;
+            float interchange = 0f;
+            float crossCoverage = 0f;
+            for (int i = 0; i < m_AllStopPositions.Count; i++)
+            {
+                bool sameMode = m_AllStopTypes[i] == self;
+                // The map counts a stop of the placed mode at 1, and any other at its
+                // own capacity — CollectStops builds the two bucket sets that way.
+                float weight = sameMode
+                    ? 1f
+                    : SuitabilityInputs.ModeWeight((Game.Prefabs.TransportType)m_AllStopTypes[i]);
+                SuitabilityScoring.AccumulateStop(
+                    math.distance(m_AllStopPositions[i], point), weight, sameMode,
+                    m_ScoredCatchmentRadius, m_ScoredInterchangeRadius,
+                    ref coverage, ref interchange, ref crossCoverage);
+            }
+
+            SuitabilityCell raw = m_RawTerms[index];
+            float invSelf = 1f / math.max(0.1f, SuitabilityInputs.ModeWeight(SuitabilityInputs.TransportTypeOf(mode)));
+            float mine = SuitabilityScoring.ModeTerms(
+                math.min(coverage, SuitabilityJob.MaxPenalty) / SuitabilityJob.MaxPenalty,
+                interchange, crossCoverage, invSelf,
+                m_ScoredCoverageWeight, m_ScoredInterchangeWeight, m_ScoredCrossWeight);
+            float shown = SuitabilityScoring.ModeTerms(
+                raw.m_Coverage / SuitabilityJob.MaxPenalty,
+                raw.m_Interchange, raw.m_CrossCoverage, m_ScoredInvSelf,
+                m_ScoredCoverageWeight, m_ScoredInterchangeWeight, m_ScoredCrossWeight);
+
+            // The road gate the combine pass applied to the whole score applies to the
+            // swap as well, or a tile with no road access would gain a bonus the map
+            // suppresses.
+            float gate = SuitabilityScoring.Saturate(raw.m_Access * RoadGateScale);
+            return baseScore + ((mine - shown) * gate);
+        }
+
         // A ferry pier belongs where the water meets the land it serves. Scoring open
         // water at zero keeps stops off mid-crossing positions; the score of the
         // nearby land then decides which stretch of coast gets the pier.
@@ -4278,6 +4410,20 @@ namespace StationSuitabilityOverlay
             return touchesLand ? best + 1f : 0f;
         }
 
+        // Two routes are the same suggestion when they run between the same places.
+        private static string RouteKeyOf(SuggestedRoute route)
+        {
+            if (route.Stops.Count < 2)
+            {
+                return "empty";
+            }
+
+            float2 from = route.Stops[0];
+            float2 to = route.Stops[route.Stops.Count - 1];
+            return $"{((int)from.x).ToString(CultureInfo.InvariantCulture)},{((int)from.y).ToString(CultureInfo.InvariantCulture)}>" +
+                $"{((int)to.x).ToString(CultureInfo.InvariantCulture)},{((int)to.y).ToString(CultureInfo.InvariantCulture)}";
+        }
+
         private void UpdateRouteSummary(int tripCount, int assignedPairs)
         {
             // Both are positions in the list about to be replaced. Nothing may be shown
@@ -4298,7 +4444,7 @@ namespace StationSuitabilityOverlay
                 }
                 else
                 {
-                    s_RouteSummary = $"{(tripCount).ToString(CultureInfo.InvariantCulture)} journeys, {(assignedPairs).ToString(CultureInfo.InvariantCulture)} routed, but no corridor was strong enough to suggest.";
+                    s_RouteSummary = $"{(tripCount).ToString(CultureInfo.InvariantCulture)} journeys, {(assignedPairs).ToString(CultureInfo.InvariantCulture)} routed, but no new line would improve enough of what is still unserved.";
                 }
 
                 return;
@@ -4327,7 +4473,17 @@ namespace StationSuitabilityOverlay
                 // the panel makes and cannot show, and there is no way to tell a clear
                 // leader from three suggestions of much the same worth.
                 float reach = m_UnservedTravelWeight > 0f ? r.EnabledDemand / m_UnservedTravelWeight : 0f;
-                _ = list.Append((reach * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                // A decimal below ten percent. The figure the list is RANKED by was
+                // rounded to whole percent, so every suggestion in a well-served city
+                // read "unlocks 0%" — including the one that unlocked the most.
+                _ = list.Append((reach * 100f).ToString(reach >= 0.1f ? "F0" : "F1", CultureInfo.InvariantCulture));
+                _ = list.Append('|');
+                // Where the line runs between, as the row's identity. Mode, length,
+                // stop count and vehicles are not one: two different suggestions can
+                // agree on all four, and when they did the panel keyed two rows the
+                // same and handed one row's hover to the other's line. This is the
+                // identity SuggestionsChanged already compares by.
+                _ = list.Append(RouteKeyOf(r));
             }
             s_RouteList = list.ToString();
 

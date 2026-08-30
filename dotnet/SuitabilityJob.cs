@@ -270,22 +270,16 @@ namespace StationSuitabilityOverlay
                     int start = OtherStopOffsets[bucket];
                     for (int i = 0; i < count; i++)
                     {
-                        float dist = math.distance(OtherStopPositions[start + i], center);
-                        if (dist > CatchmentRadius)
-                        {
-                            continue;
-                        }
-
-                        float weight = OtherStopWeights[start + i];
-
-                        // How readily a rider could transfer here: 1 on top of the
-                        // other stop, 0 once it is beyond walking range.
-                        float transferable = dist <= InterchangeRadius
-                            ? TriangularWeight(dist, InterchangeRadius)
-                            : 0f;
-
-                        interchange += weight * transferable;
-                        crossCoverage += weight * TriangularWeight(dist, CatchmentRadius) * (1f - transferable);
+                        float unused = 0f;
+                        SuitabilityScoring.AccumulateStop(
+                            math.distance(OtherStopPositions[start + i], center),
+                            OtherStopWeights[start + i],
+                            sameMode: false,
+                            CatchmentRadius,
+                            InterchangeRadius,
+                            ref unused,
+                            ref interchange,
+                            ref crossCoverage);
                     }
                 }
             }
@@ -321,13 +315,17 @@ namespace StationSuitabilityOverlay
                     int start = StopOffsets[bucket];
                     for (int i = 0; i < count; i++)
                     {
-                        float dist = math.distance(StopPositions[start + i], center);
-                        if (dist > CatchmentRadius)
-                        {
-                            continue;
-                        }
-
-                        penalty += StopWeights[start + i] * TriangularWeight(dist, CatchmentRadius);
+                        float unusedInterchange = 0f;
+                        float unusedCross = 0f;
+                        SuitabilityScoring.AccumulateStop(
+                            math.distance(StopPositions[start + i], center),
+                            StopWeights[start + i],
+                            sameMode: true,
+                            CatchmentRadius,
+                            InterchangeRadius,
+                            ref penalty,
+                            ref unusedInterchange,
+                            ref unusedCross);
                     }
                 }
             }

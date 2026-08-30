@@ -110,6 +110,9 @@ namespace StationSuitabilityOverlay.Tests
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
             Run("A hub is every mode within a walk, not one stop's own", AHubIsTheUnionOverAWalk);
+            Run("Calls are spread evenly, never bunched at the end", CallsAreSpreadEvenly);
+            Run("A stop counts differently for the mode being placed", ScoringFollowsTheModeBeingPlaced);
+            Run("A stop beyond the catchment counts for nothing", StopTermsRespectTheirRadii);
             Run("The bigger interchange beats the nearer one", TheBiggerInterchangeWins);
             Run("A line does not call where there is nothing", EmptyGroundGetsNoStop);
             Run("A line with nothing along it keeps all its stops", NothingScoringKeepsEveryStop);
@@ -1685,6 +1688,126 @@ namespace StationSuitabilityOverlay.Tests
         // A line that stops fewer than about five times is a pair of stops, not a
         // service. These floors had been lowered until almost anything qualified, and
         // the result was a 659 m bus line looping around one residential block.
+        // The defect this closes: a suggested line's stops were nudged using whatever
+        // map the PANEL was showing. With Bus selected, an existing tram stop 100 m
+        // away counted as somewhere to change to — when for a tram line it is that
+        // line's own service, already there.
+        private static void ScoringFollowsTheModeBeingPlaced()
+        {
+            const float Catchment = 350f;
+            const float Interchange = 250f;
+            const float TramCapacity = 1.5f;
+
+            // One existing tram stop, 100 m from the tile being scored, read as a BUS
+            // line would read it.
+            float busCoverage = 0f;
+            float busInterchange = 0f;
+            float busCross = 0f;
+            SuitabilityScoring.AccumulateStop(100f, TramCapacity, sameMode: false, Catchment, Interchange,
+                ref busCoverage, ref busInterchange, ref busCross);
+
+            // The same stop, read as a TRAM line would read it. The map counts a stop of
+            // the mode being placed at 1, whatever that mode's capacity.
+            float tramCoverage = 0f;
+            float tramInterchange = 0f;
+            float tramCross = 0f;
+            SuitabilityScoring.AccumulateStop(100f, 1f, sameMode: true, Catchment, Interchange,
+                ref tramCoverage, ref tramInterchange, ref tramCross);
+
+            AssertTrue(busCoverage == 0f && busInterchange > 0f,
+                "for a bus line the tram stop is a change of vehicle, not coverage");
+            AssertTrue(tramCoverage > 0f && tramInterchange == 0f,
+                "for a tram line the same stop is its own service, not a change of vehicle");
+
+            // And the sign of the whole mode-dependent part flips with it.
+            float asBus = SuitabilityScoring.ModeTerms(
+                busCoverage / 4f, busInterchange, busCross, invSelf: 1f,
+                coverageWeight: 1f, interchangeWeight: 1f, crossWeight: 1f);
+            float asTram = SuitabilityScoring.ModeTerms(
+                tramCoverage / 4f, tramInterchange, tramCross, invSelf: 1f / TramCapacity,
+                coverageWeight: 1f, interchangeWeight: 1f, crossWeight: 1f);
+            AssertTrue(asBus > 0f, $"so the tile helps a bus line, got {asBus}");
+            AssertTrue(asTram < 0f, $"and hurts a tram line, got {asTram}");
+
+            // The feeder asymmetry: the smaller mode should come to the trunk. The same
+            // neighbour is worth more to a bus than to a train.
+            float toABus = SuitabilityScoring.ModeTerms(0f, busInterchange, 0f, 1f, 1f, 1f, 1f);
+            float toATrain = SuitabilityScoring.ModeTerms(0f, busInterchange, 0f, 1f / 3f, 1f, 1f, 1f);
+            AssertTrue(toABus > toATrain,
+                $"a bus gains more from a neighbour than a train does, got {toABus} against {toATrain}");
+        }
+
+        private static void StopTermsRespectTheirRadii()
+        {
+            float coverage = 0f;
+            float interchange = 0f;
+            float cross = 0f;
+
+            // Beyond the catchment a stop is not there at all.
+            SuitabilityScoring.AccumulateStop(400f, 2f, sameMode: false, 350f, 250f,
+                ref coverage, ref interchange, ref cross);
+            AssertTrue(coverage == 0f && interchange == 0f && cross == 0f,
+                "a stop past the catchment contributes nothing");
+
+            // Inside the catchment but past the transfer walk: competes, cannot be
+            // changed to. That distinction is the whole point of the two radii.
+            SuitabilityScoring.AccumulateStop(300f, 2f, sameMode: false, 350f, 250f,
+                ref coverage, ref interchange, ref cross);
+            AssertTrue(interchange == 0f && cross > 0f,
+                "too far to transfer to, close enough to carry the same riders");
+
+            // On top of the stop, a same-mode neighbour is the full penalty.
+            float onTop = 0f;
+            float unusedA = 0f;
+            float unusedB = 0f;
+            SuitabilityScoring.AccumulateStop(0f, 1f, sameMode: true, 350f, 250f,
+                ref onTop, ref unusedA, ref unusedB);
+            AssertTrue(Math.Abs(onTop - 1f) < 1e-6f, $"a stop on the spot counts in full, got {onTop}");
+
+            // A zero catchment cannot divide by itself.
+            float safe = 0f;
+            SuitabilityScoring.AccumulateStop(0f, 1f, sameMode: true, 0f, 0f, ref safe, ref unusedA, ref unusedB);
+            AssertTrue(safe == 0f, "a zero catchment contributes nothing rather than dividing by zero");
+        }
+
+        // The reported symptom: a 2.15 km tram calling twice within 190 m. Marching a
+        // fixed 450 m grid left the last two windows 2150 mod 450 = 350 m apart, and
+        // the nudge closed the rest.
+        private static void CallsAreSpreadEvenly()
+        {
+            var into = new float[32];
+            int count = SuitabilityScoring.PlanCallingPoints(2150f, 450f, into);
+            AssertTrue(count == 6, $"a 2150 m line at 450 m spacing makes six calls, got {count}");
+            AssertTrue(Math.Abs(into[0]) < 0.01f && Math.Abs(into[5] - 2150f) < 0.01f,
+                "the first and last are its termini");
+            for (int i = 1; i < count; i++)
+            {
+                float gap = into[i] - into[i - 1];
+                AssertTrue(Math.Abs(gap - 430f) < 0.01f, $"every interval is 430 m, gap {i} was {gap}");
+            }
+
+            // The property behind it: once a line calls more than twice, no interval may
+            // fall near the half-spacing that produced the bunching.
+            for (float length = 300f; length < 12000f; length += 37f)
+            {
+                int calls = SuitabilityScoring.PlanCallingPoints(length, 450f, into);
+                if (calls < 3)
+                {
+                    continue;
+                }
+
+                float step = into[1] - into[0];
+                AssertTrue(step >= 450f * 0.7f,
+                    $"a {length} m line spaced its calls {step} m apart, under 70% of 450");
+                AssertTrue(Math.Abs(into[calls - 1] - length) < 0.01f,
+                    $"and a {length} m line still reaches its own end");
+            }
+
+            AssertTrue(SuitabilityScoring.PlanCallingPoints(0f, 450f, into) == 0, "no line, no calls");
+            AssertTrue(SuitabilityScoring.PlanCallingPoints(200f, 450f, into) == 2,
+                "a line shorter than one interval still has two ends");
+        }
+
         // A hub in this game is several stop entities a few metres apart — the train
         // platform, the metro entrance below it, the bus stand out front. Reading one
         // stop's own mode calls the city's biggest interchange a train station.
@@ -1705,7 +1828,7 @@ namespace StationSuitabilityOverlay.Tests
             InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
             AssertTrue(map.Count == 4, $"every served stop is in the map, got {map.Count}");
 
-            AssertTrue(map.TryFindNear(ModePreset.Bus, 10f, 0f, out float hubX, out float hubZ),
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 10f, 0f, 250f, out float hubX, out float hubZ),
                 "a new bus line beside the station can change to something");
             AssertTrue(hubX == 0f && hubZ == 0f, $"and it is aimed at the nearest of the pair, got ({hubX}, {hubZ})");
 
@@ -1713,15 +1836,18 @@ namespace StationSuitabilityOverlay.Tests
             // metro line nothing. The union is what makes it a place where that line's
             // riders can reach a train — and the entrance itself is the nearest such
             // place, which is exactly where the terminus should go.
-            AssertTrue(map.TryFindNear(ModePreset.Metro, 40f, 0f, out float trainX, out _),
+            AssertTrue(map.TryFindNear(ModePreset.Metro, 40f, 0f, 250f, out float trainX, out _),
                 "a new metro line there can change to the train beside it");
             AssertTrue(trainX == 40f, $"aimed at the nearest place the train is reachable from, got {trainX}");
 
-            // Two stops of one mode are duplicate service, not an interchange.
-            AssertTrue(!map.TryFindNear(ModePreset.Bus, 2000f, 0f, out _, out _),
-                "a bus stop offers a bus line no change of vehicle");
+            // A new bus line calling at an existing bus stop lets riders change to
+            // whatever line already runs there — a suggestion is never the line that is
+            // already present. Mode decides the ranking, not whether it counts.
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 2000f, 0f, 250f, out float sameX, out _),
+                "a new bus line can still change lines at an existing bus stop");
+            AssertTrue(sameX == 2000f, $"and it is the stop that is there, got {sameX}");
 
-            AssertTrue(!map.TryFindNear(ModePreset.Bus, 5000f, 5000f, out _, out _),
+            AssertTrue(!map.TryFindNear(ModePreset.Bus, 5000f, 5000f, 250f, out _, out _),
                 "and nothing is in reach out in the fields");
         }
 
@@ -1742,7 +1868,7 @@ namespace StationSuitabilityOverlay.Tests
             };
 
             InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
-            AssertTrue(map.TryFindNear(ModePreset.Bus, 250f, 0f, out float hubX, out _),
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 250f, 0f, 250f, out float hubX, out _),
                 "there is somewhere to change within a walk");
             AssertTrue(hubX == 60f,
                 $"the three-mode interchange 190 m off wins over the lone tram stop 150 m off, got {hubX}");
@@ -1759,7 +1885,7 @@ namespace StationSuitabilityOverlay.Tests
             };
 
             InterchangeMap pairs = SuitabilityTransit.BuildInterchangeMap(pairX, pairZ, pairModes, 4, 250f);
-            AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, out float nearX, out _),
+            AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, 250f, out float nearX, out _),
                 "both interchanges offer the same two modes");
             AssertTrue(nearX == 400f, $"so the nearer one is chosen, got {nearX}");
         }

@@ -114,6 +114,99 @@ namespace StationSuitabilityOverlay
             return SelectKth(scratch, count, k);
         }
 
+        // What one existing served stop contributes to the three stop-derived terms at
+        // a point, given whether it runs the mode being placed.
+        //
+        // This is the single owner of that rule, and it has two callers that iterate
+        // very differently: the scoring job sweeps a bucket neighbourhood over ~200k
+        // cells, while stop placement scans the served-stop list flat at a few hundred
+        // points. Only the iteration differs — if they disagreed about what a stop is
+        // worth, a suggestion's stops would be nudged by a rule the map does not draw.
+        public static void AccumulateStop(
+            float distance,
+            float weight,
+            bool sameMode,
+            float catchmentRadius,
+            float interchangeRadius,
+            ref float coverage,
+            ref float interchange,
+            ref float crossCoverage)
+        {
+            if (catchmentRadius <= 0f || distance > catchmentRadius)
+            {
+                return;
+            }
+
+            float within = 1f - (distance / catchmentRadius);
+            if (sameMode)
+            {
+                // Service of the mode being placed already carries these riders.
+                coverage += weight * within;
+                return;
+            }
+
+            // How readily a rider could change here: 1 on top of the other stop, 0 once
+            // it is beyond walking range. What is too far to transfer to but still
+            // inside the catchment competes for the same riders instead.
+            float transferable = interchangeRadius > 0f && distance <= interchangeRadius
+                ? 1f - (distance / interchangeRadius)
+                : 0f;
+            interchange += weight * transferable;
+            crossCoverage += weight * within * (1f - transferable);
+        }
+
+        // The part of a tile's score that depends on WHICH mode is being placed:
+        // what is close enough to change to, what is close enough to compete, and how
+        // much of the mode's own service is already here. `coverageShare` is the
+        // coverage term already expressed against its own ceiling.
+        //
+        // `invSelf` scales both cross-mode terms by the placing mode's own capacity, so
+        // a bus gains a great deal from sitting at a metro station while a metro gains
+        // little from sitting at a bus stop. That asymmetry is the feeder relationship:
+        // the smaller mode should come to the trunk.
+        public static float ModeTerms(
+            float coverageShare,
+            float interchange,
+            float crossCoverage,
+            float invSelf,
+            float coverageWeight,
+            float interchangeWeight,
+            float crossWeight)
+        {
+            return (interchangeWeight * Saturate(interchange * invSelf))
+                - (coverageWeight * coverageShare)
+                - (crossWeight * Saturate(crossCoverage * invSelf));
+        }
+
+        // Where a line of `length` metres should call, at about `spacing` metres
+        // between calls, written into `into` as distances from its start. Returns how
+        // many were planned.
+        //
+        // The intervals are EVEN, and that is the whole point. Marching a fixed
+        // `spacing` grid and clamping the tail to the line's end put a 2150 m tram's
+        // last two calls 2150 mod 450 = 350 m apart where every other pair sat at 450;
+        // the nudge that follows then closed that to 190 m and the line called twice
+        // within sight of itself. Five even intervals of 430 m carry the same six
+        // calls with none of them bunched.
+        public static int PlanCallingPoints(float length, float spacing, float[] into)
+        {
+            if (into is null || length <= 0f || spacing <= 0f)
+            {
+                return 0;
+            }
+
+            int intervals = Math.Max(1, (int)Math.Round(length / spacing, MidpointRounding.AwayFromZero));
+            int count = Math.Min(intervals + 1, into.Length);
+            for (int i = 0; i < count; i++)
+            {
+                // The last one is pinned to the end rather than computed, so a line
+                // always reaches its own terminus whatever the division rounds to.
+                into[i] = i == intervals ? length : length * i / intervals;
+            }
+
+            return count;
+        }
+
         // Which of a line's candidate stop windows are worth calling at, given the
         // suitability score each one was chosen for. Sets `keep[i]` for every window
         // clearing `floorShare` of the line's own POSITIVE median, and always for the

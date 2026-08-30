@@ -146,11 +146,15 @@ namespace StationSuitabilityOverlay
             List<float2> samePositions,
             List<float2> otherPositions,
             List<float> otherWeights,
+            List<float2> allPositions,
+            List<int> allTypes,
             out int orphansSkipped)
         {
             samePositions.Clear();
             otherPositions.Clear();
             otherWeights.Clear();
+            allPositions.Clear();
+            allTypes.Clear();
             orphansSkipped = 0;
 
             TransportType selected = TransportTypeOf(mode);
@@ -168,7 +172,7 @@ namespace StationSuitabilityOverlay
 
                 bool sameMode = type == selected;
                 float otherWeight = sameMode ? 0f : ModeWeight(type);
-                if (!sameMode && otherWeight <= 0f)
+                if (ModeWeight(type) <= 0f)
                 {
                     // Not a mode anyone would transfer between (taxi, cargo, ...).
                     continue;
@@ -186,6 +190,14 @@ namespace StationSuitabilityOverlay
 
                 float3 pos = transforms[i].m_Position;
                 var flat = new float2(pos.x, pos.z);
+
+                // The same stops again, kept whole rather than split by the selected
+                // mode. The heatmap only ever needs one mode's split, but stop
+                // placement has to score a point for the SUGGESTED line's mode, which
+                // is not the one the player happens to have chosen in the panel.
+                allPositions.Add(flat);
+                allTypes.Add((int)type);
+
                 if (sameMode)
                 {
                     samePositions.Add(flat);

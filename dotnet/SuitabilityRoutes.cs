@@ -44,6 +44,17 @@ namespace StationSuitabilityOverlay
         // How far along the line a stop may be nudged to find a better score,
         // as a fraction of the spacing. It never leaves the line.
         private const float StopSearchFraction = 0.35f;
+
+        // Two consecutive calls may never end up closer than this share of the line's
+        // own interval. Adjacent windows can each nudge by StopSearchFraction, so
+        // without a floor they can close to 30% of the interval — a tram calling twice
+        // within sight of itself, which is what the player saw.
+        private const float MinStopGapShare = 0.6f;
+
+        // A line passing this close to an existing served stop calls AT it rather than
+        // beside it. Any player would put the stop at the station; doing otherwise
+        // leaves two stops a short walk apart and no reason for either.
+        private const float StationCallMetres = 150f;
         // Two stops closer than this are the same stop: the along-line search can land
         // consecutive placements on nearly the same spot.
         private const float MinStopSeparationMetres = 20f;
@@ -73,7 +84,8 @@ namespace StationSuitabilityOverlay
             float demandFloor,
             ModePreset? forcedMode,
             List<SuggestedRoute> output,
-            System.Func<float2, float> scoreAt,
+            System.Func<float2, ModePreset, float> scoreAt,
+            InterchangeMap hubs,
             out int grown,
             out int tooShort)
         {
@@ -170,7 +182,7 @@ namespace StationSuitabilityOverlay
 
                 grown++;
                 SuggestedRoute? candidate = BuildCandidate(
-                    network, corridor, meanFlow, forcedMode, scoreAt, out bool shorterThanAnyMode);
+                    network, corridor, meanFlow, forcedMode, scoreAt, hubs, out bool shorterThanAnyMode);
                 if (candidate is not null)
                 {
                     output.Add(candidate);
@@ -234,7 +246,7 @@ namespace StationSuitabilityOverlay
             float maxRouteLength,
             ModePreset forcedMode,
             List<SuggestedRoute> output,
-            System.Func<float2, float> scoreAt,
+            System.Func<float2, ModePreset, float> scoreAt,
             InterchangeMap hubs,
             out int considered,
             out int tooShort,
@@ -288,7 +300,10 @@ namespace StationSuitabilityOverlay
                 // journeys a transfer unlocks, it just had no way of being offered one.
                 int fromHub = SnapToInterchange(network, hubs, forcedMode, from, ref fromPoint);
                 int toHub = SnapToInterchange(network, hubs, forcedMode, to, ref toPoint);
-                atInterchange += (fromHub != from ? 1 : 0) + (toHub != to ? 1 : 0);
+                // Counted only once the pair actually becomes a candidate. Counting at
+                // the snap made the figure larger than the number of pairs tried, which
+                // reads as a bug in the snapping rather than as pairs being discarded.
+                int aimedAtInterchange = (fromHub != from ? 1 : 0) + (toHub != to ? 1 : 0);
                 from = fromHub;
                 to = toHub;
 
@@ -321,7 +336,7 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                PlaceStops(route, TransitModes.StopSpacingFor(forcedMode), scoreAt);
+                PlaceStops(route, forcedMode, scoreAt, hubs);
                 if (route.Stops.Count < 2)
                 {
                     continue;
@@ -330,6 +345,7 @@ namespace StationSuitabilityOverlay
                 takenFrom.Add(fromPoint);
                 takenTo.Add(toPoint);
                 output.Add(route);
+                atInterchange += aimedAtInterchange;
             }
         }
 
@@ -341,7 +357,7 @@ namespace StationSuitabilityOverlay
             SuitabilityRoadGraph network, InterchangeMap hubs, ModePreset mode, int node, ref float2 point)
         {
             if (hubs.Count == 0
-                || !hubs.TryFindNear(mode, point.x, point.y, out float hubX, out float hubZ))
+                || !hubs.TryFindNear(mode, point.x, point.y, hubs.Radius, out float hubX, out float hubZ))
             {
                 return node;
             }
@@ -432,7 +448,8 @@ namespace StationSuitabilityOverlay
             Corridor corridor,
             float meanFlow,
             ModePreset? forcedMode,
-            System.Func<float2, float> scoreAt,
+            System.Func<float2, ModePreset, float> scoreAt,
+            InterchangeMap hubs,
             out bool shorterThanAnyMode)
         {
             shorterThanAnyMode = false;
@@ -471,7 +488,7 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            PlaceStops(route, TransitModes.StopSpacingFor(route.Mode), scoreAt);
+            PlaceStops(route, route.Mode, scoreAt, hubs);
             return route.Stops.Count >= 2 ? route : null;
         }
 
@@ -503,7 +520,8 @@ namespace StationSuitabilityOverlay
             float2 from,
             float2 to,
             float referenceFlow,
-            System.Func<float2, float> scoreAt,
+            System.Func<float2, ModePreset, float> scoreAt,
+            InterchangeMap hubs,
             List<int> scratch)
         {
             if (roads?.Graph is null)
@@ -544,7 +562,7 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            Restop(route, mode, scoreAt);
+            Restop(route, mode, scoreAt, hubs);
             return KeepsItsFloor(route) ? route : null;
         }
 
@@ -563,10 +581,11 @@ namespace StationSuitabilityOverlay
         }
 
         // Re-places stops after a mode change, since spacing is mode-specific.
-        public static void Restop(SuggestedRoute route, ModePreset mode, System.Func<float2, float> scoreAt)
+        public static void Restop(
+            SuggestedRoute route, ModePreset mode, System.Func<float2, ModePreset, float> scoreAt, InterchangeMap hubs)
         {
             route.Mode = mode;
-            PlaceStops(route, TransitModes.StopSpacingFor(mode), scoreAt);
+            PlaceStops(route, mode, scoreAt, hubs);
         }
 
         // True when this candidate essentially retraces a line that already exists.
@@ -629,7 +648,8 @@ namespace StationSuitabilityOverlay
         // best-scoring position — so the flow still decides where the line runs and
         // the suitability score still decides exactly where a stop sits, but a stop
         // can never end up beside its own route.
-        internal static void PlaceStops(SuggestedRoute route, float spacing, System.Func<float2, float> scoreAt)
+        internal static void PlaceStops(
+            SuggestedRoute route, ModePreset mode, System.Func<float2, ModePreset, float> scoreAt, InterchangeMap hubs)
         {
             route.Stops.Clear();
             if (route.Path.Count < 2)
@@ -643,10 +663,11 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
+            float spacing = TransitModes.StopSpacingFor(mode);
             int windows = (int)(total / spacing) + 2;
             var offsets = new float[windows];
             var scores = new float[windows];
-            int count = ScanStopWindows(route.Path, total, spacing, scoreAt, offsets, scores);
+            int count = ScanStopWindows(route.Path, total, mode, scoreAt, hubs, offsets, scores);
 
             var keep = new bool[count];
             SuitabilityScoring.SelectCallingPoints(scores, count, StopScoreFloorShare, new float[count], keep);
@@ -678,25 +699,42 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // One candidate position per spacing interval, with the score it was chosen
-        // for. Deciding which of them are worth a stop is the caller's job.
+        // One candidate position per interval, with the score it was chosen for.
+        // Deciding which of them are worth a stop is the caller's job.
+        //
+        // The intervals are EVEN, not a fixed grid with a clamped tail. At 450 m
+        // spacing a 2150 m tram put its last two windows 2150 mod 450 = 350 m apart and
+        // the nudge closed that to 190 m; five even intervals of 430 m carry the same
+        // six stops with none of them bunched.
         private static int ScanStopWindows(
             List<float2> path,
             float total,
-            float spacing,
-            System.Func<float2, float> scoreAt,
+            ModePreset mode,
+            System.Func<float2, ModePreset, float> scoreAt,
+            InterchangeMap hubs,
             float[] offsets,
             float[] scores)
         {
-            int count = 0;
-            float search = spacing * StopSearchFraction;
-            for (float target = 0f; target <= total + 1f; target += spacing)
+            float spacing = TransitModes.StopSpacingFor(mode);
+            var planned = new float[offsets.Length];
+            int windows = SuitabilityScoring.PlanCallingPoints(total, spacing, planned);
+            if (windows < 2)
             {
-                float at = math.min(target, total);
-                float best = at;
-                float bestScore = scoreAt is null ? 0f : scoreAt(PointAlong(path, at));
+                return 0;
+            }
 
-                // A terminus is pinned where the corridor ends, and only moves if it
+            float step = total / (windows - 1);
+            float search = step * StopSearchFraction;
+            float minGap = step * MinStopGapShare;
+            int count = 0;
+            float previous = float.NegativeInfinity;
+
+            for (int window = 0; window < windows; window++)
+            {
+                float at = planned[window];
+                bool terminus = window == 0 || window == windows - 1;
+
+                // A terminus is pinned where the alignment ends, and only moves if it
                 // cannot be used where it is.
                 //
                 // Pinning matters because the nudge window is clamped to the polyline:
@@ -715,39 +753,98 @@ namespace StationSuitabilityOverlay
                 // exist: a suggested ferry ended in open water, hundreds of metres from
                 // any shore, because its terminus scored zero and was pinned there
                 // anyway. So a terminus that scores nothing searches for the nearest
-                // position along the line that scores at all. That is a validity
-                // repair, not an optimisation — it moves only when staying is not an
-                // option, which is why it cannot bring back the systematic shortening.
-                bool terminus = at <= 0f || at >= total;
-
-                if (scoreAt is not null && search > 0f && (!terminus || bestScore <= 0f))
+                // position along the line that scores at all.
+                float lower = math.max(at - search, 0f);
+                float upper = math.min(at + search, total);
+                if (!terminus && count > 0)
                 {
-                    bestScore = float.MinValue;
-                    // Sample a handful of positions in the window; more would not
-                    // change the outcome at 32 m tile resolution.
-                    for (int step = -3; step <= 3; step++)
+                    lower = math.max(lower, previous + minGap);
+                    if (lower > upper)
                     {
-                        float candidate = math.clamp(at + (search * step / 3f), 0f, total);
-                        float score = scoreAt(PointAlong(path, candidate));
-                        if (score > bestScore)
-                        {
-                            bestScore = score;
-                            best = candidate;
-                        }
+                        // No position in this window is far enough from the last call.
+                        // Skipping it is the point: the line runs on to the next one.
+                        continue;
                     }
+                }
+
+                float best = math.clamp(at, lower, upper);
+                float bestScore = scoreAt is null ? 0f : scoreAt(PointAlong(path, best), mode);
+                bool pinned = terminus && bestScore > 0f;
+
+                if (scoreAt is not null && upper > lower && !pinned)
+                {
+                    ChooseInWindow(path, mode, scoreAt, hubs, lower, upper, ref best, ref bestScore);
                 }
 
                 offsets[count] = best;
                 scores[count] = bestScore;
+                previous = best;
                 count++;
 
-                if (at >= total || count >= offsets.Length)
+                if (at >= total)
                 {
                     break;
                 }
             }
 
             return count;
+        }
+
+        // The position within one window a stop belongs at. Normally the best-scoring
+        // one; but where the line passes an existing served stop, the position nearest
+        // that stop wins — a call at the station is worth more than a slightly better
+        // tile beside it, because it is what turns two lines into a network.
+        private static void ChooseInWindow(
+            List<float2> path,
+            ModePreset mode,
+            System.Func<float2, ModePreset, float> scoreAt,
+            InterchangeMap hubs,
+            float lower,
+            float upper,
+            ref float best,
+            ref float bestScore)
+        {
+            float stationBest = 0f;
+            float stationDistSq = StationCallMetres * StationCallMetres;
+            float stationScore = 0f;
+            bool atStation = false;
+
+            // Sample a handful of positions in the window; more would not change the
+            // outcome at 32 m tile resolution.
+            const int Samples = 6;
+            for (int step = 0; step <= Samples; step++)
+            {
+                float candidate = lower + ((upper - lower) * step / Samples);
+                float2 point = PointAlong(path, candidate);
+                float score = scoreAt(point, mode);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = candidate;
+                }
+
+                // A stop over ground nothing can use is not a call, however close the
+                // station: the terminus repair above exists for exactly that reason.
+                if (score <= 0f || hubs.Count == 0
+                    || !hubs.TryNearest(point.x, point.y, StationCallMetres, out float distanceSq))
+                {
+                    continue;
+                }
+
+                if (distanceSq < stationDistSq)
+                {
+                    atStation = true;
+                    stationDistSq = distanceSq;
+                    stationBest = candidate;
+                    stationScore = score;
+                }
+            }
+
+            if (atStation)
+            {
+                best = stationBest;
+                bestScore = stationScore;
+            }
         }
 
         // Keeps only the stretch of the polyline between two distances along it,

@@ -178,6 +178,11 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
 1. **Heatmap** — terrain/water masks (`SuitabilityMasks.cs`) → a Burst job emitting seven raw terms
    per cell (`SuitabilityJob.cs`) → per-term percentile normalization → intensities written into a
    terrain overlay channel obtained by reflection. Channel index is `InfomodeActive.m_Index - 1`.
+   The map is built for the mode the PANEL shows. Stop placement needs the suggested line's mode
+   instead, so `ScoreForMode` swaps the three stop-derived terms at a point — the other four do not
+   depend on the mode. `SuitabilityScoring.AccumulateStop` is the single owner of what one existing
+   stop is worth; the job sweeps buckets over ~200k cells and `ScoreForMode` scans the served-stop
+   list flat, but both call it, so a suggestion cannot be nudged by a rule the map does not draw.
 2. **Travel demand** — real home→work/school journeys read from `Citizen`/`HouseholdMember`
    (`SuitabilityTravelDemand.cs`), aggregated into 256 m zones, discounted by whether the existing
    network can actually route them, then assigned to a network by shortest path.

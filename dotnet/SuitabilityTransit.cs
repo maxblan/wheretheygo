@@ -76,14 +76,47 @@ namespace StationSuitabilityOverlay
         // the routing will not credit.
         public float Radius => m_Radius;
 
+        // Squared distance to the nearest served stop within `radius`, or false when
+        // there is none. Squared because the caller only ever compares it with another
+        // distance, and a square root per sampled position buys nothing.
+        public bool TryNearest(float x, float z, float radius, out float distanceSq)
+        {
+            distanceSq = 0f;
+            if (m_StopX is null || m_StopZ is null)
+            {
+                return false;
+            }
+
+            float radiusSq = radius * radius;
+            bool found = false;
+            for (int i = 0; i < m_Count; i++)
+            {
+                float dx = m_StopX[i] - x;
+                float dz = m_StopZ[i] - z;
+                float candidate = (dx * dx) + (dz * dz);
+                if (candidate > radiusSq || (found && candidate >= distanceSq))
+                {
+                    continue;
+                }
+
+                found = true;
+                distanceSq = candidate;
+            }
+
+            return found;
+        }
+
         // The best place near (x, z) for a line of `ownMode` to call at: the one
-        // offering the most OTHER modes, nearest among equals. False when nothing
-        // within the walk radius offers a change of vehicle.
+        // offering the most OTHER modes, nearest among equals. False when there is no
+        // served stop within the walk radius at all.
         //
-        // Its own mode does not count. Two stops of one mode are duplicate service,
-        // not an interchange — the same rule the coverage and interchange scoring
-        // terms already draw between them.
-        public bool TryFindNear(ModePreset ownMode, float x, float z, out float hubX, out float hubZ)
+        // Any served stop counts, its own mode included. A SUGGESTION is never the line
+        // that is already there, so a new tram calling at an existing tram station lets
+        // riders change between tram lines — the heatmap's interchange term excludes the
+        // same mode only because, scoring a bare tile, it cannot know which line would
+        // run there. Mode still decides the RANKING, so a place where three modes meet
+        // beats a lone stop; it no longer decides whether the place counts at all.
+        public bool TryFindNear(ModePreset ownMode, float x, float z, float radius, out float hubX, out float hubZ)
         {
             hubX = 0f;
             hubZ = 0f;
@@ -93,7 +126,7 @@ namespace StationSuitabilityOverlay
             }
 
             int ownBit = TransitModes.ModeBit(ownMode);
-            float radiusSq = m_Radius * m_Radius;
+            float radiusSq = radius * radius;
             int bestModes = 0;
             float bestSq = 0f;
             bool found = false;
@@ -109,11 +142,6 @@ namespace StationSuitabilityOverlay
                 }
 
                 int modes = TransitModes.ModeCount(m_Reachable[i] & ~ownBit);
-                if (modes == 0)
-                {
-                    continue;
-                }
-
                 if (!found || modes > bestModes || (modes == bestModes && distanceSq < bestSq))
                 {
                     found = true;

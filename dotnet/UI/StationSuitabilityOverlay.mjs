@@ -172,10 +172,14 @@ function RouteList({ raw, selected }) {
                 const mode = parts[0] || "Bus";
                 const chosen = index === selected;
                 return h("button", {
-                    // Keyed by the row's own content rather than its position: the list
-                    // is re-ranked on every refresh, and a positional key re-seats the
-                    // rows.
-                    key: row,
+                    // Keyed by where the line runs between, which the C# side sends as
+                    // parts[6]. Not the position — the list is re-ranked on every
+                    // refresh and a positional key re-seats the rows. Not the row's
+                    // text either: two different suggestions can agree on mode, length,
+                    // stop count, vehicles and reach, and when they did React saw one
+                    // key twice, re-seated the rows against the handlers, and hovering
+                    // a bus highlighted a tram.
+                    key: parts[6] || row,
                     className: "sso-route" + (chosen ? " sso-route-on" : ""),
                     onClick: () => trigger("selectRoute", index),
                     onMouseEnter: () => trigger("highlightRoute", index),
