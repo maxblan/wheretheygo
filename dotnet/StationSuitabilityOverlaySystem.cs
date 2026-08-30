@@ -293,6 +293,8 @@ namespace StationSuitabilityOverlay
         private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
         private uint m_LastHistoryFrame;
         private static string s_DataCoverage = string.Empty;
+        private uint m_LastLineRefreshFrame;
+        private float m_LastLineSample;
         // Where last refresh's suggestions ran between, so churn can be measured.
         private readonly List<RouteEnds> m_PreviousRouteEnds = new List<RouteEnds>();
         private float[]? m_ZoneStopDistSq;
@@ -743,6 +745,19 @@ namespace StationSuitabilityOverlay
                 {
                     m_RecomputeRequested = false;
                 }
+            }
+
+            // Deliberately NOT gated on `active`. The window is a 24 GAME-HOUR
+            // measurement, and `active` means the suitability heat map is currently
+            // being drawn — a player has no reason to leave the map recoloured for a
+            // game day, and the moment they switch it off the readings stopped. The
+            // panel then showed line verdicts and "1 Messung" beside them, which is
+            // exactly as broken as it sounds. Reading six lines is cheap; the route
+            // pipeline below is what stays gated.
+            if (now - m_LastLineSample >= DemandRefreshSeconds)
+            {
+                m_LastLineSample = now;
+                RefreshLineHealth();
             }
 
             MaybeUpdateTravelDemand(settings, active, now);
@@ -2378,6 +2393,29 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // Reads the lines, folds this reading into the rolling window and re-judges
+        // them. Cheap next to the route pipeline — it walks the lines and nothing else
+        // — which is what lets it run on its own regardless of what is on screen.
+        //
+        // Idempotent within a simulation frame, so the route pipeline can call it
+        // without the background tick making it happen twice.
+        private void RefreshLineHealth()
+        {
+            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
+            uint frame = simulation?.frameIndex ?? 0u;
+            if (m_ExistingLines.Count > 0 && frame == m_LastLineRefreshFrame)
+            {
+                return;
+            }
+
+            m_LastLineRefreshFrame = frame;
+            SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
+                m_ExistingLines, m_TransitStops, m_StopIndices);
+            RecordLineWindow();
+            SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
+            UpdateLineHealthText();
+        }
+
         // Folds this collection's readings into the rolling window and hands each line
         // back its own averages.
         //
@@ -2466,11 +2504,7 @@ namespace StationSuitabilityOverlay
         // against how close its ends happen to be to some stop.
         private void BuildTransitModel(int2 gridSize)
         {
-            SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
-                m_ExistingLines, m_TransitStops, m_StopIndices);
-            RecordLineWindow();
-            SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
-            UpdateLineHealthText();
+            RefreshLineHealth();
 
             if (m_TransitStops.Count == 0)
             {
@@ -3333,12 +3367,24 @@ namespace StationSuitabilityOverlay
                 0.1f, 12000f, roadDemand, demandFloor, forcedMode: null, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g1, out int s1);
 
+            // The lattice flow fractions were far too high for the lattices to ever
+            // produce a line, which the growth diagnostics finally made visible: at
+            // 0.6 the train floor stood at 256 against a mean edge flow of 426, and
+            // 226 of the refused extensions were refused by that floor alone. Train
+            // corridors averaged 414 m and every one of the fifteen died against the
+            // 4000 m minimum for a train. Metro at 0.4 fared little better — 1684 m
+            // average against a 2000 m minimum, so 15 of 19 were thrown away.
+            //
+            // Lowered so a lattice corridor can actually reach the length its mode
+            // requires. The demand gate, the length floors and ChooseMode's own
+            // multiples of the network reference all still apply downstream, so this
+            // widens what may be considered rather than what may be suggested.
             SuitabilityRoutes.BuildForNetwork(m_TrainNetwork, objective, settings.RouteCount,
-                0.6f, 20000f, trainDemand, demandFloor, Setting.ModePreset.Train, m_RouteCandidates,
+                0.3f, 20000f, trainDemand, demandFloor, Setting.ModePreset.Train, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g2, out int s2);
 
             SuitabilityRoutes.BuildForNetwork(m_MetroNetwork, objective, settings.RouteCount,
-                0.4f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
+                0.2f, 15000f, metroDemand, demandFloor, Setting.ModePreset.Metro, m_RouteCandidates,
                 point => ScoreAtWorld(point, gridSize), out int g3, out int s3);
 
             // Water is gated on the demand of the land beside it, so a ferry cannot
