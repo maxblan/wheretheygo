@@ -89,29 +89,19 @@ namespace StationSuitabilityOverlay
             // by the demand layer.
             var flow = (float[])network.EdgeFlow.Clone();
 
-            // Edges a line could not call at start out spent. They stay in the graph
-            // so journeys still route over them and their flow still counts towards
-            // the network's mean, but no corridor may be seeded on or extended along
-            // one — a bus route down a motorway serves nobody.
             var used = new bool[graph.EdgeCount];
-            int unstoppable = 0;
-            bool[]? noStopEdges = network.EdgeCannotHostStops;
-            if (noStopEdges is not null)
-            {
-                for (int e = 0; e < graph.EdgeCount && e < noStopEdges.Length; e++)
-                {
-                    if (noStopEdges[e])
-                    {
-                        used[e] = true;
-                        unstoppable++;
-                    }
-                }
-            }
+            int unstoppable = MarkUnstoppable(network, used);
             var novelty = new float[graph.NodeCount];
             for (int n = 0; n < graph.NodeCount; n++)
             {
                 novelty[n] = 1f;
             }
+
+            // Node positions come along so growth knows which way it is heading: without
+            // them a corridor staircases across the map, which is what a lattice route
+            // did before there was any preference for carrying straight on.
+            var growthNetwork = new CorridorNetwork(
+                graph, flow, used, novelty, nodeDemand, network.NodePositionsX, network.NodePositionsZ);
 
             float meanFlow = SuitabilityGraphMath.MeanPositiveFlow(flow, graph.EdgeCount);
             if (meanFlow <= 0f)
@@ -151,8 +141,8 @@ namespace StationSuitabilityOverlay
             int budget = maxRoutes * 4;
             for (int r = 0; r < attempts && added < budget; r++)
             {
-                if (!SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, noveltyWeight,
-                        flowFloor, maxRouteLength, corridor, nodeDemand, demandFloor, seedNoveltyBias))
+                if (!SuitabilityGraphMath.GrowCorridor(in growthNetwork, noveltyWeight,
+                        flowFloor, maxRouteLength, corridor, demandFloor, seedNoveltyBias))
                 {
                     break;
                 }
@@ -211,6 +201,31 @@ namespace StationSuitabilityOverlay
                 $"pastMaxLength={(blocked.m_Length).ToString(CultureInfo.InvariantCulture)}, " +
                 $"noDemandBeside={(blocked.m_Demand).ToString(CultureInfo.InvariantCulture)}" +
                 $"{(added >= budget ? $"; STOPPED at this network's budget of {budget.ToString(CultureInfo.InvariantCulture)} candidates — there may be more worth having" : string.Empty)}");
+        }
+
+        // Edges a line could not call at start out spent. They stay in the graph so
+        // journeys still route over them and their flow still counts towards the
+        // network's mean, but no corridor may be seeded on or extended along one — a
+        // bus route down a motorway serves nobody. Returns how many were excluded.
+        private static int MarkUnstoppable(SuitabilityRoadGraph network, bool[] used)
+        {
+            bool[]? noStopEdges = network.EdgeCannotHostStops;
+            if (noStopEdges is null)
+            {
+                return 0;
+            }
+
+            int unstoppable = 0;
+            for (int e = 0; e < used.Length && e < noStopEdges.Length; e++)
+            {
+                if (noStopEdges[e])
+                {
+                    used[e] = true;
+                    unstoppable++;
+                }
+            }
+
+            return unstoppable;
         }
 
         // Turns one grown corridor into a candidate line: its drawn alignment, the mode

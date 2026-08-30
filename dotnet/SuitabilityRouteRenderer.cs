@@ -54,6 +54,13 @@ namespace StationSuitabilityOverlay
         // in TransitModes, so the map and the panel cannot disagree about it.
         private const float RouteOpacity = 0.9f;
 
+        // What pointing at a row in the panel does to its line on the map: same mode
+        // colour, drawn heavier and fully opaque with a size up on the stop markers, so
+        // a glance answers "which one is this" without touching any other line.
+        private const float HighlightWidthScale = 2f;
+        private const float HighlightStopScale = 1.4f;
+        private const float HighlightOpacity = 1f;
+
         private static Color ColorFor(ModePreset mode)
         {
             TransitModes.ColorFor(mode, out byte red, out byte green, out byte blue);
@@ -132,10 +139,29 @@ namespace StationSuitabilityOverlay
                 }
             }
 
+            // Narrowed to one suggestion, or -1 for all of them. Both this and the
+            // highlight are positions in the current list, which the overlay system
+            // clears whenever it replaces that list.
+            int only = StationSuitabilityOverlaySystem.SelectedRouteIndex;
+            int highlighted = StationSuitabilityOverlaySystem.HighlightedRouteIndex;
+
             for (int r = 0; r < routes.Count; r++)
             {
+                if (only >= 0 && r != only)
+                {
+                    continue;
+                }
+
                 SuggestedRoute route = routes[r];
+                bool heavy = r == highlighted;
                 Color color = ColorFor(route.Mode);
+                if (heavy)
+                {
+                    color.a = HighlightOpacity;
+                }
+
+                float widthScale = heavy ? HighlightWidthScale : 1f;
+                float stopScale = heavy ? HighlightStopScale : 1f;
 
                 for (int i = 1; i < route.Path.Count; i++)
                 {
@@ -143,7 +169,7 @@ namespace StationSuitabilityOverlay
                     float3 to = ToGround(route.Path[i], ref heightData);
                     // Rail and water routes do not follow streets, so they are dashed
                     // to read as their own alignment rather than as a road overlay.
-                    float width = LineWidthFor(route.Mode);
+                    float width = LineWidthFor(route.Mode) * widthScale;
                     switch (route.Mode)
                     {
                         case ModePreset.Bus:
@@ -175,14 +201,14 @@ namespace StationSuitabilityOverlay
                     if (TurnsSharply(route.Path[i - 1], route.Path[i], route.Path[i + 1]))
                     {
                         float3 joint = ToGround(route.Path[i], ref heightData);
-                        buffer.DrawCircle(color, joint, LineWidthFor(route.Mode));
+                        buffer.DrawCircle(color, joint, LineWidthFor(route.Mode) * widthScale);
                     }
                 }
 
                 for (int s = 0; s < route.Stops.Count; s++)
                 {
                     float3 stop = ToGround(route.Stops[s], ref heightData);
-                    buffer.DrawCircle(color, stop, StopDiameterFor(route.Mode));
+                    buffer.DrawCircle(color, stop, StopDiameterFor(route.Mode) * stopScale);
                 }
             }
 

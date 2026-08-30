@@ -356,8 +356,65 @@ namespace StationSuitabilityOverlay
         public readonly int Total => m_Used + m_Flow + m_Visited + m_Length + m_Demand;
     }
 
+    // The network a corridor is grown over: its topology, what each edge carries, and
+    // what is true of each node. Passed as one value because growth reads them
+    // together and because handing them over one at a time had already made
+    // GrowCorridor a twelve-parameter call whose arguments could only be checked by
+    // counting.
+    //
+    // `NodeX`/`NodeZ` are optional. Without them growth has no idea which way it is
+    // heading and will happily staircase across a city; see TurnPenalty.
+    internal readonly struct CorridorNetwork
+    {
+        public CorridorNetwork(
+            CompactGraph graph,
+            float[] edgeFlow,
+            bool[] edgeUsed,
+            float[]? nodeNovelty = null,
+            float[]? nodeDemand = null,
+            float[]? nodeX = null,
+            float[]? nodeZ = null)
+        {
+            Graph = graph;
+            EdgeFlow = edgeFlow;
+            EdgeUsed = edgeUsed;
+            NodeNovelty = nodeNovelty;
+            NodeDemand = nodeDemand;
+            NodeX = nodeX;
+            NodeZ = nodeZ;
+        }
+
+        public CompactGraph Graph { get; }
+
+        public float[] EdgeFlow { get; }
+
+        public bool[] EdgeUsed { get; }
+
+        public float[]? NodeNovelty { get; }
+
+        public float[]? NodeDemand { get; }
+
+        public float[]? NodeX { get; }
+
+        public float[]? NodeZ { get; }
+    }
+
     internal static class SuitabilityGraphMath
     {
+        // How much a corridor prefers to carry straight on.
+        //
+        // Growth picks the best adjacent edge on flow and novelty alone, and on a
+        // lattice — a 128 m grid where flow is spread thin and nearly uniform — the
+        // tiniest difference between two edges steers it. The result wandered across
+        // the whole city in a staircase, which is not an alignment anyone would build
+        // and not something Ramer-Douglas-Peucker can straighten afterwards: the
+        // corridor genuinely went that way.
+        //
+        // A real line continues along the street or the alignment it is on and turns
+        // only for a reason. At 0.6 a right-angle turn keeps 70% of its score and a
+        // reversal 40%, so a genuinely busier direction still wins — this is a
+        // preference, not a constraint.
+        private const float TurnPenalty = 0.6f;
         // Consecutive quiet nodes a corridor may cross before giving up. Two is a
         // park, a river, a rail crossing or an industrial strip — the things that sit
         // between two busy districts — and not a licence to strike out into open
@@ -498,26 +555,24 @@ namespace StationSuitabilityOverlay
         // A `seedNoveltyBias` of 0 seeds purely on flow, which is both the Ridership
         // objective and the behaviour every caller had before it existed.
         public static bool GrowCorridor(
-            CompactGraph graph,
-            float[] edgeFlow,
-            bool[] edgeUsed,
-            float[]? nodeNovelty,
+            in CorridorNetwork network,
             float noveltyWeight,
             float flowFloor,
             float maxLength,
             Corridor result,
-            float[]? nodeDemand = null,
             float demandFloor = 0f,
             float seedNoveltyBias = 0f,
             int maxLowDemandBridge = DefaultLowDemandBridge)
         {
             result.Clear();
-            if (graph is null || edgeFlow is null || edgeUsed is null || graph.EdgeCount == 0)
+            CompactGraph graph = network.Graph;
+            float[] edgeFlow = network.EdgeFlow;
+            if (graph is null || edgeFlow is null || network.EdgeUsed is null || graph.EdgeCount == 0)
             {
                 return false;
             }
 
-            int seed = SelectSeed(graph, edgeFlow, edgeUsed, nodeNovelty, flowFloor, seedNoveltyBias);
+            int seed = SelectSeed(graph, edgeFlow, network.EdgeUsed, network.NodeNovelty, flowFloor, seedNoveltyBias);
             if (seed < 0)
             {
                 return false;
@@ -545,6 +600,11 @@ namespace StationSuitabilityOverlay
             // polyline, joined to the real corridor by a chord across the very
             // emptiness the discard exists to cut off.
             int frontTerminus = headNode;
+            // Where each end came FROM, so an extension can be judged on whether it
+            // carries straight on. The seed itself is the incoming direction at both
+            // ends: growing off the head continues away from the tail, and vice versa.
+            int headFrom = tailNode;
+            int tailFrom = headNode;
             _ = visited.Add(headNode);
             _ = visited.Add(tailNode);
             float length = graph.EdgeCost[seed];
@@ -561,12 +621,12 @@ namespace StationSuitabilityOverlay
                 // Reset each round: what matters is what blocked the LAST look, which
                 // is the reason this corridor is the length it is.
                 blocks = default;
-                FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
-                    headNode, length, maxLength, nodeDemand, demandFloor,
+                FindExtension(in network, noveltyWeight, flowFloor, visited,
+                    headNode, headFrom, length, maxLength, demandFloor,
                     ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, ref blocks,
                     frontBridge.Count, maxLowDemandBridge, atHead: true);
-                FindExtension(graph, edgeFlow, edgeUsed, nodeNovelty, noveltyWeight, flowFloor, visited,
-                    tailNode, length, maxLength, nodeDemand, demandFloor,
+                FindExtension(in network, noveltyWeight, flowFloor, visited,
+                    tailNode, tailFrom, length, maxLength, demandFloor,
                     ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, ref blocks,
                     backBridge.Count, maxLowDemandBridge, atHead: false);
 
@@ -579,40 +639,25 @@ namespace StationSuitabilityOverlay
                 length += graph.EdgeCost[bestEdge];
                 _ = visited.Add(bestNext);
 
-                bool crossingEmptiness = nodeDemand is not null
-                    && bestNext < nodeDemand.Length
-                    && nodeDemand[bestNext] < demandFloor;
+                bool crossingEmptiness = network.NodeDemand is not null
+                    && bestNext < network.NodeDemand.Length
+                    && network.NodeDemand[bestNext] < demandFloor;
 
                 if (bestAtHead)
                 {
-                    if (crossingEmptiness)
+                    Commit(front, frontBridge, bestEdge, crossingEmptiness);
+                    if (!crossingEmptiness)
                     {
-                        frontBridge.Add(bestEdge);
-                    }
-                    else
-                    {
-                        // Demand resumed, so the crossing earned its place.
-                        front.AddRange(frontBridge);
-                        frontBridge.Clear();
-                        front.Add(bestEdge);
                         frontTerminus = bestNext;
                     }
 
+                    headFrom = headNode;
                     headNode = bestNext;
                 }
                 else
                 {
-                    if (crossingEmptiness)
-                    {
-                        backBridge.Add(bestEdge);
-                    }
-                    else
-                    {
-                        back.AddRange(backBridge);
-                        backBridge.Clear();
-                        back.Add(bestEdge);
-                    }
-
+                    Commit(back, backBridge, bestEdge, crossingEmptiness);
+                    tailFrom = tailNode;
                     tailNode = bestNext;
                 }
             }
@@ -700,6 +745,56 @@ namespace StationSuitabilityOverlay
             return seed;
         }
 
+        // Takes an extension into the corridor, or holds it back as part of a crossing
+        // that has not yet earned its place. Flushing the held run when demand resumes
+        // is what lets a line pass through emptiness but never terminate in it.
+        private static void Commit(List<int> side, List<int> bridge, int edge, bool crossingEmptiness)
+        {
+            if (crossingEmptiness)
+            {
+                bridge.Add(edge);
+                return;
+            }
+
+            side.AddRange(bridge);
+            bridge.Clear();
+            side.Add(edge);
+        }
+
+        // How much an extension carries straight on: 1 for continuing in the same
+        // direction, 1 - TurnPenalty for a right angle, less for doubling back.
+        //
+        // Without node positions there is no direction to measure and every extension
+        // scores the same, which is the behaviour every caller had before positions
+        // existed.
+        private static float Continuity(in CorridorNetwork network, int from, int at, int to)
+        {
+            float[]? x = network.NodeX;
+            float[]? z = network.NodeZ;
+            if (x is null || z is null || from < 0 || at < 0 || to < 0
+                || from >= x.Length || at >= x.Length || to >= x.Length
+                || from >= z.Length || at >= z.Length || to >= z.Length)
+            {
+                return 1f;
+            }
+
+            float inX = x[at] - x[from];
+            float inZ = z[at] - z[from];
+            float outX = x[to] - x[at];
+            float outZ = z[to] - z[at];
+            double inLength = Math.Sqrt((inX * inX) + (inZ * inZ));
+            double outLength = Math.Sqrt((outX * outX) + (outZ * outZ));
+            if (inLength <= 0.0 || outLength <= 0.0)
+            {
+                return 1f;
+            }
+
+            // -1 doubling back, 0 a right angle, 1 straight on.
+            double cosine = (((inX * outX) + (inZ * outZ)) / inLength) / outLength;
+            float straightness = (float)((cosine + 1.0) * 0.5);
+            return 1f - (TurnPenalty * (1f - straightness));
+        }
+
         private static float NoveltyAt(float[]? nodeNovelty, int node)
         {
             return nodeNovelty is not null && node >= 0 && node < nodeNovelty.Length
@@ -708,17 +803,14 @@ namespace StationSuitabilityOverlay
         }
 
         private static void FindExtension(
-            CompactGraph graph,
-            float[] edgeFlow,
-            bool[] edgeUsed,
-            float[]? nodeNovelty,
+            in CorridorNetwork network,
             float noveltyWeight,
             float flowFloor,
             HashSet<int> visited,
             int fromNode,
+            int cameFrom,
             float length,
             float maxLength,
-            float[]? nodeDemand,
             float demandFloor,
             ref int bestEdge,
             ref int bestNext,
@@ -729,6 +821,11 @@ namespace StationSuitabilityOverlay
             int maxLowDemandBridge,
             bool atHead)
         {
+            CompactGraph graph = network.Graph;
+            float[] edgeFlow = network.EdgeFlow;
+            bool[] edgeUsed = network.EdgeUsed;
+            float[]? nodeDemand = network.NodeDemand;
+
             int start = graph.NodeOffsets[fromNode];
             int end = graph.NodeOffsets[fromNode + 1];
             for (int i = start; i < end; i++)
@@ -781,7 +878,10 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                float score = edgeFlow[edge] + noveltyWeight * NoveltyAt(nodeNovelty, next);
+                float score = edgeFlow[edge] + (noveltyWeight * NoveltyAt(network.NodeNovelty, next));
+
+                // A line continues along the alignment it is on and turns for a reason.
+                score *= Continuity(in network, cameFrom, fromNode, next);
 
                 // Crossing emptiness is a last resort, never a preference: any node
                 // with people beside it outranks a bridge out of the same junction.

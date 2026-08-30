@@ -99,7 +99,10 @@ namespace StationSuitabilityOverlay.Tests
             Run("A train is justified by reach where flow alone never could", TrainJustifiedByReach);
             Run("Reach cannot justify a mode that is still too short", ReachDoesNotExcuseLength);
             Run("Following existing track lowers a train's reach bar", TrackFollowingEasesTheTrainBar);
-            Run("Only the train may be justified by reach", ReachIsTrainOnly);
+            Run("Rail scale decides whether it is a train or a metro", RailScaleDecidesTrainOrMetro);
+            Run("Only a rail mode may be justified by reach", ReachIsRailOnly);
+            Run("A sub-kilometre stub is not a line", ShortStubsAreNotLines);
+            Run("Growth carries straight on unless a turn is worth it", GrowthPrefersToCarryStraightOn);
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
@@ -736,7 +739,7 @@ namespace StationSuitabilityOverlay.Tests
             var novelty = NewNovelty(7);
 
             var corridor = new Corridor();
-            AssertTrue(SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, 0f, 2f, 1000f, corridor),
+            AssertTrue(SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), 0f, 2f, 1000f, corridor),
                 "corridor should grow");
 
             // Seeded on edge 2 (the strongest) and extended over the other strong
@@ -762,7 +765,7 @@ namespace StationSuitabilityOverlay.Tests
             var used = new bool[4];
 
             var corridor = new Corridor();
-            AssertTrue(SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(5), 0f, 1f, 1000f, corridor),
+            AssertTrue(SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(5)), 0f, 1f, 1000f, corridor),
                 "corridor should grow");
 
             // Nodes must form an unbroken walk: each consecutive pair is joined by
@@ -788,7 +791,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 10f, 10f, 10f, 10f, 10f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[5], NewNovelty(6), 0f, 1f, 250f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[5], NewNovelty(6)), 0f, 1f, 250f, corridor);
 
             AssertTrue(corridor.Length <= 250f, $"length {corridor.Length} must respect the limit");
             AssertTrue(corridor.Edges.Count <= 2, $"only 2 edges of 100 fit under 250, got {corridor.Edges.Count}");
@@ -805,7 +808,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 40f, 40f, 40f, 40f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5)), 0f, 1f, 10000f, corridor);
 
             AssertTrue(corridor.Edges.Count >= 3, $"should grow along the chain, got {corridor.Edges.Count} edges");
             AssertEqual(40f, corridor.CapturedFlow, 1e-3f, "uniform flow means the mean equals that flow");
@@ -826,12 +829,11 @@ namespace StationSuitabilityOverlay.Tests
             var demand = new[] { 1f, 1f, 1f, 0f, 0f };
 
             var ungated = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, ungated);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5)), 0f, 1f, 10000f, ungated);
             AssertTrue(ungated.Edges.Count == 4, "without the gate it runs the whole chain including empty land");
 
             var gated = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), 0f, 1f, 10000f,
-                gated, demand, 0.5f);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, gated, 0.5f);
 
             AssertTrue(gated.Nodes.Contains(0) && gated.Nodes.Contains(2), "populated stretch is kept");
             AssertTrue(!gated.Nodes.Contains(3) && !gated.Nodes.Contains(4), "empty nodes must be refused");
@@ -848,7 +850,7 @@ namespace StationSuitabilityOverlay.Tests
             var used = new bool[3];
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(4), 0f, 1f, 1000f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(4)), 0f, 1f, 1000f, corridor);
             float before = 0f;
             for (int e = 0; e < 3; e++)
             {
@@ -871,7 +873,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // A second growth must not re-select the same corridor.
             var second = new Corridor();
-            bool grew = SuitabilityGraphMath.GrowCorridor(graph, flow, used, NewNovelty(4), 0f, 1f, 1000f, second);
+            bool grew = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(4)), 0f, 1f, 1000f, second);
             if (grew)
             {
                 for (int i = 0; i < second.Edges.Count; i++)
@@ -891,14 +893,14 @@ namespace StationSuitabilityOverlay.Tests
 
             var ridership = new Corridor();
             var flowA = new[] { 100f, 90f, 20f };
-            _ = SuitabilityGraphMath.GrowCorridor(graph, flowA, new bool[3], NewNovelty(4),
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flowA, new bool[3], NewNovelty(4)),
                 SuitabilityGraphMath.NoveltyWeight(RouteObjective.Ridership, 70f), 0f, 1000f, ridership);
 
             var coverage = new Corridor();
             var flowB = new[] { 100f, 90f, 20f };
             // Node 3 is virgin territory; nodes 0-2 are already covered.
             var novelty = new[] { 0.05f, 0.05f, 0.05f, 1f };
-            _ = SuitabilityGraphMath.GrowCorridor(graph, flowB, new bool[3], novelty,
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flowB, new bool[3], novelty),
                 SuitabilityGraphMath.NoveltyWeight(RouteObjective.Coverage, 70f), 0f, 1000f, coverage);
 
             AssertTrue(ridership.Edges.Contains(1), "ridership objective should take the busy trunk");
@@ -936,7 +938,7 @@ namespace StationSuitabilityOverlay.Tests
 
                 var first = new Corridor();
                 AssertTrue(
-                    SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, weight, 0f, 250f, first,
+                    SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), weight, 0f, 250f, first,
                         seedNoveltyBias: bias),
                     "first corridor grows");
                 SuitabilityGraphMath.PeelFlow(graph, first, flow, used, 0.85f);
@@ -944,7 +946,7 @@ namespace StationSuitabilityOverlay.Tests
 
                 var second = new Corridor();
                 AssertTrue(
-                    SuitabilityGraphMath.GrowCorridor(graph, flow, used, novelty, weight, 0f, 250f, second,
+                    SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), weight, 0f, 250f, second,
                         seedNoveltyBias: bias),
                     "second corridor grows");
                 return second;
@@ -1177,8 +1179,7 @@ namespace StationSuitabilityOverlay.Tests
 
             var corridor = new Corridor();
             AssertTrue(
-                SuitabilityGraphMath.GrowCorridor(
-                    graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor, demand, 0.5f),
+                SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, corridor, 0.5f),
                 "corridor should grow");
 
             AssertTrue(!corridor.Nodes.Contains(0) && !corridor.Nodes.Contains(1),
@@ -1204,7 +1205,7 @@ namespace StationSuitabilityOverlay.Tests
 
             var corridor = new Corridor();
             _ = SuitabilityGraphMath.GrowCorridor(
-                graph, flow, new bool[3], NewNovelty(4), 0f, 1f, 300f, corridor, demand, 0.5f);
+                new CorridorNetwork(graph, flow, new bool[3], NewNovelty(4), demand), 0f, 1f, 300f, corridor, 0.5f);
 
             AssertEqual(100f, corridor.Length, 1e-3f, "the two crossing edges are handed back");
             AssertTrue(corridor.Blocks.m_HitMaxLength,
@@ -1225,8 +1226,8 @@ namespace StationSuitabilityOverlay.Tests
                 var corridor = new Corridor();
                 AssertTrue(
                     SuitabilityGraphMath.GrowCorridor(
-                        graph, new[] { 5f, 5f }, new bool[2], nodeNovelty: null, noveltyWeight: 0f,
-                        flowFloor: 1f, maxLength: 1000f, result: corridor, nodeDemand: null, demandFloor: 0f,
+                        new CorridorNetwork(graph, new[] { 5f, 5f }, new bool[2]), noveltyWeight: 0f,
+                        flowFloor: 1f, maxLength: 1000f, result: corridor, demandFloor: 0f,
                         seedNoveltyBias: SuitabilityGraphMath.SeedNoveltyBias(objective)),
                     $"{objective} must grow a corridor without a novelty array");
                 AssertNodeWalkMatchesEdges(graph, corridor);
@@ -1576,37 +1577,76 @@ namespace StationSuitabilityOverlay.Tests
 
         // A train running along track the city already has is an extension rather than
         // a new alignment: cheaper to build, likelier to be wanted, so it clears the
-        // reach bar on half the demand. A preference, not a requirement.
+        // reach bar on half the demand. A preference, not a requirement — and what it
+        // buys is the TRAIN over the metro, since both are justified by reach and the
+        // bigger commitment asks for more evidence.
         private static void TrackFollowingEasesTheTrainBar()
         {
-            float bar = TransitModes.MinEnabledDemandShareFor(ModePreset.Train);
-            float between = bar * 0.75f;
+            float trainBar = TransitModes.MinEnabledDemandShareFor(ModePreset.Train);
+            float between = trainBar * 0.75f;
 
-            var offTrack = new CorridorEvidence(flow: 1f, length: 12000f, enabledDemandShare: between, trackShare: 0f);
+            // Long enough for either mode, unlocking more than a metro needs but less
+            // than a train does.
+            var offTrack = new CorridorEvidence(flow: 1f, length: 14000f, enabledDemandShare: between, trackShare: 0f);
             AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, offTrack, 96f, out _, out _),
-                "below the full bar on fresh alignment, this is not a train");
+                TransitModes.ChooseMode(RouteNetwork.Rail, offTrack, 224f, out ModePreset fresh, out _),
+                "the corridor is justified as something");
+            AssertTrue(fresh == ModePreset.Metro,
+                $"on fresh alignment this evidence buys a metro, not heavy rail — got {fresh}");
 
             var onTrack = new CorridorEvidence(
-                flow: 1f, length: 12000f, enabledDemandShare: between,
+                flow: 1f, length: 14000f, enabledDemandShare: between,
                 trackShare: TransitModes.MostlyOnTrackShare);
             AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, onTrack, 96f, out ModePreset mode, out _),
-                "the same corridor along existing track is an extension and does qualify");
-            AssertTrue(mode == ModePreset.Train, $"expected Train, got {mode}");
+                TransitModes.ChooseMode(RouteNetwork.Rail, onTrack, 224f, out ModePreset extension, out _),
+                "and along existing track it is justified too");
+            AssertTrue(extension == ModePreset.Train,
+                $"following the track the city already has is what earns the train — got {extension}");
         }
 
-        // Density is what justifies every other mode. Letting reach speak for them too
-        // would put a tram on a street nobody travels because the line happens to touch
-        // a busy interchange.
-        private static void ReachIsTrainOnly()
+        // What a rail corridor is depends on its SCALE, and length is what says so.
+        // Giving reach to the train alone was worse than not having it: ModesFor tries
+        // the biggest mode first, so every rail corridor past the train's minimum
+        // became a train whatever its size — a 4 km, three-stop line was suggested as
+        // heavy rail in a city whose real trains run 25 and 33 km.
+        private static void RailScaleDecidesTrainOrMetro()
         {
+            const float reference = 224f;
+
+            // The line that was actually suggested: 4 km, three stops, unlocking 7% of
+            // the city's travel on a corridor carrying 264 against a train floor of 1796.
+            var urban = new CorridorEvidence(flow: 264f, length: 4000f, enabledDemandShare: 0.07f, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Rail, urban, reference, out ModePreset urbanMode, out _),
+                "a 4 km rail corridor unlocking real travel is worth building as something");
+            AssertTrue(urbanMode == ModePreset.Metro, $"at 4 km that is a metro, not a train — got {urbanMode}");
+
+            // The same evidence over the distance a train is actually for.
+            var regional = new CorridorEvidence(flow: 264f, length: 26000f, enabledDemandShare: 0.07f, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Rail, regional, reference, out ModePreset regionalMode, out _),
+                "and over twenty-six kilometres it is justified too");
+            AssertTrue(regionalMode == ModePreset.Train, $"at 26 km that is a train — got {regionalMode}");
+        }
+
+        // Density is what justifies a ROAD mode. Letting reach speak for a tram would
+        // put one down an empty street because the line happens to touch a busy
+        // interchange. Reach belongs to the rail modes, whose value is the places they
+        // connect rather than the load on any one edge.
+        private static void ReachIsRailOnly()
+        {
+            AssertTrue(
+                TransitModes.MinEnabledDemandShareFor(ModePreset.Train)
+                    > TransitModes.MinEnabledDemandShareFor(ModePreset.Metro),
+                "the larger commitment must ask for more evidence");
+
             foreach (ModePreset mode in TransitModes.All)
             {
                 float bar = TransitModes.MinEnabledDemandShareFor(mode);
-                if (mode == ModePreset.Train)
+                bool rail = mode is ModePreset.Train or ModePreset.Metro;
+                if (rail)
                 {
-                    AssertTrue(bar > 0f, "a train must have a reach bar");
+                    AssertTrue(bar > 0f, $"{mode} is justified by what it connects");
                     continue;
                 }
 
@@ -1617,9 +1657,35 @@ namespace StationSuitabilityOverlay.Tests
             // which is the mode with no demand floor at all.
             var evidence = new CorridorEvidence(flow: 1f, length: 12000f, enabledDemandShare: 0.5f, trackShare: 0f);
             AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Road, evidence, 140f, out ModePreset road, out _),
+                TransitModes.ChooseMode(RouteNetwork.Road, evidence, 332f, out ModePreset road, out _),
                 "a road corridor always yields something");
             AssertTrue(road == ModePreset.Bus, $"expected Bus, not a tram bought with reach — got {road}");
+        }
+
+        // A line that stops fewer than about five times is a pair of stops, not a
+        // service. These floors had been lowered until almost anything qualified, and
+        // the result was a 659 m bus line looping around one residential block.
+        private static void ShortStubsAreNotLines()
+        {
+            var stub = new CorridorEvidence(flow: 804f, length: 659f, enabledDemandShare: 0.038f, trackShare: 0f);
+            AssertTrue(
+                !TransitModes.ChooseMode(RouteNetwork.Road, stub, 332f, out _, out ModeRejection why),
+                "a 659 m corridor is not a bus line however much travel it touches");
+            AssertTrue(why == ModeRejection.TooShort, $"and the reason is length — got {why}");
+
+            // Every mode's floor must be enough for a real service at its own spacing.
+            foreach (ModePreset mode in TransitModes.All)
+            {
+                if (mode == ModePreset.Ferry)
+                {
+                    // A crossing is two stops by nature.
+                    continue;
+                }
+
+                float calls = (TransitModes.MinLengthFor(mode) / TransitModes.StopSpacingFor(mode)) + 1f;
+                AssertTrue(calls >= 4.5f,
+                    $"{mode} must be long enough for about five calls at its own spacing, got {calls}");
+            }
         }
 
         // "Already served" has to mean slow FOR HERE. Against a fixed hour a ten-minute
@@ -1675,6 +1741,49 @@ namespace StationSuitabilityOverlay.Tests
                 SuitabilityTransit.ServedCeiling(new float[0], 0, 3f, 3600f, 20, out _),
                 1e-3f,
                 "a network carrying nothing falls back too");
+        }
+
+        // Growth picks the best adjacent edge on flow and novelty alone, and on a
+        // lattice — a 128 m grid where flow is thin and nearly uniform — the tiniest
+        // difference between two edges steers it. Corridors staircased across the whole
+        // city, which is not an alignment anyone would build and not something the
+        // polyline simplifier can repair afterwards: the corridor really did go there.
+        private static void GrowthPrefersToCarryStraightOn()
+        {
+            // 0-1-2-3 runs east; 1-4 branches due north and carries MORE.
+            var a = new[] { 0, 1, 2, 1 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 100f, 100f, 100f, 100f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var flow = new[] { 20f, 10f, 10f, 12f };
+            var x = new[] { 0f, 100f, 200f, 300f, 100f };
+            var z = new[] { 0f, 0f, 0f, 0f, 100f };
+
+            // With no positions there is no direction to prefer, and the busier branch
+            // wins — the behaviour every caller had before positions existed.
+            var blind = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5)),
+                0f, 1f, 10000f, blind);
+            AssertTrue(blind.Nodes.Contains(4), "without positions the busier turn is taken");
+
+            // With them, a right-angle turn has to be worth appreciably more.
+            var straight = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), null, x, z),
+                0f, 1f, 10000f, straight);
+            AssertTrue(!straight.Nodes.Contains(4),
+                $"a 20% busier right-angle turn is not worth leaving the alignment for, got [{string.Join(",", straight.Nodes)}]");
+            AssertTrue(straight.Nodes.Contains(3), "and the corridor carries on east instead");
+
+            // A turn that is genuinely much busier is still taken: this is a
+            // preference, not a constraint.
+            var worthIt = new[] { 20f, 10f, 10f, 60f };
+            var turned = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                new CorridorNetwork(graph, worthIt, new bool[4], NewNovelty(5), null, x, z),
+                0f, 1f, 10000f, turned);
+            AssertTrue(turned.Nodes.Contains(4), "a far busier direction still wins");
         }
 
         private static float[] NewNovelty(int nodes)
@@ -1881,8 +1990,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 50f, 50f, 0f, 0f, 0f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
-                graph, flow, new bool[5], NewNovelty(6), 0f, 10f, 100000f, corridor);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[5], NewNovelty(6)), 0f, 10f, 100000f, corridor);
 
             AssertTrue(corridor.Edges.Count == 2, $"only the two edges with flow are taken, got {corridor.Edges.Count}");
             AssertTrue(!corridor.Blocks.m_HitMaxLength, "it stopped for want of flow, not at the length limit");
@@ -1894,8 +2002,7 @@ namespace StationSuitabilityOverlay.Tests
             // the other reason, and says so.
             var flowing = new[] { 50f, 50f, 50f, 50f, 50f };
             var capped = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
-                graph, flowing, new bool[5], NewNovelty(6), 0f, 10f, 250f, capped);
+            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flowing, new bool[5], NewNovelty(6)), 0f, 10f, 250f, capped);
 
             AssertTrue(capped.Blocks.m_Length > 0 || capped.Blocks.m_HitMaxLength,
                 "a corridor stopped by its length limit reports the length, not the flow");
@@ -1920,7 +2027,7 @@ namespace StationSuitabilityOverlay.Tests
 
             var corridor = new Corridor();
             _ = SuitabilityGraphMath.GrowCorridor(
-                graph, flow, new bool[6], NewNovelty(7), 0f, 1f, 10000f, corridor, demand, 0.5f);
+                new CorridorNetwork(graph, flow, new bool[6], NewNovelty(7), demand), 0f, 1f, 10000f, corridor, 0.5f);
 
             AssertTrue(corridor.Nodes.Contains(0), "the first district is served");
             AssertTrue(corridor.Nodes.Contains(6), "the district across the gap is reached");
@@ -1933,8 +2040,8 @@ namespace StationSuitabilityOverlay.Tests
             var wide = new[] { 1f, 1f, 1f, 0f, 0f, 0f, 0f };
             var stopped = new Corridor();
             _ = SuitabilityGraphMath.GrowCorridor(
-                graph, (float[])flow.Clone(), new bool[6], NewNovelty(7), 0f, 1f, 10000f,
-                stopped, wide, 0.5f, seedNoveltyBias: 0f, maxLowDemandBridge: 2);
+                new CorridorNetwork(graph, (float[])flow.Clone(), new bool[6], NewNovelty(7), wide), 0f, 1f, 10000f,
+                stopped, 0.5f, seedNoveltyBias: 0f, maxLowDemandBridge: 2);
 
             AssertTrue(!stopped.Nodes.Contains(6), "a gap wider than the allowance is not crossed");
         }
@@ -1954,7 +2061,7 @@ namespace StationSuitabilityOverlay.Tests
 
             var corridor = new Corridor();
             _ = SuitabilityGraphMath.GrowCorridor(
-                graph, flow, new bool[4], NewNovelty(5), 0f, 1f, 10000f, corridor, demand, 0.5f);
+                new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, corridor, 0.5f);
 
             AssertTrue(!corridor.Nodes.Contains(3) && !corridor.Nodes.Contains(4),
                 "a crossing that leads nowhere is handed back");

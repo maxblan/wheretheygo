@@ -149,18 +149,24 @@ namespace StationSuitabilityOverlay
         }
 
         // Below these lengths the mode is not worth building, whatever the demand.
+        //
+        // Roughly five calls at the mode's own stop spacing: a line that stops fewer
+        // times than that is a pair of stops, not a service. These had been lowered
+        // until almost anything qualified, and the result was a 659 m bus line looping
+        // around one residential block and a 4 km "train" with three stops in a city
+        // whose real trains run 25 and 33 km.
+        //
+        // The ferry is the exception, and deliberately: a crossing is two stops by
+        // nature, and every ferry in a real city here is a 1.7-2.7 km hop.
         public static float MinLengthFor(ModePreset mode)
         {
             switch (mode)
             {
-                // Lowered after a run where 51 of 53 grown corridors died here and
-                // nothing at all was suggested. Corridors on a real street grid come
-                // out shorter than these originally assumed.
-                case ModePreset.Tram: return 1200f;
-                case ModePreset.Metro: return 2000f;
-                case ModePreset.Train: return 4000f;
+                case ModePreset.Tram: return 1800f;
+                case ModePreset.Metro: return 3200f;
+                case ModePreset.Train: return 10000f;
                 case ModePreset.Ferry: return 1200f;
-                default: return 500f;
+                default: return 1400f;
             }
         }
 
@@ -240,25 +246,28 @@ namespace StationSuitabilityOverlay
         // Share of the city's whole travel weight a line must unlock before its REACH
         // alone can justify the mode, with no demand floor met on any single edge.
         //
-        // Only a train has one. A tram or a metro is justified by density — enough
-        // people on one corridor to fill a big vehicle often — and MinFlowMultipleFor
-        // is the right bar for that. A train is justified by DISTANCE: its value is
-        // connecting places far enough apart that nothing else can keep to time, and a
-        // corridor spanning twenty kilometres of a city necessarily spreads its flow
-        // thin over every one of its edges.
+        // Both RAIL modes have one. A rail alignment is justified by the places it
+        // connects, and a corridor spanning a city necessarily spreads its flow thin
+        // over every one of its edges — judging it on flow alone made it unreachable.
+        // On a real city the rail lattice's mean edge flow was 224, so the train's 8x
+        // multiple asked for 1796 while the best rail corridor anywhere carried 264.
         //
-        // Judging a train on flow alone made it unreachable. On a real city the rail
-        // lattice's mean edge flow was 96, so the 8x multiple asked for 764 while the
-        // best rail corridor anywhere carried 131 — no train candidate ever reached
-        // scoring, and the log blamed length because that gate failed first.
+        // A road mode keeps flow as its only evidence. Density is the right test for a
+        // tram or a bus, and letting reach speak for them would put a tram down an
+        // empty street because the line happens to touch a busy interchange.
         //
-        // Zero means "this mode cannot be justified by reach", which is the answer for
-        // every mode but the train.
+        // The train's bar is the higher of the two: it is much the larger commitment.
+        // Giving reach to the train ALONE was worse than not having it — ModesFor tries
+        // the biggest mode first, so every rail corridor over the train's minimum
+        // length became a train whatever its scale, and a 4 km three-stop line was
+        // suggested as heavy rail. With the metro able to clear the same kind of bar,
+        // LENGTH is what separates them, which is what it should have been all along.
         public static float MinEnabledDemandShareFor(ModePreset mode)
         {
             switch (mode)
             {
                 case ModePreset.Train: return 0.02f;
+                case ModePreset.Metro: return 0.01f;
                 default: return 0f;
             }
         }

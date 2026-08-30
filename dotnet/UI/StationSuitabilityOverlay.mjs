@@ -151,31 +151,46 @@ function Legend() {
 
 // Rows arrive as "mode|km|stops|vehicles|colour", best first. The colour comes with
 // the row so this file holds no copy of the mode palette.
-function RouteList({ raw }) {
+//
+// Pointing at a row draws its line heavier on the map; clicking narrows the map to
+// that line alone, and clicking it again brings the others back. Neither decision is
+// taken here: the row reports what the pointer did and renders `selected` from the
+// binding, so the highlight in the list and the lines on the map cannot disagree —
+// and a refresh clearing the selection on the C# side clears it here too.
+//
+// The index is a position in the list, which is only safe because that clearing
+// happens the moment a new list arrives.
+function RouteList({ raw, selected }) {
     const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean);
-    if (!rows.length) {
-        return null;
-    }
 
-    return h("div", { className: "sso-routes" },
+    return h("div", { className: "sso-half" },
         h("div", { className: "sso-section" }, t("SuggestedLines", "Suggested lines")),
-        rows.map((row) => {
-            const parts = row.split("|");
-            const mode = parts[0] || "Bus";
-            // Keyed by the row's own content rather than its position: the list is
-            // re-ranked on every refresh, and a positional key re-seats the rows.
-            return h("div", { className: "sso-route", key: row },
-                h("div", {
-                    className: "sso-swatch",
-                    style: { backgroundColor: parts[4] || "rgb(200, 200, 200)" },
-                }),
-                h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
-                h("div", { className: "sso-route-meta" },
-                    (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
-                    + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
-                    + (parts[3] || "?") + " " + t("Vehicles", "veh")));
-        }));
+        h("div", { className: "sso-scroll" },
+            rows.map((row, index) => {
+                const parts = row.split("|");
+                const mode = parts[0] || "Bus";
+                const chosen = index === selected;
+                return h("button", {
+                    // Keyed by the row's own content rather than its position: the list
+                    // is re-ranked on every refresh, and a positional key re-seats the
+                    // rows.
+                    key: row,
+                    className: "sso-route" + (chosen ? " sso-route-on" : ""),
+                    onClick: () => trigger("selectRoute", index),
+                    onMouseEnter: () => trigger("highlightRoute", index),
+                    onMouseLeave: () => trigger("highlightRoute", -1),
+                },
+                    h("div", {
+                        className: "sso-swatch",
+                        style: { backgroundColor: parts[4] || "rgb(200, 200, 200)" },
+                    }),
+                    h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
+                    h("div", { className: "sso-route-meta" },
+                        (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
+                        + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
+                        + (parts[3] || "?") + " " + t("Vehicles", "veh")));
+            })));
 }
 
 // The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|spacing",
@@ -243,11 +258,8 @@ const VERDICT_COLORS = {
 function LineHealth({ raw, plan, planFor, planDrawn }) {
     const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
-    if (!rows.length) {
-        return null;
-    }
 
-    return h("div", { className: "sso-column" },
+    return h("div", { className: "sso-half" },
         h("div", { className: "sso-section" }, t("LineHealth", "Line health")),
         h("div", { className: "sso-scroll" },
             rows.map((parts) => {
@@ -360,6 +372,7 @@ function Panel() {
     const improvePlan = useBound("improvePlan", "");
     const improvedLine = useBound("improvedLine", -1);
     const improvedRouteDrawn = useBound("improvedRouteDrawn", false);
+    const selectedRoute = useBound("selectedRoute", -1);
 
     // The panel's static shape, from the side that owns it.
     const modes = parseNames(useBound("modes", ""), ["Bus", "Metro", "Tram", "Train", "Ferry"]);
@@ -467,14 +480,19 @@ function Panel() {
             });
         }),
 
-        h(RouteList, { raw: routeList })),
+        ),
 
-        h(LineHealth, {
-            raw: lineHealth,
-            plan: improvePlan,
-            planFor: improvedLine,
-            planDrawn: improvedRouteDrawn,
-        })));
+        // The right-hand column, split in half: what to build on top, how what you
+        // have is doing below. Each half scrolls on its own so neither can push the
+        // other off the bottom.
+        h("div", { className: "sso-column" },
+            h(RouteList, { raw: routeList, selected: selectedRoute }),
+            h(LineHealth, {
+                raw: lineHealth,
+                plan: improvePlan,
+                planFor: improvedLine,
+                planDrawn: improvedRouteDrawn,
+            }))));
 }
 
 // Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their

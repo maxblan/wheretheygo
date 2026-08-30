@@ -96,6 +96,9 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", static () => StationSuitabilityOverlaySystem.ImprovePlanText));
             AddUpdateBinding(new GetterValueBinding<int>(Group, "improvedLine", static () => StationSuitabilityOverlaySystem.ImprovedLineIndex));
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "improvedRouteDrawn", static () => StationSuitabilityOverlaySystem.ImprovedRouteDrawn));
+            // The selection lives on the C# side so the panel's row highlight and what
+            // the map draws cannot disagree, and so a refresh clearing it clears both.
+            AddUpdateBinding(new GetterValueBinding<int>(Group, "selectedRoute", static () => StationSuitabilityOverlaySystem.SelectedRouteIndex));
 
             AddTriggerBindings();
         }
@@ -126,6 +129,16 @@ namespace StationSuitabilityOverlay
             AddBinding(new TriggerBinding<int>(Group, "improveLine", static index =>
             {
                 StationSuitabilityOverlaySystem.RequestImprovement(index);
+            }));
+
+            AddBinding(new TriggerBinding<int>(Group, "highlightRoute", static index =>
+            {
+                StationSuitabilityOverlaySystem.HighlightRoute(index);
+            }));
+
+            AddBinding(new TriggerBinding<int>(Group, "selectRoute", static index =>
+            {
+                StationSuitabilityOverlaySystem.SelectRoute(index);
             }));
 
             // One shape, nine times over. The engineering baseline exempts this

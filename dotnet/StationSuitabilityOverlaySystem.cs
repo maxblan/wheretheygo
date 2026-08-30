@@ -81,6 +81,12 @@ namespace StationSuitabilityOverlay
         private static string s_ImprovePlan = string.Empty;
         private static int s_ImprovedLine = -1;
         private static bool s_ImprovedRouteDrawn;
+        // Which suggestion the panel is pointing at, and which one it has narrowed the
+        // map down to. Both are positions in the CURRENT suggestion list, which is only
+        // a safe key because both are cleared the moment a new list arrives — see
+        // UpdateRouteSummary.
+        private static int s_HighlightedRoute = -1;
+        private static int s_SelectedRoute = -1;
 
         public static string CalibrationStatusText =>
             string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
@@ -110,6 +116,21 @@ namespace StationSuitabilityOverlay
         // The panel asks for one line's improvement plan by the line's own id — never
         // by its position, since the list is re-sorted worst-first on every refresh.
         public static void RequestImprovement(int lineId) => s_ImproveRequest = lineId;
+
+        // The suggestion the pointer is over, drawn heavier so a glance answers "which
+        // one is this row". -1 for none.
+        public static void HighlightRoute(int index) => s_HighlightedRoute = index;
+
+        // Narrows the map to one suggestion, or back to all of them. Clicking the row
+        // that is already selected clears it, which is the only way back.
+        public static void SelectRoute(int index) => s_SelectedRoute = s_SelectedRoute == index ? -1 : index;
+
+        // Which suggestion is drawn alone, or -1 for all of them. The panel renders its
+        // row highlight from this rather than from state of its own, so the two cannot
+        // disagree about what the map is showing.
+        public static int SelectedRouteIndex => s_SelectedRoute;
+
+        internal static int HighlightedRouteIndex => s_HighlightedRoute;
 
         public static string ImprovePlanText => s_ImprovePlan;
 
@@ -679,6 +700,8 @@ namespace StationSuitabilityOverlay
             s_ImprovedLine = -1;
             s_ImprovedRouteDrawn = false;
             s_ImproveRequest = -1;
+            s_HighlightedRoute = -1;
+            s_SelectedRoute = -1;
             base.OnDestroy();
         }
 
@@ -4027,6 +4050,11 @@ namespace StationSuitabilityOverlay
 
         private void UpdateRouteSummary(int tripCount, int assignedPairs)
         {
+            // Both are positions in the list about to be replaced. Nothing may be shown
+            // as selected that is not in the list on screen, so they go with it.
+            s_HighlightedRoute = -1;
+            s_SelectedRoute = -1;
+
             if (m_Routes.Count == 0)
             {
                 s_RouteList = string.Empty;
