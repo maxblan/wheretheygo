@@ -83,6 +83,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("Bucketed walk edges match an exhaustive sweep", WalkEdgesMatchAnExhaustiveSweep);
             Run("Vanilla wait model floors at zero", ExpectedWaitModel);
             Run("A proposed stop puts an unserved zone onto the network", RemapReachesUnservedZone);
+            Run("A line earns nothing for a journey it does not improve", NoCreditWithoutAnImprovement);
+            Run("The walk to a stop is part of the journey", AccessWalkCountsAsTravel);
             Run("A line is judged over the window, not one reading", WindowAveragesLineReadings);
             Run("Readings older than the window are evicted", WindowEvictsPastADay);
             Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
@@ -103,6 +105,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("Only a rail mode may be justified by reach", ReachIsRailOnly);
             Run("A sub-kilometre stub is not a line", ShortStubsAreNotLines);
             Run("Growth carries straight on unless a turn is worth it", GrowthPrefersToCarryStraightOn);
+            Run("Growth heads away from where it started", GrowthHeadsAwayFromItsOtherEnd);
+            Run("A corridor that comes back on itself is a ring", RingsAreNotRoutes);
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
@@ -1091,16 +1095,21 @@ namespace StationSuitabilityOverlay.Tests
             var origins = new[] { 4 };
             var dests = new[] { 3 };
             var weights = new[] { 1000f };
+            // No walk to the stops and nothing to switch away from: these tests are
+            // about what a line is credited for, not about whether anyone would move to
+            // it, so the journey is unreachable without the network.
+            var noWalk = new[] { 0f };
+            var nothingBefore = new[] { float.MaxValue };
 
-            float feederCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1,
-                1, 1f, 100000f, out float served);
+            float feederCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1,
+                1, 1f, 100000f, 0f, out float served);
 
             AssertEqual(1000f, served, 1f, "the journey is served");
             AssertTrue(feederCredit > 0f, "the feeder must be credited for a journey it only starts");
             AssertEqual(1000f, feederCredit, 1f, "with no discount it earns the full weight");
 
-            float trunkCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1,
-                0, 1f, 100000f, out _);
+            float trunkCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1,
+                0, 1f, 100000f, 0f, out _);
             AssertTrue(trunkCredit > 0f, "the trunk is credited too — both legs enable the trip");
         }
 
@@ -1112,16 +1121,18 @@ namespace StationSuitabilityOverlay.Tests
             var origins = new[] { 4 };
             var dests = new[] { 3 };
             var weights = new[] { 1000f };
+            var noWalk = new[] { 0f };
+            var nothingBefore = new[] { float.MaxValue };
 
             // One change, so one discount factor is applied.
-            float full = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1, 1, 1f, 100000f, out _);
-            float discounted = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, 1, 1, 0.6f, 100000f, out _);
+            float full = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1, 1, 1f, 100000f, 0f, out _);
+            float discounted = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1, 1, 0.6f, 100000f, 0f, out _);
 
             AssertEqual(1000f, full, 1f, "no discount");
             AssertEqual(600f, discounted, 1f, "one change costs one discount factor");
 
             // A direct journey on the trunk keeps its full weight either way.
-            float direct = SuitabilityTransit.CreditLine(net, ws, new[] { 0 }, new[] { 3 }, weights, 1, 0, 0.6f, 100000f, out _);
+            float direct = SuitabilityTransit.CreditLine(net, ws, new[] { 0 }, new[] { 3 }, weights, noWalk, nothingBefore, 1, 0, 0.6f, 100000f, 0f, out _);
             AssertEqual(1000f, direct, 1f, "a direct journey is not discounted");
         }
 
@@ -1541,15 +1552,20 @@ namespace StationSuitabilityOverlay.Tests
         {
             const float reference = 96f;
 
-            // Long, thin, and unlocking 3% of the city's journeys.
-            var byReach = new CorridorEvidence(flow: 131f, length: 12000f, enabledDemandShare: 0.03f, trackShare: 0f);
+            // Long, thin, and unlocking more of the unserved demand than even a train
+            // is asked for. Stated against the bar itself rather than a number of its
+            // own, so re-basing the bars cannot silently change what this asserts.
+            float trainBar = TransitModes.MinEnabledDemandShareFor(ModePreset.Train);
+            var byReach = new CorridorEvidence(flow: 131f, length: 12000f, enabledDemandShare: trainBar * 1.5f, trackShare: 0f);
             AssertTrue(
                 TransitModes.ChooseMode(RouteNetwork.Rail, byReach, reference, out ModePreset mode, out ModeRejection why),
                 $"a long corridor unlocking real travel must justify something, got {why}");
             AssertTrue(mode == ModePreset.Train, $"expected Train, got {mode}");
 
-            // The same corridor unlocking almost nothing still cannot.
-            var noReach = new CorridorEvidence(flow: 131f, length: 12000f, enabledDemandShare: 0.001f, trackShare: 0f);
+            // The same corridor unlocking almost nothing still cannot — below even the
+            // metro's bar, which is the lower of the two.
+            float floor = TransitModes.MinEnabledDemandShareFor(ModePreset.Metro) * 0.1f;
+            var noReach = new CorridorEvidence(flow: 131f, length: 12000f, enabledDemandShare: floor, trackShare: 0f);
             AssertTrue(
                 !TransitModes.ChooseMode(RouteNetwork.Rail, noReach, reference, out _, out ModeRejection quiet),
                 "reach below the bar and flow below every floor justifies nothing");
@@ -1786,6 +1802,135 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(turned.Nodes.Contains(4), "a far busier direction still wins");
         }
 
+        // The turn penalty is local: it stops a staircase but says nothing about the
+        // shape overall, and a corridor can carry smoothly round a long arc back to
+        // where it started. On a lattice — a uniform grid where the shortest path
+        // between two zones is degenerate and the flow ridges are an artifact of the
+        // grid rather than of where anyone travels — that is exactly what happened: a
+        // metro proposed as a box around an empty field.
+        private static void GrowthHeadsAwayFromItsOtherEnd()
+        {
+            // The corridor runs east from (0,0) to (200,0), then north to (200,200).
+            // From there both options are 45-degree turns, so the turn penalty scores
+            // them IDENTICALLY — only which way they go relative to the far end can
+            // tell them apart. Node 3 carries on outward; node 4 curls back towards it.
+            var a = new[] { 0, 1, 2, 2 };
+            var b = new[] { 1, 2, 3, 4 };
+            var cost = new[] { 200f, 200f, 141f, 141f };
+            CompactGraph graph = CompactGraph.Build(5, a, b, cost, 4);
+            var x = new[] { 0f, 200f, 200f, 300f, 100f };
+            var z = new[] { 0f, 0f, 200f, 300f, 300f };
+
+            // The curl carries a fifth more than the continuation.
+            var flow = new[] { 30f, 20f, 10f, 12f };
+
+            var corridor = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), null, x, z),
+                0f, 1f, 10000f, corridor);
+            AssertTrue(corridor.Nodes.Contains(3),
+                $"the corridor must head onward, got [{string.Join(",", corridor.Nodes)}]");
+            AssertTrue(!corridor.Nodes.Contains(4),
+                "and must not curl back towards the end it started from");
+
+            // Without positions there is nothing to measure and the busier curl wins,
+            // which is the behaviour every caller had before positions existed.
+            var blind = new Corridor();
+            _ = SuitabilityGraphMath.GrowCorridor(
+                new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5)),
+                0f, 1f, 10000f, blind);
+            AssertTrue(blind.Nodes.Contains(4), "without positions the busier curl is taken");
+        }
+
+        // Where growth had no alternative it still comes round, so the shape is checked
+        // once it is finished. A line whose ends nearly meet is a ring, not a route.
+        private static void RingsAreNotRoutes()
+        {
+            // A 4 km line that gets 3.6 km away from where it began is a route.
+            AssertTrue(SuitabilityGraphMath.IsDirectEnough(3600f, 4000f), "a line that gets somewhere");
+
+            // The same 4 km spent going round a block is not.
+            AssertTrue(!SuitabilityGraphMath.IsDirectEnough(800f, 4000f), "a loop around a field is not a route");
+            AssertTrue(!SuitabilityGraphMath.IsDirectEnough(0f, 4000f), "and a closed ring least of all");
+
+            // Exactly at the bar counts, and a zero-length corridor is nothing to judge.
+            AssertTrue(
+                SuitabilityGraphMath.IsDirectEnough(4000f * SuitabilityGraphMath.MinDirectness, 4000f),
+                "the bar itself passes");
+            AssertTrue(SuitabilityGraphMath.IsDirectEnough(0f, 0f), "nothing to judge");
+        }
+
+        // Riders are not captive. A zone attaches to whichever stop is nearest, so a
+        // proposed stop landing a metre closer than an existing one took every journey
+        // in that zone — and the line was credited with demand that in the game carried
+        // on using the tram. A line is worth what it IMPROVES.
+        private static void NoCreditWithoutAnImprovement()
+        {
+            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+
+            var origins = new[] { 4 };
+            var dests = new[] { 3 };
+            var weights = new[] { 1000f };
+            var noWalk = new[] { 0f };
+
+            // What this journey costs on the network as it stands.
+            ws.Run(net.Graph, 4, 100000f);
+            AssertTrue(SuitabilityTransit.Inspect(net, ws, 4, 3, 1, out _, out _, out float onTheDay),
+                "the journey is routable");
+
+            // A line that leaves the journey exactly as it was earns nothing.
+            float unchanged = SuitabilityTransit.CreditLine(
+                net, ws, origins, dests, weights, noWalk, new[] { onTheDay },
+                1, 1, 1f, 100000f, switchMarginSeconds: 0f, out float served);
+            AssertEqual(1000f, served, 1f, "the journey is still served either way");
+            AssertEqual(0f, unchanged, 1e-3f, "but nobody changes how they travel for nothing");
+
+            // Beating what they had by a clear margin does earn it.
+            float better = SuitabilityTransit.CreditLine(
+                net, ws, origins, dests, weights, noWalk, new[] { onTheDay + 600f },
+                1, 1, 1f, 100000f, switchMarginSeconds: 60f, out _);
+            AssertEqual(1000f, better, 1f, "ten minutes better is worth switching for");
+
+            // Beating it by less than the margin is not worth the bother.
+            float marginal = SuitabilityTransit.CreditLine(
+                net, ws, origins, dests, weights, noWalk, new[] { onTheDay + 30f },
+                1, 1, 1f, 100000f, switchMarginSeconds: 60f, out _);
+            AssertEqual(0f, marginal, 1e-3f, "half a minute is not");
+        }
+
+        // A stop 490 m away was exactly as good as one on the doorstep, because the
+        // walk to it cost nothing. It is part of the journey.
+        private static void AccessWalkCountsAsTravel()
+        {
+            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+
+            var origins = new[] { 4 };
+            var dests = new[] { 3 };
+            var weights = new[] { 1000f };
+
+            ws.Run(net.Graph, 4, 100000f);
+            _ = SuitabilityTransit.Inspect(net, ws, 4, 3, 1, out _, out _, out float ride);
+
+            // The rider already has a journey 300 s longer than the ride, so a stop on
+            // the doorstep is worth walking to.
+            var baseline = new[] { ride + 300f };
+            float onTheDoorstep = SuitabilityTransit.CreditLine(
+                net, ws, origins, dests, weights, new[] { 0f }, baseline,
+                1, 1, 1f, 100000f, 60f, out _);
+            AssertEqual(1000f, onTheDoorstep, 1f, "a stop you are standing on is worth using");
+
+            // The same line reached only by a 490 m walk at the model's own walking
+            // speed costs about six minutes, which eats the whole saving.
+            float walkSeconds = 490f / SuitabilityTransit.WalkSpeed;
+            AssertTrue(walkSeconds > 300f, $"the fixture must make the walk decisive, got {walkSeconds}s");
+            float acrossTown = SuitabilityTransit.CreditLine(
+                net, ws, origins, dests, weights, new[] { walkSeconds }, baseline,
+                1, 1, 1f, 100000f, 60f, out _);
+            AssertEqual(0f, acrossTown, 1e-3f, "and one you must walk half a kilometre to is not");
+        }
+
         private static float[] NewNovelty(int nodes)
         {
             var novelty = new float[nodes];
@@ -1821,7 +1966,7 @@ namespace StationSuitabilityOverlay.Tests
 
             int changed = SuitabilityTransit.RemapZones(
                 zoneX, zoneZ, 3, zoneStop, zoneDistSq,
-                newX, newZ, 2, 20, 500f, merged);
+                newX, newZ, 2, 20, 500f, merged, new float[3]);
 
             AssertTrue(changed == 2, "both zones the candidate reaches are remapped");
             AssertTrue(merged[0] == 7, "a zone already served by a closer existing stop keeps it");
@@ -1835,7 +1980,7 @@ namespace StationSuitabilityOverlay.Tests
             var one = new int[1];
             int stolen = SuitabilityTransit.RemapZones(
                 new[] { 0f }, new[] { 0f }, 1, farStop, farDistSq,
-                new[] { 100f }, new[] { 0f }, 1, 20, 500f, one);
+                new[] { 100f }, new[] { 0f }, 1, 20, 500f, one, new float[1]);
 
             AssertTrue(stolen == 1 && one[0] == 20, "a nearer candidate stop takes the zone from a distant existing one");
         }

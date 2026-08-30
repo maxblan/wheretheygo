@@ -393,10 +393,13 @@ namespace StationSuitabilityOverlay
             int[] originStops,
             int[] destStops,
             float[] weights,
+            float[] accessSeconds,
+            float[] baselineSeconds,
             int pairCount,
             int targetLine,
             float transferDiscount,
             float maxTravelTime,
+            float switchMarginSeconds,
             out float servedWeight)
         {
             servedWeight = 0f;
@@ -429,7 +432,8 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                if (travelTime > maxTravelTime)
+                float doorToDoor = travelTime + accessSeconds[i];
+                if (doorToDoor > maxTravelTime)
                 {
                     continue;
                 }
@@ -437,6 +441,13 @@ namespace StationSuitabilityOverlay
                 servedWeight += weights[i];
 
                 if (!usesTarget || boardings <= 0)
+                {
+                    continue;
+                }
+
+                // Nobody changes how they travel for nothing. The margin is what makes
+                // it worth the bother rather than a rounding difference.
+                if (doorToDoor >= baselineSeconds[i] - switchMarginSeconds)
                 {
                     continue;
                 }
@@ -520,10 +531,11 @@ namespace StationSuitabilityOverlay
             int newStopCount,
             int baseIndex,
             float maxDistance,
-            int[] outZoneStop)
+            int[] outZoneStop,
+            float[] outZoneStopDistSq)
         {
             if (zoneX is null || zoneZ is null || zoneStop is null || zoneStopDistSq is null
-                || newStopX is null || newStopZ is null || outZoneStop is null)
+                || newStopX is null || newStopZ is null || outZoneStop is null || outZoneStopDistSq is null)
             {
                 return 0;
             }
@@ -556,6 +568,9 @@ namespace StationSuitabilityOverlay
                 }
 
                 outZoneStop[zone] = best;
+                // The walk to it, so the caller can charge for it. A stop the zone only
+                // just reaches is not the same offer as one on its doorstep.
+                outZoneStopDistSq[zone] = best >= 0 ? bestSq : 0f;
             }
 
             return captured;

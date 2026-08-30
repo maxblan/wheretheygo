@@ -563,6 +563,7 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[Km]", "km" },
                 { "StationSuitabilityOverlay.Panel[Stops]", "stops" },
                 { "StationSuitabilityOverlay.Panel[Vehicles]", "veh" },
+                { "StationSuitabilityOverlay.Panel[Reach]", "unlocks {0}% of unserved travel" },
                 { "StationSuitabilityOverlay.Panel[LineHealth]", "Line health" },
                 { "StationSuitabilityOverlay.Panel[SuggestImprovement]", "Suggest improvement" },
                 { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Improved plan" },

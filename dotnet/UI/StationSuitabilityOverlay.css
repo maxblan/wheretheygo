@@ -181,6 +181,24 @@
     border-radius: 2rem;
 }
 
+.sso-route-text {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.sso-route-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+/* What the list is ordered by, under the row it belongs to. */
+.sso-route-reach {
+    color: #7f97ad;
+    font-size: 9rem;
+}
+
 .sso-route-mode {
     width: 52rem;
     color: #eaf2fb;

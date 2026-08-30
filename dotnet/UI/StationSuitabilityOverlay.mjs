@@ -149,7 +149,7 @@ function Legend() {
             h("div", { className: "sso-legend-end" }, t("LegendHigh", "High"))));
 }
 
-// Rows arrive as "mode|km|stops|vehicles|colour", best first. The colour comes with
+// Rows arrive as "mode|km|stops|vehicles|colour|reachPercent", best first. The colour comes with
 // the row so this file holds no copy of the mode palette.
 //
 // Pointing at a row draws its line heavier on the map; clicking narrows the map to
@@ -185,11 +185,17 @@ function RouteList({ raw, selected }) {
                         className: "sso-swatch",
                         style: { backgroundColor: parts[4] || "rgb(200, 200, 200)" },
                     }),
-                    h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
-                    h("div", { className: "sso-route-meta" },
-                        (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
-                        + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
-                        + (parts[3] || "?") + " " + t("Vehicles", "veh")));
+                    h("div", { className: "sso-route-text" },
+                        h("div", { className: "sso-route-head" },
+                            h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
+                            h("div", { className: "sso-route-meta" },
+                                (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
+                                + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
+                                + (parts[3] || "?") + " " + t("Vehicles", "veh"))),
+                        // The figure the list is ordered by, so the gap between the
+                        // first row and the second is visible rather than implied.
+                        h("div", { className: "sso-route-reach" },
+                            t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0"))));
             })));
 }
 

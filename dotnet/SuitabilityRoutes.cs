@@ -79,6 +79,7 @@ namespace StationSuitabilityOverlay
         {
             grown = 0;
             tooShort = 0;
+            int wandered = 0;
             if (network?.Graph is null || network.EdgeFlow is null || network.EdgeCount == 0)
             {
                 return;
@@ -179,6 +180,10 @@ namespace StationSuitabilityOverlay
                 {
                     tooShort++;
                 }
+                else if (corridor.Length > 0f)
+                {
+                    wandered++;
+                }
 
                 SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, CaptureFraction);
                 SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, NoveltyHops, NoveltyFactor);
@@ -194,7 +199,9 @@ namespace StationSuitabilityOverlay
                 $"mean length {((lengthCount > 0 ? lengthSum / lengthCount : 0f)).ToString("F0", CultureInfo.InvariantCulture)}m, " +
                 $"{(hitMaxLength).ToString(CultureInfo.InvariantCulture)} reached the {(maxRouteLength).ToString("F0", CultureInfo.InvariantCulture)}m limit; " +
                 $"meanEdgeFlow={(meanFlow).ToString("F0", CultureInfo.InvariantCulture)}, flowFloor={(flowFloor).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                $"{(unstoppable).ToString(CultureInfo.InvariantCulture)} edge(s) excluded as unable to host a stop; " +
+                $"{(unstoppable).ToString(CultureInfo.InvariantCulture)} edge(s) excluded as unable to host a stop, " +
+                $"{(wandered).ToString(CultureInfo.InvariantCulture)} discarded for coming back on themselves " +
+                $"(ends must be {(SuitabilityGraphMath.MinDirectness * 100f).ToString("F0", CultureInfo.InvariantCulture)}% of the length apart); " +
                 $"extensions refused — alreadyUsed={(blocked.m_Used).ToString(CultureInfo.InvariantCulture)}, " +
                 $"belowFlowFloor={(blocked.m_Flow).ToString(CultureInfo.InvariantCulture)}, " +
                 $"wouldRevisit={(blocked.m_Visited).ToString(CultureInfo.InvariantCulture)}, " +
@@ -226,6 +233,12 @@ namespace StationSuitabilityOverlay
             }
 
             return unstoppable;
+        }
+
+        // Straight-line distance between a polyline's two ends.
+        private static float EndToEnd(List<float2> path)
+        {
+            return path.Count < 2 ? 0f : math.distance(path[0], path[path.Count - 1]);
         }
 
         // Turns one grown corridor into a candidate line: its drawn alignment, the mode
@@ -269,6 +282,15 @@ namespace StationSuitabilityOverlay
             if (route.Length < TransitModes.ShortestModeLength(network.Network))
             {
                 shorterThanAnyMode = true;
+                return null;
+            }
+
+            // A line that comes back on itself is a ring, not a route. Growth prefers
+            // to head away from where it started, but on a corridor with nowhere else
+            // to go it still curls round — a metro was proposed as a box around an
+            // empty field, and another as a ring about the whole city.
+            if (!SuitabilityGraphMath.IsDirectEnough(EndToEnd(route.Path), route.Length))
+            {
                 return null;
             }
 

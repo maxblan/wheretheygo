@@ -151,6 +151,7 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[Km]", "km" },
                 { "StationSuitabilityOverlay.Panel[Stops]", "Haltestellen" },
                 { "StationSuitabilityOverlay.Panel[Vehicles]", "Fz." },
+                { "StationSuitabilityOverlay.Panel[Reach]", "erschließt {0} % der unbedienten Nachfrage" },
                 { "StationSuitabilityOverlay.Panel[LineHealth]", "Linienzustand" },
                 { "StationSuitabilityOverlay.Panel[SuggestImprovement]", "Verbesserung vorschlagen" },
                 { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Verbesserter Vorschlag" },

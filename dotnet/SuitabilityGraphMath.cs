@@ -415,6 +415,37 @@ namespace StationSuitabilityOverlay
         // reversal 40%, so a genuinely busier direction still wins — this is a
         // preference, not a constraint.
         private const float TurnPenalty = 0.6f;
+
+        // How much a corridor prefers to be GOING somewhere.
+        //
+        // The turn penalty is local: it stops a staircase but says nothing about the
+        // shape overall, and a corridor can carry smoothly round a long arc back to
+        // where it started. On a lattice that is exactly what happened — a metro was
+        // proposed as a box around an empty field, and another as a ring around the
+        // whole city.
+        //
+        // The cause is that a lattice is a UNIFORM grid, so the shortest path between
+        // two zones is degenerate: hundreds of staircases cost the same, and which one
+        // Dijkstra picks falls out of the order edges were added. The flow those paths
+        // accumulate forms ridges that are an artifact of the grid rather than of where
+        // anyone travels, and growth follows them faithfully.
+        //
+        // A line connects two places. Every extension is therefore weighed on whether
+        // it takes this end FURTHER from the other one: at 0.7 an extension that curls
+        // back keeps 30% of its score and one heading straight out keeps all of it.
+        private const float SpreadPenalty = 0.7f;
+
+        // A line whose ends are closer together than this share of the distance it
+        // travels is a ring, not a route. The spread bias only helps where growth had
+        // an alternative; on a corridor with nowhere else to go it still comes round,
+        // and this is what catches that.
+        public const float MinDirectness = 0.45f;
+
+        // Whether a grown corridor actually gets somewhere.
+        public static bool IsDirectEnough(float endToEndMetres, float lengthMetres)
+        {
+            return lengthMetres <= 0f || endToEndMetres / lengthMetres >= MinDirectness;
+        }
         // Consecutive quiet nodes a corridor may cross before giving up. Two is a
         // park, a river, a rail crossing or an industrial strip — the things that sit
         // between two busy districts — and not a licence to strike out into open
@@ -622,11 +653,11 @@ namespace StationSuitabilityOverlay
                 // is the reason this corridor is the length it is.
                 blocks = default;
                 FindExtension(in network, noveltyWeight, flowFloor, visited,
-                    headNode, headFrom, length, maxLength, demandFloor,
+                    headNode, headFrom, tailNode, length, maxLength, demandFloor,
                     ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, ref blocks,
                     frontBridge.Count, maxLowDemandBridge, atHead: true);
                 FindExtension(in network, noveltyWeight, flowFloor, visited,
-                    tailNode, tailFrom, length, maxLength, demandFloor,
+                    tailNode, tailFrom, headNode, length, maxLength, demandFloor,
                     ref bestEdge, ref bestNext, ref bestScore, ref bestAtHead, ref blocks,
                     backBridge.Count, maxLowDemandBridge, atHead: false);
 
@@ -795,6 +826,37 @@ namespace StationSuitabilityOverlay
             return 1f - (TurnPenalty * (1f - straightness));
         }
 
+        // How much an extension takes this end of the corridor further from the other
+        // one: 1 for heading straight out, down to 1 - SpreadPenalty for curling back.
+        //
+        // Measured against the edge's own length, so it means the same on a 128 m
+        // lattice edge and a 400 m street.
+        private static float Spread(in CorridorNetwork network, int thisEnd, int otherEnd, int next, float edgeCost)
+        {
+            float[]? x = network.NodeX;
+            float[]? z = network.NodeZ;
+            if (x is null || z is null || edgeCost <= 0f
+                || thisEnd < 0 || otherEnd < 0 || next < 0
+                || thisEnd >= x.Length || otherEnd >= x.Length || next >= x.Length
+                || thisEnd >= z.Length || otherEnd >= z.Length || next >= z.Length)
+            {
+                return 1f;
+            }
+
+            double before = Separation(x[thisEnd] - x[otherEnd], z[thisEnd] - z[otherEnd]);
+            double after = Separation(x[next] - x[otherEnd], z[next] - z[otherEnd]);
+
+            // -1 straight back towards the other end, 1 straight away from it.
+            double gain = (after - before) / edgeCost;
+            float outward = (float)((Math.Max(-1.0, Math.Min(1.0, gain)) + 1.0) * 0.5);
+            return 1f - (SpreadPenalty * (1f - outward));
+        }
+
+        private static double Separation(float dx, float dz)
+        {
+            return Math.Sqrt(((double)dx * dx) + ((double)dz * dz));
+        }
+
         private static float NoveltyAt(float[]? nodeNovelty, int node)
         {
             return nodeNovelty is not null && node >= 0 && node < nodeNovelty.Length
@@ -809,6 +871,7 @@ namespace StationSuitabilityOverlay
             HashSet<int> visited,
             int fromNode,
             int cameFrom,
+            int otherEnd,
             float length,
             float maxLength,
             float demandFloor,
@@ -880,8 +943,10 @@ namespace StationSuitabilityOverlay
 
                 float score = edgeFlow[edge] + (noveltyWeight * NoveltyAt(network.NodeNovelty, next));
 
-                // A line continues along the alignment it is on and turns for a reason.
+                // A line continues along the alignment it is on and turns for a reason,
+                // and it is on its way from somewhere to somewhere else.
                 score *= Continuity(in network, cameFrom, fromNode, next);
+                score *= Spread(in network, fromNode, otherEnd, next, graph.EdgeCost[edge]);
 
                 // Crossing emptiness is a last resort, never a preference: any node
                 // with people beside it outranks a bridge out of the same junction.

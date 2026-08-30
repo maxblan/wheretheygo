@@ -243,8 +243,14 @@ namespace StationSuitabilityOverlay
             return shortest;
         }
 
-        // Share of the city's whole travel weight a line must unlock before its REACH
-        // alone can justify the mode, with no demand floor met on any single edge.
+        // Share of the UNSERVED demand a line must unlock before its REACH alone can
+        // justify the mode, with no demand floor met on any single edge.
+        //
+        // Against the demand the existing network has already taken its share of, not
+        // against every journey in the city: the numerator is credited out of the
+        // discounted pool, and measuring it against the undiscounted total compared two
+        // different quantities. These bars are stated in the honest units and chosen to
+        // sit where the old ones effectively did.
         //
         // Both RAIL modes have one. A rail alignment is justified by the places it
         // connects, and a corridor spanning a city necessarily spreads its flow thin
@@ -266,8 +272,8 @@ namespace StationSuitabilityOverlay
         {
             switch (mode)
             {
-                case ModePreset.Train: return 0.02f;
-                case ModePreset.Metro: return 0.01f;
+                case ModePreset.Train: return 0.04f;
+                case ModePreset.Metro: return 0.02f;
                 default: return 0f;
             }
         }
