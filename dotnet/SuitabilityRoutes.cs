@@ -273,6 +273,7 @@ namespace StationSuitabilityOverlay
             considered = 0;
             tooShort = 0;
             atInterchange = 0;
+            int bent = 0;
             if (network?.Graph is null || zoneNodes is null || flows.Count == 0)
             {
                 return;
@@ -348,6 +349,14 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
+                // Bend the middle of the alignment through an interchange if one is
+                // worth reaching. Aiming the ENDS at a hub has never helped a line that
+                // simply passes a station two kilometres off to one side.
+                if (BendThroughInterchange(network, hubs, forcedMode, from, to, maxRouteLength, scratch))
+                {
+                    bent++;
+                }
+
                 var route = new SuggestedRoute
                 {
                     Network = network.Network,
@@ -388,6 +397,173 @@ namespace StationSuitabilityOverlay
                 added++;
                 atInterchange += aimedAtInterchange;
             }
+
+            if (bent > 0)
+            {
+                Mod.Log.Info(
+                    $"  {forcedMode} alignments bent through an interchange: {(bent).ToString(CultureInfo.InvariantCulture)} " +
+                    $"of {(considered).ToString(CultureInfo.InvariantCulture)} traced, within " +
+                    $"{(SuitabilityGraphMath.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment");
+            }
+        }
+
+        // How far off an alignment an interchange may sit and still be worth bending
+        // towards. Generous on purpose: the real bound is the detour
+        // (SuitabilityGraphMath.IsDetourWorthwhile), and it scales with the line, which
+        // this cannot. Reaching a hub 2 km to one side costs about 4 km of extra
+        // running, so a quarter-again detour only pays for it on a line already 16 km
+        // long — short lines rule out far hubs on their own, without a second constant
+        // that would have to be kept in step with the first.
+        private const float ViaReachMetres = 2000f;
+
+        // How far the lattice node standing in for the hub may be from the hub itself.
+        // The lattice has a 128 m pitch, so the nearest node to a station is not the
+        // station; past a transfer walk it is not an interchange either.
+        private const float ViaSnapMetres = 250f;
+
+        // Every this many nodes along the alignment, look sideways for a hub. At the
+        // 128 m lattice pitch that is a look every half kilometre, which cannot miss
+        // anything inside a 2 km reach.
+        private const int ViaSampleStride = 4;
+
+        // Bends an alignment through an interchange it passes near, by re-tracing it as
+        // two legs through that hub.
+        //
+        // The last piece of "take transport hubs into account". Termini have been aimed
+        // at a hub since SnapToInterchange, and stops call at any station within 150 m
+        // of where the line already runs — but a metro passing two kilometres from the
+        // train station was never diverted to reach it, because an alignment was traced
+        // end to end and only its STOPS were ever adjusted. A line that misses the
+        // interchange misses the network.
+        //
+        // Only the lattices. A road corridor's shape is a measurement — grown along
+        // real street flow and peeled — and re-tracing its middle would throw that
+        // measurement away to buy a transfer. Its ends are aimed at a hub instead.
+        //
+        // Returns true when `path` was replaced with the bent alignment.
+        private static bool BendThroughInterchange(
+            SuitabilityRoadGraph network,
+            InterchangeMap hubs,
+            ModePreset mode,
+            int from,
+            int to,
+            float maxRouteLength,
+            List<int> path)
+        {
+            if (hubs.Count == 0 || path.Count < 2)
+            {
+                return false;
+            }
+
+            // The best hub anywhere along the line: most other modes first, and among
+            // equals the one that asks for the least sideways travel.
+            float bestX = 0f;
+            float bestZ = 0f;
+            int bestModes = 0;
+            float bestOffsetSq = float.MaxValue;
+            bool found = false;
+
+            for (int i = 0; i < path.Count; i += ViaSampleStride)
+            {
+                int node = path[i];
+                if (node < 0 || node >= network.NodePositionsX.Length)
+                {
+                    continue;
+                }
+
+                float x = network.NodePositionsX[node];
+                float z = network.NodePositionsZ[node];
+                if (!hubs.TryFindNear(mode, x, z, ViaReachMetres, out float hubX, out float hubZ, out int modes)
+                    || modes <= 0)
+                {
+                    continue;
+                }
+
+                float dx = hubX - x;
+                float dz = hubZ - z;
+                float offsetSq = (dx * dx) + (dz * dz);
+                if (found && (modes < bestModes || (modes == bestModes && offsetSq >= bestOffsetSq)))
+                {
+                    continue;
+                }
+
+                found = true;
+                bestModes = modes;
+                bestOffsetSq = offsetSq;
+                bestX = hubX;
+                bestZ = hubZ;
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            int via = network.NearestNode(new float2(bestX, bestZ), ViaSnapMetres);
+            if (via < 0 || via == from || via == to || path.Contains(via))
+            {
+                // Already on the line, or no node near enough to stand for the hub.
+                return false;
+            }
+
+            float direct = NodePathLength(network, path);
+            var head = new List<int>();
+            var tail = new List<int>();
+            if (!network.TracePath(from, via, maxRouteLength, head)
+                || !network.TracePath(via, to, maxRouteLength, tail))
+            {
+                return false;
+            }
+
+            float bentLength = NodePathLength(network, head) + NodePathLength(network, tail);
+            if (!SuitabilityGraphMath.IsDetourWorthwhile(direct, bentLength, maxRouteLength))
+            {
+                return false;
+            }
+
+            // Two shortest paths sharing anything but the via point means the line
+            // doubles back through it — a hub reached by going out and coming home is
+            // not on the way to anywhere.
+            for (int i = 0; i < head.Count - 1; i++)
+            {
+                if (tail.Contains(head[i]))
+                {
+                    return false;
+                }
+            }
+
+            path.Clear();
+            path.AddRange(head);
+            // head ends at the via, which tail begins with.
+            for (int i = 1; i < tail.Count; i++)
+            {
+                path.Add(tail[i]);
+            }
+
+            return true;
+        }
+
+        // Geometric length of a node path. NOT the sum of edge costs: a lattice scales
+        // its costs to express "prefer existing track", so a cost total is a preference
+        // score rather than a distance, and the detour bound is about distance.
+        private static float NodePathLength(SuitabilityRoadGraph network, List<int> nodes)
+        {
+            float length = 0f;
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                int a = nodes[i - 1];
+                int b = nodes[i];
+                if (a < 0 || b < 0 || a >= network.NodePositionsX.Length || b >= network.NodePositionsX.Length)
+                {
+                    continue;
+                }
+
+                float dx = network.NodePositionsX[a] - network.NodePositionsX[b];
+                float dz = network.NodePositionsZ[a] - network.NodePositionsZ[b];
+                length += math.sqrt((dx * dx) + (dz * dz));
+            }
+
+            return length;
         }
 
         // Moves a terminus onto the network node nearest a usable interchange, when one
@@ -398,7 +574,7 @@ namespace StationSuitabilityOverlay
             SuitabilityRoadGraph network, InterchangeMap hubs, ModePreset mode, int node, ref float2 point)
         {
             if (hubs.Count == 0
-                || !hubs.TryFindNear(mode, point.x, point.y, hubs.Radius, out float hubX, out float hubZ))
+                || !hubs.TryFindNear(mode, point.x, point.y, hubs.Radius, out float hubX, out float hubZ, out _))
             {
                 return node;
             }
@@ -608,7 +784,7 @@ namespace StationSuitabilityOverlay
 
             float x = network.NodePositionsX[terminus];
             float z = network.NodePositionsZ[terminus];
-            if (!hubs.TryFindNear(mode, x, z, hubs.Radius, out float hubX, out float hubZ))
+            if (!hubs.TryFindNear(mode, x, z, hubs.Radius, out float hubX, out float hubZ, out _))
             {
                 return false;
             }

@@ -116,10 +116,17 @@ namespace StationSuitabilityOverlay
         // same mode only because, scoring a bare tile, it cannot know which line would
         // run there. Mode still decides the RANKING, so a place where three modes meet
         // beats a lone stop; it no longer decides whether the place counts at all.
-        public bool TryFindNear(ModePreset ownMode, float x, float z, float radius, out float hubX, out float hubZ)
+        // `otherModes` is how many modes OTHER than `ownMode` a rider could change to
+        // there — what the hub is worth, as distinct from where it is. A caller
+        // deciding whether to bend a whole alignment towards it needs to know that; one
+        // merely nudging a terminus already standing beside it does not.
+        public bool TryFindNear(
+            ModePreset ownMode, float x, float z, float radius,
+            out float hubX, out float hubZ, out int otherModes)
         {
             hubX = 0f;
             hubZ = 0f;
+            otherModes = 0;
             if (m_StopX is null || m_StopZ is null || m_Reachable is null)
             {
                 return false;
@@ -149,6 +156,7 @@ namespace StationSuitabilityOverlay
                     bestSq = distanceSq;
                     hubX = m_StopX[i];
                     hubZ = m_StopZ[i];
+                    otherModes = modes;
                 }
             }
 

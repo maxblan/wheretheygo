@@ -109,6 +109,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("A sub-kilometre stub is not a line", ShortStubsAreNotLines);
             Run("Growth carries straight on unless a turn is worth it", GrowthPrefersToCarryStraightOn);
             Run("Growth heads away from where it started", GrowthHeadsAwayFromItsOtherEnd);
+            Run("A detour to an interchange is worth only so much", ADetourIsWorthOnlySoMuch);
             Run("A corridor that comes back on itself is a ring", RingsAreNotRoutes);
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
@@ -2000,7 +2001,7 @@ namespace StationSuitabilityOverlay.Tests
             InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
             AssertTrue(map.Count == 4, $"every served stop is in the map, got {map.Count}");
 
-            AssertTrue(map.TryFindNear(ModePreset.Bus, 10f, 0f, 250f, out float hubX, out float hubZ),
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 10f, 0f, 250f, out float hubX, out float hubZ, out _),
                 "a new bus line beside the station can change to something");
             AssertTrue(hubX == 0f && hubZ == 0f, $"and it is aimed at the nearest of the pair, got ({hubX}, {hubZ})");
 
@@ -2008,18 +2009,18 @@ namespace StationSuitabilityOverlay.Tests
             // metro line nothing. The union is what makes it a place where that line's
             // riders can reach a train — and the entrance itself is the nearest such
             // place, which is exactly where the terminus should go.
-            AssertTrue(map.TryFindNear(ModePreset.Metro, 40f, 0f, 250f, out float trainX, out _),
+            AssertTrue(map.TryFindNear(ModePreset.Metro, 40f, 0f, 250f, out float trainX, out _, out _),
                 "a new metro line there can change to the train beside it");
             AssertTrue(trainX == 40f, $"aimed at the nearest place the train is reachable from, got {trainX}");
 
             // A new bus line calling at an existing bus stop lets riders change to
             // whatever line already runs there — a suggestion is never the line that is
             // already present. Mode decides the ranking, not whether it counts.
-            AssertTrue(map.TryFindNear(ModePreset.Bus, 2000f, 0f, 250f, out float sameX, out _),
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 2000f, 0f, 250f, out float sameX, out _, out _),
                 "a new bus line can still change lines at an existing bus stop");
             AssertTrue(sameX == 2000f, $"and it is the stop that is there, got {sameX}");
 
-            AssertTrue(!map.TryFindNear(ModePreset.Bus, 5000f, 5000f, 250f, out _, out _),
+            AssertTrue(!map.TryFindNear(ModePreset.Bus, 5000f, 5000f, 250f, out _, out _, out _),
                 "and nothing is in reach out in the fields");
         }
 
@@ -2040,7 +2041,7 @@ namespace StationSuitabilityOverlay.Tests
             };
 
             InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
-            AssertTrue(map.TryFindNear(ModePreset.Bus, 250f, 0f, 250f, out float hubX, out _),
+            AssertTrue(map.TryFindNear(ModePreset.Bus, 250f, 0f, 250f, out float hubX, out _, out _),
                 "there is somewhere to change within a walk");
             AssertTrue(hubX == 60f,
                 $"the three-mode interchange 190 m off wins over the lone tram stop 150 m off, got {hubX}");
@@ -2057,7 +2058,7 @@ namespace StationSuitabilityOverlay.Tests
             };
 
             InterchangeMap pairs = SuitabilityTransit.BuildInterchangeMap(pairX, pairZ, pairModes, 4, 250f);
-            AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, 250f, out float nearX, out _),
+            AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, 250f, out float nearX, out _, out _),
                 "both interchanges offer the same two modes");
             AssertTrue(nearX == 400f, $"so the nearer one is chosen, got {nearX}");
         }
@@ -2270,6 +2271,51 @@ namespace StationSuitabilityOverlay.Tests
 
         // Where growth had no alternative it still comes round, so the shape is checked
         // once it is finished. A line whose ends nearly meet is a ring, not a route.
+        // A metro passing two kilometres from the train station was never diverted to
+        // reach it: an alignment was traced end to end and only its STOPS were ever
+        // adjusted, so a line that missed the interchange missed the network. Bending
+        // it through the hub is worth doing — but only while the people already on
+        // board can stand the extra minutes, which is what this bound is.
+        private static void ADetourIsWorthOnlySoMuch()
+        {
+            const float direct = 10000f;
+            const float maxLength = 20000f;
+
+            AssertTrue(
+                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct, maxLength),
+                "a via that costs nothing extra is always worth taking");
+            AssertTrue(
+                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * 1.1f, maxLength),
+                "a tenth further to reach an interchange is worth it");
+
+            AssertTrue(
+                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * SuitabilityGraphMath.MaxViaDetour, maxLength),
+                "the bound itself is allowed");
+            AssertTrue(
+                !SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * (SuitabilityGraphMath.MaxViaDetour + 0.01f), maxLength),
+                "and a line that goes noticeably out of its way is not");
+
+            // A hub two kilometres to one side costs roughly four kilometres of extra
+            // running. That pays on a long line and not on a short one, which is what
+            // lets the reach radius stay a single generous constant.
+            AssertTrue(
+                SuitabilityGraphMath.IsDetourWorthwhile(20000f, 24000f, 60000f),
+                "reaching it off a twenty-kilometre line is worth four kilometres");
+            AssertTrue(
+                !SuitabilityGraphMath.IsDetourWorthwhile(4000f, 8000f, 60000f),
+                "doubling a four-kilometre line for the same hub is not");
+
+            // The mode's own ceiling still applies: a line it cannot hold a headway
+            // around is no use however modest the detour.
+            AssertTrue(
+                !SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * 1.05f, 9000f),
+                "past the mode's maximum length nothing is worthwhile");
+
+            // Degenerate input is not a licence to wander.
+            AssertTrue(!SuitabilityGraphMath.IsDetourWorthwhile(0f, 5000f, maxLength), "no direct path, no detour");
+            AssertTrue(!SuitabilityGraphMath.IsDetourWorthwhile(direct, 0f, maxLength), "a via of no length is not a path");
+        }
+
         private static void RingsAreNotRoutes()
         {
             // A 4 km line that gets 3.6 km away from where it began is a route.

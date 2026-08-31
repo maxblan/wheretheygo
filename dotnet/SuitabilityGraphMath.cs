@@ -446,6 +446,37 @@ namespace StationSuitabilityOverlay
         {
             return lengthMetres <= 0f || endToEndMetres / lengthMetres >= MinDirectness;
         }
+
+        // How much longer an alignment may become to pass through an interchange.
+        //
+        // A judgement, and stated as one: every rider already on the line pays the
+        // detour in minutes, while only those changing vehicle collect the benefit, so
+        // the bound is about what the majority will tolerate rather than about what the
+        // hub is worth. A quarter again is roughly the point at which a bend stops
+        // reading on a map as "the line goes past the station" and starts reading as
+        // "the line goes out of its way".
+        //
+        // Deliberately NOT scaled by how many modes the hub offers. A better hub is a
+        // reason to prefer one via over another — which is what the ranking does — not
+        // a reason to make the people on board travel further for it.
+        public const float MaxViaDetour = 1.25f;
+
+        // Whether bending an alignment through a via point is worth it. `viaMetres` is
+        // the whole bent alignment, not the detour alone.
+        //
+        // Both bounds matter and they fail differently: past MaxViaDetour the line is
+        // no longer the line anyone asked for, and past `maxMetres` it is not a line
+        // the mode can hold a headway around at all.
+        public static bool IsDetourWorthwhile(float directMetres, float viaMetres, float maxMetres)
+        {
+            if (viaMetres <= 0f || viaMetres > maxMetres)
+            {
+                return false;
+            }
+
+            // No direct path to compare against is not a licence to wander.
+            return directMetres > 0f && viaMetres <= directMetres * MaxViaDetour;
+        }
         // Consecutive quiet nodes a corridor may cross before giving up. Two is a
         // park, a river, a rail crossing or an industrial strip — the things that sit
         // between two busy districts — and not a licence to strike out into open
