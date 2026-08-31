@@ -83,6 +83,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Bucketed walk edges match an exhaustive sweep", WalkEdgesMatchAnExhaustiveSweep);
             Run("Vanilla wait model floors at zero", ExpectedWaitModel);
             Run("A proposed stop puts an unserved zone onto the network", RemapReachesUnservedZone);
+            Run("A city with no transit at all can still be scored", EmptyNetworkCreditsTheFirstLine);
             Run("A line earns nothing for a journey it does not improve", NoCreditWithoutAnImprovement);
             Run("The walk to a stop is part of the journey", AccessWalkCountsAsTravel);
             Run("A line is judged over the window, not one reading", WindowAveragesLineReadings);
@@ -2192,6 +2193,71 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             return novelty;
+        }
+
+        // The first line in a city that has no transit whatsoever. Every stage below is
+        // the empty case of a stage the overlay system runs, and each one used to be
+        // skipped: BuildTransitModel returned early on a stop count of zero, leaving the
+        // network and the per-journey baseline null, so the scoring pass never ran and
+        // every candidate was dropped for enabling nothing. There is no harder case for
+        // the mod to get right — it is the city the player most needs advice about.
+        private static void EmptyNetworkCreditsTheFirstLine()
+        {
+            // A city with no stops and no lines. This has to be a routable network
+            // rather than a null; the graph is simply empty.
+            float[] noStops = Array.Empty<float>();
+            TransitNetwork empty = SuitabilityTransit.Build(
+                noStops, noStops, 0, new List<TransitLine>(),
+                250f, SuitabilityTransit.DefaultBoardPenaltySeconds);
+            CompactGraph? emptyGraph = empty.Graph;
+            AssertTrue(emptyGraph is not null, "an empty city still has a graph");
+            AssertTrue(emptyGraph is not null && emptyGraph.NodeCount == 0, "with nothing in it");
+            AssertTrue(
+                SuitabilityTransit.BuildInterchangeMap(noStops, noStops, Array.Empty<int>(), 0, 250f).Count == 0,
+                "and nowhere to change vehicle");
+
+            // Two zones 1200 m apart that people travel between. Neither has a stop, so
+            // the mapping against the existing network leaves both unattached — which is
+            // why the journey's baseline is "unreachable" rather than a travel time.
+            var zoneX = new[] { 0f, 1200f };
+            var zoneZ = new[] { 0f, 0f };
+            var incumbentStop = new[] { -1, -1 };
+            var incumbentWalkSq = new[] { 0f, 0f };
+            var baseline = new[] { float.MaxValue };
+
+            // The candidate: one line calling in both zones.
+            var candidateX = new[] { 0f, 1200f };
+            var candidateZ = new[] { 0f, 0f };
+            var mapped = new int[2];
+            int captured = SuitabilityTransit.RemapZones(
+                zoneX, zoneZ, 2, incumbentStop, incumbentWalkSq,
+                candidateX, candidateZ, 2, 0, 512f, mapped, new float[2]);
+
+            AssertTrue(captured == 2, "the candidate's own stops are what put these zones on the network");
+            AssertTrue(mapped[0] == 0 && mapped[1] == 1, "each zone routes through the stop standing in it");
+
+            var lines = new List<TransitLine>
+            {
+                new TransitLine
+                {
+                    m_Stops = new[] { 0, 1 },
+                    m_ExpectedWait = 200f,
+                    m_SpeedMetresPerSecond = 12f,
+                },
+            };
+
+            TransitNetwork withCandidate = SuitabilityTransit.Build(
+                candidateX, candidateZ, 2, lines, 250f, SuitabilityTransit.DefaultBoardPenaltySeconds);
+            var workspace = new DijkstraWorkspace(withCandidate.Graph.NodeCount);
+
+            float credited = SuitabilityTransit.CreditLine(
+                withCandidate, workspace,
+                new[] { mapped[0] }, new[] { mapped[1] }, new[] { 900f },
+                new[] { 0f }, baseline,
+                1, 0, 1f, 3600f, 60f, out float served);
+
+            AssertEqual(900f, served, 1f, "the line carries the journey");
+            AssertEqual(900f, credited, 1f, "and is credited all of it, because nothing carried it before");
         }
 
         // A suggested line is scored by the demand it would ENABLE, which is measured

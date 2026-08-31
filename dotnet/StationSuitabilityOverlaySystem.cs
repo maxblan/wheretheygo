@@ -2697,13 +2697,18 @@ namespace StationSuitabilityOverlay
         {
             RefreshLineHealth();
 
-            if (m_TransitStops.Count == 0)
-            {
-                m_TransitNetwork = null;
-                m_Interchanges = default;
-                return;
-            }
-
+            // A city with NO transit at all still gets a model, empty though it is.
+            // Returning early here left m_TransitNetwork and m_BaselineSeconds null,
+            // which is what ScoreCandidates guards on — so the transfer-scoring pass
+            // never ran, every candidate kept an enabled demand of zero, and the
+            // MinEnabledDemandShare gate then dropped the lot with "would improve only
+            // 0.00% of unserved travel". The mod could not suggest a first line until
+            // the player had already built one.
+            //
+            // The empty case is routable, not special: no stops means no walk edges and
+            // a graph of zero nodes, every zone maps to no stop, no pair is routable,
+            // and so every journey's baseline stays at "unreachable" — which is exactly
+            // the baseline a first line has to be credited against.
             var xs = new float[m_TransitStops.Count];
             var zs = new float[m_TransitStops.Count];
             for (int i = 0; i < m_TransitStops.Count; i++)
