@@ -63,13 +63,15 @@ namespace StationSuitabilityOverlay
     internal readonly struct CorridorEvidence
     {
         public CorridorEvidence(
-            float flow, float length, float enabledDemand, float cityTravelWeight, float trackShare)
+            float flow, float length, float enabledDemand, float cityTravelWeight,
+            float trackShare, bool demandScored)
         {
             Flow = flow;
             Length = length;
             EnabledDemand = enabledDemand;
             CityTravelWeight = cityTravelWeight;
             TrackShare = trackShare;
+            DemandScored = demandScored;
         }
 
         // Length-weighted mean demand per network edge along the corridor.
@@ -92,9 +94,43 @@ namespace StationSuitabilityOverlay
         public float EnabledDemandShare =>
             CityTravelWeight > 0f ? EnabledDemand / CityTravelWeight : 0f;
 
+        // Whether EnabledDemand was measured at all. A candidate past the transfer
+        // scoring window carries a zero that was never routed, and a zero nobody
+        // measured is not evidence that nobody would ride — the rider floor has to let
+        // it by and let flow speak instead.
+        public bool DemandScored { get; }
+
         // Share of the corridor that runs along rail that already exists. Only
         // meaningful on the rail lattice; zero everywhere else.
         public float TrackShare { get; }
+    }
+
+    // Passenger capacity of one vehicle of each mode, as the game's own prefabs report
+    // it — a whole consist, carriages included, which is what a CS2 subway's 1,080
+    // against a bus's 80 actually is.
+    //
+    // Read from the loaded prefabs rather than written down here, because the figures
+    // belong to the assets the player has installed and a table in this file would be
+    // a second copy of them that nothing keeps in step. The mod logs what it found.
+    //
+    // Indexed by ModePreset so the array and the enum cannot drift; a mode the save has
+    // no vehicle for reports zero, and every bar derived from a zero capacity is zero,
+    // which lets that mode through on its other evidence rather than silently blocking
+    // it on a number nobody could read.
+    internal readonly struct FleetCapacity
+    {
+        private readonly float[] m_ByMode;
+
+        public FleetCapacity(float[] byMode)
+        {
+            m_ByMode = byMode;
+        }
+
+        public float For(ModePreset mode)
+        {
+            int index = (int)mode;
+            return m_ByMode is not null && index >= 0 && index < m_ByMode.Length ? m_ByMode[index] : 0f;
+        }
     }
 
     // What a suggested route is grown to maximise.
@@ -344,66 +380,48 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // The travel a city must have before a reach SHARE is evidence of anything.
+        // Share of a day's boardings that fall in the peak hour, and rides per journey.
         //
-        // Every other bar in this decision is relative — the flow floors are multiples
-        // of the network's own mean edge flow, the reach bars are shares of the city's
-        // unserved travel — which was deliberate, so the bars hold on any size of city.
-        // They hold the RATIO and say nothing about the scale, and that is how a
-        // village of 1,663 people came to be offered a metro: its whole unserved pool
-        // was 1,110 weighted journeys, so the 80 the line would serve read as 7.2% and
-        // cleared the metro's 2% bar comfortably. Two trains for eighty commuters.
-        //
-        // Below this figure a reach share is measured against a pool too small to
-        // divide, so the bar is applied to this instead. The effect is an absolute floor
-        // in small cities and no change at all in large ones: with the shares below,
-        // a metro needs 400 weighted journeys and a train 800 however small the city,
-        // and both stop binding once the city's unserved travel passes 20,000 — from
-        // there the share is the tighter test again.
-        //
-        // A judgement, not a measurement: the mod has never been run on a city large
-        // enough to calibrate it. It is set where a metro's floor lands at a few
-        // hundred daily commuters, which is the order below which a CS2 metro cannot
-        // fill one train a day at any sensible headway.
-        public const float MinCityTravelForReach = 20000f;
+        // A journey in this model is one citizen's home-to-work or home-to-school trip
+        // (SuitabilityTravelDemand), which they make in both directions, so it is two
+        // boardings. The peak share is the ordinary commuting shape — a fifth of the
+        // day's travel in the busiest hour. Together they turn a count of journeys into
+        // the load a line actually has to carry when it is busiest.
+        public const float PeakShareOfDay = 0.2f;
+        public const float RidesPerJourney = 2f;
 
-        // The pool any demand share is measured against. One owner, because the mode
-        // decision and the acceptance gate in StationSuitabilityOverlaySystem have to
-        // agree about what a share is a share OF — they were written apart, and only
-        // the mode decision got the scale floor, so a tram nobody would ride sailed
-        // through acceptance on 1.1% of a pool of 568.
-        public static float DemandPool(float cityTravelWeight)
+        // Journeys needed to fill one vehicle of this capacity at the peak.
+        //
+        // This is what replaced a guessed scale floor. Every bar in the mode decision
+        // is relative — flow floors are multiples of the network's own mean edge, reach
+        // bars are shares of the city's unserved travel — which holds the RATIO on any
+        // size of city and says nothing about whether the vehicles would be full. So a
+        // village of 1,663 was offered a metro for 80 journeys, and a town of 6,120 one
+        // for 484: 484 journeys is about 970 boardings a DAY, and a CS2 subway train
+        // holds 1,080. The whole day's ridership fitted in one train.
+        //
+        // Anchored on the game's own vehicle capacities, read off the loaded prefabs
+        // rather than typed in here, so this scales with whatever assets are installed.
+        public static float RidersToFillOne(float vehicleCapacity)
         {
-            return Math.Max(cityTravelWeight, MinCityTravelForReach);
+            float perJourney = PeakShareOfDay * RidesPerJourney;
+            return perJourney > 0f ? vehicleCapacity / perJourney : 0f;
         }
 
-        // Demand a mode must show before its FLOW evidence counts for anything.
+        // Journeys a MODE must show before it may be suggested, whatever its flow.
         //
         // NECESSARY, where MinEnabledDemandShareFor is SUFFICIENT: that one is a second
-        // way to clear the bar, this one is a condition on clearing it at all. Read as
-        // a share of DemandPool, so like every bar here it is a share in a real city
-        // and an absolute number of journeys in a village.
+        // way to clear the bar, this is a condition on clearing it at all. A mode whose
+        // vehicles would run near-empty is the wrong mode, however busy the road under
+        // it or however large a share of a small city it would serve.
         //
-        // Only the tram has one. Corridor flow is traffic on the road, not people who
-        // would ride, and the two come apart hardest on a corridor that is the only way
-        // through: the single road west out of Valmare carried 129 per edge against a
-        // city mean of 67 purely because every westbound journey funnels down it, and
-        // 129 over the tram's 1.5x multiple bought a tram whose whole enabled demand
-        // was SIX journeys, ending at a groundwater pump station.
-        //
-        // A bus keeps no floor, which is what makes every road corridor yield a usable
-        // suggestion; that corridor becoming a bus rather than a tram is the right
-        // answer, and the acceptance gate then decides whether it is worth offering at
-        // all. The rail modes need none: their reach bars already answer this, and a
-        // corridor carrying nine times the typical edge is a train whatever the
-        // transfer model has managed to credit it with.
-        public static float MinDemandShareToRun(ModePreset mode)
+        // The bus is floorless here, which is what keeps every road corridor yielding a
+        // usable suggestion — and is what lets an over-ambitious rail alignment come
+        // back as a bus rather than as nothing. Whether that bus is worth offering is
+        // the acceptance gate's decision, and it uses RidersToFillOne directly.
+        public static float MinRidersFor(ModePreset mode, float vehicleCapacity)
         {
-            switch (mode)
-            {
-                case ModePreset.Tram: return 0.005f;
-                default: return 0f;
-            }
+            return mode == ModePreset.Bus ? 0f : RidersToFillOne(vehicleCapacity);
         }
 
         // How much of the corridor has to run along existing track before it counts as
@@ -424,6 +442,7 @@ namespace StationSuitabilityOverlay
             ModePreset tracedMode,
             CorridorEvidence evidence,
             float referenceFlow,
+            FleetCapacity capacities,
             out ModePreset mode,
             out ModeRejection rejection)
         {
@@ -440,14 +459,15 @@ namespace StationSuitabilityOverlay
                     reachBar *= OnTrackReachRelief;
                 }
 
-                // Against the larger of the city's own pool and the scale below which a
-                // share means nothing, so the bar is a share in a real city and an
-                // absolute number of journeys in a village.
-                float pool = DemandPool(evidence.CityTravelWeight);
-                bool byReach = reachBar > 0f && evidence.EnabledDemand >= reachBar * pool;
+                bool byReach = reachBar > 0f && evidence.EnabledDemandShare >= reachBar;
 
-                // Whatever the flow says, a mode nobody would ride is not that mode.
-                bool enoughRiders = evidence.EnabledDemand >= MinDemandShareToRun(option) * pool;
+                // Whatever the flow or the share says, a mode whose vehicles would run
+                // near-empty is not that mode. Skipped when the demand was never
+                // measured: an unscored candidate ranks on flow alone, and reading its
+                // zero as "nobody would ride" would reject it for a measurement nobody
+                // took.
+                bool enoughRiders = !evidence.DemandScored
+                    || evidence.EnabledDemand >= MinRidersFor(option, capacities.For(option));
 
                 metSomeBar |= (byFlow || byReach) && enoughRiders;
                 if ((byFlow || byReach) && enoughRiders && evidence.Length >= MinLengthFor(option))

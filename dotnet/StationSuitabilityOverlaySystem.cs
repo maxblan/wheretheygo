@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using Colossal.Entities;
 using Game;
 using Game.Common;
 using Game.Companies;
@@ -427,6 +428,11 @@ namespace StationSuitabilityOverlay
         // really 17% of the demand it was competing for. Two different pools, one
         // ratio.
         private float m_UnservedTravelWeight;
+        private EntityQuery m_VehiclePrefabQuery;
+        // Capacity per mode, read once from the prefabs. Prefabs do not change while a
+        // save is loaded, so this is built on the first compute and kept; a reload
+        // rebuilds it with the rest of the system.
+        private float[]? m_FleetCapacities;
         private bool m_GraphDirty = true;
         private RouteGoal m_LastObjective;
         private int m_LastRouteCount;
@@ -657,6 +663,15 @@ namespace StationSuitabilityOverlay
             {
                 All = new[] { ComponentType.ReadOnly<Edge>(), ComponentType.ReadOnly<Curve>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
+            });
+
+            // Vehicle PREFABS, not vehicles: the capacity of a mode is a property of
+            // the assets installed, and has to be readable before the player has built
+            // a single line of that mode.
+            m_VehiclePrefabQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<PublicTransportVehicleData>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>() },
             });
 
             m_NodeChangedQuery = ChangedQuery(ComponentType.ReadOnly<Node>());
@@ -3036,6 +3051,88 @@ namespace StationSuitabilityOverlay
             return longest;
         }
 
+        // Passenger capacity of one vehicle of each mode, taken from the game's own
+        // prefabs. This is what every rider floor is derived from, so it must be the
+        // real figure and not a table in this mod that nothing keeps in step.
+        //
+        // A consist is summed the way TransportVehicleSelectData.CreateVehicle does it
+        // (decompiled): the base vehicle's own capacity plus, for every entry in its
+        // VehicleCarriages buffer, that carriage's capacity times the MINIMUM count —
+        // `m_Count.x`, which is the game's own choice in that loop. The minimum, not the
+        // maximum, because a floor must be what the smallest sensible train carries;
+        // sizing it off the longest consist the player could couple would demand demand
+        // for a service nobody has to run.
+        //
+        // The largest vehicle of each type wins, since that is what the player would
+        // reach for on a line worth building.
+        private FleetCapacity ReadFleetCapacities()
+        {
+            if (m_FleetCapacities is not null)
+            {
+                return new FleetCapacity(m_FleetCapacities);
+            }
+
+            var byMode = new float[TransitModes.All.Length];
+            using var entities = m_VehiclePrefabQuery.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Entity prefab = entities[i];
+                if (!EntityManager.TryGetComponent(prefab, out PublicTransportVehicleData vehicle))
+                {
+                    continue;
+                }
+
+                int capacity = vehicle.m_PassengerCapacity;
+                if (EntityManager.TryGetBuffer(prefab, isReadOnly: true, out DynamicBuffer<VehicleCarriageElement> carriages))
+                {
+                    for (int c = 0; c < carriages.Length; c++)
+                    {
+                        VehicleCarriageElement carriage = carriages[c];
+                        if (carriage.m_Prefab == Entity.Null
+                            || !EntityManager.TryGetComponent(carriage.m_Prefab, out PublicTransportVehicleData unit))
+                        {
+                            continue;
+                        }
+
+                        capacity += unit.m_PassengerCapacity * carriage.m_Count.x;
+                    }
+                }
+
+                for (int m = 0; m < TransitModes.All.Length; m++)
+                {
+                    ModePreset mode = TransitModes.All[m];
+                    if (SuitabilityInputs.TransportTypeOf(mode) != vehicle.m_TransportType)
+                    {
+                        continue;
+                    }
+
+                    int index = (int)mode;
+                    if (index >= 0 && index < byMode.Length)
+                    {
+                        byMode[index] = math.max(byMode[index], capacity);
+                    }
+                }
+            }
+
+            m_FleetCapacities = byMode;
+
+            var report = new StringBuilder("Fleet capacities read from the loaded prefabs (one vehicle, carriages included): ");
+            for (int m = 0; m < TransitModes.All.Length; m++)
+            {
+                ModePreset mode = TransitModes.All[m];
+                float capacity = byMode[(int)mode];
+                _ = report.Append(mode.ToString()).Append(' ')
+                    .Append(capacity.ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(" (needs ")
+                    .Append(TransitModes.MinRidersFor(mode, capacity).ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(" journeys), ");
+            }
+
+            _ = report.Append("a capacity of 0 means no vehicle of that mode is installed, and its rider floor drops out.");
+            Mod.Log.Info(report.ToString());
+            return new FleetCapacity(byMode);
+        }
+
         // Seconds spent walking to a stop that far away. The model's own walking speed,
         // the one it already uses between stops.
         private static float WalkSeconds(float distanceSq)
@@ -4009,27 +4106,6 @@ namespace StationSuitabilityOverlay
             return order;
         }
 
-        // A suggestion has to make something better. Below this share of the travel the
-        // city still cannot carry, a line is noise rather than a recommendation.
-        //
-        // Measured, not guessed: over one session 37 of 101 accepted suggestions
-        // enabled exactly NOTHING, and the values that did appear fell into two groups
-        // with a clear gap between them — 0, 1, 2, 4, 6, 7, 8 against 38, 59, 84, 115,
-        // 291, 742 out of an unserved weight of 13709. This sits in that gap (0.06% to
-        // 0.28%) rather than on top of either group.
-        //
-        // It is also what makes the round-based rescoring mean anything. A candidate
-        // shadowing a line already accepted this round correctly rescores to zero
-        // enabled demand — that part worked. Nothing acted on it, so three trams along
-        // the same corridor were all offered, each claiming to unlock nothing.
-        //
-        // The scale floor it is now read against (TransitModes.DemandPool) does not
-        // move it away from that measurement — it lands inside the same gap. Against
-        // the 13709 of the session above the bare share asked for 13.7 journeys; the
-        // floor asks for 20. Both sit between the 8 of the worthless group and the 38
-        // of the useful one. What the floor changes is the small city the measurement
-        // never covered, where the bare share asked for well under one journey.
-        private const float MinEnabledDemandShare = 0.001f;
 
         // Why the candidates that did not become suggestions were turned down, for the
         // one summary line the log is read by.
@@ -4106,39 +4182,37 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            // Only when the denominator is known. An unmeasured pool is not the
-            // same as an empty one, and rejecting against a zero would suppress
-            // every suggestion on the refresh before travel demand first lands.
+            // The least a suggestion may be worth: enough journeys to fill one BUS at
+            // the peak, the smallest vehicle the game has. A line that cannot manage
+            // that is not a line, whatever mode it would run as — and the bus is the
+            // one mode with no rider floor of its own, precisely so an over-ambitious
+            // alignment can come back as one, so this is where that bus is judged.
             //
-            // Measured against TransitModes.DemandPool, not against the city's own
-            // unserved weight — the same floor the mode bars use, and for the same
-            // reason. As a bare share this bar could not reject anything in a small
-            // city: a tram enabling SIX journeys out of an unserved 568 read as
-            // 1.1%, eleven times the bar, and was offered as the one suggestion in
-            // Valmare. The floor turns 0.1% into twenty journeys until the city has
-            // twenty thousand of them to share out.
-            float pool = TransitModes.DemandPool(m_UnservedTravelWeight);
-            float reachShare = m_UnservedTravelWeight > 0f
-                ? candidate.EnabledDemand / pool
-                : float.MaxValue;
-
-            // And only when this candidate's demand was actually MEASURED. A
-            // candidate past the transfer scoring window keeps a demand of zero
-            // without ever being routed, and this gate read that zero as "improves
-            // nothing" and dropped it — which is not what ScoreCandidates says
-            // happens to them, and made the corridor-flow bar above unreachable
-            // rather than the alternative kind of evidence it is documented to be.
-            if (candidate.DemandScored && reachShare < MinEnabledDemandShare)
+            // This replaced a measured bar of 0.1% of the city's unserved travel. The
+            // measurement was real — over one session 37 of 101 accepted suggestions
+            // enabled exactly nothing, and the rest split into 0,1,2,4,6,7,8 against
+            // 38,59,84,115,291,742 out of an unserved 13709, with the bar set in that
+            // gap. But a SHARE of a small city is not a bar at all: with 568 journeys
+            // unserved it asked for 0.6 of one, which is how a tram enabling SIX
+            // journeys came to be the single suggestion offered in Valmare. One bus
+            // load is 200 journeys, above the 38-115 that measurement called useful —
+            // deliberately, because those lines would have filled a fifth of a bus at
+            // the peak. It could separate worthless from less worthless; it never
+            // showed the upper group was worth building.
+            //
+            // Only when the demand was MEASURED. A candidate past the transfer scoring
+            // window keeps a zero it was never routed for, and reading that as
+            // "improves nothing" dropped it for a measurement nobody took.
+            float busLoad = TransitModes.RidersToFillOne(ReadFleetCapacities().For(ModePreset.Bus));
+            if (candidate.DemandScored && candidate.EnabledDemand < busLoad)
             {
                 tally.ImprovedTooLittle++;
                 Mod.Log.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, would newly serve " +
-                    $"{(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} journeys, under the " +
-                    $"{(MinEnabledDemandShare * pool).ToString("F0", CultureInfo.InvariantCulture)} a suggestion has to be worth " +
-                    $"({(MinEnabledDemandShare * 100f).ToString("F2", CultureInfo.InvariantCulture)}% of " +
-                    $"{(pool).ToString("F0", CultureInfo.InvariantCulture)}; this city has " +
-                    $"{(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} unserved)");
+                    $"{(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} journeys against the " +
+                    $"{(busLoad).ToString("F0", CultureInfo.InvariantCulture)} it takes to fill one bus at the peak " +
+                    $"(this city still has {(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys unserved)");
                 return false;
             }
 
@@ -4266,9 +4340,10 @@ namespace StationSuitabilityOverlay
                 candidate.Length,
                 candidate.EnabledDemand,
                 m_UnservedTravelWeight,
-                TrackShareOf(candidate));
+                TrackShareOf(candidate),
+                candidate.DemandScored);
             if (TransitModes.ChooseMode(candidate.Network, candidate.TracedMode, evidence, networkReference,
-                    out ModePreset mode, out ModeRejection why))
+                    ReadFleetCapacities(), out ModePreset mode, out ModeRejection why))
             {
                 // Spacing is mode-specific, so a changed mode needs its stops back.
                 if (mode != candidate.Mode)
@@ -4294,7 +4369,8 @@ namespace StationSuitabilityOverlay
             // actually run it.
             SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
                 m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1],
-                roadReference, (point, mode) => ScoreForMode(point, gridSize, mode), m_Interchanges, scratch);
+                roadReference, ReadFleetCapacities(),
+                (point, mode) => ScoreForMode(point, gridSize, mode), m_Interchanges, scratch);
 
             if (onRoad is null)
             {
@@ -4657,6 +4733,7 @@ namespace StationSuitabilityOverlay
                     $"Route #{(i + 1).ToString(CultureInfo.InvariantCulture)}: {route.Mode}, {(route.Length / 1000f).ToString("F2", CultureInfo.InvariantCulture)} km, {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops, " +
                     $"corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"enabledDemand={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
+                    $"{(route.BentThroughHub ? "bent through an interchange, " : string.Empty)}" +
                     $"({((int)from.x).ToString(CultureInfo.InvariantCulture)},{((int)from.y).ToString(CultureInfo.InvariantCulture)}) -> ({((int)to.x).ToString(CultureInfo.InvariantCulture)},{((int)to.y).ToString(CultureInfo.InvariantCulture)})");
             }
         }

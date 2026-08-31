@@ -30,6 +30,11 @@ namespace StationSuitabilityOverlay
         // Which network traced this alignment, and therefore which modes could
         // actually run on it. A tunnel path cannot host a bus.
         public RouteNetwork Network;
+        // Whether the alignment was re-traced through an interchange it passes near.
+        // Recorded so a corner in the drawn line can be attributed — a bend puts a
+        // genuine corner at the hub, and telling that apart from a lattice staircase
+        // the simplifier failed to straighten is otherwise guesswork.
+        public bool BentThroughHub;
         // The mode whose lattice traced this alignment. A lattice path is only valid
         // for the cost model that produced it, so this is the only mode it may be
         // suggested as — see TransitModes.ModesForTraced. Meaningless for a road
@@ -352,7 +357,8 @@ namespace StationSuitabilityOverlay
                 // Bend the middle of the alignment through an interchange if one is
                 // worth reaching. Aiming the ENDS at a hub has never helped a line that
                 // simply passes a station two kilometres off to one side.
-                if (BendThroughInterchange(network, hubs, forcedMode, from, to, maxRouteLength, scratch))
+                bool wasBent = BendThroughInterchange(network, hubs, forcedMode, from, to, maxRouteLength, scratch);
+                if (wasBent)
                 {
                     bent++;
                 }
@@ -362,6 +368,7 @@ namespace StationSuitabilityOverlay
                     Network = network.Network,
                     Mode = forcedMode,
                     TracedMode = forcedMode,
+                    BentThroughHub = wasBent,
                 };
                 network.MaterialisePath(scratch, route.Path);
 
@@ -530,6 +537,31 @@ namespace StationSuitabilityOverlay
                 {
                     return false;
                 }
+            }
+
+            // And the bend must not be a hairpin. Sharing no node is not the same as
+            // not turning back: a hub square off to one side gives two legs that meet
+            // at a sharp V, which the length bound alone permits on a long enough line
+            // — 1.25x the direct distance buys a wide detour or a narrow spike equally.
+            // The same directness test that catches a grown corridor curling into a
+            // ring catches this.
+            float endToEnd = 0f;
+            if (head.Count > 0 && tail.Count > 0)
+            {
+                int first = head[0];
+                int last = tail[tail.Count - 1];
+                if (first >= 0 && last >= 0
+                    && first < network.NodePositionsX.Length && last < network.NodePositionsX.Length)
+                {
+                    float ex = network.NodePositionsX[first] - network.NodePositionsX[last];
+                    float ez = network.NodePositionsZ[first] - network.NodePositionsZ[last];
+                    endToEnd = math.sqrt((ex * ex) + (ez * ez));
+                }
+            }
+
+            if (!SuitabilityGraphMath.IsDirectEnough(endToEnd, bentLength))
+            {
+                return false;
             }
 
             path.Clear();
@@ -858,6 +890,7 @@ namespace StationSuitabilityOverlay
             float2 from,
             float2 to,
             float referenceFlow,
+            FleetCapacity capacities,
             System.Func<float2, ModePreset, float> scoreAt,
             InterchangeMap hubs,
             List<int> scratch)
@@ -886,11 +919,15 @@ namespace StationSuitabilityOverlay
             route.Length = length;
             route.CapturedFlow = roads.FlowAlong(scratch);
 
-            // No track share and no enabled demand: a road re-trace is judged on flow,
-            // which is the only evidence a street corridor ever had.
-            var evidence = new CorridorEvidence(route.CapturedFlow, route.Length, 0f, 0f, 0f);
+            // No track share, and the demand is deliberately marked UNMEASURED rather
+            // than zero: the caller carries the original candidate's enabled demand
+            // across afterwards, because the re-trace is the same journey on a
+            // different alignment. Passing a measured zero here would let the rider
+            // floor reject a road mode for a figure that has not been taken yet.
+            var evidence = new CorridorEvidence(
+                route.CapturedFlow, route.Length, 0f, 0f, 0f, demandScored: false);
             if (!TransitModes.ChooseMode(RouteNetwork.Road, route.TracedMode, evidence, referenceFlow,
-                    out ModePreset mode, out ModeRejection why))
+                    capacities, out ModePreset mode, out ModeRejection why))
             {
                 Mod.Log.Info(
                     $"Re-trace on road found a {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m path " +
