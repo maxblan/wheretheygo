@@ -85,6 +85,13 @@ namespace StationSuitabilityOverlay
             return cell;
         }
 
+        // Centre of a cell in world space — the inverse of WorldToCell, to within the
+        // half-cell the floor above threw away.
+        public static float2 CellCentre(int2 cell, float2 worldMin, float cellSize)
+        {
+            return worldMin + ((new float2(cell.x, cell.y) + 0.5f) * cellSize);
+        }
+
         public static PointBuckets BuildBuckets(
             List<float2> positions,
             List<float>? weights,

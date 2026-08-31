@@ -62,11 +62,13 @@ namespace StationSuitabilityOverlay
     // justified by evidence, and which evidence counts differs by mode.
     internal readonly struct CorridorEvidence
     {
-        public CorridorEvidence(float flow, float length, float enabledDemandShare, float trackShare)
+        public CorridorEvidence(
+            float flow, float length, float enabledDemand, float cityTravelWeight, float trackShare)
         {
             Flow = flow;
             Length = length;
-            EnabledDemandShare = enabledDemandShare;
+            EnabledDemand = enabledDemand;
+            CityTravelWeight = cityTravelWeight;
             TrackShare = trackShare;
         }
 
@@ -75,9 +77,20 @@ namespace StationSuitabilityOverlay
 
         public float Length { get; }
 
-        // Share of the city's whole travel weight this line would put on the network,
-        // counting journeys it forms any leg of. Zero before transfer scoring has run.
-        public float EnabledDemandShare { get; }
+        // Journey weight this line would newly serve, counting journeys it forms any
+        // leg of. Zero before transfer scoring has run. Same units as
+        // CityTravelWeight: weighted one-way journeys, a commute counting 1 and a
+        // school run 0.6.
+        public float EnabledDemand { get; }
+
+        // The pool EnabledDemand was taken out of — the travel the city still cannot
+        // carry. Carried alongside rather than divided out at the call site so the two
+        // cannot drift apart, and because a share alone cannot say how big the city is.
+        public float CityTravelWeight { get; }
+
+        // Share of that pool. Zero before transfer scoring has run.
+        public float EnabledDemandShare =>
+            CityTravelWeight > 0f ? EnabledDemand / CityTravelWeight : 0f;
 
         // Share of the corridor that runs along rail that already exists. Only
         // meaningful on the rail lattice; zero everywhere else.
@@ -235,8 +248,12 @@ namespace StationSuitabilityOverlay
         }
 
         // Modes a given alignment can carry, best capacity first. Choosing among these
-        // is what lets an under-used rail corridor come back as something feasible
-        // instead of being dropped for not justifying a metro.
+        // is what lets an under-used road corridor come back as something feasible
+        // instead of being dropped for not justifying a tram.
+        //
+        // Streets carry no mode-specific cost, so a road corridor is genuinely open to
+        // either mode that can drive it. A LATTICE alignment is not: see
+        // ModesForTraced.
         public static ModePreset[] ModesFor(RouteNetwork network)
         {
             switch (network)
@@ -250,6 +267,32 @@ namespace StationSuitabilityOverlay
                     // road corridor always yields a usable suggestion.
                     return new[] { ModePreset.Tram, ModePreset.Bus };
             }
+        }
+
+        // Modes an alignment may be SUGGESTED as, given the mode whose lattice traced
+        // it. This is narrower than ModesFor on the lattices, and deliberately so.
+        //
+        // A lattice path is only valid for the cost model that produced it.
+        // SuitabilityLattice.RailCostScale makes existing track 0.35 against 1.6 for
+        // fresh ground on the TRAIN lattice — a 4.6x preference — because heavy rail
+        // reuses track. The metro lattice is nearly indifferent (0.9 against 1.0)
+        // because a tunnel goes where it likes. So a train-lattice path follows the
+        // railway around the countryside, and a metro-lattice path between the same two
+        // places runs more or less straight between them. They are different shapes for
+        // different reasons.
+        //
+        // Letting a rail alignment pick either mode by LENGTH therefore relabelled
+        // track-hugging train paths as metros: observed in Valmare as a 3.4 km "U-Bahn"
+        // taking a mainline detour around open farmland between two villages a
+        // kilometre apart, chosen because 3392 m clears the metro minimum and falls far
+        // under the train's. That relabelling was a workaround for the metro lattice
+        // never producing candidates at all — BuildDirectForNetwork counted its budget
+        // against the shared output list, so train filled it and metro never ran. With
+        // that fixed the metro lattice traces its own alignments, and the workaround is
+        // free to go.
+        public static ModePreset[] ModesForTraced(RouteNetwork network, ModePreset tracedMode)
+        {
+            return network == RouteNetwork.Road ? ModesFor(network) : new[] { tracedMode };
         }
 
         // Minimum length of the least demanding mode this network can host.
@@ -285,11 +328,12 @@ namespace StationSuitabilityOverlay
         // empty street because the line happens to touch a busy interchange.
         //
         // The train's bar is the higher of the two: it is much the larger commitment.
-        // Giving reach to the train ALONE was worse than not having it — ModesFor tries
-        // the biggest mode first, so every rail corridor over the train's minimum
-        // length became a train whatever its scale, and a 4 km three-stop line was
-        // suggested as heavy rail. With the metro able to clear the same kind of bar,
-        // LENGTH is what separates them, which is what it should have been all along.
+        // Both rail modes need one because each lattice now proposes only its own mode
+        // (ModesForTraced), so a metro alignment that cannot clear the metro bar is
+        // rejected rather than falling through to the other rail mode. Length used to
+        // separate the two, which was only ever a stand-in for the lattice a path came
+        // from — and it separated them wrongly, labelling track-hugging train paths as
+        // metros.
         public static float MinEnabledDemandShareFor(ModePreset mode)
         {
             switch (mode)
@@ -299,6 +343,29 @@ namespace StationSuitabilityOverlay
                 default: return 0f;
             }
         }
+
+        // The travel a city must have before a reach SHARE is evidence of anything.
+        //
+        // Every other bar in this decision is relative — the flow floors are multiples
+        // of the network's own mean edge flow, the reach bars are shares of the city's
+        // unserved travel — which was deliberate, so the bars hold on any size of city.
+        // They hold the RATIO and say nothing about the scale, and that is how a
+        // village of 1,663 people came to be offered a metro: its whole unserved pool
+        // was 1,110 weighted journeys, so the 80 the line would serve read as 7.2% and
+        // cleared the metro's 2% bar comfortably. Two trains for eighty commuters.
+        //
+        // Below this figure a reach share is measured against a pool too small to
+        // divide, so the bar is applied to this instead. The effect is an absolute floor
+        // in small cities and no change at all in large ones: with the shares below,
+        // a metro needs 400 weighted journeys and a train 800 however small the city,
+        // and both stop binding once the city's unserved travel passes 20,000 — from
+        // there the share is the tighter test again.
+        //
+        // A judgement, not a measurement: the mod has never been run on a city large
+        // enough to calibrate it. It is set where a metro's floor lands at a few
+        // hundred daily commuters, which is the order below which a CS2 metro cannot
+        // fill one train a day at any sensible headway.
+        public const float MinCityTravelForReach = 20000f;
 
         // How much of the corridor has to run along existing track before it counts as
         // extending the rail network rather than laying a new one.
@@ -315,12 +382,13 @@ namespace StationSuitabilityOverlay
         // and says which test did the rejecting.
         public static bool ChooseMode(
             RouteNetwork network,
+            ModePreset tracedMode,
             CorridorEvidence evidence,
             float referenceFlow,
             out ModePreset mode,
             out ModeRejection rejection)
         {
-            ModePreset[] options = ModesFor(network);
+            ModePreset[] options = ModesForTraced(network, tracedMode);
             bool metSomeBar = false;
             for (int i = 0; i < options.Length; i++)
             {
@@ -333,7 +401,11 @@ namespace StationSuitabilityOverlay
                     reachBar *= OnTrackReachRelief;
                 }
 
-                bool byReach = reachBar > 0f && evidence.EnabledDemandShare >= reachBar;
+                // Against the larger of the city's own pool and the scale below which a
+                // share means nothing, so the bar is a share in a real city and an
+                // absolute number of journeys in a village.
+                float pool = Math.Max(evidence.CityTravelWeight, MinCityTravelForReach);
+                bool byReach = reachBar > 0f && evidence.EnabledDemand >= reachBar * pool;
 
                 metSomeBar |= byFlow || byReach;
                 if ((byFlow || byReach) && evidence.Length >= MinLengthFor(option))

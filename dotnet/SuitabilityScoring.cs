@@ -218,8 +218,13 @@ namespace StationSuitabilityOverlay
         // floor with it, so exactly the case that needs skipping would skip nothing.
         // A line where nothing at all scores keeps every window instead of losing its
         // stops entirely.
+        // `mustCall[i]` marks a window the line may not run past — today, one where it
+        // passes an existing served stop. Such a call is worth more than the tile it
+        // stands on: it is what turns two lines into a network, and the score floor
+        // could otherwise drop it, leaving a suggestion running past a station without
+        // stopping there. Termini are exempt for the same reason and always were.
         public static void SelectCallingPoints(
-            float[] scores, int count, float floorShare, float[] scratch, bool[] keep)
+            float[] scores, int count, float floorShare, float[] scratch, bool[]? mustCall, bool[] keep)
         {
             if (scores is null || keep is null || count <= 0)
             {
@@ -229,7 +234,8 @@ namespace StationSuitabilityOverlay
             float floor = PositivePercentile(scores, count, 0.5f, scratch) * floorShare;
             for (int i = 0; i < count; i++)
             {
-                keep[i] = i == 0 || i == count - 1 || scores[i] >= floor;
+                bool pinned = mustCall is not null && i < mustCall.Length && mustCall[i];
+                keep[i] = i == 0 || i == count - 1 || pinned || scores[i] >= floor;
             }
         }
 

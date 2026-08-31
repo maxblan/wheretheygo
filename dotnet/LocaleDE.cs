@@ -159,7 +159,7 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[Meta]", "{0} % ausgelastet, {1} Fz., {2} Haltestellen" },
                 { "StationSuitabilityOverlay.Panel[DataBasis]", "Datenbasis" },
                 { "StationSuitabilityOverlay.Panel[DataBasisValue]", "{0} h von {1} h \u00b7 {2} Messungen" },
-                { "StationSuitabilityOverlay.Panel[DataBasisEmpty]", "noch nichts erfasst \u2014 Stadt eine Minute laufen lassen" },
+                { "StationSuitabilityOverlay.Panel[DataBasisEmpty]", "noch keine Linien \u2014 Messungen beginnen mit deiner ersten" },
                 { "StationSuitabilityOverlay.Panel[Basis]", "Mittel über {0} h, {1} Messungen, Spitze {2} %" },
                 { "StationSuitabilityOverlay.Panel[BasisSingle]", "bisher nur eine Messung" },
                 { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },

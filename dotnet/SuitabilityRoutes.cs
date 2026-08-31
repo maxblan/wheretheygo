@@ -20,10 +20,21 @@ namespace StationSuitabilityOverlay
         // magnitude larger than CapturedFlow and the two must never be compared,
         // combined, or substituted for one another.
         public float EnabledDemand;
+        // Whether EnabledDemand was ever measured. A candidate past the transfer
+        // scoring window is left at zero without being routed, and a zero that was
+        // never measured is not evidence of anything — it must not be read as "this
+        // line would improve nothing", which is how every unscored candidate came to be
+        // dropped by a bar that was meant to reject only measured zeroes.
+        public bool DemandScored;
         public float Length;
         // Which network traced this alignment, and therefore which modes could
         // actually run on it. A tunnel path cannot host a bus.
         public RouteNetwork Network;
+        // The mode whose lattice traced this alignment. A lattice path is only valid
+        // for the cost model that produced it, so this is the only mode it may be
+        // suggested as — see TransitModes.ModesForTraced. Meaningless for a road
+        // corridor, where growth carries no mode-specific cost.
+        public ModePreset TracedMode;
         // Fleet the line would need to hold its assumed headway.
         public int Vehicles;
     }
@@ -87,10 +98,12 @@ namespace StationSuitabilityOverlay
             System.Func<float2, ModePreset, float> scoreAt,
             InterchangeMap hubs,
             out int grown,
-            out int tooShort)
+            out int tooShort,
+            out int atInterchange)
         {
             grown = 0;
             tooShort = 0;
+            atInterchange = 0;
             int wandered = 0;
             if (network?.Graph is null || network.EdgeFlow is null || network.EdgeCount == 0)
             {
@@ -182,11 +195,16 @@ namespace StationSuitabilityOverlay
 
                 grown++;
                 SuggestedRoute? candidate = BuildCandidate(
-                    network, corridor, meanFlow, forcedMode, scoreAt, hubs, out bool shorterThanAnyMode);
+                    network, corridor, meanFlow, forcedMode, scoreAt, hubs,
+                    out bool shorterThanAnyMode, out int aimedAtInterchange);
                 if (candidate is not null)
                 {
                     output.Add(candidate);
                     added++;
+                    // Counted only once the corridor becomes a candidate, so the figure
+                    // cannot exceed the number of candidates and read as a bug in the
+                    // aiming rather than as corridors being discarded afterwards.
+                    atInterchange += aimedAtInterchange;
                 }
                 else if (shorterThanAnyMode)
                 {
@@ -273,9 +291,19 @@ namespace StationSuitabilityOverlay
             var scratch = new List<int>();
             var takenFrom = new List<float2>();
             var takenTo = new List<float2>();
-            int budget = maxRoutes * 4;
 
-            for (int slot = 0; slot < order.Count && output.Count < budget; slot++)
+            // Counted PER NETWORK, in a local, not against the shared output list —
+            // exactly as BuildForNetwork does and says. Testing output.Count made one
+            // shared allowance that whichever network ran first consumed: BuildRoutes
+            // calls road, train, metro then water into the same list, train filled the
+            // budget, and metro and ferry found it spent before their first iteration.
+            // The log said so on every cycle — `metro pairs tried=0 ferry pairs
+            // tried=0` beside a populated water lattice and 38 cross-water journeys —
+            // and no metro or ferry could be suggested however much demand there was.
+            int budget = maxRoutes * 4;
+            int added = 0;
+
+            for (int slot = 0; slot < order.Count && added < budget; slot++)
             {
                 ZoneFlow flow = flows[order[slot]];
                 if (flow.m_Weight <= 0f)
@@ -320,7 +348,12 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                var route = new SuggestedRoute { Network = network.Network, Mode = forcedMode };
+                var route = new SuggestedRoute
+                {
+                    Network = network.Network,
+                    Mode = forcedMode,
+                    TracedMode = forcedMode,
+                };
                 network.MaterialisePath(scratch, route.Path);
 
                 // A shortest path on a uniform grid is a minimal staircase; straightening
@@ -330,7 +363,14 @@ namespace StationSuitabilityOverlay
                 route.Length = PathLength(route.Path);
                 route.CapturedFlow = network.FlowAlong(scratch);
 
-                if (route.Length < TransitModes.ShortestModeLength(network.Network))
+                // The traced mode's OWN minimum, not the shortest any mode on this
+                // network could use. Since a lattice alignment may only be suggested as
+                // the mode that traced it (TransitModes.ModesForTraced), measuring it
+                // against the other rail mode's floor only carried paths forward that
+                // ChooseMode was then certain to reject: 1320 of 1329 train paths in one
+                // cycle were under the 3200 m metro floor, and every one of the nine
+                // survivors was under the train's own 10000 m.
+                if (route.Length < TransitModes.MinLengthFor(forcedMode))
                 {
                     tooShort++;
                     continue;
@@ -345,6 +385,7 @@ namespace StationSuitabilityOverlay
                 takenFrom.Add(fromPoint);
                 takenTo.Add(toPoint);
                 output.Add(route);
+                added++;
                 atInterchange += aimedAtInterchange;
             }
         }
@@ -450,21 +491,40 @@ namespace StationSuitabilityOverlay
             ModePreset? forcedMode,
             System.Func<float2, ModePreset, float> scoreAt,
             InterchangeMap hubs,
-            out bool shorterThanAnyMode)
+            out bool shorterThanAnyMode,
+            out int aimedAtInterchange)
         {
             shorterThanAnyMode = false;
+            ModePreset mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
             var route = new SuggestedRoute
             {
                 CapturedFlow = corridor.CapturedFlow,
                 Length = corridor.Length,
                 Network = network.Network,
+                Mode = mode,
+                TracedMode = mode,
             };
+
+            // A terminus is where every rider must finish or change vehicle, so it is
+            // the most valuable point on the line to put within a walk of another mode.
+            // The lattices have aimed their ends at a hub since SnapToInterchange was
+            // written; a grown corridor's ends were wherever growth happened to stop,
+            // because they are an OUTPUT of flow peeling rather than an input.
+            int extended = AimEndsAtInterchange(network, hubs, route.Mode, corridor.Nodes);
+            aimedAtInterchange = extended;
+
 
             // Follow each edge's real centreline where there is one, so a street
             // route stays on the street instead of cutting every corner.
             network.MaterialisePath(corridor.Nodes, route.Path);
 
-            route.Mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
+            // Only when the ends actually moved: corridor.Length is the graph's own
+            // edge total, and re-measuring the materialised polyline for every
+            // candidate would quietly change every length floor at once.
+            if (extended > 0)
+            {
+                route.Length = PathLength(route.Path);
+            }
 
             // Lattice corridors are 8-connected staircases; straighten them before
             // measuring or drawing so a tunnel does not zig-zag.
@@ -490,6 +550,108 @@ namespace StationSuitabilityOverlay
 
             PlaceStops(route, route.Mode, scoreAt, hubs);
             return route.Stops.Count >= 2 ? route : null;
+        }
+
+        // How far along the streets a corridor's end may be extended to reach a hub.
+        // The hub itself is within one transfer walk, but the road route to the node
+        // beside it can go round a block, so the allowance is wider than the walk —
+        // and still short enough that the extension is local rather than a second leg.
+        private const float InterchangeReachMetres = 500f;
+
+        // Extends a grown corridor's ends onto the road node nearest a usable
+        // interchange, when one is within reach. Returns how many ends moved.
+        //
+        // Extending the NODE LIST rather than nudging the drawn polyline: a bus has to
+        // follow the streets, so the added stretch must be real road edges. That is
+        // also why this cannot reuse SnapToInterchange, which relocates a lattice
+        // terminus by moving a point — on a lattice any two nodes are joined, on the
+        // street network they are not.
+        private static int AimEndsAtInterchange(
+            SuitabilityRoadGraph network, InterchangeMap hubs, ModePreset mode, List<int> nodes)
+        {
+            if (hubs.Count == 0 || nodes.Count < 2)
+            {
+                return 0;
+            }
+
+            var trace = new List<int>();
+            int moved = 0;
+
+            // Far end first. Extending the near end shifts every later index, and
+            // taking them in this order keeps nodes[0] meaning what it did.
+            if (ExtendEnd(network, hubs, mode, nodes, nodes[nodes.Count - 1], trace, atStart: false))
+            {
+                moved++;
+            }
+
+            if (ExtendEnd(network, hubs, mode, nodes, nodes[0], trace, atStart: true))
+            {
+                moved++;
+            }
+
+            return moved;
+        }
+
+        private static bool ExtendEnd(
+            SuitabilityRoadGraph network,
+            InterchangeMap hubs,
+            ModePreset mode,
+            List<int> nodes,
+            int terminus,
+            List<int> trace,
+            bool atStart)
+        {
+            if (terminus < 0 || terminus >= network.NodePositionsX.Length)
+            {
+                return false;
+            }
+
+            float x = network.NodePositionsX[terminus];
+            float z = network.NodePositionsZ[terminus];
+            if (!hubs.TryFindNear(mode, x, z, hubs.Radius, out float hubX, out float hubZ))
+            {
+                return false;
+            }
+
+            int target = network.NearestNode(new float2(hubX, hubZ), hubs.Radius);
+            if (target < 0 || target == terminus || nodes.Contains(target))
+            {
+                return false;
+            }
+
+            if (!network.TracePath(terminus, target, InterchangeReachMetres, trace) || trace.Count < 2)
+            {
+                return false;
+            }
+
+            // A corridor that walks back over itself to reach a hub is a worse line
+            // than one that stops short of it.
+            for (int i = 1; i < trace.Count; i++)
+            {
+                if (nodes.Contains(trace[i]))
+                {
+                    return false;
+                }
+            }
+
+            if (atStart)
+            {
+                // trace runs terminus -> target, so it goes on the front reversed and
+                // without its first entry, which is the terminus already in `nodes`.
+                for (int i = 1; i < trace.Count; i++)
+                {
+                    nodes.Insert(0, trace[i]);
+                }
+            }
+            else
+            {
+                for (int i = 1; i < trace.Count; i++)
+                {
+                    nodes.Add(trace[i]);
+                }
+            }
+
+            return true;
         }
 
         // On the street network the only choice is how heavy the corridor is, and the
@@ -536,7 +698,7 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            var route = new SuggestedRoute { Network = RouteNetwork.Road };
+            var route = new SuggestedRoute { Network = RouteNetwork.Road, TracedMode = ModePreset.Bus };
             roads.MaterialisePath(scratch, route.Path);
 
             float length = 0f;
@@ -550,8 +712,8 @@ namespace StationSuitabilityOverlay
 
             // No track share and no enabled demand: a road re-trace is judged on flow,
             // which is the only evidence a street corridor ever had.
-            var evidence = new CorridorEvidence(route.CapturedFlow, route.Length, 0f, 0f);
-            if (!TransitModes.ChooseMode(RouteNetwork.Road, evidence, referenceFlow,
+            var evidence = new CorridorEvidence(route.CapturedFlow, route.Length, 0f, 0f, 0f);
+            if (!TransitModes.ChooseMode(RouteNetwork.Road, route.TracedMode, evidence, referenceFlow,
                     out ModePreset mode, out ModeRejection why))
             {
                 Mod.Log.Info(
@@ -667,10 +829,12 @@ namespace StationSuitabilityOverlay
             int windows = (int)(total / spacing) + 2;
             var offsets = new float[windows];
             var scores = new float[windows];
-            int count = ScanStopWindows(route.Path, total, mode, scoreAt, hubs, offsets, scores);
+            var mustCall = new bool[windows];
+            int count = ScanStopWindows(route.Path, total, mode, scoreAt, hubs, offsets, scores, mustCall);
 
             var keep = new bool[count];
-            SuitabilityScoring.SelectCallingPoints(scores, count, StopScoreFloorShare, new float[count], keep);
+            SuitabilityScoring.SelectCallingPoints(
+                scores, count, StopScoreFloorShare, new float[count], mustCall, keep);
 
             float firstAt = -1f;
             float lastAt = -1f;
@@ -713,7 +877,8 @@ namespace StationSuitabilityOverlay
             System.Func<float2, ModePreset, float> scoreAt,
             InterchangeMap hubs,
             float[] offsets,
-            float[] scores)
+            float[] scores,
+            bool[] mustCall)
         {
             float spacing = TransitModes.StopSpacingFor(mode);
             var planned = new float[offsets.Length];
@@ -770,14 +935,16 @@ namespace StationSuitabilityOverlay
                 float best = math.clamp(at, lower, upper);
                 float bestScore = scoreAt is null ? 0f : scoreAt(PointAlong(path, best), mode);
                 bool pinned = terminus && bestScore > 0f;
+                bool atStation = false;
 
                 if (scoreAt is not null && upper > lower && !pinned)
                 {
-                    ChooseInWindow(path, mode, scoreAt, hubs, lower, upper, ref best, ref bestScore);
+                    atStation = ChooseInWindow(path, mode, scoreAt, hubs, lower, upper, ref best, ref bestScore);
                 }
 
                 offsets[count] = best;
                 scores[count] = bestScore;
+                mustCall[count] = atStation;
                 previous = best;
                 count++;
 
@@ -794,7 +961,9 @@ namespace StationSuitabilityOverlay
         // one; but where the line passes an existing served stop, the position nearest
         // that stop wins — a call at the station is worth more than a slightly better
         // tile beside it, because it is what turns two lines into a network.
-        private static void ChooseInWindow(
+        // Returns true when the chosen position is at an existing served stop, which
+        // the caller records so the score floor cannot drop the call afterwards.
+        private static bool ChooseInWindow(
             List<float2> path,
             ModePreset mode,
             System.Func<float2, ModePreset, float> scoreAt,
@@ -845,6 +1014,8 @@ namespace StationSuitabilityOverlay
                 best = stationBest;
                 bestScore = stationScore;
             }
+
+            return atStation;
         }
 
         // Keeps only the stretch of the polyline between two distances along it,

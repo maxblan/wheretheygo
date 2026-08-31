@@ -349,7 +349,7 @@ function DataCoverage({ raw }) {
         return h("div", { className: "sso-coverage" },
             h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
             h("div", { className: "sso-coverage-empty" },
-                t("DataBasisEmpty", "nothing logged yet — run the city for a minute")));
+                t("DataBasisEmpty", "no lines to watch yet — readings start with your first one")));
     }
 
     // Bar rather than only a number: the point is how much of the window is filled,
