@@ -104,6 +104,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Following existing track lowers a train's reach bar", TrackFollowingEasesTheTrainBar);
             Run("A lattice alignment keeps the mode that traced it", ALatticeAlignmentKeepsTheModeThatTracedIt);
             Run("A reach share needs a city big enough to have one", AReachShareNeedsACityBigEnoughToHaveOne);
+            Run("Flow alone does not buy a tram", FlowAloneDoesNotBuyATram);
             Run("Only a rail mode may be justified by reach", ReachIsRailOnly);
             Run("A sub-kilometre stub is not a line", ShortStubsAreNotLines);
             Run("Growth carries straight on unless a turn is worth it", GrowthPrefersToCarryStraightOn);
@@ -1730,6 +1731,57 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(
                 TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Metro, atCrossover, reference, out _, out _),
                 "a city exactly at the scale floor is judged on the share alone");
+        }
+
+        // Corridor flow is traffic on the ROAD, not people who would ride, and the two
+        // come apart hardest where a corridor is the only way through. The single road
+        // west out of Valmare carried 129 per edge against a city mean of 67 purely
+        // because every westbound journey funnels down it — and 129 over the tram's
+        // 1.5x multiple bought a TRAM whose entire enabled demand was six journeys,
+        // running two kilometres into open country to end at a pump station.
+        private static void FlowAloneDoesNotBuyATram()
+        {
+            const float reference = 67f;
+            const float village = 568f;
+
+            // The corridor exactly as it was: well over the tram's flow floor of 100,
+            // long enough for a tram, and carrying almost nobody.
+            var throughTraffic = new CorridorEvidence(
+                flow: 129f, length: 1957f, enabledDemand: 6f,
+                cityTravelWeight: village, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, throughTraffic, reference, out ModePreset mode, out _),
+                "a road corridor still yields something — a bus has no floor by design");
+            AssertTrue(mode == ModePreset.Bus,
+                $"but six riders do not make it a tram, however busy the road is — got {mode}");
+
+            // The same corridor once the riders are actually there.
+            float bar = TransitModes.MinDemandShareToRun(ModePreset.Tram);
+            var ridden = new CorridorEvidence(
+                flow: 129f, length: 1957f,
+                enabledDemand: bar * TransitModes.DemandPool(village) * 1.1f,
+                cityTravelWeight: village, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, ridden, reference, out ModePreset tram, out _),
+                "and with riders it is justified");
+            AssertTrue(tram == ModePreset.Tram, $"as a tram — got {tram}");
+
+            // The bar is a share in a city with travel to share out, so a real city
+            // clearing it on the same PROPORTION is unaffected.
+            var city = new CorridorEvidence(
+                flow: 129f, length: 1957f, enabledDemand: bar * BigCity * 1.1f,
+                cityTravelWeight: BigCity, trackShare: 0f);
+            AssertTrue(
+                TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, city, reference, out ModePreset urban, out _)
+                    && urban == ModePreset.Tram,
+                "a real city clearing the same share still gets its tram");
+
+            // Only the tram carries this condition. A bus must stay floorless or a road
+            // corridor stops yielding a usable suggestion at all.
+            AssertEqual(0f, TransitModes.MinDemandShareToRun(ModePreset.Bus), 0f,
+                "a bus has no rider floor");
+            AssertEqual(0f, TransitModes.MinDemandShareToRun(ModePreset.Train), 0f,
+                "and the rail modes answer this with their reach bars instead");
         }
 
         // Density is what justifies a ROAD mode. Letting reach speak for a tram would

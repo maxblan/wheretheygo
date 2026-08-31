@@ -4022,6 +4022,13 @@ namespace StationSuitabilityOverlay
         // shadowing a line already accepted this round correctly rescores to zero
         // enabled demand — that part worked. Nothing acted on it, so three trams along
         // the same corridor were all offered, each claiming to unlock nothing.
+        //
+        // The scale floor it is now read against (TransitModes.DemandPool) does not
+        // move it away from that measurement — it lands inside the same gap. Against
+        // the 13709 of the session above the bare share asked for 13.7 journeys; the
+        // floor asks for 20. Both sit between the 8 of the worthless group and the 38
+        // of the useful one. What the floor changes is the small city the measurement
+        // never covered, where the bare share asked for well under one journey.
         private const float MinEnabledDemandShare = 0.001f;
 
         // Why the candidates that did not become suggestions were turned down, for the
@@ -4036,6 +4043,117 @@ namespace StationSuitabilityOverlay
             public int Retraced;
             public int AlreadyBuilt;
             public int ImprovedTooLittle;
+        }
+
+        // Every bar a resolved candidate has to clear before it is worth offering, in
+        // the order that makes the log readable: shape first, then the two kinds of
+        // demand evidence, then whether the player has already built it. Each gate
+        // reports its own reason, because "too short once trimmed" and "nobody would
+        // ride it" call for opposite responses from whoever reads the log.
+        //
+        // Split out of AcceptBestCandidate, which owns the ranking and the acceptance;
+        // this owns the rejecting. Behaviour is unchanged by the split.
+        private bool SurvivesEveryBar(
+            SuggestedRoute candidate,
+            int index,
+            float corridorFlow,
+            float networkReference,
+            RejectionTally tally)
+        {
+            // Placing the stops trimmed the line back to its termini, which can
+            // leave it shorter than the floor ChooseMode approved it against.
+            if (!SuitabilityRoutes.KeepsItsFloor(candidate))
+            {
+                tally.Unjustified++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
+                    $"under the {(TransitModes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
+                return false;
+            }
+
+            // A bus has no demand floor of its own — MinFlowMultipleFor(Bus) is 0
+            // so every road corridor yields a "usable" suggestion — and a bare
+            // MinCandidateFlow of 1 was not a bar at all: a 540 m line carrying a
+            // corridor flow of 27 against a city mean of 625, with zero enabled
+            // demand, was suggested to the player. A suggestion nobody can justify
+            // is worse than no suggestion.
+            //
+            // Either kind of evidence will do, because they answer different
+            // questions: enabled demand says journeys exist that this line would
+            // newly serve, corridor flow says people travel this way at all. A
+            // city with no transit yet has no enabled demand anywhere, so corridor
+            // flow has to be able to carry a suggestion on its own.
+            if (candidate.EnabledDemand <= 0f && corridorFlow < networkReference * MinFlowShareOfReference)
+            {
+                tally.Unjustified++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                    $"(needs {(networkReference * MinFlowShareOfReference).ToString("F0", CultureInfo.InvariantCulture)} without enabled demand), enabledDemand=0, " +
+                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, too little travel on this corridor to justify a line");
+                return false;
+            }
+
+            // A corridor nobody travels at all is not a suggestion.
+            if (corridorFlow <= MinCandidateFlow)
+            {
+                tally.Unjustified++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
+                    $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
+                return false;
+            }
+
+            // Only when the denominator is known. An unmeasured pool is not the
+            // same as an empty one, and rejecting against a zero would suppress
+            // every suggestion on the refresh before travel demand first lands.
+            //
+            // Measured against TransitModes.DemandPool, not against the city's own
+            // unserved weight — the same floor the mode bars use, and for the same
+            // reason. As a bare share this bar could not reject anything in a small
+            // city: a tram enabling SIX journeys out of an unserved 568 read as
+            // 1.1%, eleven times the bar, and was offered as the one suggestion in
+            // Valmare. The floor turns 0.1% into twenty journeys until the city has
+            // twenty thousand of them to share out.
+            float pool = TransitModes.DemandPool(m_UnservedTravelWeight);
+            float reachShare = m_UnservedTravelWeight > 0f
+                ? candidate.EnabledDemand / pool
+                : float.MaxValue;
+
+            // And only when this candidate's demand was actually MEASURED. A
+            // candidate past the transfer scoring window keeps a demand of zero
+            // without ever being routed, and this gate read that zero as "improves
+            // nothing" and dropped it — which is not what ScoreCandidates says
+            // happens to them, and made the corridor-flow bar above unreachable
+            // rather than the alternative kind of evidence it is documented to be.
+            if (candidate.DemandScored && reachShare < MinEnabledDemandShare)
+            {
+                tally.ImprovedTooLittle++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, would newly serve " +
+                    $"{(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} journeys, under the " +
+                    $"{(MinEnabledDemandShare * pool).ToString("F0", CultureInfo.InvariantCulture)} a suggestion has to be worth " +
+                    $"({(MinEnabledDemandShare * 100f).ToString("F2", CultureInfo.InvariantCulture)}% of " +
+                    $"{(pool).ToString("F0", CultureInfo.InvariantCulture)}; this city has " +
+                    $"{(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} unserved)");
+                return false;
+            }
+
+            // A suggestion the player has already built should stop being offered.
+            if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
+            {
+                tally.AlreadyBuilt++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"{candidate.Stops.Count} stops — DROPPED, already built");
+                return false;
+            }
+
+            return true;
         }
 
         // Takes the best remaining candidate that survives every gate, and adds it to
@@ -4081,89 +4199,9 @@ namespace StationSuitabilityOverlay
                 float corridorFlow = candidate.CapturedFlow;
                 networkReference = references.For(candidate.Network);
 
-                // Placing the stops trimmed the line back to its termini, which can
-                // leave it shorter than the floor ChooseMode approved it against.
-                if (!SuitabilityRoutes.KeepsItsFloor(candidate))
+                if (!SurvivesEveryBar(candidate, i, corridorFlow, networkReference, tally))
                 {
-                    tally.Unjustified++;
                     settled[i] = true;
-                    Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
-                        $"under the {(TransitModes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
-                    continue;
-                }
-
-                // A bus has no demand floor of its own — MinFlowMultipleFor(Bus) is 0
-                // so every road corridor yields a "usable" suggestion — and a bare
-                // MinCandidateFlow of 1 was not a bar at all: a 540 m line carrying a
-                // corridor flow of 27 against a city mean of 625, with zero enabled
-                // demand, was suggested to the player. A suggestion nobody can justify
-                // is worse than no suggestion.
-                //
-                // Either kind of evidence will do, because they answer different
-                // questions: enabled demand says journeys exist that this line would
-                // newly serve, corridor flow says people travel this way at all. A
-                // city with no transit yet has no enabled demand anywhere, so corridor
-                // flow has to be able to carry a suggestion on its own.
-                if (candidate.EnabledDemand <= 0f && corridorFlow < networkReference * MinFlowShareOfReference)
-                {
-                    tally.Unjustified++;
-                    settled[i] = true;
-                    Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
-                        $"(needs {(networkReference * MinFlowShareOfReference).ToString("F0", CultureInfo.InvariantCulture)} without enabled demand), enabledDemand=0, " +
-                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, too little travel on this corridor to justify a line");
-                    continue;
-                }
-
-                // A corridor nobody travels at all is not a suggestion.
-                if (corridorFlow <= MinCandidateFlow)
-                {
-                    tally.Unjustified++;
-                    settled[i] = true;
-                    Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
-                        $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
-                    continue;
-                }
-
-                // Only when the denominator is known. An unmeasured pool is not the
-                // same as an empty one, and rejecting against a zero would suppress
-                // every suggestion on the refresh before travel demand first lands.
-                float reachShare = m_UnservedTravelWeight > 0f
-                    ? candidate.EnabledDemand / m_UnservedTravelWeight
-                    : float.MaxValue;
-
-                // And only when this candidate's demand was actually MEASURED. A
-                // candidate past the transfer scoring window keeps a demand of zero
-                // without ever being routed, and this gate read that zero as "improves
-                // nothing" and dropped it — which is not what ScoreCandidates says
-                // happens to them, and made the corridor-flow bar above unreachable
-                // rather than the alternative kind of evidence it is documented to be.
-                if (candidate.DemandScored && reachShare < MinEnabledDemandShare)
-                {
-                    tally.ImprovedTooLittle++;
-                    settled[i] = true;
-                    Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, would improve only " +
-                        $"{(reachShare * 100f).ToString("F2", CultureInfo.InvariantCulture)}% of unserved travel, under the " +
-                        $"{(MinEnabledDemandShare * 100f).ToString("F2", CultureInfo.InvariantCulture)}% a suggestion has to be worth");
-                    continue;
-                }
-
-                // A suggestion the player has already built should stop being offered.
-                if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
-                {
-                    tally.AlreadyBuilt++;
-                    settled[i] = true;
-                    Mod.Log.Info(
-                        $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                        $"{candidate.Stops.Count} stops — DROPPED, already built");
                     continue;
                 }
 

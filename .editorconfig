@@ -75,11 +75,12 @@ dotnet_diagnostic.MA0181.severity = none
 # done blind, so the ratchet holds the line meanwhile. Lower these numbers as methods
 # are split; never raise them.
 #
-# The current ceilings are SuitabilityGraphMath.GrowCorridor, at 138 lines and 61
-# statements as MA0051 counts them. The statement limit stood at 80 against an actual worst of 52, which is
-# not a ratchet at all — it has been pulled down to what the code really does.
+# The line ceiling is SuitabilityGraphMath.GrowCorridor at 138; the statement ceiling
+# is 60, checked by build rather than counted by eye — 59 fails nothing, 55 fails six
+# methods. Both were pulled down to what the code really does rather than left at a
+# round number, which is not a ratchet at all.
 MA0051.maximum_lines_per_method = 138
-MA0051.maximum_statements_per_method = 61
+MA0051.maximum_statements_per_method = 60
 
 # One type per file, named after the file. `SuitabilityLines.cs` deliberately holds
 # `ExistingLine` beside the reader that builds it.

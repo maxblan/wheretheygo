@@ -367,6 +367,45 @@ namespace StationSuitabilityOverlay
         // fill one train a day at any sensible headway.
         public const float MinCityTravelForReach = 20000f;
 
+        // The pool any demand share is measured against. One owner, because the mode
+        // decision and the acceptance gate in StationSuitabilityOverlaySystem have to
+        // agree about what a share is a share OF — they were written apart, and only
+        // the mode decision got the scale floor, so a tram nobody would ride sailed
+        // through acceptance on 1.1% of a pool of 568.
+        public static float DemandPool(float cityTravelWeight)
+        {
+            return Math.Max(cityTravelWeight, MinCityTravelForReach);
+        }
+
+        // Demand a mode must show before its FLOW evidence counts for anything.
+        //
+        // NECESSARY, where MinEnabledDemandShareFor is SUFFICIENT: that one is a second
+        // way to clear the bar, this one is a condition on clearing it at all. Read as
+        // a share of DemandPool, so like every bar here it is a share in a real city
+        // and an absolute number of journeys in a village.
+        //
+        // Only the tram has one. Corridor flow is traffic on the road, not people who
+        // would ride, and the two come apart hardest on a corridor that is the only way
+        // through: the single road west out of Valmare carried 129 per edge against a
+        // city mean of 67 purely because every westbound journey funnels down it, and
+        // 129 over the tram's 1.5x multiple bought a tram whose whole enabled demand
+        // was SIX journeys, ending at a groundwater pump station.
+        //
+        // A bus keeps no floor, which is what makes every road corridor yield a usable
+        // suggestion; that corridor becoming a bus rather than a tram is the right
+        // answer, and the acceptance gate then decides whether it is worth offering at
+        // all. The rail modes need none: their reach bars already answer this, and a
+        // corridor carrying nine times the typical edge is a train whatever the
+        // transfer model has managed to credit it with.
+        public static float MinDemandShareToRun(ModePreset mode)
+        {
+            switch (mode)
+            {
+                case ModePreset.Tram: return 0.005f;
+                default: return 0f;
+            }
+        }
+
         // How much of the corridor has to run along existing track before it counts as
         // extending the rail network rather than laying a new one.
         public const float MostlyOnTrackShare = 0.6f;
@@ -404,11 +443,14 @@ namespace StationSuitabilityOverlay
                 // Against the larger of the city's own pool and the scale below which a
                 // share means nothing, so the bar is a share in a real city and an
                 // absolute number of journeys in a village.
-                float pool = Math.Max(evidence.CityTravelWeight, MinCityTravelForReach);
+                float pool = DemandPool(evidence.CityTravelWeight);
                 bool byReach = reachBar > 0f && evidence.EnabledDemand >= reachBar * pool;
 
-                metSomeBar |= byFlow || byReach;
-                if ((byFlow || byReach) && evidence.Length >= MinLengthFor(option))
+                // Whatever the flow says, a mode nobody would ride is not that mode.
+                bool enoughRiders = evidence.EnabledDemand >= MinDemandShareToRun(option) * pool;
+
+                metSomeBar |= (byFlow || byReach) && enoughRiders;
+                if ((byFlow || byReach) && enoughRiders && evidence.Length >= MinLengthFor(option))
                 {
                     mode = option;
                     rejection = ModeRejection.None;

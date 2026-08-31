@@ -88,8 +88,9 @@ generator (found the hard way: removing it fails the build with EA0007). Volume 
 reason — read the comment before adding another.
 
 `MA0051` (method length) is **ratcheted, not disabled**: the limits sit exactly at today's worst
-offender so no method may grow. Both ceilings are `SuitabilityGraphMath.GrowCorridor` — 138 lines
-and 61 statements as MA0051 counts them.
+offender so no method may grow. The line ceiling is `SuitabilityGraphMath.GrowCorridor` at 138; the
+statement ceiling is 60. Check either by build rather than by counting — MA0051 counts statements
+differently from a reader, and 138/60 is where the build says the real worst sits today.
 
 Roughly forty methods sit over 60 lines and sixteen over 100; the longest are
 `SuitabilityGraphMath.GrowCorridor`, `SuitabilityRoutes.BuildForNetwork`,
