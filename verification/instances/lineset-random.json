@@ -1,0 +1,146 @@
+{
+ "comment": "seeded 3x3 zone grid, 4 candidates, K=2",
+ "data": {
+  "board_penalty_b32": 1084227584,
+  "candidates": [
+   {
+    "captured_flow_b32": 1082130432,
+    "expected_wait_b32": 1128792064,
+    "speed_b32": 1091567616,
+    "stop_x_b32": [
+     0,
+     1150681088,
+     1159069696
+    ],
+    "stop_z_b32": [
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "captured_flow_b32": 1077936128,
+    "expected_wait_b32": 1128792064,
+    "speed_b32": 1091567616,
+    "stop_x_b32": [
+     0,
+     1150681088,
+     1159069696
+    ],
+    "stop_z_b32": [
+     1159069696,
+     1159069696,
+     1159069696
+    ]
+   },
+   {
+    "captured_flow_b32": 1073741824,
+    "expected_wait_b32": 1128792064,
+    "speed_b32": 1091567616,
+    "stop_x_b32": [
+     0,
+     0,
+     0
+    ],
+    "stop_z_b32": [
+     0,
+     1150681088,
+     1159069696
+    ]
+   },
+   {
+    "captured_flow_b32": 1065353216,
+    "expected_wait_b32": 1128792064,
+    "speed_b32": 1091567616,
+    "stop_x_b32": [
+     1159069696,
+     1159069696,
+     1159069696
+    ],
+    "stop_z_b32": [
+     0,
+     1150681088,
+     1159069696
+    ]
+   }
+  ],
+  "existing_lines": [],
+  "existing_stop_x_b32": [],
+  "existing_stop_z_b32": [],
+  "flows": [
+   {
+    "dest": 4,
+    "origin": 7,
+    "weight_b32": 1096810496
+   },
+   {
+    "dest": 7,
+    "origin": 3,
+    "weight_b32": 1104674816
+   },
+   {
+    "dest": 7,
+    "origin": 3,
+    "weight_b32": 1104150528
+   },
+   {
+    "dest": 8,
+    "origin": 2,
+    "weight_b32": 1112276992
+   },
+   {
+    "dest": 1,
+    "origin": 8,
+    "weight_b32": 1111490560
+   },
+   {
+    "dest": 0,
+    "origin": 6,
+    "weight_b32": 1113325568
+   },
+   {
+    "dest": 6,
+    "origin": 4,
+    "weight_b32": 1102053376
+   },
+   {
+    "dest": 2,
+    "origin": 4,
+    "weight_b32": 1100480512
+   }
+  ],
+  "max_accept": 2,
+  "max_travel_seconds_b32": 1163984896,
+  "switch_margin_b32": 1114636288,
+  "transfer_discount_b32": 1058642330,
+  "walk_radius_b32": 1132068864,
+  "zone_stop_reach_b32": 1140457472,
+  "zone_x_b32": [
+   0,
+   1150681088,
+   1159069696,
+   0,
+   1150681088,
+   1159069696,
+   0,
+   1150681088,
+   1159069696
+  ],
+  "zone_z_b32": [
+   0,
+   0,
+   0,
+   1150681088,
+   1150681088,
+   1150681088,
+   1159069696,
+   1159069696,
+   1159069696
+  ]
+ },
+ "hash": "8e2aed52ccc31be8b7c591c2356eb9934b12be0c364eab8f89f792ca969e4287",
+ "kind": "lineset",
+ "name": "lineset-random",
+ "schema_version": 1,
+ "seed": 20260903
+}

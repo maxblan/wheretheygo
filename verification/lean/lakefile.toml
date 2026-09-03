@@ -1,0 +1,10 @@
+name = "verify"
+version = "0.1.0"
+defaultTargets = ["verify"]
+
+[[lean_lib]]
+name = "Verify"
+
+[[lean_exe]]
+name = "verify"
+root = "Main"

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Subject</AssemblyName>
+    <RootNamespace>StationSuitabilityOverlay.Verification</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- CS0649: TransitLine.m_RideSeconds is assigned by SuitabilityLines.cs, which
+         needs Unity types and is not linked here — same situation as the test harness. -->
+    <NoWarn>CS0649</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- The system under test: the mod's pure files, linked UNCHANGED — the same
+         linking the offline test harness uses. Nothing in this project reimplements
+         mod logic; Program.cs is IO plus the argument wiring documented in
+         docs/formal-specification.md. -->
+    <Compile Include="../../dotnet/SuitabilityScoring.cs" Link="SuitabilityScoring.cs" />
+    <Compile Include="../../dotnet/SuitabilityGraphMath.cs" Link="SuitabilityGraphMath.cs" />
+    <Compile Include="../../dotnet/SuitabilityTransit.cs" Link="SuitabilityTransit.cs" />
+    <Compile Include="../../dotnet/SuitabilityLineHistory.cs" Link="SuitabilityLineHistory.cs" />
+    <Compile Include="../../dotnet/TransitMode.cs" Link="TransitMode.cs" />
+    <Compile Include="../../dotnet/SuitabilityLineHealth.cs" Link="SuitabilityLineHealth.cs" />
+  </ItemGroup>
+
+</Project>

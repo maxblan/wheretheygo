@@ -1,0 +1,127 @@
+{
+ "data": {
+  "capacities_b32": {
+   "Bus": 1117782016,
+   "Ferry": 1120403456,
+   "Metro": 1149698048,
+   "Train": 1147207680,
+   "Tram": 1128792064
+  },
+  "rows": [
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1140457472,
+    "flow_b32": 1126170624,
+    "length_b32": 1159479296,
+    "network": "Road",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Bus",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1140457472,
+    "flow_b32": 1123024896,
+    "length_b32": 1159479296,
+    "network": "Road",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Bus",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1140457472,
+    "flow_b32": 1126170624,
+    "length_b32": 1147207680,
+    "network": "Road",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Bus",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1198153728,
+    "demand_scored": true,
+    "enabled_demand_b32": 1159069696,
+    "flow_b32": 1092616192,
+    "length_b32": 1178304512,
+    "network": "Rail",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Train",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1206542336,
+    "demand_scored": true,
+    "enabled_demand_b32": 1159069696,
+    "flow_b32": 1092616192,
+    "length_b32": 1178304512,
+    "network": "Rail",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Train",
+    "track_share_b32": 1058642330
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1137180672,
+    "flow_b32": 1092616192,
+    "length_b32": 1178304512,
+    "network": "Rail",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Train",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1120403456,
+    "flow_b32": 1142292480,
+    "length_b32": 1165623296,
+    "network": "Rail",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Metro",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": false,
+    "enabled_demand_b32": 0,
+    "flow_b32": 1142292480,
+    "length_b32": 1165623296,
+    "network": "Rail",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Metro",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1133903872,
+    "flow_b32": 1120403456,
+    "length_b32": 1153138688,
+    "network": "Water",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Ferry",
+    "track_share_b32": 0
+   },
+   {
+    "city_travel_weight_b32": 1176256512,
+    "demand_scored": true,
+    "enabled_demand_b32": 1133903872,
+    "flow_b32": 1120403456,
+    "length_b32": 1149861888,
+    "network": "Water",
+    "reference_flow_b32": 1120403456,
+    "traced_mode": "Ferry",
+    "track_share_b32": 0
+   }
+  ]
+ },
+ "hash": "3dc6ec18e4b380b282c4f34ee01d56d93bf85eacd00fbb0426b11f269949666e",
+ "kind": "mode_choice",
+ "name": "mode-choice-sweep",
+ "schema_version": 1
+}

@@ -1,0 +1,78 @@
+{
+ "data": {
+  "catchment_b32": 1135542272,
+  "coverage_weight_b32": 1067030938,
+  "cross_weight_b32": 1053609165,
+  "interchange_b32": 1132068864,
+  "interchange_weight_b32": 1063675494,
+  "inv_self_b32": 1065353216,
+  "queries": [
+   {
+    "x_b32": 0,
+    "z_b32": 0
+   },
+   {
+    "x_b32": 1112014848,
+    "z_b32": 1112014848
+   },
+   {
+    "x_b32": 3284664320,
+    "z_b32": 0
+   }
+  ],
+  "stops": [
+   {
+    "same_mode": true,
+    "weight_b32": 1065353216,
+    "x_b32": 0,
+    "z_b32": 0
+   },
+   {
+    "same_mode": true,
+    "weight_b32": 1065353216,
+    "x_b32": 1120403456,
+    "z_b32": 0
+   },
+   {
+    "same_mode": false,
+    "weight_b32": 1075838976,
+    "x_b32": 0,
+    "z_b32": 1120403456
+   },
+   {
+    "same_mode": false,
+    "weight_b32": 1077936128,
+    "x_b32": 1132068864,
+    "z_b32": 0
+   },
+   {
+    "same_mode": false,
+    "weight_b32": 1069547520,
+    "x_b32": 0,
+    "z_b32": 1135542272
+   },
+   {
+    "same_mode": false,
+    "weight_b32": 1077936128,
+    "x_b32": 0,
+    "z_b32": 1135575040
+   },
+   {
+    "same_mode": false,
+    "weight_b32": 1067030938,
+    "x_b32": 3276275712,
+    "z_b32": 0
+   },
+   {
+    "same_mode": false,
+    "weight_b32": 1069547520,
+    "x_b32": 1133903872,
+    "z_b32": 0
+   }
+  ]
+ },
+ "hash": "c7b0cfe77e931f6421403a319bd0236564321ef2b728adbd082ae9d058dcd139",
+ "kind": "heatmap_point",
+ "name": "heatmap-point",
+ "schema_version": 1
+}

@@ -1,0 +1,11 @@
+<Project>
+  <!-- Deliberately (almost) empty: MSBuild stops at the NEAREST Directory.Build.props,
+       so this file shields the verification harness from the repo root's
+       TreatWarningsAsErrors/analyzer ratchet, which is calibrated for the mod and its
+       test project. The harness is scaffolding around the system under test; the
+       production strictness gates stay exactly as they are for dotnet/ and tests/. -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

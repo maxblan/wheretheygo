@@ -1,0 +1,45 @@
+{
+ "comment": "minimal counterexample: greedy sum 8 < optimal sum 10",
+ "data": {
+  "height": 3,
+  "max_sites": 2,
+  "min_separation": 4,
+  "scores_b32": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1084227584,
+   0,
+   0,
+   1090519040,
+   0,
+   0,
+   1084227584,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "width": 9
+ },
+ "expect": {
+  "greedy_is_optimal": false
+ },
+ "hash": "2a288bcc158e0e8e4cd708a10d7f0113353a96dded2ffc3019940efbce890618",
+ "kind": "sites",
+ "name": "sites-greedy-gap",
+ "schema_version": 1
+}

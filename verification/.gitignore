@@ -1,0 +1,6 @@
+runs/
+.toolchain/
+subject/bin/
+subject/obj/
+__pycache__/
+lean/.lake/
