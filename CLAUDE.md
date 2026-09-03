@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Six files are on that side, and `SuitabilityScoring.Tests.csproj` links all six:
+project. Seven files are on that side, and `SuitabilityScoring.Tests.csproj` links all seven:
 
 - `SuitabilityScoring.cs` — percentiles, site selection, geodesic catchment, weight fitting
 - `SuitabilityGraphMath.cs` — CSR graph, Dijkstra, corridor growth, RDP
@@ -156,6 +156,11 @@ project. Six files are on that side, and `SuitabilityScoring.Tests.csproj` links
 - `SuitabilityLineHistory.cs` — the rolling window of line readings
 - `SuitabilityLineHealth.cs` — verdicts and improvement plans
 - `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
+- `SuitabilityExportJson.cs` — the verification export's canonical JSON and its digest.
+  Not scoring math, and on this side for one reason: the format is a CONTRACT with
+  `verification/common/canonical.py`, which recomputes the digest on load and refuses
+  any file it cannot reproduce, so a golden-vector test is the only thing standing
+  between a wire-format drift and every exported instance becoming unloadable.
 
 Anything touching Unity or ECS types is untestable here, so **keep algorithms out of the ECS
 systems**. Several silent bugs — double-counted demand, summed instead of averaged corridor flow,
@@ -200,6 +205,25 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    one re-scored transfer-aware over a transit graph that already contains the ones above it.
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
+
+### The verification export
+
+`SuitabilityVerificationExport.cs` (a partial of the overlay system) writes the
+offline pipeline in `verification/` a canonical instance of the live city, behind an
+Options button. It is **read-only** — it exports what the mod already computed and
+must never grow a rule of its own; anything it would have to decide belongs on the
+side being verified, not here.
+
+The one thing to preserve if you touch it: the inputs are captured **inside
+`StartCompute`**, out of the values being handed to the Burst job, and the outputs are
+that job's own terms. Re-collecting them at export time is the obvious simplification
+and it is wrong — the input collections are rebuilt on their own timers, so the export
+would describe a city the exported terms were never computed from.
+
+The wire format is a contract with `verification/common/canonical.py`, which recomputes
+the SHA-256 on load and refuses a file it cannot reproduce. `SuitabilityExportJson.cs`
+owns it and is pinned by a golden-vector test; changing sort order, escaping or number
+formatting there breaks every exported instance at once.
 
 ### Networks are not interchangeable
 

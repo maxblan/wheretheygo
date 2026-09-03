@@ -28,6 +28,10 @@
     <Compile Include="../../dotnet/SuitabilityLineHistory.cs" Link="SuitabilityLineHistory.cs" />
     <Compile Include="../../dotnet/TransitMode.cs" Link="TransitMode.cs" />
     <Compile Include="../../dotnet/SuitabilityLineHealth.cs" Link="SuitabilityLineHealth.cs" />
+    <!-- The verification export's wire format. Linked so the golden-vector test can
+         pin it against verification/common/canonical.py, which refuses any file whose
+         digest it cannot reproduce. -->
+    <Compile Include="../../dotnet/SuitabilityExportJson.cs" Link="SuitabilityExportJson.cs" />
   </ItemGroup>
 
 </Project>

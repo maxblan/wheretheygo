@@ -48,11 +48,25 @@ Two sources, same schema:
 - **Synthetic instances** (`verification/instances/`): deterministic generators for
   bounded cases — these are what complete enumeration and the counterexample search
   run on.
-- **Game exports**: reading a real save requires code inside the game process. Since
-  production code must not change in this phase, a real-save export is specified
-  (schema below) but implemented later as a separate opt-in file
-  (`SuitabilityVerificationExport.cs`) that only *reads* the same arrays the pipeline
-  already builds. Until then, real-city claims are out of scope and say so.
+- **Game exports** (implemented 2026-09-03, `dotnet/SuitabilityVerificationExport.cs`):
+  `Options → Export verification instance` writes canonical instances of the live city
+  to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Three
+  files per press — `heatmap_grid` (the Burst job's own inputs plus a sample of its
+  terms), `sites` (the real score field) and `lineset` (zones, discounted flows, the
+  real transit graph and the candidate pool). Read-only: nothing in the export changes
+  what the mod computes.
+
+  The design point that makes the export worth trusting is *when* it captures: the
+  inputs are copied inside `StartCompute`, out of the values being handed to the job,
+  and the outputs are the terms that job produced. Re-collecting at export time would
+  have been simpler and wrong — the input collections are rebuilt on their own timers,
+  so an export could otherwise have described a city the exported terms were never
+  computed from.
+
+  Sampling: the whole grid would be a quarter-million cells per term, so the export
+  carries a deterministic sample — one stride over every cell (which covers the
+  unbuildable gate) and one over the buildable ones — with the chosen indices written
+  into the instance, so the pipeline never has to know the rule.
 
 **Canonical form**: UTF-8 JSON, keys sorted, arrays in a documented stable order
 (stops by index, edges by (a, b, cost) lexicographic, zone flows by (origin, dest)),
@@ -136,7 +150,8 @@ Components that must still be trusted after a green run:
 
 | Component | Trusted for | Mitigation |
 |---|---|---|
-| ECS data gathering (game → arrays) | Faithfulness of real-save instances | Out of scope offline; logged inputs; future export tool reads the same arrays the mod itself consumes |
+| ECS data gathering (game → arrays) | Faithfulness of real-save instances | Narrowed, not removed: the exporter copies the job's own inputs at the moment the job receives them, so a drifted second collection cannot be mistaken for the real one. The gather itself (ECS components → those arrays) stays trusted and is out of scope offline |
+| The export's wire format | Producing what the pipeline can load | Golden-vector test in the offline harness pins the C# canonical form and digest against `canonical.py` (claim CX.5); on load the pipeline recomputes the digest and refuses a file it cannot reproduce |
 | Subject runner glue | Wiring arguments as the ECS half does | Wiring table in formal-specification.md, reviewed against code; kept minimal |
 | Instance generator | Representativeness of synthetic instances | Property-based generation + adversarial hand-built cases; generators seeded and versioned |
 | Refmodel generator | Encoding spec → MIP correctly | Cross-checked against the independent evaluator on every instance (candidate sets must agree; on small instances the evaluator's own enumeration must reproduce the certified optimum) |

@@ -263,6 +263,19 @@ namespace StationSuitabilityOverlay
         // Accumulated ridership aggregates, persisted through the normal settings
         // file so the series survives across sessions. Hidden because it is data,
         // not a preference.
+        // Writes the offline verification pipeline a canonical instance of the current
+        // city. Read-only: it exports what the mod already computed and changes
+        // nothing. See verification/README.md.
+        [SettingsUIButton]
+        [SettingsUISection(kSection, kCalibrationGroup)]
+        [SuppressMessage("Performance", "CA1822:Mark members as static",
+            Justification = "The game's settings UI binds to instance properties by "
+                + "reflection; a static member would not appear in the Options page.")]
+        public bool ExportVerificationInstance
+        {
+            set => StationSuitabilityOverlaySystem.RequestVerificationExport();
+        }
+
         [SettingsUIHidden]
         public string RidershipData
         {
@@ -495,6 +508,8 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyFittedWeights)), "Overwrite the demand, jobs, accessibility and future weights with the fitted values above. Does nothing until enough samples have been collected." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Reset collected samples" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ResetRidershipData)), "Discard all collected ridership samples and start over. Useful after reshaping your network." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ExportVerificationInstance)), "Export verification instance" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Write this city's scoring inputs and results to ModsData/StationSuitabilityOverlay/verification as canonical JSON, for the offline verification pipeline. Read-only: it exports what the mod already computed and changes nothing. The files are written after the next recalculation; the mod log names the folder." },
 
                 { "StationSuitabilityOverlay.Infomode", "Station Suitability" },
                 { "Infoviews.INFOVIEW[StationSuitabilityOverlay]", "Station Suitability" },

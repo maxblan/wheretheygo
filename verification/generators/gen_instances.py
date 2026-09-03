@@ -16,6 +16,7 @@ Instance kinds and what they verify (see docs/formal-specification.md):
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import struct
@@ -258,6 +259,201 @@ def heatmap_point():
             "cross_weight_b32": f32_bits(0.4),      # W7
             "stops": stops,
             "queries": queries,
+        },
+    }
+
+
+# -------------------------------------------------------- heatmap grid (S1)
+
+def _f32(x):
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def _dist(ax, az, bx, bz):
+    dx = _f32(ax - bx)
+    dz = _f32(az - bz)
+    return _f32(math.sqrt(_f32(_f32(dx * dx) + _f32(dz * dz))))
+
+
+def _tri(d, r):
+    return _f32(1.0 - _f32(d / r))
+
+
+def heatmap_grid_plumbing():
+    """A hand-sized `heatmap_grid` instance whose expected terms are computed
+    HERE, directly over the handful of sources, with no bucket sweep and no
+    component-lookup machinery — the two things the evaluator does differently.
+    A 4x4 map at a 128 m bucket pitch has exactly one bucket, so the evaluator's
+    sweep must reduce to this straight-line sum.
+
+    This exercises the evaluator's plumbing; it does NOT test the Burst job,
+    which cannot run offline. Only a real export closes C1.1b, and the claims
+    table says so.
+
+    Layout: tiles 32 m, world_min (-64,-64), so tile centres sit at -48, -16,
+    16, 48. Components split the map down the middle (x<=1 -> 1, x>=2 -> 2), so
+    a sample cell on the left must gate out every source on the right.
+    """
+    grid = 4
+    tile = 32.0
+    world_min = -64.0
+    catchment = 350.0
+    access_radius = 120.0
+    interchange_radius = 250.0
+
+    def centre(i):
+        x, y = i % grid, i // grid
+        return (_f32(world_min + _f32(_f32(x + 0.5) * tile)),
+                _f32(world_min + _f32(_f32(y + 0.5) * tile)))
+
+    components = [1 if (i % grid) <= 1 else 2 for i in range(grid * grid)]
+    buildable = [1] * (grid * grid)
+    # One water/steep tile, so the job's gate (all seven terms zero) is covered
+    # and the buildable/component correspondence has something to check.
+    buildable[15] = 0
+    components[15] = 0
+
+    # Population raster shares the tile grid, so a population cell centre IS a
+    # tile centre — which keeps the expected values readable.
+    population = [0.0] * (grid * grid)
+    population[0] = 100.0          # (0,0), component 1
+    population[15] = 500.0         # (3,3), component 2 -> gated out from the left
+
+    def pt(i, w):
+        cx, cz = centre(i)
+        return (cx, cz, w)
+
+    jobs = [pt(4, 50.0)]                     # (0,1) component 1
+    future_homes = [pt(1, 25.0)]             # (1,0) component 1
+    future_jobs = [pt(5, 35.0), pt(7, 60.0)]  # (1,1) c1 and (3,1) c2
+    nodes = [pt(0, 1.0), pt(1, 1.0)]
+    edges = [pt(4, 1.0)]
+    stops = [pt(1, 1.0)]                     # same mode
+    other_stops = [pt(4, 2.5), pt(2, 3.0)]   # metro left, train right
+
+    def bucket_set(points):
+        return {
+            "x_b32": f32_list([p[0] for p in points]),
+            "z_b32": f32_list([p[1] for p in points]),
+            "w_b32": f32_list([p[2] for p in points]),
+            "offsets": [0],
+            "counts": [len(points)],
+        }
+
+    def accumulate_stop(d, w, same, cov, inter, cross):
+        if catchment <= 0.0 or d > catchment:
+            return cov, inter, cross
+        within = _f32(1.0 - _f32(d / catchment))
+        if same:
+            return _f32(cov + _f32(w * within)), inter, cross
+        transferable = (_f32(1.0 - _f32(d / interchange_radius))
+                        if interchange_radius > 0.0 and d <= interchange_radius else 0.0)
+        inter = _f32(inter + _f32(w * transferable))
+        cross = _f32(cross + _f32(_f32(w * within) * _f32(1.0 - transferable)))
+        return cov, inter, cross
+
+    def expected(i):
+        if buildable[i] == 0:
+            return {"demand": 0.0, "jobs": 0.0, "coverage": 0.0, "access": 0.0,
+                    "future": 0.0, "interchange": 0.0, "cross": 0.0}
+        cx, cz = centre(i)
+        comp = components[i]
+        demand = 0.0
+        for j in range(grid * grid):
+            px, pz = centre(j)
+            d = _dist(px, pz, cx, cz)
+            if d > catchment or components[j] != comp:
+                continue
+            demand = _f32(demand + _f32(population[j] * _tri(d, catchment)))
+
+        def gated_sum(points):
+            total = 0.0
+            for (px, pz, w) in points:
+                d = _dist(px, pz, cx, cz)
+                if d > catchment:
+                    continue
+                # The source's component is that of the tile it stands on; every
+                # source here sits on a tile centre.
+                pj = min(max(int(math.floor(_f32(_f32(px - world_min) / tile))), 0), grid - 1)
+                pk = min(max(int(math.floor(_f32(_f32(pz - world_min) / tile))), 0), grid - 1)
+                if components[pj + pk * grid] != comp:
+                    continue
+                total = _f32(total + _f32(w * _tri(d, catchment)))
+            return total
+
+        cov = 0.0
+        for (px, pz, w) in stops:
+            cov, _i, _c = accumulate_stop(_dist(px, pz, cx, cz), w, True, cov, 0.0, 0.0)
+        cov = min(max(cov, 0.0), _f32(1.5))
+
+        inter = 0.0
+        cross = 0.0
+        for (px, pz, w) in other_stops:
+            _cv, inter, cross = accumulate_stop(
+                _dist(px, pz, cx, cz), w, False, 0.0, inter, cross)
+
+        node_w = 0.0
+        edge_w = 0.0
+        for (px, pz, _w) in nodes:
+            d = _dist(px, pz, cx, cz)
+            if d <= access_radius:
+                node_w = _f32(node_w + _tri(d, access_radius))
+        for (px, pz, _w) in edges:
+            d = _dist(px, pz, cx, cz)
+            if d <= access_radius:
+                edge_w = _f32(edge_w + _tri(d, access_radius))
+        scale = _f32(_f32(120.0 * 120.0) / _f32(access_radius * access_radius))
+        access = _f32(_f32(_f32(edge_w * _f32(0.06)) + _f32(node_w * _f32(0.15))) * scale)
+        access = 0.0 if access < 0.0 else (1.0 if access > 1.0 else access)
+
+        return {
+            "demand": demand,
+            "jobs": gated_sum(jobs),
+            "coverage": cov,
+            "access": access,
+            "future": _f32(gated_sum(future_homes) + gated_sum(future_jobs)),
+            "interchange": inter,
+            "cross": cross,
+        }
+
+    sample = [0, 1, 5, 10, 15]
+    rows = [expected(i) for i in sample]
+    return {
+        "kind": "heatmap_grid",
+        "name": "heatmap-grid-plumbing",
+        "comment": "synthetic; exercises the heatmap_grid evaluator, does NOT test "
+                   "the Burst job (only a real export does — see C1.1b)",
+        "data": {
+            "grid_x": grid, "grid_y": grid,
+            "bucket_x": 1, "bucket_y": 1,
+            "world_min_x_b32": f32_bits(world_min),
+            "world_min_z_b32": f32_bits(world_min),
+            "tile_size_b32": f32_bits(tile),
+            "bucket_size_b32": f32_bits(128.0),
+            "catchment_b32": f32_bits(catchment),
+            "access_radius_b32": f32_bits(access_radius),
+            "interchange_b32": f32_bits(interchange_radius),
+            "population_cell_x_b32": f32_bits(tile),
+            "population_cell_z_b32": f32_bits(tile),
+            "population_tex_x": grid, "population_tex_y": grid,
+            "population_b32": f32_list(population),
+            "stops": bucket_set(stops),
+            "other_stops": bucket_set(other_stops),
+            "nodes": bucket_set(nodes),
+            "edges": bucket_set(edges),
+            "jobs": bucket_set(jobs),
+            "future_homes": bucket_set(future_homes),
+            "future_jobs": bucket_set(future_jobs),
+            "components": components,
+            "buildable": buildable,
+            "sample_indices": sample,
+            "sample_demand_b32": f32_list([r["demand"] for r in rows]),
+            "sample_jobs_b32": f32_list([r["jobs"] for r in rows]),
+            "sample_coverage_b32": f32_list([r["coverage"] for r in rows]),
+            "sample_access_b32": f32_list([r["access"] for r in rows]),
+            "sample_future_b32": f32_list([r["future"] for r in rows]),
+            "sample_interchange_b32": f32_list([r["interchange"] for r in rows]),
+            "sample_cross_b32": f32_list([r["cross"] for r in rows]),
         },
     }
 
@@ -661,6 +857,7 @@ def main():
         corridor_maxlen(),
         corridor_coverage(),
         heatmap_point(),
+        heatmap_grid_plumbing(),
         order_stats(),
         lineset_feeder(),
         lineset_staged(),

@@ -49,6 +49,7 @@ cross-check is subject (mod code) vs evaluator, not two Python variants.
 | Stage | Check | Level |
 |---|---|---|
 | S1 stop terms | AccumulateStop/ModeTerms (T3/T6/T7) + kernel boundary cases | bit-exact re-evaluation |
+| S1 gathered terms | the Burst job's seven terms on a REAL city (`heatmap_grid`) | bit-exact recomputation from the job's own exported inputs |
 | S1/S5 order stats | SelectKth / PositivePercentile vs sorted reference | complete enumeration (bounded family) |
 | S2 sites | output feasible (candidates, separation, budget) + greedy-faithful | exact re-evaluation |
 | S2 sites | exact optimality gap vs the declared reference objective | SCIP exact + VIPR certificate, independently checked; cross-checked by enumeration on small instances |
@@ -75,6 +76,25 @@ make -C verification instance I=sites-greedy-gap
 
 Without the Lean checker the pipeline still passes (the formally verified check
 is reported as skipped); with it built, a Lean rejection fails the run.
+
+## Verifying a real city
+
+The synthetic instances are committed and cover the algorithms; a real city adds
+the one thing they cannot — the Burst job, which does not run outside the game.
+
+1. In the game: **Options → Station Suitability Overlay → Export verification
+   instance**. The files appear after the next recalculation; the mod log names
+   the folder (`…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`).
+2. Copy the three `real-<city>-<stamp>-*.json` files into `instances/`.
+3. `make -C verification instance I=real-<city>-<stamp>-heatmap` — and the same
+   for `-lineset`. They behave like any other instance.
+
+Notes. The `-sites` file is the real score field: the resulting MIP has one
+binary per local maximum and a conflict constraint per close pair, so on a large
+city it is a long solve — run it deliberately, not as part of `verify-all`. The
+heatmap instance checks a deterministic sample of cells (the indices are in the
+file), which is exact per cell, not a whole-grid proof. The export is read-only
+and changes nothing about what the mod computes.
 
 A run writes `runs/<instance>/<utc-stamp>/` with: `versions.json` (tool versions,
 hashes of instance, model, certificate), solver log, `.vipr` certificate,

@@ -803,6 +803,7 @@ namespace StationSuitabilityOverlay
             SweepPlaceableInfoviews();
             TrackInputChanges();
             HandleCalibrationRequests(settings);
+            HandleExportRequest();
             FinishComputeIfReady();
 
             int activeLayers = ResolveActiveLayers(out long signature);
@@ -1598,6 +1599,10 @@ namespace StationSuitabilityOverlay
                 Terms = terms,
             };
 
+            // Before the buckets are handed to the deallocation jobs below: an armed
+            // export takes its copy of exactly what this job was given.
+            CaptureExportInputs(in job, popData, stops, otherStops, nodes, edges, jobs, futureHomes, futureJobs);
+
             JobHandle handle = job.Schedule(totalCells, 64);
             m_PopulationSystem.AddReader(handle);
 
@@ -1645,6 +1650,9 @@ namespace StationSuitabilityOverlay
             m_IntensityGrid = m_PendingGrid;
             m_ScoreWorldMin = m_PendingWorldMin;
             RecombineAndNormalize();
+            // After the combine, so the exported score field is the one these terms
+            // produce rather than the previous compute's.
+            WriteExportIfCaptured();
 
             Mod.Log.Info(
                 $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, stops={(m_PendingStopCount).ToString(CultureInfo.InvariantCulture)} " +

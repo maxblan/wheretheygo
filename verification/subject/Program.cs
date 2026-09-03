@@ -34,6 +34,7 @@ namespace StationSuitabilityOverlay.Verification
                 "lineset" => LineSet(data),
                 "corridor" => CorridorGrowth(data),
                 "heatmap_point" => HeatmapPoint(data),
+                "heatmap_grid" => HeatmapGrid(data),
                 "order_stats" => OrderStats(data),
                 _ => throw new InvalidOperationException($"unknown kind '{kind}'"),
             };
@@ -408,6 +409,57 @@ namespace StationSuitabilityOverlay.Verification
             return new Dictionary<string, object?> { ["queries"] = queries };
         }
 
+        // ----------------------------------- S1 gathered terms from a real save
+        //
+        // A `heatmap_grid` instance carries the Burst job's own inputs and a sample of
+        // the terms it produced. The job itself cannot run here (Unity), and this
+        // runner does NOT reimplement it: the subject's answer for this kind IS the
+        // exported sample. The evaluator recomputes the same cells from the same
+        // inputs, so the comparison is still mod-against-independent-implementation —
+        // it just crosses a file rather than a function call.
+        private static Dictionary<string, object?> HeatmapGrid(JsonElement data)
+        {
+            var terms = new List<object>();
+            JsonElement indices = data.GetProperty("sample_indices");
+            string[] fields =
+            {
+                "sample_demand_b32", "sample_jobs_b32", "sample_coverage_b32",
+                "sample_access_b32", "sample_future_b32", "sample_interchange_b32",
+                "sample_cross_b32",
+            };
+            var columns = new List<uint[]>();
+            foreach (string field in fields)
+            {
+                JsonElement column = data.GetProperty(field);
+                var values = new uint[column.GetArrayLength()];
+                int i = 0;
+                foreach (JsonElement item in column.EnumerateArray())
+                {
+                    values[i++] = item.GetUInt32();
+                }
+                columns.Add(values);
+            }
+
+            int index = 0;
+            foreach (JsonElement cell in indices.EnumerateArray())
+            {
+                terms.Add(new Dictionary<string, object?>
+                {
+                    ["index"] = cell.GetInt32(),
+                    ["demand_b32"] = columns[0][index],
+                    ["jobs_b32"] = columns[1][index],
+                    ["coverage_b32"] = columns[2][index],
+                    ["access_b32"] = columns[3][index],
+                    ["future_b32"] = columns[4][index],
+                    ["interchange_b32"] = columns[5][index],
+                    ["cross_b32"] = columns[6][index],
+                });
+                index++;
+            }
+
+            return new Dictionary<string, object?> { ["cells"] = terms };
+        }
+
         // ----------------------------------------------- S1/S5 order statistics
 
         private static Dictionary<string, object?> OrderStats(JsonElement data)
@@ -487,6 +539,11 @@ namespace StationSuitabilityOverlay.Verification
                     m_Stops = IntArray(l.GetProperty("stops")),
                     m_ExpectedWait = F32(l.GetProperty("expected_wait_b32")),
                     m_SpeedMetresPerSecond = F32(l.GetProperty("speed_b32")),
+                    // Present on exported instances, absent on synthetic ones, where
+                    // the geometric fallback is what the instance intends.
+                    m_RideSeconds = l.TryGetProperty("ride_seconds_b32", out JsonElement rides)
+                        ? F32Array(rides)
+                        : null,
                 });
             }
 

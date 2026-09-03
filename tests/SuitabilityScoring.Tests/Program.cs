@@ -123,6 +123,11 @@ namespace StationSuitabilityOverlay.Tests
             Run("A line with nothing along it keeps all its stops", NothingScoringKeepsEveryStop);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
 
+            Run("Export JSON matches the canonical form byte for byte", ExportJsonIsCanonical);
+            Run("Export JSON escapes exactly as ensure_ascii does", ExportJsonEscapes);
+            Run("Export float bits round-trip", ExportJsonBitsRoundTrip);
+            Run("Export instances carry the digest of their own body", ExportJsonHashesBody);
+
             Console.WriteLine();
             if (s_Failures == 0)
             {
@@ -2840,6 +2845,101 @@ namespace StationSuitabilityOverlay.Tests
             if (!condition)
             {
                 throw new TestFailedException(because);
+            }
+        }
+
+        // GOLDEN VECTOR, produced by the other side of the contract:
+        //   json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        // then sha256 of its ASCII bytes (verification/common/canonical.py). If this
+        // test fails, every instance the mod exports becomes unloadable — the pipeline
+        // recomputes this digest on load and refuses a file it cannot reproduce.
+        private const string GoldenCanonical =
+            "{\"data\":{\"label\":\"Gr\\u00fc\\u00dfe \\\"x\\\" \\\\ y\",\"values_b32\":"
+            + "[1069547520,2147483648]},\"kind\":\"demo\",\"name\":\"golden\",\"schema_version\":1}";
+
+        private const string GoldenHash =
+            "ed592da4e2e64bf1a8dde36156ecdacd83812eb864ca1a1b75fdc9a802c453db";
+
+        private static SuitabilityJsonObject GoldenBody()
+        {
+            string data = new SuitabilityJsonObject()
+                // Added out of order on purpose: the writer sorts, so the canonical
+                // form must not depend on the order the export code gathers things in.
+                .Add("values_b32", SuitabilityExportJson.BitsArray(new[] { 1.5f, -0.0f }))
+                .Add("label", SuitabilityExportJson.Str("Grüße \"x\" \\ y"))
+                .Build();
+
+            return new SuitabilityJsonObject()
+                .Add("name", SuitabilityExportJson.Str("golden"))
+                .Add("kind", SuitabilityExportJson.Str("demo"))
+                .Add("data", data);
+        }
+
+        private static void ExportJsonIsCanonical()
+        {
+            SuitabilityJsonObject body = GoldenBody();
+            _ = body.Add("schema_version", SuitabilityExportJson.Int(1));
+            string canonical = body.Build();
+            if (!string.Equals(canonical, GoldenCanonical, StringComparison.Ordinal))
+            {
+                throw new TestFailedException(
+                    $"canonical form drifted from canonical.py:\n  got      {canonical}\n  expected {GoldenCanonical}");
+            }
+
+            string hash = SuitabilityExportJson.Sha256Hex(canonical);
+            if (!string.Equals(hash, GoldenHash, StringComparison.Ordinal))
+            {
+                throw new TestFailedException($"digest drifted: {hash} != {GoldenHash}");
+            }
+        }
+
+        private static void ExportJsonEscapes()
+        {
+            // Control characters, the short forms, a surrogate pair, and lowercase hex
+            // — all four are what ensure_ascii=True produces.
+            AssertJson("\"\\u0000\\b\\t\\n\\f\\r\"", SuitabilityExportJson.Str("\0\b\t\n\f\r"));
+            AssertJson("\"\\ud83d\\ude00\"", SuitabilityExportJson.Str("\U0001F600"));
+            AssertJson("\"~\"", SuitabilityExportJson.Str("~"));
+            AssertJson("null", SuitabilityExportJson.Str(null));
+        }
+
+        private static void ExportJsonBitsRoundTrip()
+        {
+            float[] values = { 0f, -0f, 1f, -1.5f, 3.4028235e38f, 1.4e-45f, 128f * 1.41421356f };
+            foreach (float value in values)
+            {
+                uint bits = SuitabilityExportJson.ToBits(value);
+                byte[] bytes = BitConverter.GetBytes(bits);
+                float back = BitConverter.ToSingle(bytes, 0);
+                if (!back.Equals(value))
+                {
+                    throw new TestFailedException($"bit pattern for {value} did not round-trip");
+                }
+            }
+        }
+
+        private static void ExportJsonHashesBody()
+        {
+            string file = GoldenBody().BuildHashed(1);
+            // The digest is OVER THE BODY, so it must be the golden hash, and the file
+            // must still contain the body verbatim after the inserted member.
+            if (!file.Contains(GoldenHash, StringComparison.Ordinal))
+            {
+                throw new TestFailedException("the written instance does not carry the body's digest");
+            }
+
+            if (!file.StartsWith("{\"hash\":", StringComparison.Ordinal)
+                || !file.EndsWith(GoldenCanonical.Substring(1), StringComparison.Ordinal))
+            {
+                throw new TestFailedException($"the written instance is not body-plus-digest: {file}");
+            }
+        }
+
+        private static void AssertJson(string expected, string actual)
+        {
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            {
+                throw new TestFailedException($"expected {expected}, got {actual}");
             }
         }
 

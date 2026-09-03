@@ -29,6 +29,7 @@ from common.canonical import (bits_to_f32, canonical_bytes,  # noqa: E402
                               load_instance, sha256_hex)
 from evaluator import corridor as ev_corridor  # noqa: E402
 from evaluator import heatmap as ev_heatmap  # noqa: E402
+from evaluator import heatmap_grid as ev_heatmap_grid  # noqa: E402
 from evaluator import lineset as ev_lineset  # noqa: E402
 from evaluator import modes as ev_modes  # noqa: E402
 from evaluator import orderstats as ev_orderstats  # noqa: E402
@@ -363,7 +364,7 @@ def base_pass(kind: str, verdict: dict) -> bool:
         return bool(verdict.get("pass_path") and verdict.get("certificate_verified")
                     and lean_ok is not False)
     if kind in ("calling_points", "mode_choice", "corridor", "heatmap_point",
-                "order_stats"):
+                "heatmap_grid", "order_stats"):
         return bool(verdict.get("evaluator", {}).get("ok"))
     if kind == "lineset":
         return bool(verdict.get("pass_rounds") and verdict.get("enumeration_complete"))
@@ -443,6 +444,8 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
                 verdict["tail_discarded"] = bool(rounds[0]["termini_have_demand"])
     elif kind == "heatmap_point":
         verdict = {"evaluator": ev_heatmap.check(instance, solution)}
+    elif kind == "heatmap_grid":
+        verdict = {"evaluator": ev_heatmap_grid.check(instance, solution)}
     elif kind == "order_stats":
         verdict = {"evaluator": ev_orderstats.check(instance, solution)}
     elif kind == "lineset":
@@ -476,12 +479,29 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
     return passed
 
 
+def is_heavy(name: str) -> bool:
+    """An instance the exporter marked as a long solve (a real city's score field
+    is one binary per local maximum). Skipped by the default sweep so copying an
+    export into instances/ cannot silently turn `verify-all` into an hour."""
+    try:
+        with open(os.path.join(INSTANCES, name + ".json"), "r", encoding="ascii") as f:
+            return bool(json.load(f).get("heavy", False))
+    except (OSError, ValueError):
+        return False
+
+
 def main() -> int:
-    names = sys.argv[1:]
+    names = [a for a in sys.argv[1:] if not a.startswith("--")]
+    run_all = "--all" in sys.argv[1:]
     if not names:
         names = sorted(
             os.path.splitext(f)[0]
             for f in os.listdir(INSTANCES) if f.endswith(".json"))
+        if not run_all:
+            skipped = [n for n in names if is_heavy(n)]
+            names = [n for n in names if n not in skipped]
+            for name in skipped:
+                print(f"[{name}] SKIPPED (heavy; run it by name, or pass --all)")
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     version_info = versions()
     all_pass = True

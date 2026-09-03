@@ -30,7 +30,13 @@ def parse(instance: dict) -> dict:
         "existing_lines": [
             transit.Line(stops=list(l["stops"]),
                          wait=bits_to_f32(l["expected_wait_b32"]),
-                         speed=bits_to_f32(l["speed_b32"]))
+                         speed=bits_to_f32(l["speed_b32"]),
+                         # Exported instances carry the game's own pathfound ride
+                         # durations; without them the router would price every ride
+                         # geometrically and disagree with the mod for a reason that
+                         # has nothing to do with the mod being wrong.
+                         ride_seconds=([bits_to_f32(b) for b in l["ride_seconds_b32"]]
+                                       if "ride_seconds_b32" in l else None))
             for l in d["existing_lines"]
         ],
         "candidates": [

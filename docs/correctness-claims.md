@@ -26,10 +26,10 @@ for what has and has not been shown; nothing else in the repo may claim more.
 | # | Claim | Status | Evidence |
 |---|---|---|---|
 | C1.1a | The stop-derived terms T3/T6/T7 and the mode-terms combination match the specification | getestet (bit-exact against an independent binary32 re-implementation, incl. the kernel boundary cases: a stop at exactly the transfer radius contributes zero interchange, at exactly the catchment contributes nothing, beyond it nothing) | `heatmap-point` verdict |
-| C1.1b | The gathered terms T1/T2/T4/T5 (population, jobs, access, future) match the specification | offen — they live in the Burst job, unreachable offline; the reference formulas are fully specified (spec §7.2) and wait on the real-save export (CX.4) | — |
+| C1.1b | The gathered terms T1/T2/T4/T5 (population, jobs, access, future) match the specification | **offen — machinery complete, awaiting one run of the game.** The Burst job cannot execute offline, so the mod now EXPORTS the job's own inputs and a sample of its outputs (`heatmap_grid`), and `evaluator/heatmap_grid.py` recomputes those cells from the specification in exact binary32. The evaluator is itself checked by `heatmap-grid-plumbing`, whose expected terms are computed independently of its bucket machinery, and a one-ULP mutation fails the run. Status flips to *getestet* on the first real export | `heatmap-grid-plumbing` verdict; `Options → Export verification instance` |
+| C1.4 | Catchments never draw demand across water/cliffs (component gating) | **offen — same mechanism, same wait.** The gate is part of the bit-exact recomputation above, and each run reports how many sources it rejected (39 on the plumbing instance), so a silently disabled gate cannot pass | `sources_rejected_by_component_gate` |
 | C1.2 | `SelectKth` returns the k-th order statistic (with k-clamping) | **enumeration** — complete enumeration of every array of length 1–5 over {−1, 0, 1, 2} with every k (4,092 cases), plus clamping and adversarial float cases; all match the sorted reference | `order-stats` verdict |
 | C1.3 | `PositivePercentile`: k = ⌊count·p⌋-th smallest of the positives; 0 when none | **enumeration** — every array of length 1–4 over {−1, 0, 1, 2} at the mod's three percentiles (1,020 cases, all-nonpositive families included) | `order-stats` verdict |
-| C1.4 | Catchments never draw demand across water/cliffs | offen | — |
 | C1.5 | Walk-distance re-scoring settles each tile exactly once | getestet | mod tests `WalkDistanceCountsOnce`/`IsDeterministic` |
 
 ## S2 Site selection (`FindTopSites`)
@@ -117,7 +117,8 @@ parallel edges.
 | CX.1 | The pure half is deterministic given its inputs | getestet — with the S2/S7 unstable-sort tie caveats documented in formal-specification §8 | pure-math rule + pipeline |
 | CX.2 | Instances are canonical and tamper-evident (sorted keys, binary32 bits, SHA-256) | getestet (mutation test: a flipped bit is rejected; a wrong expectation fails the run) | run.py hash check |
 | CX.3 | Reference evaluator and mod agree (exactly for S5/S6; within stated budgets for S7 sums) | getestet on all pipeline instances | verdicts |
-| CX.4 | ECS-half data gathering (game → arrays) is faithful | **not verifiable offline** — trust boundary; a mod-side export tool is specified but deliberately not built (production code untouched) | verification-architecture.md |
+| CX.4 | ECS-half data gathering (game → arrays) is faithful | **not verifiable offline** — remains the trust boundary, but a narrower one than before: the exporter captures its inputs INSIDE `StartCompute`, from the very values handed to the Burst job, so what verification sees is the job's own input rather than a second collection that could have drifted. What is still trusted is the ECS gather itself (ECS components → those arrays) | verification-architecture.md; `SuitabilityVerificationExport.cs` |
+| CX.5 | The exported wire format is exactly what the pipeline can load (canonical form + digest) | getestet — golden-vector test in the offline harness pins the C# writer against `canonical.py`'s own encoding and SHA-256, including sort order, escaping and the body-digest rule | mod tests `Export JSON …` (4 cases) |
 
 ## What the strongest levels mean here
 

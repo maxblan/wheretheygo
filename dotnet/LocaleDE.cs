@@ -85,6 +85,8 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyFittedWeights)), "Überschreibt die Gewichtungen für Nachfrage, Arbeitsplätze, Erreichbarkeit und künftige Nachfrage mit den oben ermittelten Werten. Ohne genügend Messwerte ohne Wirkung." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Messwerte zurücksetzen" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ResetRidershipData)), "Verwirft alle erfassten Fahrgast-Messwerte und beginnt neu. Sinnvoll nach einem Umbau des Netzes." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ExportVerificationInstance)), "Verifikationsdaten exportieren" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Schreibt die Bewertungs-Eingaben und -Ergebnisse dieser Stadt als kanonisches JSON nach ModsData/StationSuitabilityOverlay/verification, für die externe Verifikations-Pipeline. Nur lesend: exportiert wird, was der Mod ohnehin berechnet hat. Die Dateien entstehen bei der nächsten Neuberechnung; das Mod-Log nennt den Ordner." },
 
                 { "StationSuitabilityOverlay.Infomode", "Haltestellen-Eignung" },
                 { "Infoviews.INFOVIEW[StationSuitabilityOverlay]", "Haltestellen-Eignung" },
