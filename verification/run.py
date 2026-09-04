@@ -28,8 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common.canonical import (bits_to_f32, canonical_bytes,  # noqa: E402
                               load_instance, sha256_hex)
 from evaluator import corridor as ev_corridor  # noqa: E402
-from evaluator import heatmap as ev_heatmap  # noqa: E402
 from evaluator import heatmap_grid as ev_heatmap_grid  # noqa: E402
+from evaluator import heatmap_walk as ev_heatmap_walk  # noqa: E402
+from evaluator import sites_walk as ev_sites_walk  # noqa: E402
 from evaluator import lineset as ev_lineset  # noqa: E402
 from evaluator import modes as ev_modes  # noqa: E402
 from evaluator import orderstats as ev_orderstats  # noqa: E402
@@ -38,7 +39,7 @@ from evaluator import sites as ev_sites  # noqa: E402
 from evaluator import stops as ev_stops  # noqa: E402
 from evaluator.checkcert_path import check_certificate  # noqa: E402
 from enumerate.enum_lines import enumerate_optimum  # noqa: E402
-from refmodel.sites_milp import build_lp  # noqa: E402
+from refmodel.sites_milp import build_lp, build_walk_lp  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INSTANCES = os.path.join(HERE, "instances")
@@ -111,6 +112,14 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
         "pass_greedy_faithful": report["greedy_faithful"],
         "pass_scores_exact": report["reported_scores_exact"],
     }
+    exact = report.get("exact")
+    verdict["exact_present"] = exact is not None
+    if exact is not None:
+        verdict["pass_exact_feasible"] = bool(
+            exact["feasible"] and exact["reported_scores_exact"] and exact["ranked"]
+            and exact["value_consistent"])
+        if not verdict["pass_exact_feasible"]:
+            notes.append("exact selection infeasible or inconsistent")
 
     # Reference model: SCIP 10 exact + VIPR, independently checked.
     lp, cands, model_hash = build_lp(instance)
@@ -118,10 +127,76 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
         ev_sites.candidates(instance["data"]["width"], instance["data"]["height"],
                             [Fraction(bits_to_f32(b))
                              for b in instance["data"]["scores_b32"]]))
+    verdict["model_hash"] = model_hash
+    optimum = certify_lp(lp, out_dir, notes, verdict)
+    if optimum is None:
+        return verdict
+
+    greedy_value = Fraction(report["objective_value"])
+    if optimum is not None:
+        verdict["certified_optimum"] = str(optimum)
+        verdict["gap"] = str(optimum - greedy_value)
+        verdict["greedy_is_optimal"] = optimum == greedy_value
+        if exact is not None:
+            judge_exact_selection(exact, optimum, verdict, notes)
+        if "enumeration_optimum" in report:
+            agree = Fraction(report["enumeration_optimum"]) == optimum
+            verdict["enumeration_agrees_with_certificate"] = agree
+            if not agree:
+                notes.append("enumeration and certified optimum disagree")
+                verdict["certified"] = False
+    return verdict
+
+
+def check_sites_walk(instance: dict, solution: dict, out_dir: str,
+                     notes: list[str]) -> dict:
+    """S2 v2: candidates are network nodes, conflicts are walking times below the
+    spacing. Feasibility and greedy baseline from the evaluator; optimum certified
+    through the same SCIP/VIPR path as the grid form; the mod's exact selection judged
+    against it."""
+    report = ev_sites_walk.check(instance, solution)
+    verdict = {
+        "evaluator": report,
+        "pass_feasible": report["feasible"],
+        "pass_scores_exact": report["reported_scores_exact"],
+        "pass_greedy_faithful": report["greedy_faithful"],
+        "exact_present": True,
+        "pass_exact_feasible": bool(report["feasible"] and report["reported_scores_exact"]
+                                    and report["ranked"] and report["value_consistent"]),
+    }
+    lp, model_hash = build_walk_lp(instance, report["conflict_pairs"])
+    verdict["model_hash"] = model_hash
+    optimum = certify_lp(lp, out_dir, notes, verdict)
+    if optimum is None:
+        return verdict
+    greedy_value = Fraction(report["greedy_value"])
+    verdict["certified_optimum"] = str(optimum)
+    verdict["gap"] = str(optimum - greedy_value)
+    verdict["greedy_is_optimal"] = optimum == greedy_value
+    exact = {
+        "objective_value": report["objective_value"],
+        "upper_bound": report["upper_bound"],
+        "optimal_claimed": report["optimal_claimed"],
+    }
+    verdict["evaluator"]["objective_value"] = report["greedy_value"]
+    judge_exact_selection(exact, optimum, verdict, notes)
+    if "enumeration_optimum" in report:
+        agree = Fraction(report["enumeration_optimum"]) == optimum
+        verdict["enumeration_agrees_with_certificate"] = agree
+        if not agree:
+            notes.append("enumeration and certified optimum disagree")
+            verdict["certified"] = False
+    return verdict
+
+
+def certify_lp(lp: str, out_dir: str, notes: list[str], verdict: dict):
+    """Solve `lp` with SCIP 10 exact, complete and independently check its VIPR
+    certificate, and require the verified range to pin the claimed optimum. Fills
+    `verdict` and returns the certified optimum as a Fraction, or None when any step
+    fails (verdict["certified"] is then False)."""
     lp_path = os.path.join(out_dir, "model.lp")
     with open(lp_path, "w", encoding="ascii") as f:
         f.write(lp)
-    verdict["model_hash"] = model_hash
 
     scip = find_tool("scip")
     viprchk = find_tool("viprchk")
@@ -129,7 +204,7 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
     if scip is None or viprchk is None:
         verdict["certified"] = False
         notes.append("scip/viprchk not found — run verification/bootstrap.sh")
-        return verdict
+        return None
 
     cert_path = os.path.join(out_dir, "model.vipr")
     code, output = run_cmd(
@@ -147,7 +222,7 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
     if code != 0 or not scip_result.get("status_optimal"):
         verdict["certified"] = False
         notes.append("SCIP did not prove optimality")
-        return verdict
+        return None
 
     # SCIP may emit the certificate under the given name or with an _ori twin.
     cert_file = None
@@ -158,7 +233,7 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
     if cert_file is None:
         verdict["certified"] = False
         notes.append("no certificate file produced")
-        return verdict
+        return None
 
     # Reject trivial certificates (the presolve-solved DER 0 case).
     with open(cert_file, "r", encoding="ascii", errors="replace") as f:
@@ -168,7 +243,7 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
     if verdict["certificate_derivations"] <= 0:
         verdict["certified"] = False
         notes.append("certificate is trivial (0 derivations)")
-        return verdict
+        return None
     verdict["certificate_hash"] = sha256_hex(cert_text.encode("ascii", "replace"))
 
     # SCIP 10 emits VIPR 1.1 "weak" derivations — linear combinations that only
@@ -204,7 +279,7 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
     if not verified:
         verdict["certified"] = False
         notes.append("viprchk did not verify the certificate")
-        return verdict
+        return None
 
     optimum = Fraction(scip_result["primal"]) if "primal" in scip_result else None
     dual = Fraction(scip_result["dual"]) if "dual" in scip_result else None
@@ -225,19 +300,35 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
     if not cert_matches:
         notes.append("verified certificate value does not pin the claimed optimum")
     verdict["certified"] = verdict["bounds_meet"] and cert_matches
+    return optimum
 
-    greedy_value = Fraction(report["objective_value"])
-    if optimum is not None:
-        verdict["certified_optimum"] = str(optimum)
-        verdict["gap"] = str(optimum - greedy_value)
-        verdict["greedy_is_optimal"] = optimum == greedy_value
-        if "enumeration_optimum" in report:
-            agree = Fraction(report["enumeration_optimum"]) == optimum
-            verdict["enumeration_agrees_with_certificate"] = agree
-            if not agree:
-                notes.append("enumeration and certified optimum disagree")
-                verdict["certified"] = False
-    return verdict
+
+def judge_exact_selection(exact: dict, optimum: Fraction, verdict: dict,
+                          notes: list[str]) -> None:
+    """The mod's exact S2 result against the certified optimum. A closed search
+    must hit the optimum exactly (gap 0). A budget-stopped search must report a
+    value no better than the optimum and a bound no worse than it — its claimed
+    interval has to contain the truth — and must be at least as good as greedy."""
+    exact_value = Fraction(exact["objective_value"])
+    upper_bound = Fraction(exact["upper_bound"])
+    greedy_value = Fraction(verdict["evaluator"]["objective_value"])
+    verdict["exact_gap"] = str(optimum - exact_value)
+    verdict["exact_optimal_claimed"] = exact["optimal_claimed"]
+    verdict["exact_is_optimal"] = exact_value == optimum
+    verdict["exact_upper_bound"] = str(upper_bound)
+    verdict["exact_upper_bound_sound"] = upper_bound >= optimum
+    verdict["exact_at_least_greedy"] = exact_value >= greedy_value
+    if exact_value > optimum:
+        notes.append("exact selection exceeds the certified optimum — one of them is wrong")
+    if exact["optimal_claimed"]:
+        verdict["pass_exact_optimal"] = exact_value == optimum
+        if not verdict["pass_exact_optimal"]:
+            notes.append("exact search claimed optimality but missed the certified optimum")
+    else:
+        verdict["pass_exact_optimal"] = (exact_value <= optimum
+                                        and verdict["exact_upper_bound_sound"]
+                                        and verdict["exact_at_least_greedy"])
+        notes.append("exact search stopped on its node budget; bound checked instead")
 
 
 def integer_scaled_certificate(instance: dict, certificate: dict) -> dict:
@@ -406,15 +497,20 @@ def base_pass(kind: str, verdict: dict) -> bool:
     if kind == "sites":
         return all(verdict.get(k) for k in (
             "pass_feasible", "pass_greedy_faithful", "pass_scores_exact",
-            "refmodel_candidates_agree", "certified"))
+            "refmodel_candidates_agree", "certified",
+            "exact_present", "pass_exact_feasible", "pass_exact_optimal"))
+    if kind == "sites_walk":
+        return all(verdict.get(k) for k in (
+            "pass_feasible", "pass_greedy_faithful", "pass_scores_exact", "certified",
+            "pass_exact_feasible", "pass_exact_optimal"))
     if kind == "lattice_path":
         if not verdict.get("evaluator", {}).get("subject_reachable", False):
             return verdict.get("pass_path", False)
         lean_ok = verdict.get("lean_certificate_verified", None)
         return bool(verdict.get("pass_path") and verdict.get("certificate_verified")
                     and lean_ok is not False)
-    if kind in ("calling_points", "mode_choice", "corridor", "heatmap_point",
-                "heatmap_grid", "order_stats"):
+    if kind in ("calling_points", "mode_choice", "corridor",
+                "heatmap_grid", "heatmap_walk", "order_stats"):
         return bool(verdict.get("evaluator", {}).get("ok"))
     if kind == "lineset":
         return bool(verdict.get("pass_rounds")
@@ -480,6 +576,8 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
     kind = instance["kind"]
     if kind == "sites":
         verdict = check_sites(instance, solution, out_dir, notes)
+    elif kind == "sites_walk":
+        verdict = check_sites_walk(instance, solution, out_dir, notes)
     elif kind == "lattice_path":
         verdict = check_lattice_path(instance, solution, out_dir, notes)
     elif kind == "calling_points":
@@ -494,10 +592,11 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
             verdict["hit_max_length"] = bool(rounds[0].get("hit_max_length"))
             if "termini_have_demand" in rounds[0]:
                 verdict["tail_discarded"] = bool(rounds[0]["termini_have_demand"])
-    elif kind == "heatmap_point":
-        verdict = {"evaluator": ev_heatmap.check(instance, solution)}
     elif kind == "heatmap_grid":
         verdict = {"evaluator": ev_heatmap_grid.check(instance, solution)}
+    elif kind == "heatmap_walk":
+        report = ev_heatmap_walk.check(instance, solution)
+        verdict = {"evaluator": report, "three_way_exact": report["three_way_exact"]}
     elif kind == "order_stats":
         verdict = {"evaluator": ev_orderstats.check(instance, solution)}
     elif kind == "lineset":

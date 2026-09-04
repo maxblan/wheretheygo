@@ -41,6 +41,20 @@ namespace StationSuitabilityOverlay.Tests
             Run("FindTopSites respects separation and count", TopSitesRespectSeparationAndCount);
             Run("FindTopSites returns descending scores", TopSitesDescending);
             Run("FindTopSites ignores non-positive fields", TopSitesIgnoresEmptyField);
+            Run("Exact sites beat greedy on the two-fives counterexample", ExactSitesBeatGreedyCounterexample);
+            Run("Exact sites match brute force on random grids", ExactSitesMatchBruteForce);
+            Run("Exact sites report a sound bound when the budget runs out", ExactSitesBoundWhenExhausted);
+            Run("Exact sites rank ties by index and handle empty fields", ExactSitesRankingAndEmptyField);
+            Run("Exact sites scale wide-ranging scores without loss", ExactSitesWeightScaling);
+            Run("Network sites conflict by walking time and match brute force", NetworkSitesMatchBruteForce);
+            Run("Network sites beat greedy where the middle node blocks both ends", NetworkSitesBeatGreedy);
+            Run("Walk graph converts metres to whole milliseconds at the planning speed", WalkGraphMilliseconds);
+            Run("Integer Dijkstra is exact, bounded and reusable", IntDijkstraExactBoundedReusable);
+            Run("Nearest node breaks ties by index and respects the access walk", NearestNodeTiesAndReach);
+            Run("Walk access accumulates the linear time kernel per class", WalkAccessAccumulatesKernel);
+            Run("Walk access splits stops into coverage, interchange and cross terms", WalkAccessStopTerms);
+            Run("Tile terms follow the node and fade with the access walk", WalkAccessTileTerms);
+            Run("Catchment classes are exactly the modes' horizons", CatchmentClassesMatchModes);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -115,14 +129,13 @@ namespace StationSuitabilityOverlay.Tests
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
             Run("A hub is every mode within a walk, not one stop's own", AHubIsTheUnionOverAWalk);
             Run("Calls are spread evenly, never bunched at the end", CallsAreSpreadEvenly);
-            Run("A stop counts differently for the mode being placed", ScoringFollowsTheModeBeingPlaced);
-            Run("A stop beyond the catchment counts for nothing", StopTermsRespectTheirRadii);
             Run("The bigger interchange beats the nearer one", TheBiggerInterchangeWins);
             Run("An interchange call survives a thin score", AnInterchangeCallSurvivesAThinScore);
             Run("A line does not call where there is nothing", EmptyGroundGetsNoStop);
             Run("A line with nothing along it keeps all its stops", NothingScoringKeepsEveryStop);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
 
+            Run("Interchange weight is capacity relative to a bus, zero when unknown", CapacityWeightIsRelativeToBus);
             Run("Export JSON matches the canonical form byte for byte", ExportJsonIsCanonical);
             Run("Export JSON escapes exactly as ensure_ascii does", ExportJsonEscapes);
             Run("Export float bits round-trip", ExportJsonBitsRoundTrip);
@@ -382,6 +395,618 @@ namespace StationSuitabilityOverlay.Tests
                 scores[i] = -1f;
             }
             AssertEqual(0, SuitabilityScoring.FindTopSites(scores, 10, 10, 2, 4, indices, siteScores, out _), 0, "all-negative field");
+        }
+
+        private static void ExactSitesBeatGreedyCounterexample()
+        {
+            // 5 _ _ 8 _ _ 5 on a 9x3 grid, separation 4: greedy takes the 8 and can
+            // add nothing; the two 5s are mutually feasible and sum to 10.
+            const int width = 9;
+            const int height = 3;
+            var scores = new float[width * height];
+            scores[1 + width] = 5f;
+            scores[4 + width] = 8f;
+            scores[7 + width] = 5f;
+
+            var greedyIndices = new int[2];
+            var greedyScores = new float[2];
+            int greedy = SuitabilityScoring.FindTopSites(scores, width, height, 4, 2, greedyIndices, greedyScores, out _);
+            AssertEqual(1, greedy, 0, "greedy is stuck with the single 8");
+
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 4, 2, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(exact.Optimal, "search closes on a three-candidate field");
+            AssertTrue(exact.WeightsExact, "integer weights lose nothing on small integers");
+            AssertEqual(2, exact.Count, 0, "both fives are chosen");
+            AssertEqual(1 + width, exact.Indices[0], 0, "ranked by score then index: left five first");
+            AssertEqual(7 + width, exact.Indices[1], 0, "right five second");
+            AssertEqual(10f, exact.Scores[0] + exact.Scores[1], 0f, "objective is 10");
+            AssertEqual(3, exact.Candidates, 0, "three local maxima");
+        }
+
+        private static void ExactSitesMatchBruteForce()
+        {
+            // Small random fields with integer scores, so a brute-force sum over every
+            // feasible subset is exact and comparable to the solver's integer objective.
+            uint state = 20260904u;
+            for (int trial = 0; trial < 40; trial++)
+            {
+                int width = 6 + trial % 5;
+                int height = 5 + trial % 4;
+                int separation = 2 + trial % 3;
+                int maxSites = 1 + trial % 5;
+                var scores = new float[width * height];
+                for (int i = 0; i < scores.Length; i++)
+                {
+                    state = unchecked(state * 1664525u + 1013904223u);
+                    scores[i] = (state >> 24) < 96 ? (int)((state >> 8) % 50) : 0f;
+                }
+
+                ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, separation, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+                AssertTrue(exact.Optimal, "small fields close within the budget");
+                AssertTrue(exact.WeightsExact, "integer scores scale exactly");
+                AssertTrue(exact.Count <= maxSites, "never more than K sites");
+                AssertSitesFeasible(exact.Indices, exact.Count, width, separation);
+
+                int count = SuitabilityScoring.CollectSiteCandidates(scores, width, height, out int[] candidates, out float[] candidateScores, out _);
+                long best = BruteForceSites(candidates, candidateScores, count, width, separation, maxSites);
+                long value = 0;
+                for (int i = 0; i < exact.Count; i++)
+                {
+                    value += (long)exact.Scores[i];
+                    AssertEqual(scores[exact.Indices[i]], exact.Scores[i], 0f, "reported score is the grid value");
+                }
+
+                AssertEqual((int)best, (int)value, 0, $"trial {trial}: brute force {best} vs solver {value}");
+            }
+        }
+
+        private static long BruteForceSites(int[] candidates, float[] candidateScores, int count, int width, int separation, int maxSites)
+        {
+            long best = 0;
+            var chosen = new int[Math.Max(1, maxSites)];
+            Recurse(0, 0, 0);
+            return best;
+
+            void Recurse(int from, int depth, long value)
+            {
+                if (value > best)
+                {
+                    best = value;
+                }
+
+                if (depth == maxSites)
+                {
+                    return;
+                }
+
+                for (int i = from; i < count; i++)
+                {
+                    bool ok = true;
+                    for (int j = 0; j < depth && ok; j++)
+                    {
+                        int dx = Math.Abs((candidates[i] % width) - (chosen[j] % width));
+                        int dy = Math.Abs((candidates[i] / width) - (chosen[j] / width));
+                        ok = Math.Max(dx, dy) >= separation;
+                    }
+
+                    if (ok)
+                    {
+                        chosen[depth] = candidates[i];
+                        Recurse(i + 1, depth + 1, value + (long)candidateScores[i]);
+                    }
+                }
+            }
+        }
+
+        private static void AssertSitesFeasible(int[] indices, int count, int width, int separation)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                for (int j = i + 1; j < count; j++)
+                {
+                    int dx = Math.Abs((indices[i] % width) - (indices[j] % width));
+                    int dy = Math.Abs((indices[i] / width) - (indices[j] / width));
+                    AssertTrue(Math.Max(dx, dy) >= separation, "chosen sites respect the separation");
+                }
+            }
+        }
+
+        private static void ExactSitesBoundWhenExhausted()
+        {
+            // The two-fives field with a budget of one node: the root bound (13) beats
+            // the greedy incumbent (8), so the search starts, expands the 8, and is
+            // stopped before it can try the fives. It must then report the incumbent
+            // with the unexplored branch's bound (10) as ceiling — and the closed run's
+            // optimum has to sit inside that interval.
+            const int width = 9;
+            const int height = 3;
+            var scores = new float[width * height];
+            scores[1 + width] = 5f;
+            scores[4 + width] = 8f;
+            scores[7 + width] = 5f;
+
+            ExactSiteSolution starved = SuitabilityExactSites.Solve(scores, width, height, 4, 2, 1);
+            AssertTrue(!starved.Optimal, "one node cannot close the counterexample");
+            AssertEqual(1, starved.Count, 0, "falls back to the greedy incumbent");
+            AssertEqual(8f, starved.Scores[0], 0f, "the incumbent is the 8");
+            AssertTrue(starved.UpperBound > starved.Value, "the ceiling admits a better set");
+
+            ExactSiteSolution closed = SuitabilityExactSites.Solve(scores, width, height, 4, 2, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(closed.Optimal, "closes with the full budget");
+            AssertEqual(starved.ScaleShift, closed.ScaleShift, 0, "same field, same scaling");
+            AssertTrue(closed.Value <= starved.UpperBound, "the true optimum sits under the starved run's ceiling");
+            AssertTrue(closed.Value > starved.Value, "the true optimum beats the incumbent here");
+            AssertTrue(closed.Value == starved.UpperBound, "on this field the open bound is tight");
+
+            // A dense 40x40 field closes within the default budget, and whatever a
+            // starved run reports must bracket that optimum and beat plain greedy.
+            const int denseWidth = 40;
+            const int denseHeight = 40;
+            var dense = new float[denseWidth * denseHeight];
+            uint state = 7u;
+            for (int i = 0; i < dense.Length; i++)
+            {
+                state = unchecked(state * 1664525u + 1013904223u);
+                dense[i] = 1 + (int)((state >> 8) % 1000);
+            }
+
+            ExactSiteSolution denseStarved = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, 1);
+            ExactSiteSolution denseClosed = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(denseClosed.Optimal, "the full budget closes a 40x40 field");
+            AssertSitesFeasible(denseClosed.Indices, denseClosed.Count, denseWidth, 3);
+            AssertSitesFeasible(denseStarved.Indices, denseStarved.Count, denseWidth, 3);
+            AssertTrue(denseClosed.Value <= denseStarved.UpperBound, "starved ceiling holds the optimum");
+            AssertTrue(denseClosed.Value >= denseStarved.Value, "starved incumbent never beats the optimum");
+
+            var greedyIndices = new int[8];
+            var greedyScores = new float[8];
+            int greedy = SuitabilityScoring.FindTopSites(dense, denseWidth, denseHeight, 3, 8, greedyIndices, greedyScores, out _);
+            float greedySum = 0f;
+            for (int i = 0; i < greedy; i++)
+            {
+                greedySum += greedyScores[i];
+            }
+
+            float starvedSum = 0f;
+            for (int i = 0; i < denseStarved.Count; i++)
+            {
+                starvedSum += denseStarved.Scores[i];
+            }
+
+            AssertTrue(starvedSum >= greedySum, "the incumbent is at least the greedy ranking");
+        }
+
+        private static void ExactSitesRankingAndEmptyField()
+        {
+            const int width = 12;
+            const int height = 7;
+            var scores = new float[width * height];
+            // Three equal peaks and one lesser four rows down: ranking is score desc,
+            // then index asc.
+            scores[10 + width] = 4f;
+            scores[1 + width] = 4f;
+            scores[5 + width] = 4f;
+            scores[5 + 5 * width] = 1f;
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 4, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(exact.Optimal, "closes");
+            AssertEqual(4, exact.Count, 0, "all four peaks fit");
+            AssertEqual(1 + width, exact.Indices[0], 0, "lowest index among equal scores first");
+            AssertEqual(5 + width, exact.Indices[1], 0, "then the next index");
+            AssertEqual(10 + width, exact.Indices[2], 0, "then the last equal score");
+            AssertEqual(5 + 5 * width, exact.Indices[3], 0, "the lesser peak last");
+
+            ExactSiteSolution empty = SuitabilityExactSites.Solve(new float[width * height], width, height, 3, 4, SuitabilityExactSites.DefaultNodeBudget);
+            AssertEqual(0, empty.Count, 0, "nothing to choose from");
+            AssertTrue(empty.Optimal, "an empty field is trivially solved");
+            AssertEqual(0, (int)empty.Nodes, 0, "no search on an empty field");
+        }
+
+        private static void ExactSitesWeightScaling()
+        {
+            // Scores spanning 2^20 stay exact after scaling; a spread beyond the long's
+            // headroom is reported as inexact rather than silently rounded.
+            const int width = 9;
+            const int height = 3;
+            var scores = new float[width * height];
+            scores[1 + width] = 1048576f;
+            scores[4 + width] = 0.75f;
+            scores[7 + width] = 1.0f;
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 3, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(exact.WeightsExact, "a 2^20 spread is exact");
+            AssertEqual(3, exact.Count, 0, "all three are compatible at separation 3");
+            AssertEqual(1048576f, exact.Scores[0], 0f, "ranked by score");
+            AssertEqual(1.0f, exact.Scores[1], 0f, "then 1.0");
+            AssertEqual(0.75f, exact.Scores[2], 0f, "then 0.75");
+
+            scores[4 + width] = 1e-20f;
+            ExactSiteSolution wide = SuitabilityExactSites.Solve(scores, width, height, 3, 3, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(!wide.WeightsExact, "a 1e26 spread floors the tiny score");
+            AssertTrue(wide.Optimal, "still closes");
+            AssertSitesFeasible(wide.Indices, wide.Count, width, 3);
+        }
+
+        private static void NetworkSitesBeatGreedy()
+        {
+            // Nodes 0-1-2 one minute apart, scores 5 / 8 / 5, spacing 90 s: the 8 in the
+            // middle conflicts with both fives (60 s < 90 s) while the fives are 120 s
+            // apart and compatible. Greedy takes the 8; the optimum is the two fives.
+            WalkGraph graph = LineGraph(3, 72f);
+            var nodes = new[] { 0, 1, 2 };
+            var scores = new[] { 5f, 8f, 5f };
+            ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 90000, 2, SuitabilityExactSites.DefaultNodeBudget);
+            AssertTrue(exact.Optimal, "closes");
+            AssertEqual(2, exact.Count, 0, "both fives");
+            AssertEqual(0, exact.Indices[0], 0, "ranked by score then node index");
+            AssertEqual(2, exact.Indices[1], 0, "the other five");
+
+            // Spacing 60 s: the middle node is exactly a minute away, which does NOT
+            // conflict (strictly below), so all three fit.
+            ExactSiteSolution loose = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 60000, 3, SuitabilityExactSites.DefaultNodeBudget);
+            AssertEqual(3, loose.Count, 0, "a walk equal to the spacing is allowed");
+
+            // Budget of one node: greedy incumbent with a ceiling that holds the optimum.
+            ExactSiteSolution starved = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 90000, 2, 1);
+            AssertTrue(!starved.Optimal, "one node cannot close it");
+            AssertEqual(8f, starved.Scores[0], 0f, "falls back to the greedy 8");
+            AssertTrue(exact.Value <= starved.UpperBound, "ceiling holds the optimum");
+        }
+
+        private static void NetworkSitesMatchBruteForce()
+        {
+            // Random small graphs: a line with a few random shortcuts, random scores,
+            // random spacing. Conflicts are recomputed here by a plain all-pairs
+            // Floyd-Warshall so the solver's Dijkstra-based lists are cross-checked too.
+            uint state = 99u;
+            for (int trial = 0; trial < 30; trial++)
+            {
+                int n = 6 + trial % 6;
+                var x = new float[n];
+                var z = new float[n];
+                var a = new List<int>();
+                var b = new List<int>();
+                var len = new List<float>();
+                for (int i = 0; i < n; i++)
+                {
+                    x[i] = i * 60f;
+                    if (i > 0)
+                    {
+                        a.Add(i - 1);
+                        b.Add(i);
+                        state = unchecked(state * 1664525u + 1013904223u);
+                        len.Add(30f + (state >> 8) % 90);
+                    }
+                }
+
+                for (int extra = 0; extra < 2; extra++)
+                {
+                    state = unchecked(state * 1664525u + 1013904223u);
+                    int u = (int)((state >> 8) % n);
+                    state = unchecked(state * 1664525u + 1013904223u);
+                    int v = (int)((state >> 8) % n);
+                    if (u != v)
+                    {
+                        a.Add(u);
+                        b.Add(v);
+                        len.Add(40f + (state >> 20) % 200);
+                    }
+                }
+
+                WalkGraph graph = WalkGraph.Build(x, z, a.ToArray(), b.ToArray(), len.ToArray(), a.Count);
+                var candidates = new int[n];
+                var scores = new float[n];
+                for (int i = 0; i < n; i++)
+                {
+                    candidates[i] = i;
+                    state = unchecked(state * 1664525u + 1013904223u);
+                    scores[i] = 1 + (int)((state >> 8) % 40);
+                }
+
+                state = unchecked(state * 1664525u + 1013904223u);
+                int separation = 40000 + (int)((state >> 8) % 120000);
+                int maxSites = 1 + trial % 4;
+                long[][] dist = AllPairsMs(graph);
+
+                long best = 0;
+                for (int mask = 0; mask < (1 << n); mask++)
+                {
+                    int bits = 0;
+                    long value = 0;
+                    bool ok = true;
+                    for (int i = 0; i < n && ok; i++)
+                    {
+                        if ((mask & (1 << i)) == 0)
+                        {
+                            continue;
+                        }
+
+                        bits++;
+                        value += (long)scores[i];
+                        for (int j = i + 1; j < n; j++)
+                        {
+                            if ((mask & (1 << j)) != 0 && dist[i][j] < separation)
+                            {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (ok && bits <= maxSites)
+                    {
+                        best = Math.Max(best, value);
+                    }
+                }
+
+                ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, candidates, scores, n, separation, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+                AssertTrue(exact.Optimal, "small graphs close");
+                long value2 = 0;
+                for (int i = 0; i < exact.Count; i++)
+                {
+                    value2 += (long)exact.Scores[i];
+                    for (int j = i + 1; j < exact.Count; j++)
+                    {
+                        AssertTrue(dist[exact.Indices[i]][exact.Indices[j]] >= separation, $"trial {trial}: chosen nodes respect the spacing");
+                    }
+                }
+
+                AssertTrue(exact.Count <= maxSites, "never more than K");
+                AssertEqual((int)best, (int)value2, 0, $"trial {trial}: brute force {best} vs solver {value2}");
+            }
+        }
+
+        private static long[][] AllPairsMs(WalkGraph graph)
+        {
+            int n = graph.NodeCount;
+            var dist = new long[n][];
+            for (int i = 0; i < n; i++)
+            {
+                dist[i] = new long[n];
+                for (int j = 0; j < n; j++)
+                {
+                    dist[i][j] = i == j ? 0 : long.MaxValue / 4;
+                }
+            }
+
+            for (int e = 0; e < graph.EdgeMs.Length; e++)
+            {
+                int u = graph.EdgeA[e];
+                int v = graph.EdgeB[e];
+                dist[u][v] = Math.Min(dist[u][v], graph.EdgeMs[e]);
+                dist[v][u] = Math.Min(dist[v][u], graph.EdgeMs[e]);
+            }
+
+            for (int k = 0; k < n; k++)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        dist[i][j] = Math.Min(dist[i][j], dist[i][k] + dist[k][j]);
+                    }
+                }
+            }
+
+            return dist;
+        }
+
+        private static WalkGraph LineGraph(int nodes, float metres)
+        {
+            var x = new float[nodes];
+            var z = new float[nodes];
+            var a = new int[Math.Max(0, nodes - 1)];
+            var b = new int[a.Length];
+            var len = new float[a.Length];
+            for (int i = 0; i < nodes; i++)
+            {
+                x[i] = i * metres;
+            }
+
+            for (int e = 0; e < a.Length; e++)
+            {
+                a[e] = e;
+                b[e] = e + 1;
+                len[e] = metres;
+            }
+
+            return WalkGraph.Build(x, z, a, b, len, a.Length);
+        }
+
+        private static void WalkGraphMilliseconds()
+        {
+            // 1.2f widened is 1.2000000476837158, so 1.2 m is fractionally under a
+            // second and rounds to 1000 ms; 0 m is never free.
+            AssertEqual(1000, WalkGraph.WalkMilliseconds(1.2), 0, "1.2 m at 1.2 m/s");
+            AssertEqual(0, WalkGraph.WalkMilliseconds(0.0), 0, "a zero walk is zero milliseconds");
+            AssertEqual(100000, WalkGraph.WalkMilliseconds(120.0), 0, "120 m is 100 s");
+            WalkGraph graph = LineGraph(3, 72f);
+            AssertEqual(60000, graph.EdgeMs[0], 0, "72 m is one minute");
+            WalkGraph degenerate = WalkGraph.Build(new float[2], new float[2], new[] { 0 }, new[] { 1 }, new[] { 0f }, 1);
+            AssertEqual(1, degenerate.EdgeMs[0], 0, "a zero-length edge still costs a millisecond");
+            AssertEqual(2, graph.Offsets[2] - graph.Offsets[1], 0, "middle node has two adjacencies");
+        }
+
+        private static void IntDijkstraExactBoundedReusable()
+        {
+            // 0-1-2-3-4 at one minute per edge, plus a 0-4 shortcut of 150 s: the
+            // shortcut wins for node 4 (150 < 240) and settles before node 3 (180).
+            WalkGraph line = LineGraph(5, 72f);
+            var a = new List<int>(line.EdgeA) { 0 };
+            var b = new List<int>(line.EdgeB) { 4 };
+            var len = new List<float> { 72f, 72f, 72f, 72f, 180f };
+            WalkGraph graph = WalkGraph.Build(line.NodeX, line.NodeZ, a.ToArray(), b.ToArray(), len.ToArray(), 5);
+
+            var dijkstra = new IntDijkstra(graph.NodeCount);
+            dijkstra.Run(graph, 0, 0, 1_000_000);
+            AssertEqual(5, dijkstra.SettledCount, 0, "everything is within the bound");
+            AssertTrue(dijkstra.Dist[4] == 150000, "shortcut time is exact");
+            AssertTrue(dijkstra.Dist[3] == 180000, "line time is exact");
+            AssertEqual(4, dijkstra.Settled[3], 0, "node 4 settles before node 3");
+
+            dijkstra.Run(graph, 2, 30000, 90000);
+            AssertEqual(3, dijkstra.SettledCount, 0, "start 30 s + one minute reaches the neighbours only");
+            AssertTrue(dijkstra.Dist[2] == 30000, "start cost is the source's time");
+            AssertTrue(dijkstra.Dist[0] == IntDijkstra.Unreached, "beyond the bound is unreached");
+            AssertTrue(dijkstra.Dist[4] == IntDijkstra.Unreached, "the previous run's labels are gone");
+
+            var fresh = new IntDijkstra(graph.NodeCount);
+            fresh.Run(graph, 2, 30000, 90000);
+            for (int i = 0; i < graph.NodeCount; i++)
+            {
+                AssertTrue(fresh.Dist[i] == dijkstra.Dist[i], "reused workspace equals a fresh one");
+            }
+        }
+
+        private static void NearestNodeTiesAndReach()
+        {
+            var x = new float[] { 0f, 100f, 100f, 400f };
+            var z = new float[] { 0f, 0f, 0f, 0f };
+            WalkGraph graph = WalkGraph.Build(x, z, new[] { 0, 1, 2 }, new[] { 1, 2, 3 }, new[] { 100f, 1f, 300f }, 3);
+            var index = new WalkNodeIndex(graph, 144.0);
+
+            int node = index.Nearest(60f, 0f, 144.0, out double metres);
+            AssertEqual(1, node, 0, "co-located nodes 1 and 2: the lower index wins");
+            AssertEqual(40f, (float)metres, 0f, "distance to it");
+            AssertEqual(-1, index.Nearest(250f, 0f, 144.0, out _), 0, "nothing within reach");
+            AssertEqual(1, index.Nearest(250f, 0f, 200.0, out _), 0, "150 m to both sides: the lower index wins");
+            AssertEqual(3, index.Nearest(260f, 0f, 200.0, out _), 0, "wider reach finds the nearer node 3");
+
+            int snapped = SuitabilityWalkAccess.SnapPoint(index, 0f, 60f, TransitModes.AccessWalkMs, out int walkMs);
+            AssertEqual(0, snapped, 0, "60 m off node 0");
+            AssertEqual(50000, walkMs, 0, "60 m is 50 s");
+        }
+
+        private static WalkAccessInputs LineInputs(int nodes)
+        {
+            return new WalkAccessInputs
+            {
+                Graph = LineGraph(nodes, 72f),
+                TypeCount = 14,
+                AccessMs = TransitModes.AccessWalkMs,
+                TransferMs = TransitModes.TransferWalkMs,
+                CatchmentMs = TransitModes.CatchmentClassesMs,
+            };
+        }
+
+        private static WalkSources Sources(params (float x, float w)[] points)
+        {
+            var sources = new WalkSources { Count = points.Length, X = new float[points.Length], Z = new float[points.Length], Weight = new float[points.Length] };
+            for (int i = 0; i < points.Length; i++)
+            {
+                sources.X[i] = points[i].x;
+                sources.Weight[i] = points[i].w;
+            }
+
+            return sources;
+        }
+
+        private static void WalkAccessAccumulatesKernel()
+        {
+            // Ten residents at node 0 (access 0) and ten more 36 m off node 0 (30 s
+            // access). Class 0 is six minutes; node k is k minutes down the line.
+            WalkAccessInputs inputs = LineInputs(12);
+            inputs.Homes = Sources((0f, 10f), (0f, 10f));
+            inputs.Homes.Z[1] = 36f;
+            WalkAccessResult result = SuitabilityWalkAccess.Compute(inputs);
+
+            AssertEqual(0, result.SourcesOffNetwork, 0, "both homes are on the network");
+            AssertEqual(30000, result.HomeAccessMs[1], 0, "36 m is 30 s");
+            float k0 = SuitabilityWalkAccess.Kernel(0, 360000);
+            float k30 = SuitabilityWalkAccess.Kernel(30000, 360000);
+            AssertEqual((10f * k0) + (10f * k30), result.Demand[0][0], 0f, "node 0 sums both homes in index order");
+            float k60 = SuitabilityWalkAccess.Kernel(60000, 360000);
+            float k90 = SuitabilityWalkAccess.Kernel(90000, 360000);
+            AssertEqual((10f * k60) + (10f * k90), result.Demand[0][1], 0f, "node 1 is a minute further for both");
+            AssertEqual(0f, result.Demand[0][6], 0f, "six minutes out the kernel reaches zero");
+            AssertEqual(0f, result.Demand[0][7], 0f, "beyond the class horizon nothing arrives");
+            AssertTrue(result.Demand[2][7] > 0f, "the 16-minute class still sees node 7");
+            AssertEqual(0f, result.Jobs[0][0], 0f, "no jobs given");
+
+            // Off-network home is dropped and counted.
+            inputs.Homes = Sources((0f, 5f), (1200f, 5f));
+            result = SuitabilityWalkAccess.Compute(inputs);
+            AssertEqual(1, result.SourcesOffNetwork, 0, "the far home has no node within the access walk");
+            AssertEqual(5f * k0, result.Demand[0][0], 0f, "only the near home counts");
+        }
+
+        private static void WalkAccessStopTerms()
+        {
+            // A bus stop (type 0) at node 0 and a train station (type 1) at node 2,
+            // two minutes apart. Transfer horizon is three minutes, class 0 six.
+            WalkAccessInputs inputs = LineInputs(8);
+            inputs.StopCount = 2;
+            inputs.StopX = new[] { 0f, 144f };
+            inputs.StopZ = new[] { 0f, 0f };
+            inputs.StopType = new[] { 0, 1 };
+            WalkAccessResult result = SuitabilityWalkAccess.Compute(inputs);
+
+            float within120 = SuitabilityWalkAccess.Kernel(120000, 360000);
+            float transferable120 = SuitabilityWalkAccess.Kernel(120000, 180000);
+            AssertEqual(1f, result.StopWithin[0][0][0], 0f, "the bus stop covers its own node fully");
+            AssertEqual(within120, result.StopWithin[0][1][0], 0f, "the station is two minutes from node 0");
+            AssertEqual(transferable120, result.Interchange[1][0], 0f, "transferable at two of three minutes");
+            AssertEqual(within120 * (1f - transferable120), result.CrossRaw[0][1][0], 0f, "cross fades by transferability");
+            AssertEqual(0f, result.Interchange[1][6], 0f, "six minutes away is not a transfer");
+            AssertTrue(result.StopWithin[0][1][5] > 0f && result.Interchange[1][5] == 0f, "node 5: inside the catchment, outside the transfer walk");
+
+            // Terms for a bus (type 0) vs a train (type 1) at node 0, train weight 3.
+            var weights = new float[14];
+            weights[0] = 1f;
+            weights[1] = 3f;
+            SuitabilityCell bus = SuitabilityWalkAccess.NodeTerms(result, 0, 0, 0, weights);
+            AssertEqual(1f, bus.m_Coverage, 0f, "own bus stop is coverage");
+            AssertEqual(3f * transferable120, bus.m_Interchange, 0f, "the station is a weighted transfer partner");
+            AssertEqual(3f * within120 * (1f - transferable120), bus.m_CrossCoverage, 0f, "and a weighted competitor");
+            SuitabilityCell train = SuitabilityWalkAccess.NodeTerms(result, 0, 0, 1, weights);
+            AssertEqual(within120, train.m_Coverage, 0f, "for a train the station is coverage");
+            AssertEqual(1f * SuitabilityWalkAccess.Kernel(0, 180000), train.m_Interchange, 0f, "the bus stop is its transfer partner");
+            weights[0] = 0f;
+            SuitabilityCell trainNoBus = SuitabilityWalkAccess.NodeTerms(result, 0, 0, 1, weights);
+            AssertEqual(0f, trainNoBus.m_Interchange, 0f, "a type with weight 0 is excluded");
+        }
+
+        private static void WalkAccessTileTerms()
+        {
+            WalkAccessInputs inputs = LineInputs(4);
+            inputs.Homes = Sources((0f, 10f));
+            WalkAccessResult result = SuitabilityWalkAccess.Compute(inputs);
+            var index = new WalkNodeIndex(inputs.Graph, 144.0);
+
+            // Three 32 m tiles in a row starting at x = -16: centres 0, 32, 64.
+            const int width = 3;
+            var buildable = new byte[] { 1, 0, 1 };
+            var terms = new SuitabilityCell[width];
+            var tileNode = new int[width];
+            var tileWalk = new int[width];
+            SuitabilityWalkAccess.TileTerms(result, index, width, 1, -16f, -16f, 32f, buildable, inputs.AccessMs, 0, 0, new float[14], terms, tileNode, tileWalk);
+
+            AssertEqual(0, tileNode[0], 0, "tile 0 sits on node 0");
+            AssertEqual(1f, terms[0].m_Access, 0f, "on the node access is 1");
+            AssertEqual(result.Demand[0][0], terms[0].m_Demand, 0f, "tile demand is the node's");
+            AssertEqual(-1, tileNode[1], 0, "unbuildable tiles are not snapped");
+            AssertEqual(0f, terms[1].m_Demand, 0f, "and score nothing");
+            AssertEqual(1, tileNode[2], 0, "tile 2 at x=64 is nearer node 1 (72) than node 0");
+            int walk = WalkGraph.WalkMilliseconds(8.0);
+            AssertEqual(walk, tileWalk[2], 0, "8 m off the node");
+            AssertEqual(SuitabilityWalkAccess.Kernel(walk, inputs.AccessMs), terms[2].m_Access, 0f, "access fades with the walk");
+            AssertEqual(result.Demand[0][1], terms[2].m_Demand, 0f, "terms are node 1's");
+        }
+
+        private static void CatchmentClassesMatchModes()
+        {
+            var expected = new SortedSet<int>();
+            foreach (ModePreset mode in Enum.GetValues<ModePreset>())
+            {
+                _ = expected.Add(TransitModes.CatchmentMs(mode));
+            }
+
+            int[] classes = TransitModes.CatchmentClassesMs;
+            AssertEqual(expected.Count, classes.Length, 0, "one class per distinct horizon");
+            int k = 0;
+            foreach (int horizon in expected)
+            {
+                AssertEqual(horizon, classes[k++], 0, "ascending and complete");
+                AssertTrue(SuitabilityWalkAccess.ClassOf(classes, horizon) >= 0, "every mode finds its class");
+            }
         }
 
         // The regression test for the double-counting bug: an open grid gives every
@@ -1913,84 +2538,6 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(ends[0] && ends[thin.Length - 1], "a line still calls at both its ends");
         }
 
-        private static void ScoringFollowsTheModeBeingPlaced()
-        {
-            const float Catchment = 350f;
-            const float Interchange = 250f;
-            const float TramCapacity = 1.5f;
-
-            // One existing tram stop, 100 m from the tile being scored, read as a BUS
-            // line would read it.
-            float busCoverage = 0f;
-            float busInterchange = 0f;
-            float busCross = 0f;
-            SuitabilityScoring.AccumulateStop(100f, TramCapacity, sameMode: false, Catchment, Interchange,
-                ref busCoverage, ref busInterchange, ref busCross);
-
-            // The same stop, read as a TRAM line would read it. The map counts a stop of
-            // the mode being placed at 1, whatever that mode's capacity.
-            float tramCoverage = 0f;
-            float tramInterchange = 0f;
-            float tramCross = 0f;
-            SuitabilityScoring.AccumulateStop(100f, 1f, sameMode: true, Catchment, Interchange,
-                ref tramCoverage, ref tramInterchange, ref tramCross);
-
-            AssertTrue(busCoverage == 0f && busInterchange > 0f,
-                "for a bus line the tram stop is a change of vehicle, not coverage");
-            AssertTrue(tramCoverage > 0f && tramInterchange == 0f,
-                "for a tram line the same stop is its own service, not a change of vehicle");
-
-            // And the sign of the whole mode-dependent part flips with it.
-            float asBus = SuitabilityScoring.ModeTerms(
-                busCoverage / 4f, busInterchange, busCross, invSelf: 1f,
-                coverageWeight: 1f, interchangeWeight: 1f, crossWeight: 1f);
-            float asTram = SuitabilityScoring.ModeTerms(
-                tramCoverage / 4f, tramInterchange, tramCross, invSelf: 1f / TramCapacity,
-                coverageWeight: 1f, interchangeWeight: 1f, crossWeight: 1f);
-            AssertTrue(asBus > 0f, $"so the tile helps a bus line, got {asBus}");
-            AssertTrue(asTram < 0f, $"and hurts a tram line, got {asTram}");
-
-            // The feeder asymmetry: the smaller mode should come to the trunk. The same
-            // neighbour is worth more to a bus than to a train.
-            float toABus = SuitabilityScoring.ModeTerms(0f, busInterchange, 0f, 1f, 1f, 1f, 1f);
-            float toATrain = SuitabilityScoring.ModeTerms(0f, busInterchange, 0f, 1f / 3f, 1f, 1f, 1f);
-            AssertTrue(toABus > toATrain,
-                $"a bus gains more from a neighbour than a train does, got {toABus} against {toATrain}");
-        }
-
-        private static void StopTermsRespectTheirRadii()
-        {
-            float coverage = 0f;
-            float interchange = 0f;
-            float cross = 0f;
-
-            // Beyond the catchment a stop is not there at all.
-            SuitabilityScoring.AccumulateStop(400f, 2f, sameMode: false, 350f, 250f,
-                ref coverage, ref interchange, ref cross);
-            AssertTrue(coverage == 0f && interchange == 0f && cross == 0f,
-                "a stop past the catchment contributes nothing");
-
-            // Inside the catchment but past the transfer walk: competes, cannot be
-            // changed to. That distinction is the whole point of the two radii.
-            SuitabilityScoring.AccumulateStop(300f, 2f, sameMode: false, 350f, 250f,
-                ref coverage, ref interchange, ref cross);
-            AssertTrue(interchange == 0f && cross > 0f,
-                "too far to transfer to, close enough to carry the same riders");
-
-            // On top of the stop, a same-mode neighbour is the full penalty.
-            float onTop = 0f;
-            float unusedA = 0f;
-            float unusedB = 0f;
-            SuitabilityScoring.AccumulateStop(0f, 1f, sameMode: true, 350f, 250f,
-                ref onTop, ref unusedA, ref unusedB);
-            AssertTrue(Math.Abs(onTop - 1f) < 1e-6f, $"a stop on the spot counts in full, got {onTop}");
-
-            // A zero catchment cannot divide by itself.
-            float safe = 0f;
-            SuitabilityScoring.AccumulateStop(0f, 1f, sameMode: true, 0f, 0f, ref safe, ref unusedA, ref unusedB);
-            AssertTrue(safe == 0f, "a zero catchment contributes nothing rather than dividing by zero");
-        }
-
         // The reported symptom: a 2.15 km tram calling twice within 190 m. Marching a
         // fixed 450 m grid left the last two windows 2150 mod 450 = 350 m apart, and
         // the nudge closed the rest.
@@ -2873,6 +3420,15 @@ namespace StationSuitabilityOverlay.Tests
                 .Add("name", SuitabilityExportJson.Str("golden"))
                 .Add("kind", SuitabilityExportJson.Str("demo"))
                 .Add("data", data);
+        }
+
+        private static void CapacityWeightIsRelativeToBus()
+        {
+            // CS2's base subway (1080 seats) against its bus (80): 13.5 buses' worth.
+            AssertEqual(13.5f, TransitModes.CapacityWeight(1080f, 80f), 1e-6f, "subway vs bus");
+            AssertEqual(1f, TransitModes.CapacityWeight(80f, 80f), 1e-6f, "a bus is one bus");
+            AssertEqual(0f, TransitModes.CapacityWeight(0f, 80f), 0f, "unknown mode is no partner");
+            AssertEqual(0f, TransitModes.CapacityWeight(1080f, 0f), 0f, "no bus to compare against");
         }
 
         private static void ExportJsonIsCanonical()

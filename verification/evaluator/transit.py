@@ -21,7 +21,7 @@ from fractions import Fraction
 
 from evaluator import f32
 
-WALK_SPEED = 1.4
+WALK_SPEED = 1.2   # planning walking speed (spec §6.1, v2: TCQSM/FHWA value; was 1.4)
 MIN_EDGE_COST = 0.01
 MAX_ITINERARIES = 512
 
@@ -51,7 +51,7 @@ def dist_sq_f32(ax: float, az: float, bx: float, bz: float) -> float:
 
 
 def walk_seconds(dist_sq: float) -> float:
-    """ECS WalkSeconds: (float)Math.Sqrt(double distSq) / 1.4f."""
+    """ECS WalkSeconds: (float)Math.Sqrt(double distSq) / WalkSpeed (1.2f since v2)."""
     return f32.div(f32.r(math.sqrt(dist_sq)), f32.r(WALK_SPEED))
 
 
@@ -72,7 +72,7 @@ def build_network(stop_x: list[float], stop_z: list[float], lines: list[Line],
             for b in range(a + 1, stop_count):
                 d_sq = dist_sq_f32(stop_x[a], stop_z[a], stop_x[b], stop_z[b])
                 if d_sq <= radius_sq:
-                    # distance = (float)Math.Sqrt(f32 sums); cost = distance/1.4f
+                    # distance = (float)Math.Sqrt(f32 sums); cost = distance / WalkSpeed
                     distance = f32.r(math.sqrt(d_sq))
                     add_edge(a, b, f32.div(distance, f32.r(WALK_SPEED)), WALK, -1)
 

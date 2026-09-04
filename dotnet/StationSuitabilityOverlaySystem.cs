@@ -35,7 +35,6 @@ namespace StationSuitabilityOverlay
     public sealed partial class StationSuitabilityOverlaySystem : GameSystemBase
     {
         private const float TileSize = 32f;
-        private const float BucketSize = 128f;
         private const float DebounceSeconds = 0.3f;
         private const float PeriodicRefreshSeconds = 10f;
         // Road, workplace and zoning collections are cached and rebuilt from change
@@ -60,12 +59,6 @@ namespace StationSuitabilityOverlay
         // normalized against this percentile of its own positive values so all five
         // weighted terms are comparable 0..1 quantities.
         private const float TermCapPercentile = 0.98f;
-        // Tiles with no road access are not viable sites; the gate fades the score
-        // in over the low end of the access term.
-        private const float RoadGateScale = 2f;
-        // How far a rider will walk to change vehicles. Capped by the catchment so a
-        // very short catchment cannot make everything an "interchange".
-        private const float MaxInterchangeRadius = 250f;
         private const float IntensityGamma = 0.6f;
 
         // Static bridge for the options page. The settings object is constructed
@@ -230,16 +223,30 @@ namespace StationSuitabilityOverlay
         private bool m_LastOverlayApplied;
         private int m_LastStopCount;
 
+        // The access pass runs on a worker thread as plain managed code — it is the
+        // Unity-free core in SuitabilityWalkAccess, so a Task is the right vehicle and
+        // the same code runs offline on an exported city. Completion is polled from
+        // OnUpdate exactly as the Burst job it replaced was.
         private bool m_JobPending;
-        private JobHandle m_PendingHandle;
-        private NativeArray<SuitabilityCell> m_PendingTerms;
+        private System.Threading.Tasks.Task? m_PendingAccess;
+        private AccessBox? m_PendingBox;
+        private WalkAccessInputs? m_PendingInputs;
+        private int m_PendingHomeCount;
+        private WalkAccessOutput? m_Access;
+        private WalkAccessInputs? m_AccessInputs;
         private int2 m_PendingGrid;
         private float2 m_PendingWorldMin;
         private int m_PendingStopCount;
         private int m_PendingOrphanCount;
         private int m_PendingJobSiteCount;
         private int m_PendingZonedCount;
-        private int m_PendingOtherStopCount;
+
+        // The worker writes its output here; the main thread reads it once the task
+        // reports completion, which is the memory barrier that makes the hand-off safe.
+        private sealed class AccessBox
+        {
+            public WalkAccessOutput? m_Output;
+        }
         // The PLAYABLE-AREA grid as of the last compute. Deliberately not the grid the
         // compute ran on — that one comes from the population map's own extent — and
         // named for what it holds, because "the grid at compute" invited the reader to
@@ -271,14 +278,9 @@ namespace StationSuitabilityOverlay
         private ModePreset m_MaskMode;
         private int m_MaskSlope;
 
-        // Cached input collections.
-        private readonly List<float2> m_StopPositions = new List<float2>();
-        private readonly List<float2> m_OtherStopPositions = new List<float2>();
-        private readonly List<float> m_OtherStopWeights = new List<float>();
-
-        // Every served stop with its transport type, unsplit. The heatmap is built for
-        // one mode; stop placement has to score for the suggested line's mode, and
-        // these are what let it, without a second Burst pass per mode.
+        // Every served stop with its transport type. The access pass accumulates each
+        // type per node, so the map (one mode) and stop placement (the suggested
+        // line's mode) read the same numbers.
         private readonly List<float2> m_AllStopPositions = new List<float2>();
         private readonly List<int> m_AllStopTypes = new List<int>();
 
@@ -286,13 +288,22 @@ namespace StationSuitabilityOverlay
         // has to undo this mode's stop-derived terms and put its own in their place.
         private ModePreset m_ScoredMode;
         private float m_ScoredInvSelf;
+        private float m_ScoredDemandWeight;
+        private float m_ScoredJobsWeight;
         private float m_ScoredCoverageWeight;
+        private float m_ScoredAccessWeight;
+        private float m_ScoredFutureWeight;
         private float m_ScoredInterchangeWeight;
         private float m_ScoredCrossWeight;
-        private float m_ScoredCatchmentRadius;
-        private float m_ScoredInterchangeRadius;
-        private readonly List<float2> m_NodePositions = new List<float2>();
-        private readonly List<float2> m_EdgePositions = new List<float2>();
+        private float m_ScoredInvDemand;
+        private float m_ScoredInvJobs;
+        private float m_ScoredInvFuture;
+        // The pedestrian network, rebuilt with the road cache.
+        private WalkGraph? m_WalkGraph;
+        private int m_EdgesWithoutPavement;
+        private readonly List<float2> m_HomePositions = new List<float2>();
+        private readonly List<float> m_HomeResidents = new List<float>();
+        private EntityQuery m_HouseholdQuery;
         private readonly List<float2> m_JobPositions = new List<float2>();
         private readonly List<float> m_JobWorkers = new List<float>();
         private readonly List<float2> m_FutureHomePositions = new List<float2>();
@@ -303,12 +314,7 @@ namespace StationSuitabilityOverlay
         private bool m_WorkplaceCacheDirty = true;
         private bool m_ZoneCacheDirty = true;
         private int m_LastOrphanCount;
-
-        // Per-tile densities for the walk-distance refinement of reported sites.
-        private float[]? m_TileDemand;
-        private float[]? m_TileJobs;
-        private float[]? m_DistanceScratch;
-        private byte[]? m_VisitedScratch;
+        private int m_HouseholdsWithoutHome;
 
         // Travel demand and route suggestions.
         private EntityQuery m_CitizenQuery;
@@ -433,6 +439,9 @@ namespace StationSuitabilityOverlay
         // save is loaded, so this is built on the first compute and kept; a reload
         // rebuilds it with the rest of the system.
         private float[]? m_FleetCapacities;
+        // Largest vehicle capacity per Game.Prefabs.TransportType (index = enum value),
+        // read alongside m_FleetCapacities. The interchange weights derive from it.
+        private float[]? m_TypeCapacities;
         private bool m_GraphDirty = true;
         private RouteGoal m_LastObjective;
         private int m_LastRouteCount;
@@ -483,6 +492,11 @@ namespace StationSuitabilityOverlay
 
         private readonly int[] m_SiteIndices = new int[Setting.kSiteCountMax];
         private readonly float[] m_SiteScores = new float[Setting.kSiteCountMax];
+        // The candidate set the last exact selection ran on, kept for the export.
+        private int[] m_SiteCandidateNodes = Array.Empty<int>();
+        private float[] m_SiteCandidateScores = Array.Empty<float>();
+        private int m_SiteCandidateCount;
+        private int m_SiteSeparationMs;
         private int m_SiteCount;
 
         private struct ComputeSnapshot : IEquatable<ComputeSnapshot>
@@ -689,6 +703,7 @@ namespace StationSuitabilityOverlay
                 All = new[] { ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<HouseholdMember>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
+            m_HouseholdQuery = LiveQuery(ComponentType.ReadOnly<Household>(), ComponentType.ReadOnly<Game.Buildings.PropertyRenter>());
 
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
             m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(isReadOnly: true);
@@ -726,6 +741,16 @@ namespace StationSuitabilityOverlay
             UpdateCalibrationStatus();
         }
 
+        // Live entities only — the None clause every gathering query here carries.
+        private EntityQuery LiveQuery(params ComponentType[] all)
+        {
+            return GetEntityQuery(new EntityQueryDesc
+            {
+                All = all,
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
+            });
+        }
+
         private EntityQuery ChangedQuery(ComponentType required)
         {
             return GetEntityQuery(new EntityQueryDesc
@@ -744,10 +769,9 @@ namespace StationSuitabilityOverlay
             m_Scores = null;
             m_ScoreScratch = null;
             m_TermScratch = null;
-            m_TileDemand = null;
-            m_TileJobs = null;
-            m_DistanceScratch = null;
-            m_VisitedScratch = null;
+            m_Access = null;
+            m_AccessInputs = null;
+            m_WalkGraph = null;
             m_Land = null;
             m_ExpandedCache = null;
             m_VanillaPlaceableInfoviews = null;
@@ -1517,6 +1541,8 @@ namespace StationSuitabilityOverlay
 
             Dependency.Complete();
 
+            // The population map is still what fixes the map's extent and grid, so the
+            // score grid stays aligned with everything else that samples the world.
             CellMapData<PopulationCell> popData = m_PopulationSystem.GetData(readOnly: true, out JobHandle popDeps);
             if (popData.m_CellSize.x <= 0f || popData.m_CellSize.y <= 0f ||
                 popData.m_TextureSize.x <= 0 || popData.m_TextureSize.y <= 0)
@@ -1530,122 +1556,142 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
+            popDeps.Complete();
             float2 worldMin = -mapSize * 0.5f;
             int2 gridSize = SuitabilityInputs.GridDims(mapSize, TileSize);
-            int totalCells = gridSize.x * gridSize.y;
-            int2 bucketGrid = SuitabilityInputs.GridDims(mapSize, BucketSize);
 
             EnsureMasks(settings, gridSize, worldMin);
             EnsureCollectionsCurrent(settings);
-
-            // Per-tile densities are read on the main thread by the site
-            // refinement, so the population job must be finished before we sample.
-            popDeps.Complete();
-            EnsureTileDensities(popData, gridSize, worldMin);
-
-            PointBuckets stops = SuitabilityInputs.BuildBuckets(m_StopPositions, weights: null, bucketGrid, worldMin, BucketSize);
-            PointBuckets nodes = SuitabilityInputs.BuildBuckets(m_NodePositions, weights: null, bucketGrid, worldMin, BucketSize);
-            PointBuckets edges = SuitabilityInputs.BuildBuckets(m_EdgePositions, weights: null, bucketGrid, worldMin, BucketSize);
-            PointBuckets jobs = SuitabilityInputs.BuildBuckets(m_JobPositions, m_JobWorkers, bucketGrid, worldMin, BucketSize);
-            PointBuckets futureHomes = SuitabilityInputs.BuildBuckets(m_FutureHomePositions, m_FutureHomeWeights, bucketGrid, worldMin, BucketSize);
-            PointBuckets futureJobs = SuitabilityInputs.BuildBuckets(m_FutureJobPositions, m_FutureJobWeights, bucketGrid, worldMin, BucketSize);
-            PointBuckets otherStops = SuitabilityInputs.BuildBuckets(m_OtherStopPositions, m_OtherStopWeights, bucketGrid, worldMin, BucketSize);
-
-            var terms = new NativeArray<SuitabilityCell>(totalCells, Allocator.Persistent, NativeArrayOptions.ClearMemory);
-
-            var job = new SuitabilityJob
+            if (m_WalkGraph is null)
             {
-                GridSize = gridSize,
-                BucketGridSize = bucketGrid,
-                WorldMin = worldMin,
-                TileSize = TileSize,
-                BucketSize = BucketSize,
-                CatchmentRadius = settings.CatchmentRadius,
-                AccessRadius = settings.AccessRadius,
-                InterchangeRadius = math.min(MaxInterchangeRadius, settings.CatchmentRadius),
-                PopulationMap = popData.m_Buffer,
-                PopulationCellSize = popData.m_CellSize,
-                PopulationTextureSize = popData.m_TextureSize,
-                StopPositions = stops.m_Positions,
-                StopWeights = stops.m_Weights,
-                StopOffsets = stops.m_Offsets,
-                StopCounts = stops.m_Counts,
-                NodePositions = nodes.m_Positions,
-                NodeWeights = nodes.m_Weights,
-                NodeOffsets = nodes.m_Offsets,
-                NodeCounts = nodes.m_Counts,
-                EdgePositions = edges.m_Positions,
-                EdgeWeights = edges.m_Weights,
-                EdgeOffsets = edges.m_Offsets,
-                EdgeCounts = edges.m_Counts,
-                JobPositions = jobs.m_Positions,
-                JobWeights = jobs.m_Weights,
-                JobOffsets = jobs.m_Offsets,
-                JobCounts = jobs.m_Counts,
-                FutureHomePositions = futureHomes.m_Positions,
-                FutureHomeWeights = futureHomes.m_Weights,
-                FutureHomeOffsets = futureHomes.m_Offsets,
-                FutureHomeCounts = futureHomes.m_Counts,
-                FutureJobPositions = futureJobs.m_Positions,
-                FutureJobWeights = futureJobs.m_Weights,
-                FutureJobOffsets = futureJobs.m_Offsets,
-                FutureJobCounts = futureJobs.m_Counts,
-                OtherStopPositions = otherStops.m_Positions,
-                OtherStopWeights = otherStops.m_Weights,
-                OtherStopOffsets = otherStops.m_Offsets,
-                OtherStopCounts = otherStops.m_Counts,
-                Components = m_Components,
-                Buildable = m_Buildable,
-                Terms = terms,
-            };
+                return false;
+            }
 
-            // Before the buckets are handed to the deallocation jobs below: an armed
-            // export takes its copy of exactly what this job was given.
-            CaptureExportInputs(in job, popData, stops, otherStops, nodes, edges, jobs, futureHomes, futureJobs);
+            WalkAccessInputs inputs = BuildAccessInputs(m_WalkGraph);
+            byte[] buildable = m_Buildable.ToArray();
+            int cls = SuitabilityWalkAccess.ClassOf(inputs.CatchmentMs, TransitModes.CatchmentMs(settings.Mode));
+            var selfType = (int)SuitabilityInputs.TransportTypeOf(settings.Mode);
+            float[] typeWeight = TypeWeights();
+            int width = gridSize.x;
+            int height = gridSize.y;
+            float minX = worldMin.x;
+            float minZ = worldMin.y;
 
-            JobHandle handle = job.Schedule(totalCells, 64);
-            m_PopulationSystem.AddReader(handle);
+            // Everything the task touches is captured here as plain arrays; nothing on
+            // the worker reads ECS state.
+            var box = new AccessBox();
+            m_PendingBox = box;
+            m_PendingAccess = System.Threading.Tasks.Task.Run(
+                () => box.m_Output = SuitabilityWalkAccess.Run(inputs, width, height, minX, minZ, TileSize, buildable, cls, selfType, typeWeight),
+                System.Threading.CancellationToken.None);
+            m_PendingInputs = inputs;
+            CaptureExportInputs(inputs, gridSize, worldMin, buildable, settings.Mode, cls, selfType, typeWeight);
 
-            stops.Dispose(handle);
-            nodes.Dispose(handle);
-            edges.Dispose(handle);
-            jobs.Dispose(handle);
-            futureHomes.Dispose(handle);
-            futureJobs.Dispose(handle);
-            otherStops.Dispose(handle);
-
-            m_PendingHandle = handle;
-            m_PendingTerms = terms;
             m_PendingGrid = gridSize;
             m_PendingWorldMin = worldMin;
-            m_PendingStopCount = m_StopPositions.Count;
+            m_PendingStopCount = m_AllStopPositions.Count;
             m_PendingOrphanCount = m_LastOrphanCount;
             m_PendingJobSiteCount = m_JobPositions.Count;
+            m_PendingHomeCount = m_HomePositions.Count;
             m_PendingZonedCount = m_FutureHomePositions.Count + m_FutureJobPositions.Count;
-            m_PendingOtherStopCount = m_OtherStopPositions.Count;
             m_JobPending = true;
             m_PlayableGridAtCompute = GetGridSize();
             return true;
         }
 
+        // Plain-array copies of the cached collections, in their cached order.
+        private WalkAccessInputs BuildAccessInputs(WalkGraph graph)
+        {
+            var inputs = new WalkAccessInputs
+            {
+                Graph = graph,
+                Homes = SourcesOf(m_HomePositions, m_HomeResidents),
+                Jobs = SourcesOf(m_JobPositions, m_JobWorkers),
+                Future = SourcesOf(m_FutureHomePositions, m_FutureHomeWeights, m_FutureJobPositions, m_FutureJobWeights),
+                StopCount = m_AllStopPositions.Count,
+                StopX = new float[m_AllStopPositions.Count],
+                StopZ = new float[m_AllStopPositions.Count],
+                StopType = m_AllStopTypes.ToArray(),
+                TypeCount = (int)TransportType.Count,
+                AccessMs = TransitModes.AccessWalkMs,
+                TransferMs = TransitModes.TransferWalkMs,
+                CatchmentMs = TransitModes.CatchmentClassesMs,
+            };
+            for (int i = 0; i < m_AllStopPositions.Count; i++)
+            {
+                inputs.StopX[i] = m_AllStopPositions[i].x;
+                inputs.StopZ[i] = m_AllStopPositions[i].y;
+            }
+
+            return inputs;
+        }
+
+        private static WalkSources SourcesOf(List<float2> positions, List<float> weights)
+        {
+            return SourcesOf(positions, weights, new List<float2>(), new List<float>());
+        }
+
+        // Two lists concatenated in order — zoned homes then zoned workplaces for the
+        // future term.
+        private static WalkSources SourcesOf(List<float2> first, List<float> firstWeights, List<float2> second, List<float> secondWeights)
+        {
+            int count = first.Count + second.Count;
+            var sources = new WalkSources { Count = count, X = new float[count], Z = new float[count], Weight = new float[count] };
+            for (int i = 0; i < first.Count; i++)
+            {
+                sources.X[i] = first[i].x;
+                sources.Z[i] = first[i].y;
+                sources.Weight[i] = firstWeights[i];
+            }
+
+            for (int i = 0; i < second.Count; i++)
+            {
+                sources.X[first.Count + i] = second[i].x;
+                sources.Z[first.Count + i] = second[i].y;
+                sources.Weight[first.Count + i] = secondWeights[i];
+            }
+
+            return sources;
+        }
+
+        // Capacity weight per Game.Prefabs.TransportType index, from the loaded prefabs
+        // (register A1.10). Zero for types the save has no vehicle for.
+        private float[] TypeWeights()
+        {
+            var weights = new float[(int)TransportType.Count];
+            for (int type = 0; type < weights.Length; type++)
+            {
+                weights[type] = StopWeightOf((TransportType)type);
+            }
+
+            return weights;
+        }
+
         private void FinishComputeIfReady()
         {
-            if (!m_JobPending || !m_PendingHandle.IsCompleted)
+            System.Threading.Tasks.Task? pending = m_PendingAccess;
+            WalkAccessOutput? output = m_PendingBox?.m_Output;
+            if (!m_JobPending || pending is null || !pending.IsCompleted)
             {
                 return;
             }
 
-            m_PendingHandle.Complete();
             m_JobPending = false;
+            m_PendingAccess = null;
+            m_PendingBox = null;
             m_LastComputeFinish = UnityEngine.Time.realtimeSinceStartup;
-
-            int totalCells = m_PendingTerms.Length;
-            if (m_RawTerms is null || m_RawTerms.Length != totalCells)
+            if (pending.IsFaulted || pending.IsCanceled || output is null)
             {
-                m_RawTerms = new SuitabilityCell[totalCells];
+                // A fault here is a defect in the pure core, not a game condition, so
+                // it is logged in full rather than swallowed; the previous map stays.
+                Mod.Log.Error($"Access pass failed: {pending.Exception}");
+                m_PendingInputs = null;
+                return;
             }
-            m_PendingTerms.CopyTo(m_RawTerms);
-            m_PendingTerms.Dispose();
+            m_Access = output;
+            m_AccessInputs = m_PendingInputs;
+            m_PendingInputs = null;
+            m_RawTerms = output.Terms;
 
             m_IntensityGrid = m_PendingGrid;
             m_ScoreWorldMin = m_PendingWorldMin;
@@ -1655,9 +1701,15 @@ namespace StationSuitabilityOverlay
             WriteExportIfCaptured();
 
             Mod.Log.Info(
-                $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, stops={(m_PendingStopCount).ToString(CultureInfo.InvariantCulture)} " +
-                $"(orphans ignored={(m_PendingOrphanCount).ToString(CultureInfo.InvariantCulture)}), otherModeStops={(m_PendingOtherStopCount).ToString(CultureInfo.InvariantCulture)}, " +
-                $"jobSites={(m_PendingJobSiteCount).ToString(CultureInfo.InvariantCulture)}, zonedCells={(m_PendingZonedCount).ToString(CultureInfo.InvariantCulture)}, sites={(m_SiteCount).ToString(CultureInfo.InvariantCulture)}");
+                $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, " +
+                $"walk network {(output.Result.Demand.Length > 0 ? m_AccessInputs?.Graph.NodeCount ?? 0 : 0).ToString(CultureInfo.InvariantCulture)} nodes " +
+                $"({(m_EdgesWithoutPavement).ToString(CultureInfo.InvariantCulture)} edges without a pedestrian lane skipped), " +
+                $"{(output.TilesOnNetwork).ToString(CultureInfo.InvariantCulture)} tiles within {(TransitModes.AccessWalkMs / 1000).ToString(CultureInfo.InvariantCulture)} s of a node, " +
+                $"homes={(m_PendingHomeCount).ToString(CultureInfo.InvariantCulture)} ({(m_HouseholdsWithoutHome).ToString(CultureInfo.InvariantCulture)} households without a home skipped), " +
+                $"jobSites={(m_PendingJobSiteCount).ToString(CultureInfo.InvariantCulture)}, zonedCells={(m_PendingZonedCount).ToString(CultureInfo.InvariantCulture)}, " +
+                $"servedStops={(m_PendingStopCount).ToString(CultureInfo.InvariantCulture)} (orphans ignored={(m_PendingOrphanCount).ToString(CultureInfo.InvariantCulture)}), " +
+                $"sourcesOffNetwork={(output.Result.SourcesOffNetwork).ToString(CultureInfo.InvariantCulture)}, " +
+                $"settled={(output.Result.Relaxations).ToString(CultureInfo.InvariantCulture)}, sites={(m_SiteCount).ToString(CultureInfo.InvariantCulture)}");
         }
 
         private void DiscardPendingCompute()
@@ -1667,8 +1719,11 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            m_PendingHandle.Complete();
-            m_PendingTerms.Dispose();
+            // A running task finishes on its own and is ignored, since nothing reads a
+            // result whose pending fields were cleared.
+            m_PendingAccess = null;
+            m_PendingBox = null;
+            m_PendingInputs = null;
             m_JobPending = false;
         }
 
@@ -1728,9 +1783,13 @@ namespace StationSuitabilityOverlay
         {
             bool rebuilt = false;
 
-            if (m_RoadCacheDirty || m_NodePositions.Count == 0)
+            if (m_RoadCacheDirty || m_WalkGraph is null)
             {
-                SuitabilityInputs.CollectRoadNetwork(m_NodeQuery, m_RoadEdgeQuery, m_NodePositions, m_EdgePositions);
+                SuitabilityInputs.CollectWalkNetwork(
+                    EntityManager, m_NodeQuery, m_AllEdgeQuery,
+                    out float[] nodeX, out float[] nodeZ, out int[] edgeA, out int[] edgeB, out float[] edgeMetres,
+                    out m_EdgesWithoutPavement);
+                m_WalkGraph = WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length);
                 m_RoadCacheDirty = false;
                 rebuilt = true;
             }
@@ -1740,6 +1799,10 @@ namespace StationSuitabilityOverlay
                 m_TransformLookup.Update(this);
                 m_PropertyRenterLookup.Update(this);
                 SuitabilityInputs.CollectWorkplaces(m_WorkplaceQuery, m_TransformLookup, m_PropertyRenterLookup, m_JobPositions, m_JobWorkers);
+                // Homes move on the same cadence as workplaces: buildings.
+                SuitabilityInputs.CollectResidents(
+                    EntityManager, m_HouseholdQuery, m_PropertyRenterLookup, m_TransformLookup,
+                    m_HomePositions, m_HomeResidents, out m_HouseholdsWithoutHome);
                 m_WorkplaceCacheDirty = false;
                 rebuilt = true;
             }
@@ -1767,9 +1830,7 @@ namespace StationSuitabilityOverlay
                 m_PrefabSystem,
                 m_StopQuery,
                 settings.Mode,
-                m_StopPositions,
-                m_OtherStopPositions,
-                m_OtherStopWeights,
+                StopWeightOf,
                 m_AllStopPositions,
                 m_AllStopTypes,
                 out m_LastOrphanCount);
@@ -1777,47 +1838,6 @@ namespace StationSuitabilityOverlay
             if (rebuilt)
             {
                 m_LastCollectionRebuild = UnityEngine.Time.realtimeSinceStartup;
-            }
-        }
-
-        // Per-tile demand and jobs density, used by the walk-distance refinement of
-        // the reported sites (the heatmap itself uses the coarse population map with
-        // a triangular kernel, which is already calibrated).
-        private void EnsureTileDensities(CellMapData<PopulationCell> popData, int2 gridSize, float2 worldMin)
-        {
-            int cells = gridSize.x * gridSize.y;
-            if (m_TileDemand is null || m_TileJobs is null || m_DistanceScratch is null
-                || m_VisitedScratch is null || m_TileDemand.Length != cells)
-            {
-                m_TileDemand = new float[cells];
-                m_TileJobs = new float[cells];
-                m_DistanceScratch = new float[cells];
-                m_VisitedScratch = new byte[cells];
-            }
-
-            Array.Clear(m_TileDemand, 0, cells);
-            Array.Clear(m_TileJobs, 0, cells);
-
-            // Population spreads evenly across the tiles covering each source cell.
-            float popCellArea = popData.m_CellSize.x * popData.m_CellSize.y;
-            float share = popCellArea > 0f ? (TileSize * TileSize) / popCellArea : 0f;
-            float2 popMapSize = popData.m_CellSize * new float2(popData.m_TextureSize.x, popData.m_TextureSize.y);
-            float2 popMin = -popMapSize * 0.5f;
-
-            for (int y = 0; y < gridSize.y; y++)
-            {
-                for (int x = 0; x < gridSize.x; x++)
-                {
-                    float2 center = worldMin + new float2((x + 0.5f) * TileSize, (y + 0.5f) * TileSize);
-                    int2 cell = SuitabilityInputs.WorldToCell(center, popMin, popData.m_CellSize.x, popData.m_TextureSize);
-                    m_TileDemand[x + y * gridSize.x] = popData.m_Buffer[cell.x + cell.y * popData.m_TextureSize.x].m_Population * share;
-                }
-            }
-
-            for (int i = 0; i < m_JobPositions.Count; i++)
-            {
-                int2 cell = SuitabilityInputs.WorldToCell(m_JobPositions[i], worldMin, TileSize, gridSize);
-                m_TileJobs[cell.x + cell.y * gridSize.x] += m_JobWorkers[i];
             }
         }
 
@@ -1880,7 +1900,7 @@ namespace StationSuitabilityOverlay
             // so a bus gains a lot from sitting at a metro station while a metro
             // gains comparatively little from sitting at a bus stop. That asymmetry
             // is the feeder relationship: the smaller mode should come to the trunk.
-            float selfWeight = math.max(0.1f, SuitabilityInputs.ModeWeight(SuitabilityInputs.TransportTypeOf(settings.Mode)));
+            float selfWeight = math.max(0.1f, StopWeightOf(SuitabilityInputs.TransportTypeOf(settings.Mode)));
             float invSelf = 1f / selfWeight;
 
             // Pinned here rather than read from `settings` at query time: a score is
@@ -1888,44 +1908,38 @@ namespace StationSuitabilityOverlay
             // weights and radii can all move between a compute and a suggestion.
             m_ScoredMode = settings.Mode;
             m_ScoredInvSelf = invSelf;
+            m_ScoredDemandWeight = settings.W1;
+            m_ScoredJobsWeight = settings.W2;
             m_ScoredCoverageWeight = settings.W3;
+            m_ScoredAccessWeight = settings.W4;
+            m_ScoredFutureWeight = settings.W5;
             m_ScoredInterchangeWeight = settings.W6;
             m_ScoredCrossWeight = settings.W7;
-            m_ScoredCatchmentRadius = settings.CatchmentRadius;
-            m_ScoredInterchangeRadius = math.min(MaxInterchangeRadius, settings.CatchmentRadius);
+            m_ScoredInvDemand = invDemand;
+            m_ScoredInvJobs = invJobs;
+            m_ScoredInvFuture = invFuture;
 
+            int[]? tileNode = m_Access?.TileNode;
             for (int i = 0; i < totalCells; i++)
             {
                 SuitabilityCell cell = m_RawTerms[i];
-                float demand = SuitabilityScoring.Saturate(cell.m_Demand * invDemand);
-                float jobs = SuitabilityScoring.Saturate(cell.m_Jobs * invJobs);
-                float future = SuitabilityScoring.Saturate(cell.m_Future * invFuture);
-                float coverage = cell.m_Coverage / SuitabilityJob.MaxPenalty;
-                float access = cell.m_Access;
-                float interchange = SuitabilityScoring.Saturate(cell.m_Interchange * invSelf);
-                float crossCoverage = SuitabilityScoring.Saturate(cell.m_CrossCoverage * invSelf);
-
-                float score = (settings.W1 * demand)
-                    + (settings.W2 * jobs)
-                    + (settings.W4 * access)
-                    + (settings.W5 * future)
-                    + SuitabilityScoring.ModeTerms(
-                        coverage, cell.m_Interchange, cell.m_CrossCoverage, invSelf,
-                        settings.W3, settings.W6, settings.W7);
-
-                scores[i] = score * SuitabilityScoring.Saturate(access * RoadGateScale);
+                // A tile with no network node within the access walk is not a place a
+                // stop can be reached from (register A1.5): its score is zero whatever
+                // the terms say.
+                bool onNetwork = tileNode is not null && i < tileNode.Length && tileNode[i] >= 0;
+                scores[i] = onNetwork ? CombineCell(in cell, invSelf) : 0f;
 
                 // The per-term layers show the raw inputs, unweighted, so they stay
                 // meaningful when a weight is set to zero.
                 if (anyTermLayer)
                 {
-                    WriteTerm(demandLayer, i, demand);
-                    WriteTerm(jobsLayer, i, jobs);
-                    WriteTerm(coverageLayer, i, coverage);
-                    WriteTerm(accessLayer, i, access);
-                    WriteTerm(futureLayer, i, future);
-                    WriteTerm(interchangeLayer, i, interchange);
-                    WriteTerm(crossLayer, i, crossCoverage);
+                    WriteTerm(demandLayer, i, SuitabilityScoring.Saturate(cell.m_Demand * invDemand));
+                    WriteTerm(jobsLayer, i, SuitabilityScoring.Saturate(cell.m_Jobs * invJobs));
+                    WriteTerm(coverageLayer, i, CoverageShare(cell.m_Coverage));
+                    WriteTerm(accessLayer, i, cell.m_Access);
+                    WriteTerm(futureLayer, i, SuitabilityScoring.Saturate(cell.m_Future * invFuture));
+                    WriteTerm(interchangeLayer, i, SuitabilityScoring.Saturate(cell.m_Interchange * invSelf));
+                    WriteTerm(crossLayer, i, SuitabilityScoring.Saturate(cell.m_CrossCoverage * invSelf));
                 }
             }
 
@@ -1943,6 +1957,28 @@ namespace StationSuitabilityOverlay
             // Any layer's bytes may have changed, so force the interleaved buffer to
             // be rebuilt even if the active set is identical.
             m_ExpandedSignature = -1;
+        }
+
+        // The one formula that turns seven raw terms into a score, under the weights
+        // and caps pinned by the last combine. The map's own cells and a query for a
+        // different mode both come through here, so they cannot disagree.
+        private float CombineCell(in SuitabilityCell cell, float invSelf)
+        {
+            float demand = SuitabilityScoring.Saturate(cell.m_Demand * m_ScoredInvDemand);
+            float jobs = SuitabilityScoring.Saturate(cell.m_Jobs * m_ScoredInvJobs);
+            float future = SuitabilityScoring.Saturate(cell.m_Future * m_ScoredInvFuture);
+            return (m_ScoredDemandWeight * demand)
+                + (m_ScoredJobsWeight * jobs)
+                + (m_ScoredAccessWeight * cell.m_Access)
+                + (m_ScoredFutureWeight * future)
+                + SuitabilityScoring.ModeTerms(
+                    CoverageShare(cell.m_Coverage), cell.m_Interchange, cell.m_CrossCoverage, invSelf,
+                    m_ScoredCoverageWeight, m_ScoredInterchangeWeight, m_ScoredCrossWeight);
+        }
+
+        private static float CoverageShare(float coverage)
+        {
+            return math.min(coverage, SuitabilityWalkAccess.MaxCoveragePenalty) / SuitabilityWalkAccess.MaxCoveragePenalty;
         }
 
         // The combine pass is where a plausible wrong map is made: a term cap of zero
@@ -1966,14 +2002,19 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            float tileDemand = 0f;
-            float tileJobs = 0f;
-            if (m_TileDemand is not null && m_TileJobs is not null)
+            float residents = 0f;
+            float jobsTotal = 0f;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (inputs is not null)
             {
-                for (int i = 0; i < m_TileDemand.Length; i++)
+                for (int i = 0; i < inputs.Homes.Count; i++)
                 {
-                    tileDemand += m_TileDemand[i];
-                    tileJobs += m_TileJobs[i];
+                    residents += inputs.Homes.Weight[i];
+                }
+
+                for (int i = 0; i < inputs.Jobs.Count; i++)
+                {
+                    jobsTotal += inputs.Jobs.Weight[i];
                 }
             }
 
@@ -1984,7 +2025,7 @@ namespace StationSuitabilityOverlay
                 "(a cap of 0 means that term is zero everywhere and drops out of the score); " +
                 $"scores min={(min).ToString("F3", CultureInfo.InvariantCulture)} max={(max).ToString("F3", CultureInfo.InvariantCulture)}, " +
                 $"{(positive).ToString(CultureInfo.InvariantCulture)}/{(totalCells).ToString(CultureInfo.InvariantCulture)} positive; " +
-                $"tile totals population={(tileDemand).ToString("F0", CultureInfo.InvariantCulture)}, jobs={(tileJobs).ToString("F0", CultureInfo.InvariantCulture)}");
+                $"source totals residents={(residents).ToString("F0", CultureInfo.InvariantCulture)}, jobs={(jobsTotal).ToString("F0", CultureInfo.InvariantCulture)}");
         }
 
         // Returns the two buffers the combine pass writes through. Handing them back
@@ -2095,24 +2136,42 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            // Sites should not cluster inside one catchment.
-            int separation = math.max(2, (int)math.round(settings.CatchmentRadius / TileSize));
-            int wanted = math.min(settings.SiteCount, m_SiteIndices.Length);
-
-            m_SiteCount = SuitabilityScoring.FindTopSites(
-                m_Scores, width, height, separation, wanted, m_SiteIndices, m_SiteScores, out bool truncated);
-
-            if (truncated)
-            {
-                Mod.Log.Warn("Site search hit its candidate budget; the reported sites may miss better ones.");
-            }
-
-            if (m_SiteCount == 0)
+            WalkAccessOutput? access = m_Access;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (access is null || inputs is null)
             {
                 return;
             }
 
-            RefineAndRankSites(settings);
+            // Candidates are network nodes (register A2.1): every node whose own tile
+            // is buildable and whose score for the map's mode is positive. Two
+            // candidates conflict when the walk between them is shorter than the
+            // mode's stop spacing (A2.2) — the same metric the stops are later set by.
+            int wanted = math.min(settings.SiteCount, m_SiteIndices.Length);
+            int separationMs = Math.Max(1, WalkGraph.WalkMilliseconds(TransitModes.StopSpacingFor(settings.Mode)));
+            CollectNodeCandidates(access, inputs, width, height);
+
+            // Exact selection: the set of at most `wanted` candidates with the largest
+            // score sum under the spacing, or — should the node budget run out on a
+            // pathological field — the best set found with a proven ceiling. The
+            // greedy ranking it replaced left up to 1.3 % of score on a real city
+            // (docs/correctness-claims.md C2.3).
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(
+                inputs.Graph, m_SiteCandidateNodes, m_SiteCandidateScores, m_SiteCandidateCount,
+                separationMs, wanted, SuitabilityExactSites.DefaultNodeBudget);
+            stopwatch.Stop();
+            m_SiteSeparationMs = separationMs;
+
+            m_SiteCount = exact.Count;
+            for (int i = 0; i < exact.Count; i++)
+            {
+                m_SiteIndices[i] = TileOfNode(inputs.Graph, exact.Indices[i], width, height);
+                m_SiteScores[i] = exact.Scores[i];
+            }
+
+            LogSiteSelection(exact, separationMs, wanted, stopwatch.ElapsedMilliseconds);
+
             if (m_SiteCount == 0)
             {
                 return;
@@ -2160,65 +2219,69 @@ namespace StationSuitabilityOverlay
             LogSites();
         }
 
-        private void RefineAndRankSites(Setting settings)
+        // Node candidates for the exact selection, scored exactly as a tile sitting on
+        // the node would be (access 1), under the caps and weights of the last combine.
+        private void CollectNodeCandidates(WalkAccessOutput access, WalkAccessInputs inputs, int width, int height)
         {
-            if (m_Land is null || m_TileDemand is null || m_TileJobs is null
-                || m_DistanceScratch is null || m_VisitedScratch is null)
+            WalkGraph graph = inputs.Graph;
+            if (m_SiteCandidateNodes.Length < graph.NodeCount)
             {
-                return;
+                m_SiteCandidateNodes = new int[graph.NodeCount];
+                m_SiteCandidateScores = new float[graph.NodeCount];
             }
 
-            byte[] land = m_Land;
-            float[] tileDemand = m_TileDemand;
-            float[] tileJobs = m_TileJobs;
-            float[] distanceScratch = m_DistanceScratch;
-            byte[] visitedScratch = m_VisitedScratch;
-
-            var refined = new float[m_SiteCount];
-            for (int s = 0; s < m_SiteCount; s++)
+            m_SiteCandidateCount = 0;
+            for (int node = 0; node < graph.NodeCount; node++)
             {
-                refined[s] = SuitabilityScoring.AccumulateWalkDistance(
-                    m_SiteIndices[s],
-                    m_IntensityGrid.x,
-                    m_IntensityGrid.y,
-                    TileSize,
-                    settings.CatchmentRadius,
-                    land,
-                    tileDemand,
-                    tileJobs,
-                    settings.W1,
-                    settings.W2,
-                    distanceScratch,
-                    visitedScratch,
-                    out float _,
-                    out float _);
-            }
-
-            // Re-rank on the walk-distance score, carrying the indices with it. The
-            // reported scores are then the refined ones: swapping m_SiteScores in
-            // lockstep here was dead work, since the whole array is overwritten below.
-            for (int i = 1; i < m_SiteCount; i++)
-            {
-                for (int j = i; j > 0 && refined[j] > refined[j - 1]; j--)
+                int tile = TileOfNode(graph, node, width, height);
+                if (tile < 0 || tile >= m_Buildable.Length || m_Buildable[tile] == 0)
                 {
-                    Swap(refined, j, j - 1);
-                    int tmp = m_SiteIndices[j];
-                    m_SiteIndices[j] = m_SiteIndices[j - 1];
-                    m_SiteIndices[j - 1] = tmp;
+                    continue;
                 }
+
+                SuitabilityCell cell = SuitabilityWalkAccess.NodeTerms(access.Result, node, access.Class, access.SelfType, access.TypeWeight);
+                float score = CombineCell(in cell, m_ScoredInvSelf);
+                if (score <= 0f)
+                {
+                    continue;
+                }
+
+                m_SiteCandidateNodes[m_SiteCandidateCount] = node;
+                m_SiteCandidateScores[m_SiteCandidateCount] = score;
+                m_SiteCandidateCount++;
+            }
+        }
+
+        private int TileOfNode(WalkGraph graph, int node, int width, int height)
+        {
+            var position = new float2(graph.NodeX[node], graph.NodeZ[node]);
+            int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, new int2(width, height));
+            return cell.x + cell.y * width;
+        }
+
+        private static void LogSiteSelection(ExactSiteSolution exact, int separationMs, int wanted, long elapsedMs)
+        {
+            double unit = Math.Pow(2.0, -exact.ScaleShift);
+            string value = (exact.Value * unit).ToString("F4", CultureInfo.InvariantCulture);
+            string closure = exact.Optimal
+                ? "optimal (search closed)"
+                : "best found, NOT proven optimal; ceiling " + (exact.UpperBound * unit).ToString("F4", CultureInfo.InvariantCulture);
+            Mod.Log.Info(
+                $"Site selection: {exact.Count.ToString(CultureInfo.InvariantCulture)} of up to {wanted.ToString(CultureInfo.InvariantCulture)} sites, "
+                + $"spacing {(separationMs / 1000).ToString(CultureInfo.InvariantCulture)} s walk, "
+                + $"{exact.Candidates.ToString(CultureInfo.InvariantCulture)} candidate network nodes, "
+                + $"score sum {value} {closure}, "
+                + $"{exact.Nodes.ToString(CultureInfo.InvariantCulture)} search nodes in {elapsedMs.ToString(CultureInfo.InvariantCulture)} ms"
+                + (exact.WeightsExact ? string.Empty : " (integer weights floored: score spread beyond 2^33)"));
+
+            if (exact.CandidatesTruncated)
+            {
+                Mod.Log.Warn("Site search hit its candidate budget; the reported sites may miss better ones.");
             }
 
-            for (int s = 0; s < m_SiteCount; s++)
+            if (!exact.Optimal)
             {
-                m_SiteScores[s] = refined[s];
-            }
-
-            // A site the walk-distance pass finds serves nobody is not a
-            // recommendation. These are remote specks the Euclidean pass scored on a
-            // stray road, and reporting them alongside real candidates is misleading.
-            while (m_SiteCount > 0 && m_SiteScores[m_SiteCount - 1] <= 0f)
-            {
-                m_SiteCount--;
+                Mod.Log.Warn("Site search ran out of its node budget; the reported ranking is the best found, not proven optimal.");
             }
         }
 
@@ -2350,7 +2413,8 @@ namespace StationSuitabilityOverlay
                     WorkTripWeight = 1f,
                     // School trips are real transit demand but shorter and less
                     // peaked than commutes.
-                    SchoolTripWeight = 0.6f,
+                    // Register A0.3: every purpose weighs the same.
+                    SchoolTripWeight = 1f,
                     Trips = trips.AsParallelWriter(),
                 };
 
@@ -3063,6 +3127,26 @@ namespace StationSuitabilityOverlay
         // prefabs. This is what every rider floor is derived from, so it must be the
         // real figure and not a table in this mod that nothing keeps in step.
         //
+        // What a stop of `type` is worth as a transfer partner: its vehicle's capacity
+        // relative to a bus, from the loaded prefabs (register A1.10). The one owner of
+        // that weight — the job's bucket weights, the combine's self weight and the
+        // per-mode swap all call this, so they cannot disagree about what a train is
+        // worth next to a bus stop. Logged once with the capacities it rests on.
+        private float StopWeightOf(TransportType type)
+        {
+            if (m_TypeCapacities is null)
+            {
+                _ = ReadFleetCapacities();
+            }
+
+            float[] byType = m_TypeCapacities ?? System.Array.Empty<float>();
+            int index = (int)type;
+            int bus = (int)TransportType.Bus;
+            float capacity = index >= 0 && index < byType.Length ? byType[index] : 0f;
+            float busCapacity = bus >= 0 && bus < byType.Length ? byType[bus] : 0f;
+            return TransitModes.CapacityWeight(capacity, busCapacity);
+        }
+
         // A consist is summed the way TransportVehicleSelectData.CreateVehicle does it
         // (decompiled): the base vehicle's own capacity plus, for every entry in its
         // VehicleCarriages buffer, that carriage's capacity times the MINIMUM count —
@@ -3081,6 +3165,7 @@ namespace StationSuitabilityOverlay
             }
 
             var byMode = new float[TransitModes.All.Length];
+            var byType = new float[(int)TransportType.Count];
             using var entities = m_VehiclePrefabQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
@@ -3106,6 +3191,12 @@ namespace StationSuitabilityOverlay
                     }
                 }
 
+                int typeIndex = (int)vehicle.m_TransportType;
+                if (typeIndex >= 0 && typeIndex < byType.Length)
+                {
+                    byType[typeIndex] = math.max(byType[typeIndex], capacity);
+                }
+
                 for (int m = 0; m < TransitModes.All.Length; m++)
                 {
                     ModePreset mode = TransitModes.All[m];
@@ -3123,6 +3214,7 @@ namespace StationSuitabilityOverlay
             }
 
             m_FleetCapacities = byMode;
+            m_TypeCapacities = byType;
 
             var report = new StringBuilder("Fleet capacities read from the loaded prefabs (one vehicle, carriages included): ");
             for (int m = 0; m < TransitModes.All.Length; m++)
@@ -3673,7 +3765,11 @@ namespace StationSuitabilityOverlay
         }
 
         // How far a rider will walk to reach or change service.
-        private const float TransferWalkRadius = 250f;
+        // How long a rider will walk to change vehicle: three minutes at the planning
+        // walking speed (register A1.11; the literature gives transfer TIME weights,
+        // no distance threshold — TCQSM Exhibit 4-5). Metres follow from the speed.
+        private const float TransferWalkSeconds = TransitModes.TransferWalkMs / 1000f;
+        private const float TransferWalkRadius = SuitabilityTransit.WalkSpeed * TransferWalkSeconds;
         // How much better a journey has to get before anyone changes how they make it.
         // Below a minute the difference is not worth the bother, and crediting a line
         // for it is how a proposed metro came to be credited with demand that carried
@@ -4493,64 +4589,41 @@ namespace StationSuitabilityOverlay
 
         // The same tile, scored for a DIFFERENT mode than the map was built for.
         //
-        // Only the stop-derived terms depend on the mode, so the four that do not —
-        // demand, jobs, access and future — are taken from the map unchanged and the
-        // mode-dependent part is swapped out. That is why this costs a scan of the
-        // served stops rather than another pass over 200k cells.
-        //
-        // It matters because the map is built for whatever mode the PANEL is showing,
-        // while a suggested line's mode is decided by flow and length. A tram was being
-        // placed against the bus map: penalised for sitting near bus stops, which is not
-        // its own service, and rewarded for sitting near trams, which is.
+        // The access pass keeps every mode's accumulators per network node, so this is
+        // the full combine over the tile's node for the requested mode — not a swap of
+        // the stop-derived terms against the panel's map. It matters because the map is
+        // built for whatever mode the PANEL is showing, while a suggested line's mode is
+        // decided by flow and length. A tram was being placed against the bus map:
+        // penalised for sitting near bus stops, which is not its own service, and
+        // rewarded for sitting near trams, which is.
         private float ScoreForMode(float2 point, int2 gridSize, ModePreset mode)
         {
             float baseScore = ScoreAtWorld(point, gridSize);
-            if (mode == m_ScoredMode || m_RawTerms is null)
+            WalkAccessOutput? access = m_Access;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (mode == m_ScoredMode || access is null || inputs is null)
             {
                 return baseScore;
             }
 
             int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
             int index = cell.x + (cell.y * gridSize.x);
-            if (index < 0 || index >= m_RawTerms.Length)
+            if (index < 0 || index >= access.TileNode.Length || access.TileNode[index] < 0)
+            {
+                return 0f;
+            }
+
+            int cls = SuitabilityWalkAccess.ClassOf(inputs.CatchmentMs, TransitModes.CatchmentMs(mode));
+            if (cls < 0)
             {
                 return baseScore;
             }
 
-            var self = (int)SuitabilityInputs.TransportTypeOf(mode);
-            float coverage = 0f;
-            float interchange = 0f;
-            float crossCoverage = 0f;
-            for (int i = 0; i < m_AllStopPositions.Count; i++)
-            {
-                bool sameMode = m_AllStopTypes[i] == self;
-                // The map counts a stop of the placed mode at 1, and any other at its
-                // own capacity — CollectStops builds the two bucket sets that way.
-                float weight = sameMode
-                    ? 1f
-                    : SuitabilityInputs.ModeWeight((Game.Prefabs.TransportType)m_AllStopTypes[i]);
-                SuitabilityScoring.AccumulateStop(
-                    math.distance(m_AllStopPositions[i], point), weight, sameMode,
-                    m_ScoredCatchmentRadius, m_ScoredInterchangeRadius,
-                    ref coverage, ref interchange, ref crossCoverage);
-            }
-
-            SuitabilityCell raw = m_RawTerms[index];
-            float invSelf = 1f / math.max(0.1f, SuitabilityInputs.ModeWeight(SuitabilityInputs.TransportTypeOf(mode)));
-            float mine = SuitabilityScoring.ModeTerms(
-                math.min(coverage, SuitabilityJob.MaxPenalty) / SuitabilityJob.MaxPenalty,
-                interchange, crossCoverage, invSelf,
-                m_ScoredCoverageWeight, m_ScoredInterchangeWeight, m_ScoredCrossWeight);
-            float shown = SuitabilityScoring.ModeTerms(
-                raw.m_Coverage / SuitabilityJob.MaxPenalty,
-                raw.m_Interchange, raw.m_CrossCoverage, m_ScoredInvSelf,
-                m_ScoredCoverageWeight, m_ScoredInterchangeWeight, m_ScoredCrossWeight);
-
-            // The road gate the combine pass applied to the whole score applies to the
-            // swap as well, or a tile with no road access would gain a bonus the map
-            // suppresses.
-            float gate = SuitabilityScoring.Saturate(raw.m_Access * RoadGateScale);
-            return baseScore + ((mine - shown) * gate);
+            var selfType = (int)SuitabilityInputs.TransportTypeOf(mode);
+            SuitabilityCell terms = SuitabilityWalkAccess.NodeTerms(access.Result, access.TileNode[index], cls, selfType, access.TypeWeight);
+            terms.m_Access = SuitabilityWalkAccess.Kernel(access.TileWalkMs[index], inputs.AccessMs);
+            float invSelf = 1f / math.max(0.1f, StopWeightOf(SuitabilityInputs.TransportTypeOf(mode)));
+            return CombineCell(in terms, invSelf);
         }
 
         // A ferry pier belongs where the water meets the land it serves. Scoring open
@@ -4615,7 +4688,7 @@ namespace StationSuitabilityOverlay
             // the 160 m this window spans, so it cannot reorder the cells within it.
             return ScoreForMode(
                 SuitabilityInputs.CellCentre(bestCell, m_ScoreWorldMin, TileSize),
-                gridSize, ModePreset.Ferry) + 1f;
+                gridSize, ModePreset.Ferry);
         }
 
         // Two routes are the same suggestion when they run between the same places.

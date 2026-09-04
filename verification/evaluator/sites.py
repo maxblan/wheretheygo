@@ -171,10 +171,61 @@ def check(instance: dict, solution: dict) -> dict:
         "objective_value": str(greedy_value),
         "truncated": bool(solution.get("truncated", False)),
     }
+    if "exact_site_indices" in solution:
+        result["exact"] = check_exact(solution, scores, width, separation, max_sites,
+                                      cand_set)
     if len(cands) <= BRUTE_FORCE_MAX_CANDIDATES:
         opt, opt_set = brute_force_optimum(cands, scores, width, separation, max_sites)
         result["enumeration_optimum"] = str(opt)
         result["enumeration_optimum_set"] = opt_set
         result["gap"] = str(opt - greedy_value)
         result["greedy_is_optimal"] = opt == greedy_value
+        if "exact" in result:
+            exact_value = Fraction(result["exact"]["objective_value"])
+            result["exact"]["enumeration_gap"] = str(opt - exact_value)
+            result["exact"]["enumeration_agrees"] = opt == exact_value
     return result
+
+
+def check_exact(solution: dict, scores: list[Fraction], width: int, separation: int,
+                max_sites: int, cand_set: set[int]) -> dict:
+    """The exact selection (SuitabilityExactSites): feasibility, exact reported
+    scores, ranking order, and the consistency of its own integer-scaled value and
+    bound with the rational objective. Optimality itself is judged in run.py against
+    the certified optimum."""
+    selection = list(solution["exact_site_indices"])
+    ok_feasible, why = feasible(selection, width, separation, max_sites, cand_set)
+    reported = [bits_to_fraction(b) for b in solution["exact_site_scores_b32"]]
+    scores_exact = len(reported) == len(selection) and all(
+        i < len(scores) and reported[k] == scores[i] for k, i in enumerate(selection))
+    ranked = all(
+        (scores[selection[k]], -selection[k]) >= (scores[selection[k + 1]], -selection[k + 1])
+        for k in range(len(selection) - 1))
+    value = objective(selection, scores)
+    shift = int(solution["exact_scale_shift"])
+    scale = Fraction(2) ** shift
+    scaled_value = Fraction(int(solution["exact_value_scaled"]))
+    scaled_bound = Fraction(int(solution["exact_upper_bound_scaled"]))
+    weights_exact = bool(solution["exact_weights_exact"])
+    # With exact weights the scaled value IS the objective; with floored weights it
+    # undershoots by less than one unit per chosen site.
+    if weights_exact:
+        value_consistent = scaled_value == value * scale
+    else:
+        value_consistent = scaled_value <= value * scale < scaled_value + len(selection)
+    return {
+        "site_indices": selection,
+        "feasible": ok_feasible,
+        "feasible_reason": why,
+        "reported_scores_exact": scores_exact,
+        "ranked": ranked,
+        "objective_value": str(value),
+        "optimal_claimed": bool(solution["exact_optimal"]),
+        "weights_exact": weights_exact,
+        "scale_shift": shift,
+        "value_consistent": value_consistent,
+        # Ceiling in rational terms, slackened by one unit per site when weights
+        # were floored (each floored weight is below its score by < 1 unit).
+        "upper_bound": str((scaled_bound + (0 if weights_exact else max_sites)) / scale),
+        "nodes": int(solution.get("exact_nodes", 0)),
+    }

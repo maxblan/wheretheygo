@@ -37,12 +37,12 @@ Verifikationsstand jeder Regel: `docs/correctness-claims.md`. Dieses Register sa
 
 | # | Annahme | Wert / Regel | Herkunft | Wirkung | Prüffrage |
 |---|---|---|---|---|---|
-| A1.1 | Kern | linear fallend 1 − d/r (Dreieck), Einzugsradius r | Literatur-Analog (Hansen 1959) | Nähe zählt linear; kein Gauß, kein Plateau | Dreieck oder z. B. Gehzeit-basiert? |
-| A1.2 | Einzugsradien | Bus 350 · Tram 450 · Metro 600 · Train 900 · Ferry 500 m | Urteil (Bus/Metro literaturkonform) | Was „im Einzugsbereich" heißt | Werte übernehmen? |
-| A1.3 | Zugangsradien Straße | Bus 120 · Tram 130 · Metro 150 · Train 200 · Ferry 140 m | Urteil | Ab wann eine Kachel „erschlossen" ist | — |
-| A1.4 | Landmassen-Gating | Bevölkerung, Jobs, Zukunft nur aus derselben Landmasse (8-connected über **Land**, nicht Bebaubarkeit); Deckung/Umsteigen/Überlappung **nicht** gegated | Urteil (im Code begründet) | Kein Ziehen über Wasser; steile Hänge trennen nicht | Steile Hänge als Barriere gewollt? |
-| A1.5 | Zugänglichkeitsterm | 0,06 pro Kante + 0,15 pro Knoten, × (120/r)², saturiert auf 1 | Urteil (getuned) | Ein normales Raster saturiert | — |
-| A1.6 | Straßen-Gate | Score × sat(2·Zugang): unter 50 % Zugang fällt alles linear auf 0 | Urteil | Kacheln ohne Straße scoren nichts | Gewollt (Metro-Stationen ohne Straße?) |
+| A1.1 ✅ umgesetzt (Phase 3) | Kern | linear fallend 1 − d/r (Dreieck), Einzugsradius r | Literatur-Analog (Hansen 1959) | Nähe zählt linear; kein Gauß, kein Plateau | Dreieck oder z. B. Gehzeit-basiert? |
+| A1.2 ✅ umgesetzt (Phase 3: 6/11/16 min) | Einzugsradien | Bus 350 · Tram 450 · Metro 600 · Train 900 · Ferry 500 m | Urteil (Bus/Metro literaturkonform) | Was „im Einzugsbereich" heißt | Werte übernehmen? |
+| A1.3 ✅ umgesetzt (Phase 3: Zeitkriterium) | Zugangsradien Straße | Bus 120 · Tram 130 · Metro 150 · Train 200 · Ferry 140 m | Urteil | Ab wann eine Kachel „erschlossen" ist | — |
+| A1.4 ✅ umgesetzt (Phase 3) | Landmassen-Gating | Bevölkerung, Jobs, Zukunft nur aus derselben Landmasse (8-connected über **Land**, nicht Bebaubarkeit); Deckung/Umsteigen/Überlappung **nicht** gegated | Urteil (im Code begründet) | Kein Ziehen über Wasser; steile Hänge trennen nicht | Steile Hänge als Barriere gewollt? |
+| A1.5 ✅ umgesetzt (Phase 3) | Zugänglichkeitsterm | 0,06 pro Kante + 0,15 pro Knoten, × (120/r)², saturiert auf 1 | Urteil (getuned) | Ein normales Raster saturiert | — |
+| A1.6 ✅ umgesetzt (Phase 3) | Straßen-Gate | Score × sat(2·Zugang): unter 50 % Zugang fällt alles linear auf 0 | Urteil | Kacheln ohne Straße scoren nichts | Gewollt (Metro-Stationen ohne Straße?) |
 | A1.7 | Normalisierung | pro Term 98. Perzentil der positiven Werte = 1; Deckung gekappt bei 1,5 | Urteil | Ausreißer beschneiden die Skala nicht | — |
 | A1.8 | Gewichte W1–W7 | Bus 1,0/0,8/1,2/0,6/0,3/0,9/0,4 · Tram 1,0/0,9/1,3/0,7/0,35/0,8/0,45 · Metro 0,9/1,0/1,4/0,8/0,4/0,6/0,5 · Train 0,8/1,1/1,5/0,5/0,5/0,5/0,6 · Ferry 1,0/0,7/1,2/0,4/0,25/0,7/0,3 (Bedarf, Jobs, Deckung, Zugang, Zukunft, Umsteigen, Überlappung) | Nutzer / Urteil | Die eigentliche Standortbewertung | **Zentrale Frage: welche Kriterien und Gewichte willst du?** |
 | A1.9 | Gewichtete Summe | Score = Σ wᵢ·Termᵢ | Urteil | Kann nicht-konvexe Pareto-Punkte nie erreichen (Das & Dennis 1997) | Alternativ lexikografisch / ε-Constraint? |
@@ -58,7 +58,7 @@ Verifikationsstand jeder Regel: `docs/correctness-claims.md`. Dieses Register sa
 |---|---|---|---|---|---|
 | A2.1 | Kandidaten | nur 3×3-Lokalmaxima mit Score > 0 (Plateau: kleinster Index) | Artefakt | Schließt Nicht-Maxima aus, auch wenn sie in Summe besser wären | Gewollt? |
 | A2.2 | Mindestabstand | max(2, round(Einzugsradius/32)) Kacheln, Chebyshev | Urteil | Bus: 11 Kacheln = 352 m | Chebyshev oder euklidisch? |
-| A2.3 | **Auswahlverfahren** | Greedy best-first; **keine Zielfunktion definiert** | Artefakt | Nachweislich nicht summenoptimal (bis 1,3 % auf Valmare) | **Optimal? Dann: Max-Summe der Scores? Anzahl vorgegeben?** |
+| A2.3 ✅ umgesetzt (Phase 2) | **Auswahlverfahren** | **Exakt** (Branch-and-Bound, `SuitabilityExactSites`): Max-Summe der Scores unter Mindestabstand, ≤ K Standorte; bei erschöpftem Suchbudget bestes Set + bewiesene Schranke, im Log ausgewiesen | Entscheidung | Auf allen 6 Instanzen (2 reale) bewiesen optimal, Gap 0 gegen SCIP/VIPR | Zielfunktion vorläufig Max-Summe; wird mit A1.8 zur Gerechtigkeits-Nebenbedingung (Phase 6) |
 | A2.4 | Nachbewertung | Gehweg-Dijkstra (8-connected, Diagonale √2) über die Land-Maske, nur W1·Bedarf + W2·Jobs, linear fallend | Urteil | Rangfolge kann sich gegenüber Heatmap ändern | Auch Jobs/Zukunft/Deckung im Gehwegmodell? |
 | A2.5 | Grenzen | ≤ 20 Standorte; Kandidatenpuffer 65 536 | Artefakt | — | — |
 
@@ -155,28 +155,77 @@ zu belegen sind, verweisen auf die laufende Literaturrecherche (LR).
 | # | Entscheidung | Folge / Stand |
 |---|---|---|
 | A0.1 | Zusätzlich Freizeit und Einkauf; **keine Vorrangregel, alle Zwecke gleich gewichtet** | CS2 speichert Freizeit-/Einkaufsziele nicht am Bürger — nur die *laufende* Reise (`TravelPurpose` = Shopping/Leisure/…, Ziel in `Target`). Diese Nachfrage muss über die Zeit **beobachtet** werden (Reisen mit Zweck und Ziel aufsammeln, wie die Kalibrierung heute Haltestellen sammelt). Arbeit/Schule bleiben aus dem Save lesbar |
-| A0.2 | Alle Bewegungen innerhalb der Karte zählen (auch Touristen); Außenverbindungen erst einmal ignoriert | Tourist-/Obdachlosen-Filter entfällt; Reisen mit Ziel oder Quelle außerhalb der Karte werden verworfen |
-| A0.3 | Siehe A0.1: **alle Wegezwecke gleich = 1,0** | Schulfaktor 0,6 entfällt |
+| A0.2 ✅ umgesetzt (Phase 1) | Alle Bewegungen innerhalb der Karte zählen (auch Touristen); Außenverbindungen erst einmal ignoriert | Tourist-/Obdachlosen-Filter entfällt; Reisen mit Ziel oder Quelle außerhalb der Karte werden verworfen |
+| A0.3 ✅ umgesetzt (Phase 1) | Siehe A0.1: **alle Wegezwecke gleich = 1,0** | Schulfaktor 0,6 entfällt |
 | A0.4 | Rückfrage — erklärt in der Antwort; Entscheidung offen | Betrifft nur den Fahrgast-Floor je Fahrzeug (A6.4) |
 | A0.5 | Unsicher; anderer Ansatz möglich | Vorschlag in der Antwort (Ziele nicht auf Zonenzentren kollabieren, sondern am Netz verorten) |
 | A0.6 | Kleinere Auflösung erwogen; sinnvolle Werte gefragt | Vorschlag in der Antwort; Zahlen aus LR |
 | A0.7 | **Einbahnstraßen, Kreuzungskosten, Spurregeln müssen rein** | Straßengraph wird gerichtet, pro Fahrspur; Kostenmodell des Spiel-Pathfinders (`PathfindCosts`: Zeit/Verhalten/Geld/Komfort) als Vorlage |
 | A0.8 | **Straßenklassen-Geschwindigkeiten sind wichtig** | Datenquelle vorhanden: `Game.Net.CarLane.m_SpeedLimit` je Fahrspur |
 | A0.9 | Bleibt | — |
-| A1.1 | **Zeitbasierte Bewertung** statt Luftlinie | Einzugsbereiche werden Gehzeit-Isochronen über das Fußwegenetz; Kern ist dann eine Zeitfunktion. Berechnung von den Quellen aus (≈ 5 000 Dijkstras) statt von jeder Kachel |
-| A1.2 | Werte prüfen | LR: gemessene Gehdistanzen/-zeiten je Modus |
-| A1.3 | Werte prüfen | LR; wird durch A1.1 zum Zeitkriterium |
-| A1.4 | **Nur Wasser trennt, Hänge nicht** (Bestand bestätigt) | Mit A1.1 implizit: erreichbar ist, was das Fußwegenetz erreicht |
-| A1.5 | Werte prüfen | Term wird mit A1.1/A1.6 neu definiert (Netzanbindung statt Straßendichte) |
-| A1.6 | Bestätigt: **Anbindung an Straße *oder Fußweg* nötig** | Heute zählen nur `Net.Road`-Kanten; `PedestrianLane`-Wege müssen dazu |
+| A1.1 ✅ umgesetzt (Phase 3) | **Zeitbasierte Bewertung** statt Luftlinie | Einzugsbereiche werden Gehzeit-Isochronen über das Fußwegenetz; Kern ist dann eine Zeitfunktion. Berechnung von den Quellen aus (≈ 5 000 Dijkstras) statt von jeder Kachel |
+| A1.2 ✅ umgesetzt (Phase 3: 6/11/16 min) | Werte prüfen | LR: gemessene Gehdistanzen/-zeiten je Modus |
+| A1.3 ✅ umgesetzt (Phase 3: Zeitkriterium) | Werte prüfen | LR; wird durch A1.1 zum Zeitkriterium |
+| A1.4 ✅ umgesetzt (Phase 3) | **Nur Wasser trennt, Hänge nicht** (Bestand bestätigt) | Mit A1.1 implizit: erreichbar ist, was das Fußwegenetz erreicht |
+| A1.5 ✅ umgesetzt (Phase 3) | Werte prüfen | Term wird mit A1.1/A1.6 neu definiert (Netzanbindung statt Straßendichte) |
+| A1.6 ✅ umgesetzt (Phase 3) | Bestätigt: **Anbindung an Straße *oder Fußweg* nötig** | Heute zählen nur `Net.Road`-Kanten; `PedestrianLane`-Wege müssen dazu |
 | A1.7 | Rückfrage — erklärt in der Antwort | — |
 | A1.8 | **Ziel: gleichmäßige, gerechte Verteilung der Nutzungschance** | Zielfunktion wechselt von „bester Standort" zu einem Gerechtigkeitsmaß über alle Bürger; Kandidatenmaße aus LR (Gini/Theil/Maximin) |
 | A1.9 | Offen, fachlich sinnvollste Lösung | Mit A1.8: gewichtete Summe ungeeignet; ε-Constraint/lexikografisch, LR |
-| A1.10 | **Kapazitäten aus CS2 ableiten** | Ist heute nur für den Fahrgast-Floor so; die Heatmap-Modusgewichte (1/1,5/2,5/3) sind Setzungen → durch Kapazitätsverhältnisse aus den Prefabs ersetzen |
-| A1.11 | Wert prüfen, eher kürzer | LR: akzeptable Umsteige-Gehzeit; wird Zeitkriterium |
+| A1.10 ✅ umgesetzt (Phase 1) | **Kapazitäten aus CS2 ableiten** | Ist heute nur für den Fahrgast-Floor so; die Heatmap-Modusgewichte (1/1,5/2,5/3) sind Setzungen → durch Kapazitätsverhältnisse aus den Prefabs ersetzen |
+| A1.11 ✅ umgesetzt (Phase 1: 3 min ≈ 216 m; Zeitgewichtung 2,5 folgt in Phase 6) | Wert prüfen, eher kürzer | LR: akzeptable Umsteige-Gehzeit; wird Zeitkriterium |
 | A1.12 | Bleibt | — |
-| A1.13 | **+1-Bonus entfällt** | Streichen |
+| A1.13 ✅ umgesetzt (Phase 1) | **+1-Bonus entfällt** | Streichen |
 | A1.14 | Unsicher | Zurückgestellt; hängt von A1.8 ab (Kalibrierung auf Nutzung ist ein Effizienz-, kein Gerechtigkeitsmaß) |
+
+Blöcke 2–7, Rückmeldung vom 2026-09-05 (Antworten des Nutzers; „RF" = Rückfrage
+gestellt, Entscheidung noch offen):
+
+| # | Entscheidung | Folge / Stand |
+|---|---|---|
+| A2.1 ✅ umgesetzt (Phase 3) | **Nein — wirklich der beste Kandidat**, nicht nur 3×3-Lokalmaxima | Kandidatenmenge wird vollständig; mit Phase 3 sind die natürlichen Kandidaten die Netzknoten (Straße/Fußweg), nicht Kacheln. RF: Netzknoten als Kandidatenmenge? |
+| A2.2 ✅ umgesetzt (Phase 3) | Idee: keine zwei Halte 5 m auseinander; Metrik unklar | RF mit Vorschlag: Mindestabstand als **Gehzeit im Fußwegenetz** = Haltabstand des Modus (A5.1) |
+| A2.3 ✅ | Optimal | Phase 2 umgesetzt (B&B); wird mit A1.8/A4.1 zur Nebenbedingungs-Optimierung |
+| A2.4 ✅ umgesetzt (Phase 3) | Frage unverstanden | Mit Phase 3 entfällt die Nachbewertung (Score ist bereits Netz-Gehzeit). RF: Streichen bestätigen |
+| A2.5 | „Sinnvoll?" | 20 ist UI-Grenze, keine Algorithmusgrenze; RF |
+| A3.1 | Vorschlag erbeten | Vorschlag: Abschlag entfällt; Zielfunktion „gesparte Personenzeit" (A4.1) enthält ihn implizit. RF: Basislinie = Gehen/Bestandsnetz, Auto ignoriert? |
+| A3.2 ✅ | Reine Fußwege zählen nicht als Bedienung | bleibt |
+| A3.3 | AON-Zuweisung ist nicht optimal | Vorschlag: AON nur zum Erzeugen von Kandidaten; Bewertung ausschließlich per Routing der gesamten Nachfrage über das Netz (S7). RF |
+| A3.4 | **Nein — Fähren auch entlang einer Küste**, wenn Nachfrage da ist | Landmassenfilter entfällt; Fähre wird wie jeder Modus über die Zielfunktion bewertet |
+| A4.1 | **Hauptziel: so viele Menschen wie möglich in so kurzer Zeit wie möglich; Auslastung hoch genug** | Zielfunktion = nachfragegewichtete Zeiteinsparung (Personenzeit); Nebenbedingung Auslastung ≥ X %. RF: X |
+| A4.2 | „Sinnvoll?" | Vorschlag: Schwellen entfallen zugunsten der Auslastungs-Nebenbedingung. RF |
+| A4.3 | **Keine Mehrfachlinien für dieselben Wege**; Kreuzen, Teilüberlappung, gleiche Endpunkte ok | Vorschlag: Duplikatregel über den Anteil gemeinsam bedienter Nachfragepaare, nicht über Halte ≤ 150 m; zusätzlich ergibt die Zielfunktion für eine Dublette ≈ 0 Nutzen. RF: Anteil |
+| A4.4 | „Sinnvoll?" | Vorschlag: Umschalter entfällt; ersetzt durch Gerechtigkeits-Floor (T, X) + Auslastungs-Floor. RF |
+| A4.5 | Nicht verstanden | Erklärung in der Antwort; Vorschlag: Zug bevorzugt Bestandsgleise (kostenlos), Metro ohne Steigung, Zug mit Steigungsgrenze. RF |
+| A4.6 | „Sinnvoll?" | Vorschlag: Längenlimits → Fahrzeitlimits je Modus. RF |
+| A4.7 | Wichtig, aber Ansatz fraglich: zählt der Umweg fürs Gesamtnetz? | Vorschlag: direkte und Hub-Variante beide als Kandidaten, exakte Mengenauswahl entscheidet. Kein Schwellenwert |
+| A5.1 ✅ | Werte übernehmen | RF: sehr hohe Nachfrage unter Mindestabstand → Mindestabstand als harte Untergrenze 50 % des Nennwerts, DP entscheidet |
+| A5.2 | Was optimaler ist | DP über Kandidatenpositionen (Phase 7) |
+| A5.3 ✅ | gut | bleibt (als Kandidatenerzeugung für die DP) |
+| A5.4 | Wert erfragt | Vorschlag: kein Prozentwert; Halt genau dann, wenn Zugangsgewinn der Einsteiger > Verzögerung der Durchfahrer. RF |
+| A5.5 ✅ | **Werte aus dem Spiel** | Fahrzeug-Prefabs (Geschwindigkeit, Kapazität), Standzeit aus dem Spiel dekompilieren |
+| A6.x | „Rest sinnvoll" | RF: Modus über Kapazitätsbedarf (Auslastung) statt Flow-Vielfache/Reichweiten-Anteile? |
+| A7.2 | **Realismus** | Zeitgewichte Gehen 2,2 · Warten 2,1 · Umsteigen 2,5 · Fahren 1 (TCQSM). RF: Spielfiguren routen 1:1:1 — akzeptiert? |
+| A7.4 | Literatur | Umstieg als Zeitäquivalent (≈ 5 min + gewichtete Wartezeit) statt 0,6-Rabatt |
+| A7.5 | Optimal; unklar welche Zielfunktion | Vorschlag: Netzziel gemeinsam (Routing der gesamten Nachfrage über alle gewählten Linien), nicht Summe der Einzelkredite. RF |
+
+**Antwort vom 2026-09-05: „Ja zu allem"**, mit drei Abweichungen — damit sind alle
+Rückfragen oben entschieden (RF → ✅):
+
+| # | Entscheidung |
+|---|---|
+| A1.8 / A4.1 | Gerechtigkeits-Floor **X = 80 %** (nicht 70 %), T = 10 min; Auslastungs-Floor 25 %; Rangfolge Gerechtigkeit → Auslastung → gesparte Personenzeit; Basislinie = Bestes aus Gehen und Bestandsnetz, Auto ignoriert |
+| A4.5 | **Steigung komplett ignorieren** (auch für Zug); **Zug und Metro erhalten denselben Bonus** für bestehende Gleise |
+| A7.2 | Realismus-Gewichte (2,2 / 2,1 / 2,5 / 1) werden **sichtbar gemacht** (Diagnose), **geplant wird mit den Spielwerten 1 : 1 : 1** |
+| A2.1/A2.2 | Kandidaten = Netzknoten mit positivem Score; Mindestabstand = Gehzeit im Fußwegenetz ≥ Haltabstand des Modus |
+| A2.4 | Nachbewertung entfällt |
+| A2.5 | 20 bleibt UI-Grenze |
+| A3.3 | AON nur zur Kandidatenerzeugung |
+| A4.3 | Dublette bei > 50 % gemeinsam bedienter Nachfragepaare |
+| A4.6/A6.1 | Fahrzeitgrenzen Bus 30 · Tram 35 · Metro 30 · Zug 60 · Fähre 45 min; Mindestlänge 3 Halte |
+| A5.1/A5.4 | harte Untergrenze 50 % des Haltabstands; Halt genau dann, wenn Zugangsgewinn > Verzögerung der Durchfahrer |
+| A6.x | Modus nach Kapazitätsbedarf bei Soll-Takt, Werte aus dem Spiel |
+| Phase 3 | Einzugszeiten Bus/Tram 6 · Metro/Fähre 11 · Zug 16 min, linear fallend; Zugang 2 min zum Netzknoten; Bevölkerung je Wohngebäude; Kapazität/Überfüllung ignoriert |
 
 ---
 

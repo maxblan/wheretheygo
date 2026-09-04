@@ -48,7 +48,8 @@ def sites_greedy_gap():
         "kind": "sites",
         "name": "sites-greedy-gap",
         "comment": "minimal counterexample: greedy sum 8 < optimal sum 10",
-        "expect": {"greedy_is_optimal": False},
+        "expect": {"greedy_is_optimal": False, "exact_is_optimal": True,
+                   "exact_optimal_claimed": True},
         "data": {
             "width": width,
             "height": height,
@@ -216,54 +217,6 @@ def calling_points_cases():
 
 
 # ------------------------------------------------------- heatmap point (S1)
-
-def heatmap_point():
-    """The stop-derived heatmap terms (T3/T6/T7) at a point: the mod's
-    AccumulateStop + ModeTerms (linked pure code) against an independent exact
-    binary32 re-implementation. Stops sit at engineered distances including
-    EXACTLY the interchange radius (250) and EXACTLY the catchment (350), where
-    the >-vs->= semantics of the kernel gates show. The remaining terms
-    (T1/T2/T4/T5) live in the Burst job and are unreachable offline — see
-    correctness-claims C1.1."""
-    catchment = 350.0
-    interchange = 250.0
-
-    def stop(x, z, weight, same):
-        return {"x_b32": f32_bits(x), "z_b32": f32_bits(z),
-                "weight_b32": f32_bits(weight), "same_mode": same}
-
-    stops = [
-        stop(0.0, 0.0, 1.0, True),        # same mode on top of the query
-        stop(100.0, 0.0, 1.0, True),      # same mode inside
-        stop(0.0, 100.0, 2.5, False),     # metro nearby: strong interchange
-        stop(250.0, 0.0, 3.0, False),     # train at EXACTLY the transfer radius
-        stop(0.0, 350.0, 1.5, False),     # tram at EXACTLY the catchment edge
-        stop(0.0, 351.0, 3.0, False),     # just outside: contributes nothing
-        stop(-200.0, 0.0, 1.2, False),    # ferry inside transfer range
-        stop(300.0, 0.0, 1.5, False),     # tram between transfer and catchment
-    ]
-    queries = [
-        {"x_b32": f32_bits(0.0), "z_b32": f32_bits(0.0)},
-        {"x_b32": f32_bits(50.0), "z_b32": f32_bits(50.0)},
-        {"x_b32": f32_bits(-400.0), "z_b32": f32_bits(0.0)},
-    ]
-    return {
-        "kind": "heatmap_point",
-        "name": "heatmap-point",
-        "data": {
-            "catchment_b32": f32_bits(catchment),
-            "interchange_b32": f32_bits(interchange),
-            "inv_self_b32": f32_bits(1.0),          # placing a bus (weight 1)
-            "coverage_weight_b32": f32_bits(1.2),   # W3 (bus defaults)
-            "interchange_weight_b32": f32_bits(0.9),  # W6
-            "cross_weight_b32": f32_bits(0.4),      # W7
-            "stops": stops,
-            "queries": queries,
-        },
-    }
-
-
-# -------------------------------------------------------- heatmap grid (S1)
 
 def _f32(x):
     return struct.unpack("<f", struct.pack("<f", x))[0]
@@ -850,6 +803,155 @@ def lineset_tie():
     return inst
 
 
+
+# ------------------------------------------------------------ sites_walk (S2 v2)
+
+def sites_walk_gap():
+    """Five nodes on a line one walking minute apart (72 m); scores 5, 8, 5 on
+    nodes 0, 1, 2 and 3, 4 on nodes 3, 4; spacing 90 s. The 8 conflicts with both
+    fives (60 s), the fives do not conflict with each other (120 s). Greedy takes
+    8 then 4 (node 4 is 180 s from node 1) = 12; the optimum with K = 3 is
+    5 + 5 + 4 = 14 (nodes 0, 2, 4 pairwise ≥ 120 s)."""
+    nodes = [0.0, 72.0, 144.0, 216.0, 288.0]
+    return {
+        "kind": "sites_walk",
+        "name": "sites-walk-gap",
+        "comment": "network form of the two-fives counterexample: greedy 12 < optimum 14",
+        "expect": {"greedy_is_optimal": False, "exact_is_optimal": True,
+                   "exact_optimal_claimed": True},
+        "data": {
+            "node_x_b32": f32_list(nodes), "node_z_b32": f32_list([0.0] * 5),
+            "edge_a": [0, 1, 2, 3], "edge_b": [1, 2, 3, 4],
+            "edge_metres_b32": f32_list([72.0] * 4),
+            "candidate_nodes": [0, 1, 2, 3, 4],
+            "candidate_scores_b32": f32_list([5.0, 8.0, 5.0, 3.0, 4.0]),
+            "separation_ms": 90000,
+            "max_sites": 3,
+        },
+    }
+
+
+# ------------------------------------------------------- heatmap_walk (S1 v2)
+
+def heatmap_walk_plumbing():
+    """A hand-sized `heatmap_walk` instance whose expected terms are computed HERE
+    by straightforward loops over three nodes — no graph search, no bucket index.
+    Three nodes on a line 72 m (one walking minute) apart; two homes at node 0
+    (one of them 36 m off it), a workplace at node 2, a bus stop at node 1 and a
+    train station at node 2. Six 32 m tiles run along the line; tile 3 is
+    unbuildable. The map is built for the bus (class 0 = 6 min, type 0), with a
+    train weighing 3 buses."""
+    nodes = [0.0, 72.0, 144.0]
+    speed = _f32(1.2)
+
+    def ms(metres):
+        return int(round(metres / speed * 1000.0))
+
+    def kernel(t, horizon):
+        return _f32(1.0 - _f32(float(t) / float(horizon)))
+
+    edge_ms = ms(72.0)
+    assert edge_ms == 60000
+    access_ms, transfer_ms = 120000, 180000
+    classes = [360000, 660000, 960000]
+
+    def times_from(node, start):
+        return {n: start + abs(n - node) * edge_ms for n in range(3)}
+
+    homes = [(0.0, 0.0, 10.0), (0.0, 36.0, 10.0)]
+    jobs = [(144.0, 0.0, 50.0)]
+    stops = [(72.0, 0.0, 0), (144.0, 0.0, 1)]
+    weights = [0.0] * 14
+    weights[0], weights[1] = 1.0, 3.0
+
+    def nearest(x, z):
+        best, best_sq = -1, (access_ms / 1000.0 * speed) ** 2
+        for i, nx in enumerate(nodes):
+            sq = (nx - x) ** 2 + (0.0 - z) ** 2
+            if sq < best_sq:
+                best, best_sq = i, sq
+        return best, (ms(best_sq ** 0.5) if best >= 0 else -1)
+
+    demand = [[0.0] * 3 for _ in classes]
+    jobs_acc = [[0.0] * 3 for _ in classes]
+    for group, acc in ((homes, demand), (jobs, jobs_acc)):
+        for x, z, w in group:
+            node, walk = nearest(x, z)
+            for n, t in times_from(node, walk).items():
+                for c, horizon in enumerate(classes):
+                    if t <= horizon:
+                        acc[c][n] = _f32(acc[c][n] + _f32(w * kernel(t, horizon)))
+    within = [[[0.0] * 3 for _ in range(14)] for _ in classes]
+    cross = [[[0.0] * 3 for _ in range(14)] for _ in classes]
+    inter = [[0.0] * 3 for _ in range(14)]
+    for x, z, ty in stops:
+        node, walk = nearest(x, z)
+        for n, t in times_from(node, walk).items():
+            transferable = kernel(t, transfer_ms) if t <= transfer_ms else 0.0
+            if t <= transfer_ms:
+                inter[ty][n] = _f32(inter[ty][n] + transferable)
+            for c, horizon in enumerate(classes):
+                if t <= horizon:
+                    k = kernel(t, horizon)
+                    within[c][ty][n] = _f32(within[c][ty][n] + k)
+                    cross[c][ty][n] = _f32(cross[c][ty][n] + _f32(k * _f32(1.0 - transferable)))
+
+    grid_x, tile, world_min = 6, 32.0, -16.0
+    buildable = [1, 1, 1, 0, 1, 1]
+    sample = list(range(grid_x))
+    cols = {k: [] for k in ("demand", "jobs", "coverage", "access", "future", "interchange", "cross")}
+    tile_node, tile_walk = [], []
+    for i in sample:
+        cx = _f32(world_min + _f32(_f32(i + 0.5) * tile))
+        node, walk = nearest(cx, 0.0) if buildable[i] else (-1, -1)
+        if node >= 0 and walk > access_ms:
+            node, walk = -1, -1
+        tile_node.append(node)
+        tile_walk.append(walk)
+        if node < 0:
+            for k in cols:
+                cols[k].append(0.0)
+            continue
+        cols["demand"].append(demand[0][node])
+        cols["jobs"].append(jobs_acc[0][node])
+        cols["future"].append(0.0)
+        cols["coverage"].append(within[0][0][node])
+        cols["interchange"].append(_f32(3.0 * inter[1][node]))
+        cols["cross"].append(_f32(3.0 * cross[0][1][node]))
+        cols["access"].append(kernel(walk, access_ms))
+
+    def sources(points):
+        return {"x_b32": f32_list([p[0] for p in points]),
+                "z_b32": f32_list([p[1] for p in points]),
+                "w_b32": f32_list([p[2] for p in points])}
+
+    data = {
+        "grid_x": grid_x, "grid_y": 1,
+        "world_min_x_b32": f32_bits(world_min), "world_min_z_b32": f32_bits(-16.0),
+        "tile_size_b32": f32_bits(tile),
+        "node_x_b32": f32_list(nodes), "node_z_b32": f32_list([0.0] * 3),
+        "edge_a": [0, 1], "edge_b": [1, 2], "edge_metres_b32": f32_list([72.0, 72.0]),
+        "edge_ms": [edge_ms, edge_ms],
+        "homes": sources(homes), "jobs": sources(jobs), "future": sources([]),
+        "stop_x_b32": f32_list([s[0] for s in stops]), "stop_z_b32": f32_list([s[1] for s in stops]),
+        "stop_type": [s[2] for s in stops],
+        "type_count": 14, "access_ms": access_ms, "transfer_ms": transfer_ms, "catchment_ms": classes,
+        "type_weight_b32": f32_list(weights),
+        "mode": "Bus", "class": 0, "self_type": 0,
+        "buildable": buildable, "land": [1] * grid_x,
+        "sample_indices": sample,
+        "sample_tile_node": tile_node, "sample_tile_walk_ms": tile_walk,
+    }
+    for k, values in cols.items():
+        data[f"sample_{k}_b32"] = f32_list(values)
+    return {
+        "kind": "heatmap_walk",
+        "name": "heatmap-walk-plumbing",
+        "comment": "three nodes, two homes, one workplace, two stops; expected terms by hand",
+        "expect": {"three_way_exact": True},
+        "data": data,
+    }
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     instances = [
@@ -857,6 +959,8 @@ def main():
         sites_random("sites-random-16", 16, 16, 20260901, 3, 6),
         sites_random("sites-random-24", 24, 24, 20260902, 5, 8),
         sites_plateau(),
+        heatmap_walk_plumbing(),
+        sites_walk_gap(),
         lattice_path_rail(),
         lattice_path_tie(),
         calling_points_cases(),
@@ -865,7 +969,6 @@ def main():
         corridor_bridge(),
         corridor_maxlen(),
         corridor_coverage(),
-        heatmap_point(),
         heatmap_grid_plumbing(),
         order_stats(),
         lineset_feeder(),

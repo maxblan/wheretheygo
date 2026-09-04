@@ -24,7 +24,7 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
 
 ## How it works
 
-The mod computes the score terms over the playable area in a parallel Burst job (with spatial bucketing for stops, roads, workplaces and zoned cells), then feeds intensities through the game's own heatmap-infomode pipeline: each active layer writes into the terrain overlay channel assigned to its infomode, and the vanilla terrain shader colors it with that infomode's gradient — the same mechanism as ground pollution or land value, so the overlay looks and behaves like a built-in infoview.
+The mod computes the score terms as walking times over the pedestrian network — an integer-time Dijkstra from every home building, workplace, zoned cell and served stop, on a worker thread — then feeds intensities through the game's own heatmap-infomode pipeline: each active layer writes into the terrain overlay channel assigned to its infomode, and the vanilla terrain shader colors it with that infomode's gradient — the same mechanism as ground pollution or land value, so the overlay looks and behaves like a built-in infoview.
 
 ### Distance model
 
@@ -123,7 +123,7 @@ The scoring math (percentile normalization, site selection, corridor growth, tra
 dotnet run --project tests/SuitabilityScoring.Tests
 ```
 
-No packages to restore; a non-zero exit code counts the failures. This project is intentionally not part of the solution so the mod toolchain build is unaffected. It links the seven Unity-free files — scoring, graph math, transit routing, the line-reading window, line health, the per-mode tables and the verification export's JSON format — so the thresholds behind a verdict are testable too.
+No packages to restore; a non-zero exit code counts the failures. This project is intentionally not part of the solution so the mod toolchain build is unaffected. It links the nine Unity-free files — scoring, walking-time access, exact site selection, graph math, transit routing, the line-reading window, line health, the per-mode tables and the verification export's JSON format — so the thresholds behind a verdict are testable too.
 
 ## Usage
 

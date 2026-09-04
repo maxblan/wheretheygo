@@ -87,3 +87,27 @@ def build_lp(instance: dict) -> tuple[str, list[int], str]:
     lp = "\n".join(lines) + "\n"
     model_hash = sha256_hex(canonical_bytes({"lp": lp}))
     return lp, cands, model_hash
+
+
+def build_walk_lp(instance: dict, conflict_pairs: list[list[int]]) -> tuple[str, str]:
+    """S2 v2 (`sites_walk`): binaries over the candidate nodes, one constraint per
+    conflicting pair (walking time below the spacing — the pairs are derived by the
+    evaluator's exact integer shortest paths and passed in), a budget of K. Returns
+    (lp_text, model_hash)."""
+    data = instance["data"]
+    nodes = list(data["candidate_nodes"])
+    scores = [bits_to_f32(b) for b in data["candidate_scores_b32"]]
+    max_sites = data["max_sites"]
+    lines = ["\\ P-SITES-WALK exact max-sum site selection on the pedestrian network", "Maximize", " obj:"]
+    terms = [f" + {Decimal(scores[k])} x{nodes[k]}" for k in range(len(nodes))]
+    lines.append("".join(terms) if terms else " 0 x_dummy")
+    lines.append("Subject To")
+    for n, (a, b) in enumerate(conflict_pairs):
+        lines.append(f" c{n}: x{nodes[a]} + x{nodes[b]} <= 1")
+    lines.append(f" budget: {' + '.join(f'x{i}' for i in nodes)} <= {max_sites}"
+                 if nodes else " budget: x_dummy <= 0")
+    lines.append("Binary")
+    lines.append(" " + " ".join(f"x{i}" for i in nodes) if nodes else " x_dummy")
+    lines.append("End")
+    lp = "\n".join(lines) + "\n"
+    return lp, sha256_hex(canonical_bytes({"lp": lp}))

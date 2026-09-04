@@ -13,60 +13,6 @@ using Transform = Game.Objects.Transform;
 
 namespace StationSuitabilityOverlay
 {
-    // A weighted point set indexed by a coarse bucket grid, so the job can gather
-    // nearby points without scanning everything. Weights are always allocated
-    // (uniform 1 for unweighted sets) — a conditionally-created NativeArray inside
-    // a Burst job is not safe to branch around.
-    internal struct PointBuckets
-    {
-        public NativeArray<float2> m_Positions;
-        public NativeArray<float> m_Weights;
-        public NativeArray<int> m_Offsets;
-        public NativeArray<int> m_Counts;
-
-        public int Count => m_Positions.IsCreated ? m_Positions.Length : 0;
-
-        // NativeArray.Dispose(handle) returns the handle of the deallocation job.
-        // Nothing here waits on it: these arrays are never reused, and the job that
-        // reads them is the one being passed in.
-        public void Dispose(Unity.Jobs.JobHandle handle)
-        {
-            if (m_Positions.IsCreated)
-            {
-                _ = m_Positions.Dispose(handle);
-            }
-            if (m_Weights.IsCreated)
-            {
-                _ = m_Weights.Dispose(handle);
-            }
-            if (m_Offsets.IsCreated)
-            {
-                _ = m_Offsets.Dispose(handle);
-            }
-            if (m_Counts.IsCreated)
-            {
-                _ = m_Counts.Dispose(handle);
-            }
-        }
-    }
-
-    // Per-cell raw scoring terms. Kept as one struct so the job writes a single
-    // array and the managed combine pass reads it back without re-deriving units.
-    internal struct SuitabilityCell
-    {
-        public float m_Demand;
-        public float m_Jobs;
-        public float m_Coverage;
-        public float m_Access;
-        public float m_Future;
-        // Served stops of OTHER modes close enough to transfer to, weighted by how
-        // much trunk capacity they represent.
-        public float m_Interchange;
-        // Served stops of other modes near enough to already absorb this tile's
-        // demand, but too far to transfer to.
-        public float m_CrossCoverage;
-    }
-
     internal static class SuitabilityInputs
     {
         public static int2 GridDims(float2 size, float cellSize)
@@ -92,50 +38,6 @@ namespace StationSuitabilityOverlay
             return worldMin + ((new float2(cell.x, cell.y) + 0.5f) * cellSize);
         }
 
-        public static PointBuckets BuildBuckets(
-            List<float2> positions,
-            List<float>? weights,
-            int2 gridSize,
-            float2 worldMin,
-            float cellSize)
-        {
-            int bucketCount = gridSize.x * gridSize.y;
-            var result = new PointBuckets
-            {
-                m_Counts = new NativeArray<int>(bucketCount, Allocator.Persistent, NativeArrayOptions.ClearMemory),
-                m_Offsets = new NativeArray<int>(bucketCount, Allocator.Persistent, NativeArrayOptions.ClearMemory),
-                m_Positions = new NativeArray<float2>(positions.Count, Allocator.Persistent, NativeArrayOptions.ClearMemory),
-                m_Weights = new NativeArray<float>(positions.Count, Allocator.Persistent, NativeArrayOptions.ClearMemory),
-            };
-
-            for (int i = 0; i < positions.Count; i++)
-            {
-                int2 cell = WorldToCell(positions[i], worldMin, cellSize, gridSize);
-                result.m_Counts[cell.x + cell.y * gridSize.x] += 1;
-            }
-
-            int running = 0;
-            for (int i = 0; i < bucketCount; i++)
-            {
-                result.m_Offsets[i] = running;
-                running += result.m_Counts[i];
-            }
-
-            var write = new NativeArray<int>(bucketCount, Allocator.Temp);
-            NativeArray<int>.Copy(result.m_Offsets, write);
-            for (int i = 0; i < positions.Count; i++)
-            {
-                int2 cell = WorldToCell(positions[i], worldMin, cellSize, gridSize);
-                int index = cell.x + cell.y * gridSize.x;
-                int writeIndex = write[index]++;
-                result.m_Positions[writeIndex] = positions[i];
-                result.m_Weights[writeIndex] = weights is not null ? weights[i] : 1f;
-            }
-
-            write.Dispose();
-            return result;
-        }
-
         // Every passenger stop, split into the selected mode (which drives the
         // coverage penalty) and all other modes (which drive the interchange bonus
         // and the cross-mode redundancy penalty).
@@ -150,16 +52,11 @@ namespace StationSuitabilityOverlay
             PrefabSystem prefabSystem,
             EntityQuery stopQuery,
             ModePreset mode,
-            List<float2> samePositions,
-            List<float2> otherPositions,
-            List<float> otherWeights,
+            System.Func<TransportType, float> weightOf,
             List<float2> allPositions,
             List<int> allTypes,
             out int orphansSkipped)
         {
-            samePositions.Clear();
-            otherPositions.Clear();
-            otherWeights.Clear();
             allPositions.Clear();
             allTypes.Clear();
             orphansSkipped = 0;
@@ -178,8 +75,10 @@ namespace StationSuitabilityOverlay
                 }
 
                 bool sameMode = type == selected;
-                float otherWeight = sameMode ? 0f : ModeWeight(type);
-                if (ModeWeight(type) <= 0f)
+                // Weight = trunk capacity relative to a bus, read from the prefabs (register
+                // A1.10); zero means the save has no vehicle of that type, so the stop is
+                // no transfer partner.
+                if (weightOf(type) <= 0f)
                 {
                     // Not a mode anyone would transfer between (taxi, cargo, ...).
                     continue;
@@ -198,41 +97,163 @@ namespace StationSuitabilityOverlay
                 float3 pos = transforms[i].m_Position;
                 var flat = new float2(pos.x, pos.z);
 
-                // The same stops again, kept whole rather than split by the selected
-                // mode. The heatmap only ever needs one mode's split, but stop
-                // placement has to score a point for the SUGGESTED line's mode, which
-                // is not the one the player happens to have chosen in the panel.
+                // Kept whole rather than split by the selected mode: the access pass
+                // accumulates every stop type per node, so the map (one mode) and stop
+                // placement (the SUGGESTED line's mode) read the same numbers.
                 allPositions.Add(flat);
                 allTypes.Add((int)type);
-
-                if (sameMode)
-                {
-                    samePositions.Add(flat);
-                }
-                else
-                {
-                    otherPositions.Add(flat);
-                    otherWeights.Add(otherWeight);
-                }
             }
         }
 
-        // Roughly how much trunk capacity each mode represents. Used to scale the
-        // interchange bonus, so feeding a metro station counts for more than
-        // standing next to another bus stop. Zero means "never a transfer partner".
-        public static float ModeWeight(TransportType type)
+        // The pedestrian network (register A1.6): every net edge with a lane a
+        // pedestrian may use — streets with pavements and stand-alone paths alike,
+        // read straight from SubLane.m_PathMethods — plus the nodes those edges end
+        // on. Edge length is the game's own arc length (Curve.m_Length). Node and edge
+        // order follow the query, and nodes are numbered in first-seen order, so the
+        // arrays are a deterministic function of the save.
+        public static void CollectWalkNetwork(
+            EntityManager entityManager,
+            EntityQuery nodeQuery,
+            EntityQuery edgeQuery,
+            out float[] nodeX,
+            out float[] nodeZ,
+            out int[] edgeA,
+            out int[] edgeB,
+            out float[] edgeMetres,
+            out int edgesWithoutPavement)
         {
-            switch (type)
+            edgesWithoutPavement = 0;
+            using var nodeEntities = nodeQuery.ToEntityArray(Allocator.Temp);
+            using var nodeData = nodeQuery.ToComponentDataArray<Game.Net.Node>(Allocator.Temp);
+            var nodeMap = new Dictionary<Entity, float3>(nodeEntities.Length);
+            for (int i = 0; i < nodeEntities.Length; i++)
             {
-                case TransportType.Bus: return 1f;
-                case TransportType.Helicopter: return 1f;
-                case TransportType.Ferry: return 1.2f;
-                case TransportType.Tram: return 1.5f;
-                case TransportType.Ship: return 1.5f;
-                case TransportType.Subway: return 2.5f;
-                case TransportType.Train: return 3f;
-                case TransportType.Airplane: return 3f;
-                default: return 0f;
+                nodeMap[nodeEntities[i]] = nodeData[i].m_Position;
+            }
+
+            using var edgeEntities = edgeQuery.ToEntityArray(Allocator.Temp);
+            using var edges = edgeQuery.ToComponentDataArray<Game.Net.Edge>(Allocator.Temp);
+            using var curves = edgeQuery.ToComponentDataArray<Game.Net.Curve>(Allocator.Temp);
+            var index = new Dictionary<Entity, int>();
+            var xs = new List<float>();
+            var zs = new List<float>();
+            var a = new List<int>();
+            var b = new List<int>();
+            var metres = new List<float>();
+            for (int i = 0; i < edgeEntities.Length; i++)
+            {
+                if (!HasPedestrianLane(entityManager, edgeEntities[i]))
+                {
+                    edgesWithoutPavement++;
+                    continue;
+                }
+
+                Game.Net.Edge edge = edges[i];
+                if (!TryIndexNode(edge.m_Start, nodeMap, index, xs, zs, out int start)
+                    || !TryIndexNode(edge.m_End, nodeMap, index, xs, zs, out int end)
+                    || start == end)
+                {
+                    continue;
+                }
+
+                a.Add(start);
+                b.Add(end);
+                metres.Add(curves[i].m_Length);
+            }
+
+            nodeX = xs.ToArray();
+            nodeZ = zs.ToArray();
+            edgeA = a.ToArray();
+            edgeB = b.ToArray();
+            edgeMetres = metres.ToArray();
+        }
+
+        private static bool TryIndexNode(
+            Entity node, Dictionary<Entity, float3> nodeMap, Dictionary<Entity, int> index,
+            List<float> xs, List<float> zs, out int slot)
+        {
+            if (index.TryGetValue(node, out slot))
+            {
+                return true;
+            }
+
+            if (!nodeMap.TryGetValue(node, out float3 position))
+            {
+                slot = -1;
+                return false;
+            }
+
+            slot = xs.Count;
+            xs.Add(position.x);
+            zs.Add(position.z);
+            index[node] = slot;
+            return true;
+        }
+
+        private static bool HasPedestrianLane(EntityManager entityManager, Entity edge)
+        {
+            if (!entityManager.TryGetBuffer(edge, isReadOnly: true, out DynamicBuffer<Game.Net.SubLane> lanes))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < lanes.Length; i++)
+            {
+                if ((lanes[i].m_PathMethods & Game.Pathfind.PathMethod.Pedestrian) != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Residents per home building: every household renting a property, weighted by
+        // the citizens it holds, placed at the building. Replaces the game's 224 m
+        // population raster as the demand source (register, Phase 3): on a real save
+        // that raster had 51 occupied cells for 38,000 residents. Buildings are listed
+        // in first-seen household order.
+        public static void CollectResidents(
+            EntityManager entityManager,
+            EntityQuery householdQuery,
+            ComponentLookup<Game.Buildings.PropertyRenter> renterLookup,
+            ComponentLookup<Transform> transformLookup,
+            List<float2> positions,
+            List<float> residents,
+            out int householdsWithoutHome)
+        {
+            positions.Clear();
+            residents.Clear();
+            householdsWithoutHome = 0;
+            using var households = householdQuery.ToEntityArray(Allocator.Temp);
+            var slotOf = new Dictionary<Entity, int>();
+            for (int i = 0; i < households.Length; i++)
+            {
+                Entity household = households[i];
+                if (!renterLookup.HasComponent(household))
+                {
+                    householdsWithoutHome++;
+                    continue;
+                }
+
+                Entity home = renterLookup[household].m_Property;
+                if (!transformLookup.HasComponent(home)
+                    || !entityManager.TryGetBuffer(household, isReadOnly: true, out DynamicBuffer<Game.Citizens.HouseholdCitizen> members))
+                {
+                    householdsWithoutHome++;
+                    continue;
+                }
+
+                if (!slotOf.TryGetValue(home, out int slot))
+                {
+                    slot = positions.Count;
+                    slotOf[home] = slot;
+                    float3 position = transformLookup[home].m_Position;
+                    positions.Add(new float2(position.x, position.z));
+                    residents.Add(0f);
+                }
+
+                residents[slot] += members.Length;
             }
         }
 
@@ -274,63 +295,6 @@ namespace StationSuitabilityOverlay
                 case ModePreset.Train: return TransportType.Train;
                 case ModePreset.Ferry: return TransportType.Ferry;
                 default: return TransportType.Bus;
-            }
-        }
-
-        // Accessibility only considers the road network: pipes, power lines and rail
-        // would otherwise inflate the score where pedestrians cannot reach. The node
-        // map spans every net node because road edges reference endpoints by entity;
-        // only road endpoints end up in nodePositions.
-        public static void CollectRoadNetwork(
-            EntityQuery nodeQuery,
-            EntityQuery roadEdgeQuery,
-            List<float2> nodePositions,
-            List<float2> edgePositions)
-        {
-            nodePositions.Clear();
-            edgePositions.Clear();
-
-            using var nodeEntities = nodeQuery.ToEntityArray(Allocator.Temp);
-            using var nodeData = nodeQuery.ToComponentDataArray<Game.Net.Node>(Allocator.Temp);
-            var nodeMap = new Dictionary<Entity, float3>(nodeEntities.Length);
-            for (int i = 0; i < nodeEntities.Length; i++)
-            {
-                nodeMap[nodeEntities[i]] = nodeData[i].m_Position;
-            }
-
-            using var edges = roadEdgeQuery.ToComponentDataArray<Game.Net.Edge>(Allocator.Temp);
-            // The set answers "seen already"; the list fixes the ORDER. Emitting
-            // straight out of the set put hash iteration order into the bucket
-            // contents the scoring job sums over, and float addition is not
-            // associative — the access term then differed in its last bits between
-            // two runs over an unchanged city.
-            var seen = new HashSet<Entity>();
-            var roadNodes = new List<Entity>();
-            for (int i = 0; i < edges.Length; i++)
-            {
-                Game.Net.Edge edge = edges[i];
-                if (!nodeMap.TryGetValue(edge.m_Start, out float3 start) || !nodeMap.TryGetValue(edge.m_End, out float3 end))
-                {
-                    continue;
-                }
-
-                float3 mid = (start + end) * 0.5f;
-                edgePositions.Add(new float2(mid.x, mid.z));
-                if (seen.Add(edge.m_Start))
-                {
-                    roadNodes.Add(edge.m_Start);
-                }
-
-                if (seen.Add(edge.m_End))
-                {
-                    roadNodes.Add(edge.m_End);
-                }
-            }
-
-            for (int i = 0; i < roadNodes.Count; i++)
-            {
-                float3 pos = nodeMap[roadNodes[i]];
-                nodePositions.Add(new float2(pos.x, pos.z));
             }
         }
 

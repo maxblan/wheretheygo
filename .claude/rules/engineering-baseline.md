@@ -39,7 +39,7 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
 - When one conceptual change forces edits across files that are not otherwise related, stop and
   name the missing boundary before continuing. Two fan-outs here are the design, not a smell: a new
   panel control moves together through `Setting.cs`, `SuitabilityPanelUISystem.cs`, the `.mjs`, the
-  `.css` and both locale files; and a new scoring term moves through `SuitabilityJob.cs`, the
+  `.css` and both locale files; and a new scoring term moves through `SuitabilityWalkAccess.cs`, the
   combine/normalize pass in `StationSuitabilityOverlaySystem.cs`, the infomode registration and the
   legend. Complete those in one change rather than reporting them as coupling.
 - When a change needs yet another special-case branch, look for the missing named concept first.

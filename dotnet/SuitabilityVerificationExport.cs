@@ -40,41 +40,43 @@ namespace StationSuitabilityOverlay
         // instance is a consistent input/output pair rather than a mixture.
         public static void RequestVerificationExport() => s_ExportRequested = true;
 
-        private sealed class ExportPoints
-        {
-            public float[] m_X = Array.Empty<float>();
-            public float[] m_Z = Array.Empty<float>();
-            public float[] m_Weights = Array.Empty<float>();
-            public int[] m_Offsets = Array.Empty<int>();
-            public int[] m_Counts = Array.Empty<int>();
-        }
-
+        // What the access pass was given, taken at StartCompute from the very arrays
+        // handed to the worker, plus the masks and the mode the map is built for.
         private sealed class ExportCapture
         {
+            public WalkAccessInputs m_Inputs = new WalkAccessInputs();
             public int2 m_Grid;
-            public int2 m_BucketGrid;
             public float2 m_WorldMin;
-            public float m_Catchment;
-            public float m_AccessRadius;
-            public float m_InterchangeRadius;
-            public float2 m_PopulationCellSize;
-            public int2 m_PopulationTextureSize;
-            public float[] m_Population = Array.Empty<float>();
-            public ExportPoints m_Stops = new ExportPoints();
-            public ExportPoints m_OtherStops = new ExportPoints();
-            public ExportPoints m_Nodes = new ExportPoints();
-            public ExportPoints m_Edges = new ExportPoints();
-            public ExportPoints m_Jobs = new ExportPoints();
-            public ExportPoints m_FutureHomes = new ExportPoints();
-            public ExportPoints m_FutureJobs = new ExportPoints();
-            public int[] m_Components = Array.Empty<int>();
             public byte[] m_Buildable = Array.Empty<byte>();
-            // Carried because component labelling floods over LAND, not over
-            // buildable — see SuitabilityMasks pass 2. Without it the pipeline can
-            // only check that a buildable tile is labelled; with it, it can check the
-            // labelling covers exactly the land.
             public byte[] m_Land = Array.Empty<byte>();
             public ModePreset m_Mode;
+            public int m_Class;
+            public int m_SelfType;
+            public float[] m_TypeWeight = Array.Empty<float>();
+        }
+
+        // Called from StartCompute with exactly the values handed to the worker.
+        private void CaptureExportInputs(
+            WalkAccessInputs inputs, int2 grid, float2 worldMin, byte[] buildable,
+            ModePreset mode, int cls, int selfType, float[] typeWeight)
+        {
+            if (!m_ExportArmed)
+            {
+                return;
+            }
+
+            m_ExportCapture = new ExportCapture
+            {
+                m_Inputs = inputs,
+                m_Grid = grid,
+                m_WorldMin = worldMin,
+                m_Buildable = buildable,
+                m_Land = m_Land is null ? Array.Empty<byte>() : (byte[])m_Land.Clone(),
+                m_Mode = mode,
+                m_Class = cls,
+                m_SelfType = selfType,
+                m_TypeWeight = typeWeight,
+            };
         }
 
         private void HandleExportRequest()
@@ -92,77 +94,6 @@ namespace StationSuitabilityOverlay
             Mod.Log.Info("Verification export requested; it will be written after the next recompute.");
         }
 
-        private static ExportPoints CapturePoints(PointBuckets buckets)
-        {
-            int count = buckets.Count;
-            var points = new ExportPoints
-            {
-                m_X = new float[count],
-                m_Z = new float[count],
-                m_Weights = new float[count],
-                m_Offsets = buckets.m_Offsets.ToArray(),
-                m_Counts = buckets.m_Counts.ToArray(),
-            };
-
-            for (int i = 0; i < count; i++)
-            {
-                float2 position = buckets.m_Positions[i];
-                points.m_X[i] = position.x;
-                points.m_Z[i] = position.y;
-                points.m_Weights[i] = buckets.m_Weights[i];
-            }
-
-            return points;
-        }
-
-        // Called from StartCompute with exactly the values handed to the job.
-        private void CaptureExportInputs(
-            in SuitabilityJob job,
-            CellMapData<PopulationCell> popData,
-            PointBuckets stops,
-            PointBuckets otherStops,
-            PointBuckets nodes,
-            PointBuckets edges,
-            PointBuckets jobs,
-            PointBuckets futureHomes,
-            PointBuckets futureJobs)
-        {
-            if (!m_ExportArmed)
-            {
-                return;
-            }
-
-            var population = new float[popData.m_Buffer.Length];
-            for (int i = 0; i < population.Length; i++)
-            {
-                population[i] = popData.m_Buffer[i].m_Population;
-            }
-
-            m_ExportCapture = new ExportCapture
-            {
-                m_Grid = job.GridSize,
-                m_BucketGrid = job.BucketGridSize,
-                m_WorldMin = job.WorldMin,
-                m_Catchment = job.CatchmentRadius,
-                m_AccessRadius = job.AccessRadius,
-                m_InterchangeRadius = job.InterchangeRadius,
-                m_PopulationCellSize = job.PopulationCellSize,
-                m_PopulationTextureSize = job.PopulationTextureSize,
-                m_Population = population,
-                m_Stops = CapturePoints(stops),
-                m_OtherStops = CapturePoints(otherStops),
-                m_Nodes = CapturePoints(nodes),
-                m_Edges = CapturePoints(edges),
-                m_Jobs = CapturePoints(jobs),
-                m_FutureHomes = CapturePoints(futureHomes),
-                m_FutureJobs = CapturePoints(futureJobs),
-                m_Components = m_Components.ToArray(),
-                m_Buildable = m_Buildable.ToArray(),
-                m_Land = m_Land is null ? Array.Empty<byte>() : (byte[])m_Land.Clone(),
-                m_Mode = m_MaskMode,
-            };
-        }
-
         // Called from FinishComputeIfReady, after the terms have landed in m_RawTerms
         // and the combine pass has produced m_Scores.
         private void WriteExportIfCaptured()
@@ -176,9 +107,9 @@ namespace StationSuitabilityOverlay
             m_ExportArmed = false;
             m_ExportCapture = null;
 
-            SuitabilityCell[]? terms = m_RawTerms;
+            WalkAccessOutput? access = m_Access;
             var settings = Mod.Settings;
-            if (terms is null || settings is null)
+            if (access is null || settings is null)
             {
                 Mod.Log.Warn("Verification export skipped: no computed terms.");
                 return;
@@ -192,7 +123,7 @@ namespace StationSuitabilityOverlay
                 string city = ExportCityName();
 
                 WriteInstance(folder, $"real-{city}-{stamp}-heatmap",
-                    BuildHeatmapInstance(capture, terms, $"real-{city}-{stamp}-heatmap"));
+                    BuildHeatmapInstance(capture, access, $"real-{city}-{stamp}-heatmap"));
                 WriteInstance(folder, $"real-{city}-{stamp}-sites",
                     BuildSitesInstance(settings, $"real-{city}-{stamp}-sites"));
                 string? lineset = BuildLinesetInstance(settings, $"real-{city}-{stamp}-lineset");
@@ -297,81 +228,96 @@ namespace StationSuitabilityOverlay
             return new List<int>(picked);
         }
 
-        private static string PointsJson(ExportPoints points)
+        private static string SourcesJson(WalkSources sources)
         {
             return new SuitabilityJsonObject()
-                .Add("x_b32", SuitabilityExportJson.BitsArray(points.m_X))
-                .Add("z_b32", SuitabilityExportJson.BitsArray(points.m_Z))
-                .Add("w_b32", SuitabilityExportJson.BitsArray(points.m_Weights))
-                .Add("offsets", SuitabilityExportJson.IntArray(points.m_Offsets))
-                .Add("counts", SuitabilityExportJson.IntArray(points.m_Counts))
+                .Add("x_b32", SuitabilityExportJson.BitsArray(Prefix(sources.X, sources.Count)))
+                .Add("z_b32", SuitabilityExportJson.BitsArray(Prefix(sources.Z, sources.Count)))
+                .Add("w_b32", SuitabilityExportJson.BitsArray(Prefix(sources.Weight, sources.Count)))
                 .Build();
         }
 
-        private static string BuildHeatmapInstance(
-            ExportCapture capture, SuitabilityCell[] terms, string name)
+        private static float[] Prefix(float[] values, int count)
         {
-            int totalCells = Math.Min(terms.Length, capture.m_Components.Length);
+            var prefix = new float[count];
+            Array.Copy(values, prefix, count);
+            return prefix;
+        }
+
+        // The `heatmap_walk` instance: the access pass's inputs verbatim, the masks,
+        // and a sample of the terms it produced — so the pipeline can run the same
+        // pure code on them (subject) and an independent re-derivation (evaluator) and
+        // require both to reproduce the game's numbers bit for bit.
+        private static string BuildHeatmapInstance(ExportCapture capture, WalkAccessOutput access, string name)
+        {
+            int totalCells = Math.Min(access.Terms.Length, capture.m_Buildable.Length);
             List<int> sample = SelectSampleCells(capture.m_Buildable, totalCells);
             var demand = new float[sample.Count];
             var jobs = new float[sample.Count];
             var coverage = new float[sample.Count];
-            var access = new float[sample.Count];
+            var accessTerm = new float[sample.Count];
             var future = new float[sample.Count];
             var interchange = new float[sample.Count];
             var cross = new float[sample.Count];
+            var node = new int[sample.Count];
+            var walk = new int[sample.Count];
             for (int i = 0; i < sample.Count; i++)
             {
-                SuitabilityCell cell = terms[sample[i]];
+                SuitabilityCell cell = access.Terms[sample[i]];
                 demand[i] = cell.m_Demand;
                 jobs[i] = cell.m_Jobs;
                 coverage[i] = cell.m_Coverage;
-                access[i] = cell.m_Access;
+                accessTerm[i] = cell.m_Access;
                 future[i] = cell.m_Future;
                 interchange[i] = cell.m_Interchange;
                 cross[i] = cell.m_CrossCoverage;
+                node[i] = access.TileNode[sample[i]];
+                walk[i] = access.TileWalkMs[sample[i]];
             }
 
+            WalkAccessInputs inputs = capture.m_Inputs;
             var data = new SuitabilityJsonObject()
                 .Add("grid_x", SuitabilityExportJson.Int(capture.m_Grid.x))
                 .Add("grid_y", SuitabilityExportJson.Int(capture.m_Grid.y))
-                .Add("bucket_x", SuitabilityExportJson.Int(capture.m_BucketGrid.x))
-                .Add("bucket_y", SuitabilityExportJson.Int(capture.m_BucketGrid.y))
                 .Add("world_min_x_b32", SuitabilityExportJson.Bits(capture.m_WorldMin.x))
                 .Add("world_min_z_b32", SuitabilityExportJson.Bits(capture.m_WorldMin.y))
                 .Add("tile_size_b32", SuitabilityExportJson.Bits(TileSize))
-                .Add("bucket_size_b32", SuitabilityExportJson.Bits(BucketSize))
-                .Add("catchment_b32", SuitabilityExportJson.Bits(capture.m_Catchment))
-                .Add("access_radius_b32", SuitabilityExportJson.Bits(capture.m_AccessRadius))
-                .Add("interchange_b32", SuitabilityExportJson.Bits(capture.m_InterchangeRadius))
-                .Add("population_cell_x_b32", SuitabilityExportJson.Bits(capture.m_PopulationCellSize.x))
-                .Add("population_cell_z_b32", SuitabilityExportJson.Bits(capture.m_PopulationCellSize.y))
-                .Add("population_tex_x", SuitabilityExportJson.Int(capture.m_PopulationTextureSize.x))
-                .Add("population_tex_y", SuitabilityExportJson.Int(capture.m_PopulationTextureSize.y))
-                .Add("population_b32", SuitabilityExportJson.BitsArray(capture.m_Population))
-                .Add("stops", PointsJson(capture.m_Stops))
-                .Add("other_stops", PointsJson(capture.m_OtherStops))
-                .Add("nodes", PointsJson(capture.m_Nodes))
-                .Add("edges", PointsJson(capture.m_Edges))
-                .Add("jobs", PointsJson(capture.m_Jobs))
-                .Add("future_homes", PointsJson(capture.m_FutureHomes))
-                .Add("future_jobs", PointsJson(capture.m_FutureJobs))
-                .Add("components", SuitabilityExportJson.IntArray(capture.m_Components))
+                .Add("node_x_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeX))
+                .Add("node_z_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeZ))
+                .Add("edge_a", SuitabilityExportJson.IntArray(inputs.Graph.EdgeA))
+                .Add("edge_b", SuitabilityExportJson.IntArray(inputs.Graph.EdgeB))
+                .Add("edge_metres_b32", SuitabilityExportJson.BitsArray(inputs.Graph.EdgeMetres))
+                .Add("edge_ms", SuitabilityExportJson.IntArray(inputs.Graph.EdgeMs))
+                .Add("homes", SourcesJson(inputs.Homes))
+                .Add("jobs", SourcesJson(inputs.Jobs))
+                .Add("future", SourcesJson(inputs.Future))
+                .Add("stop_x_b32", SuitabilityExportJson.BitsArray(Prefix(inputs.StopX, inputs.StopCount)))
+                .Add("stop_z_b32", SuitabilityExportJson.BitsArray(Prefix(inputs.StopZ, inputs.StopCount)))
+                .Add("stop_type", SuitabilityExportJson.IntArray(inputs.StopType))
+                .Add("type_count", SuitabilityExportJson.Int(inputs.TypeCount))
+                .Add("access_ms", SuitabilityExportJson.Int(inputs.AccessMs))
+                .Add("transfer_ms", SuitabilityExportJson.Int(inputs.TransferMs))
+                .Add("catchment_ms", SuitabilityExportJson.IntArray(inputs.CatchmentMs))
+                .Add("type_weight_b32", SuitabilityExportJson.BitsArray(capture.m_TypeWeight))
+                .Add("mode", SuitabilityExportJson.Str(capture.m_Mode.ToString()))
+                .Add("class", SuitabilityExportJson.Int(capture.m_Class))
+                .Add("self_type", SuitabilityExportJson.Int(capture.m_SelfType))
                 .Add("buildable", MaskJson(capture.m_Buildable))
                 .Add("land", MaskJson(capture.m_Land))
-                .Add("mode", SuitabilityExportJson.Str(capture.m_Mode.ToString()))
                 .Add("sample_indices", SuitabilityExportJson.IntArray(sample))
                 .Add("sample_demand_b32", SuitabilityExportJson.BitsArray(demand))
                 .Add("sample_jobs_b32", SuitabilityExportJson.BitsArray(jobs))
                 .Add("sample_coverage_b32", SuitabilityExportJson.BitsArray(coverage))
-                .Add("sample_access_b32", SuitabilityExportJson.BitsArray(access))
+                .Add("sample_access_b32", SuitabilityExportJson.BitsArray(accessTerm))
                 .Add("sample_future_b32", SuitabilityExportJson.BitsArray(future))
                 .Add("sample_interchange_b32", SuitabilityExportJson.BitsArray(interchange))
                 .Add("sample_cross_b32", SuitabilityExportJson.BitsArray(cross))
+                .Add("sample_tile_node", SuitabilityExportJson.IntArray(node))
+                .Add("sample_tile_walk_ms", SuitabilityExportJson.IntArray(walk))
                 .Build();
 
             return new SuitabilityJsonObject()
-                .Add("kind", SuitabilityExportJson.Str("heatmap_grid"))
+                .Add("kind", SuitabilityExportJson.Str("heatmap_walk"))
                 .Add("name", SuitabilityExportJson.Str(name))
                 .Add("data", data)
                 .BuildHashed(ExportSchemaVersion);
@@ -390,28 +336,37 @@ namespace StationSuitabilityOverlay
             return SuitabilityExportJson.IntArray(values);
         }
 
-        // The site-selection instance is the pipeline's existing `sites` kind, so the
-        // certified optimum runs on the real score field with no schema of its own.
+        // The site-selection instance: the pedestrian graph, the candidate nodes with
+        // the scores the exact selection ran on, and its spacing — the `sites_walk`
+        // kind, whose certified optimum runs on the real candidate set.
         private string BuildSitesInstance(Setting settings, string name)
         {
-            float[] scores = m_Scores ?? Array.Empty<float>();
-            int separation = Math.Max(2, (int)math.round(settings.CatchmentRadius / TileSize));
+            WalkAccessInputs? inputs = m_AccessInputs;
+            WalkGraph graph = inputs?.Graph ?? WalkGraph.Build(Array.Empty<float>(), Array.Empty<float>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<float>(), 0);
             int wanted = Math.Min(settings.SiteCount, m_SiteIndices.Length);
+            var nodes = new int[m_SiteCandidateCount];
+            var scores = new float[m_SiteCandidateCount];
+            Array.Copy(m_SiteCandidateNodes, nodes, m_SiteCandidateCount);
+            Array.Copy(m_SiteCandidateScores, scores, m_SiteCandidateCount);
 
             var data = new SuitabilityJsonObject()
-                .Add("width", SuitabilityExportJson.Int(m_IntensityGrid.x))
-                .Add("height", SuitabilityExportJson.Int(m_IntensityGrid.y))
-                .Add("scores_b32", SuitabilityExportJson.BitsArray(scores))
-                .Add("min_separation", SuitabilityExportJson.Int(separation))
+                .Add("node_x_b32", SuitabilityExportJson.BitsArray(graph.NodeX))
+                .Add("node_z_b32", SuitabilityExportJson.BitsArray(graph.NodeZ))
+                .Add("edge_a", SuitabilityExportJson.IntArray(graph.EdgeA))
+                .Add("edge_b", SuitabilityExportJson.IntArray(graph.EdgeB))
+                .Add("edge_metres_b32", SuitabilityExportJson.BitsArray(graph.EdgeMetres))
+                .Add("candidate_nodes", SuitabilityExportJson.IntArray(nodes))
+                .Add("candidate_scores_b32", SuitabilityExportJson.BitsArray(scores))
+                .Add("separation_ms", SuitabilityExportJson.Int(m_SiteSeparationMs))
                 .Add("max_sites", SuitabilityExportJson.Int(wanted))
                 .Build();
 
             return new SuitabilityJsonObject()
-                .Add("kind", SuitabilityExportJson.Str("sites"))
+                .Add("kind", SuitabilityExportJson.Str("sites_walk"))
                 .Add("name", SuitabilityExportJson.Str(name))
                 .Add("comment", SuitabilityExportJson.Str(
                     "exported from a live city; the MIP is large, so expect a long solve"))
-                // One binary per local maximum and a constraint per close pair: the
+                // One binary per candidate node and a constraint per close pair: the
                 // pipeline's default sweep skips this unless it is asked for by name.
                 .Add("heavy", SuitabilityExportJson.Bool(value: true))
                 .Add("data", data)

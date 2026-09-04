@@ -168,7 +168,9 @@ namespace StationSuitabilityOverlay
     {
         // Walking is slow enough that a long connection is worse than a detour by
         // vehicle, which is what keeps interchanges local.
-        public const float WalkSpeed = 1.4f;
+        // 1.2 m/s is the planning value (TCQSM 3rd ed. ch. 5; FHWA-RD-98-107), not the
+        // brisk 1.4 the routing used before — register decision, 2026-09-04.
+        public const float WalkSpeed = 1.2f;
 
         // Flat cost of boarding, on top of the wait. Matches TransportPathfind's
         // m_StartingCost time component (5), so a change of vehicle costs what the

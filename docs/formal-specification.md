@@ -68,7 +68,22 @@ output, plus exact optimality gap against a declared reference objective.
 
 ## 2. S2 — Site selection (`FindTopSites`)
 
-### Instance
+**v2 (Phase 3, 2026-09-05) — network form (`sites_walk`, `SolveOnNetwork`).** The
+mod's live path. Instance: the pedestrian graph of §7 (v2), candidate nodes
+c₁..c_n with scores s_k ∈ ℚ (binary32; in the mod: every node whose own tile is
+buildable and whose combined score for the map's mode is positive — the candidate
+*definition* is instance data, not checked here), a spacing σ ∈ ℕ ms
+(`WalkMilliseconds(StopSpacingFor(mode))`, ≥ 1), budget K. Two candidates conflict
+iff the exact integer walking time between them is **strictly below** σ (equal is
+allowed). A solution is a set of ≤ K pairwise non-conflicting candidates; the
+objective is max Σ s_k. Search as in the exact grid form below, with the clique cover
+replaced by walking-time balls of radius ⌊(σ−1)/2⌋ around centres taken in (score
+desc, index asc) order and in node-index order (triangle inequality ⟹ a ball is a
+clique). Result ranked by (score desc, node asc); the mod maps each node to the tile
+under it for display. The grid form below remains as specified for the synthetic
+instances and as the v1 record.
+
+### Instance (grid form, v1)
 
 - Integers W, H ≥ 1; score grid s ∈ ℚ^(W·H) (from binary32), cell index
   i = x + y·W.
@@ -90,8 +105,33 @@ k < l: Chebyshev(i_k, i_l) ≥ m (the code rejects `< separation`).
 
 ### What the mod computes
 
-Greedy: sort C by score descending (**tie order between equal scores is
-implementation-defined** — `Array.Sort` is unstable introsort; deterministic per
+**v2 (Phase 2, 2026-09-05) — exact.** `SuitabilityExactSites.Solve` returns a feasible
+S maximizing Σ_{i∈S} s_i (objective (a) below), or, if a node budget of 2·10⁶ is
+exhausted first, the best feasible S found together with a proven upper bound
+U ≥ max Σ; the result carries `Optimal ∈ {true,false}`. Definition of the search:
+
+- Total candidate order: score descending, ties by cell index ascending.
+- Integer objective: each score is multiplied by 2^σ, σ chosen so the largest
+  candidate lands in [2^(b−1), 2^b) with b = 62 − ⌈log₂ K⌉, and floored. A binary32
+  value scaled by a power of two is exact in double, so the floor is a no-op unless a
+  candidate is ~2^33 below the largest (`WeightsExact = false` then; the bound is
+  slackened by K units in rational terms).
+- Branch-and-bound, depth-first, include branch first, incumbent = the greedy
+  solution under the total order.
+- Bound at a node with remaining sorted list R and r free slots: partition the grid
+  into m×m blocks (m = max(1, separation)); two candidates in one block have
+  Chebyshev distance < m, so any feasible set has ≤ 1 per block. Bound_P(R, r) = the
+  sum of the heaviest remaining candidate of the first r distinct blocks met in R.
+  Two partitions are used (aligned; shifted by ⌊m/2⌋ in both axes) and the minimum
+  taken. Prune when value + bound ≤ incumbent.
+- On budget exhaustion: U = max(incumbent, max over unexpanded positions of
+  value + bound). The bound is monotone non-increasing along a sorted list, so the
+  first unexpanded position of each open frame suffices.
+- Output S is ranked by (score desc, index asc).
+
+The greedy ranking (`FindTopSites`) is retained as the incumbent and as the baseline
+the pipeline measures: sort C by score descending (**tie order between equal scores
+is implementation-defined** — `Array.Sort` is unstable introsort; deterministic per
 runtime version but unspecified), then accept best-first subject to separation.
 
 ### Declared reference objectives (choice = open question Q1)
@@ -215,7 +255,8 @@ EnabledDemand/DemandScored unchanged.
 Nodes: stop nodes 0..S−1, then one line-stop node per (line, position). Undirected
 edges with cost floor 0.01 s:
 
-- Walk: between stop pairs within walkRadius (Euclidean), cost = distance / 1.4 m/s.
+- Walk: between stop pairs within walkRadius (Euclidean), cost = distance / 1.2 m/s
+  (v2, 2026-09-04; v1 used 1.4).
 - Access: stop ↔ line-stop, cost = (expectedWait + boardPenalty)/2 with
   boardPenalty = 5 s; halved because an undirected edge is traversed on and off, so
   one line use pays the full cost once.
@@ -291,6 +332,50 @@ network N₀ ∪ A carries with ≥ switch-margin improvement over the N₀ base
 formalization is deferred until after the pipeline (user decision, same date).
 
 ## 7. S1 — Heatmap evaluator
+
+**v2 (Phase 3, 2026-09-05): walking-time access over the pedestrian network.** The
+Burst job of 7.2 is retired; the mod's live computation is `SuitabilityWalkAccess`
+(pure C#, run on a worker thread; the identical code runs offline in the subject).
+Instance kind `heatmap_walk`. Definitions:
+
+- **Graph.** Nodes = endpoints of every net edge carrying a lane with
+  `PathMethod.Pedestrian` (streets with pavements and stand-alone paths; `Curve` and
+  `Edge` present, not Deleted/Temp); node order = first-seen in edge order. Edge cost
+  in whole milliseconds: `ms = max(1, round_half_even(L / w · 1000))` with L =
+  `Curve.m_Length` (binary32, widened to double) and w = the binary32 constant 1.2f
+  widened (1.2000000476837158), arithmetic in double. Undirected.
+- **Snap.** A point p is served by the node minimising the double squared distance
+  Σ(Δ²) (ties: lower node index); its access walk is `a = round_half_even(√d² / w ·
+  1000)` ms (no floor); p is off-network if no node lies within A = 120 000 ms ·
+  w/1000 m or a > A. Tile centres are `worldMin + (i + 0.5)·32` in binary32.
+- **Times.** t(s, n) = a_s + d(node_s, n) with d the exact integer shortest-path time.
+  Horizons: catchment classes C = {360 000, 660 000, 960 000} ms (Bus/Tram 6, Metro/
+  Ferry 11, Train 16 min), transfer τ = 180 000 ms.
+- **Kernel.** K(t, T) = 1 − t/T in binary32 (both operands exact), for t ≤ T.
+- **Accumulators per node n**, for each class c with horizon T_c: Demand_c[n] =
+  Σ_homes w_h·K(t, T_c); Jobs_c[n]; Future_c[n] (zoned homes then zoned workplaces);
+  per stop type y: Within_c[y][n] = Σ_stops of type y K(t, T_c); Inter[y][n] = Σ K(t, τ)
+  over t ≤ τ; Cross_c[y][n] = Σ K(t, T_c)·(1 − K(t, τ)·[t ≤ τ]). All sums in binary32,
+  **in source index order**, each source contributing at most once per node (so the
+  settle order is irrelevant). Sources: residents per home building (household
+  citizens count, at the building's Transform), workplaces (max workers), zoned
+  cells (cell area), served passenger stops with `TransportStopData.m_TransportType`.
+- **Node terms for mode M** (class c(M), own type y(M), type weights ω from capacity
+  ratios, A1.10): T1 = Demand_c, T2 = Jobs_c, T5 = Future_c, T3 = Within_c[y(M)],
+  T6 = Σ_{y ≠ y(M), ω_y > 0} ω_y · Inter[y] (types ascending), T7 = Σ ω_y · Cross_c[y].
+- **Tile terms.** Unbuildable tile ⇒ all zero, no node. Otherwise the tile's node's
+  terms with T4 = K(a_tile, A); a tile with no node ⇒ all zero.
+- **Combine (v2).** Caps and weights as in 7.3; coverage share = min(T3, 1.5)/1.5;
+  `final = score` if the tile has a node, else 0 (the v1 road gate `sat(T4·2)` is
+  retired). `ScoreForMode(p, M)` = the full combine of the node terms for M at p's
+  tile (no swap), access from the tile's own walk.
+- **Verification.** `heatmap_walk` requires three-way bit equality on sampled tiles:
+  the game's exported terms, the subject (the mod's pure code on the exported inputs)
+  and the evaluator's independent re-derivation; plus edge_ms = spec(edge_metres) and
+  snap agreement. C1.6–C1.9 in the claims table.
+
+Everything from 7.1 to 7.5 below is the **v1 record** (Burst job), kept because the
+exported v1 instances are still checked against it.
 
 ### 7.1 Masks (per 32 m tile, probed at the tile centre)
 
@@ -409,3 +494,19 @@ These are suggestions, not optimal networks"). The verification therefore proves
 the mod's procedures to their own definitions, and (iii) the exact gap between the
 mod's selections (S2, S7) and the certified global optimum of the declared reference
 objectives on exported instances — not that the mod is optimal.
+
+## 10. Specification changes since the verified v1 (redesign, from 2026-09-04)
+
+Every change below is a decision from `docs/assumptions-register.md`; the pipeline's
+constants follow the spec, so each row names where verification had to move too.
+
+| Date | Change | Register | Verification impact |
+|---|---|---|---|
+| 2026-09-04 | Walking speed 1.4 → **1.2 m/s** (routing walk edges, transfer walks) | Gehgeschwindigkeit | `evaluator/transit.py` WALK_SPEED |
+| 2026-09-04 | Transfer walk radius 250 m → **180 s × 1.2 m/s = 216 m** (one constant for the routing's walk edges, the interchange map and the heatmap's transfer distance); zone→stop reach = 2× = 432 m | A1.11 | instance data — exported v1 instances keep their own values |
+| 2026-09-04 | Trip weights: school 0.6 → **1.0**; tourists/homeless no longer filtered (only "no rented property" excludes, structurally) | A0.2, A0.3 | none offline (ECS extraction) |
+| 2026-09-04 | Ferry shoreline **+1 bonus removed** | A1.13 | none offline (ECS) |
+| 2026-09-05 | **S1 heatmap terms are walking times over the pedestrian network** (`SuitabilityWalkAccess`; Burst job `SuitabilityJob` deleted; residents per home building replace the 224 m population raster; access = network node within 2 min; catchments 6/11/16 min as linear time kernels; transfer 3 min; road gate replaced by "has a node"; site refinement pass removed) | A1.1, A1.2, A1.4, A1.5, A1.6, A0.5, A0.6, Phase-3 values | new kind `heatmap_walk` with three-way bit-exact check; v1 `heatmap_grid`/`heatmap_point` evaluators retired or historical |
+| 2026-09-05 | **S2 candidates are network nodes; separation is walking time ≥ stop spacing** (`SolveOnNetwork`, ball clique-cover bound) | A2.1, A2.2, A2.4 | new kind `sites_walk`: exact Dijkstra conflicts, SCIP/VIPR on pairwise MIP, exact selection judged |
+| 2026-09-05 | **S2 site selection is exact** (`SuitabilityExactSites`, branch-and-bound with block-partition bound, integer-scaled scores, node budget 2·10⁶ with reported ceiling); the greedy ranking stays as incumbent and measured baseline | A2.3 | subject reports `exact_*` fields; `run.py` requires gap 0 against the certified optimum when the search closed, else a sound bracket — 6/6 instances closed (two real cities: 14 and 0 nodes) |
+| 2026-09-04 | Interchange/coverage weight of another mode's stop = **vehicle capacity ÷ bus capacity from the loaded prefabs** (`TransitModes.CapacityWeight`), replacing the table 1/1.2/1.5/2.5/3; a type without a loaded vehicle weighs 0 | A1.10 | heatmap `w_b32` remain instance data; new pure function unit-tested |

@@ -1,11 +1,14 @@
 ---
 paths:
   - "dotnet/SuitabilityScoring.cs"
+  - "dotnet/SuitabilityExactSites.cs"
+  - "dotnet/SuitabilityWalkAccess.cs"
   - "dotnet/SuitabilityGraphMath.cs"
   - "dotnet/SuitabilityTransit.cs"
   - "dotnet/SuitabilityLineHistory.cs"
   - "dotnet/SuitabilityLineHealth.cs"
   - "dotnet/TransitMode.cs"
+  - "dotnet/SuitabilityExportJson.cs"
   - "tests/SuitabilityScoring.Tests/**"
 ---
 

@@ -28,13 +28,14 @@ namespace StationSuitabilityOverlay.Verification
             Dictionary<string, object?> result = kind switch
             {
                 "sites" => Sites(data),
+                "sites_walk" => SitesWalk(data),
                 "lattice_path" => LatticePath(data),
                 "calling_points" => CallingPoints(data),
                 "mode_choice" => ModeChoice(data),
                 "lineset" => LineSet(data),
                 "corridor" => CorridorGrowth(data),
-                "heatmap_point" => HeatmapPoint(data),
                 "heatmap_grid" => HeatmapGrid(data),
+                "heatmap_walk" => HeatmapWalk(data),
                 "order_stats" => OrderStats(data),
                 _ => throw new InvalidOperationException($"unknown kind '{kind}'"),
             };
@@ -95,11 +96,13 @@ namespace StationSuitabilityOverlay.Verification
             return bits;
         }
 
-        // ECS-side WalkSeconds, mirrored: (float)Math.Sqrt(double)/1.4f
-        // (StationSuitabilityOverlaySystem.cs:3138-3141).
+        // ECS-side WalkSeconds, mirrored: (float)Math.Sqrt(double) / WalkSpeed. The speed
+        // is the mod's own constant, not a copy of it — a copy drifted once (1.4 after
+        // the mod moved to 1.2) and made a real-city run fail for a reason that had
+        // nothing to do with the mod.
         private static float WalkSeconds(float distSq)
         {
-            return (float)Math.Sqrt(distSq) / 1.4f;
+            return (float)Math.Sqrt(distSq) / SuitabilityTransit.WalkSpeed;
         }
 
         // ------------------------------------------------------------- S2 sites
@@ -123,11 +126,145 @@ namespace StationSuitabilityOverlay.Verification
                 idx.Add(indices[i]);
             }
 
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(
+                scores, width, height, separation, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+
             return new Dictionary<string, object?>
             {
                 ["site_indices"] = idx,
                 ["site_scores_b32"] = Bits(outScores, count),
                 ["truncated"] = truncated,
+                ["exact_site_indices"] = new List<int>(exact.Indices),
+                ["exact_site_scores_b32"] = Bits(exact.Scores, exact.Count),
+                ["exact_optimal"] = exact.Optimal,
+                ["exact_weights_exact"] = exact.WeightsExact,
+                ["exact_value_scaled"] = exact.Value,
+                ["exact_upper_bound_scaled"] = exact.UpperBound,
+                ["exact_scale_shift"] = exact.ScaleShift,
+                ["exact_nodes"] = exact.Nodes,
+                ["exact_candidates"] = exact.Candidates,
+            };
+        }
+
+        // ------------------------------------------------------ S2 v2 sites_walk
+
+        private static Dictionary<string, object?> SitesWalk(JsonElement data)
+        {
+            float[] nodeX = F32Array(data.GetProperty("node_x_b32"));
+            WalkGraph graph = WalkGraph.Build(
+                nodeX, F32Array(data.GetProperty("node_z_b32")),
+                IntArray(data.GetProperty("edge_a")), IntArray(data.GetProperty("edge_b")),
+                F32Array(data.GetProperty("edge_metres_b32")), data.GetProperty("edge_a").GetArrayLength());
+            int[] candidates = IntArray(data.GetProperty("candidate_nodes"));
+            float[] scores = F32Array(data.GetProperty("candidate_scores_b32"));
+            int separationMs = data.GetProperty("separation_ms").GetInt32();
+            int maxSites = data.GetProperty("max_sites").GetInt32();
+
+            ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(
+                graph, candidates, scores, candidates.Length, separationMs, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+            // The greedy baseline under the same conflicts: a budget of zero search
+            // nodes leaves the solver with exactly its greedy incumbent.
+            ExactSiteSolution greedy = SuitabilityExactSites.SolveOnNetwork(
+                graph, candidates, scores, candidates.Length, separationMs, maxSites, 0);
+
+            return new Dictionary<string, object?>
+            {
+                ["site_nodes"] = new List<int>(exact.Indices),
+                ["site_scores_b32"] = Bits(exact.Scores, exact.Count),
+                ["optimal"] = exact.Optimal,
+                ["weights_exact"] = exact.WeightsExact,
+                ["value_scaled"] = exact.Value,
+                ["upper_bound_scaled"] = exact.UpperBound,
+                ["scale_shift"] = exact.ScaleShift,
+                ["search_nodes"] = exact.Nodes,
+                ["greedy_nodes"] = new List<int>(greedy.Indices),
+            };
+        }
+
+        // ------------------------------------------------------- S1 v2 heatmap_walk
+
+        // Runs the mod's own access pass (SuitabilityWalkAccess.Run — the code the game
+        // executes on its worker thread) on the exported inputs and reports the terms at
+        // the sampled tiles, so the pipeline can require game == subject == evaluator.
+        private static Dictionary<string, object?> HeatmapWalk(JsonElement data)
+        {
+            float[] nodeX = F32Array(data.GetProperty("node_x_b32"));
+            float[] nodeZ = F32Array(data.GetProperty("node_z_b32"));
+            int[] edgeA = IntArray(data.GetProperty("edge_a"));
+            int[] edgeB = IntArray(data.GetProperty("edge_b"));
+            float[] edgeMetres = F32Array(data.GetProperty("edge_metres_b32"));
+            WalkGraph graph = WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length);
+
+            float[] stopX = F32Array(data.GetProperty("stop_x_b32"));
+            var inputs = new WalkAccessInputs
+            {
+                Graph = graph,
+                Homes = Sources(data.GetProperty("homes")),
+                Jobs = Sources(data.GetProperty("jobs")),
+                Future = Sources(data.GetProperty("future")),
+                StopX = stopX,
+                StopZ = F32Array(data.GetProperty("stop_z_b32")),
+                StopType = IntArray(data.GetProperty("stop_type")),
+                StopCount = stopX.Length,
+                TypeCount = data.GetProperty("type_count").GetInt32(),
+                AccessMs = data.GetProperty("access_ms").GetInt32(),
+                TransferMs = data.GetProperty("transfer_ms").GetInt32(),
+                CatchmentMs = IntArray(data.GetProperty("catchment_ms")),
+            };
+
+            int width = data.GetProperty("grid_x").GetInt32();
+            int height = data.GetProperty("grid_y").GetInt32();
+            int[] buildableInts = IntArray(data.GetProperty("buildable"));
+            var buildable = new byte[buildableInts.Length];
+            for (int i = 0; i < buildable.Length; i++)
+            {
+                buildable[i] = (byte)buildableInts[i];
+            }
+
+            WalkAccessOutput output = SuitabilityWalkAccess.Run(
+                inputs, width, height,
+                F32(data.GetProperty("world_min_x_b32")), F32(data.GetProperty("world_min_z_b32")), F32(data.GetProperty("tile_size_b32")),
+                buildable, data.GetProperty("class").GetInt32(), data.GetProperty("self_type").GetInt32(),
+                F32Array(data.GetProperty("type_weight_b32")));
+
+            var cells = new List<object>();
+            foreach (JsonElement cell in data.GetProperty("sample_indices").EnumerateArray())
+            {
+                int index = cell.GetInt32();
+                SuitabilityCell terms = output.Terms[index];
+                cells.Add(new Dictionary<string, object?>
+                {
+                    ["index"] = index,
+                    ["demand_b32"] = B32(terms.m_Demand),
+                    ["jobs_b32"] = B32(terms.m_Jobs),
+                    ["coverage_b32"] = B32(terms.m_Coverage),
+                    ["access_b32"] = B32(terms.m_Access),
+                    ["future_b32"] = B32(terms.m_Future),
+                    ["interchange_b32"] = B32(terms.m_Interchange),
+                    ["cross_b32"] = B32(terms.m_CrossCoverage),
+                    ["tile_node"] = output.TileNode[index],
+                    ["tile_walk_ms"] = output.TileWalkMs[index],
+                });
+            }
+
+            return new Dictionary<string, object?>
+            {
+                ["cells"] = cells,
+                ["edge_ms"] = new List<int>(graph.EdgeMs),
+                ["sources_off_network"] = output.Result.SourcesOffNetwork,
+                ["tiles_on_network"] = output.TilesOnNetwork,
+            };
+        }
+
+        private static WalkSources Sources(JsonElement e)
+        {
+            float[] x = F32Array(e.GetProperty("x_b32"));
+            return new WalkSources
+            {
+                X = x,
+                Z = F32Array(e.GetProperty("z_b32")),
+                Weight = F32Array(e.GetProperty("w_b32")),
+                Count = x.Length,
             };
         }
 
@@ -359,55 +496,6 @@ namespace StationSuitabilityOverlay.Verification
         }
 
         // ------------------------------------------------ S1 stop-derived terms
-
-        private static Dictionary<string, object?> HeatmapPoint(JsonElement data)
-        {
-            float catchment = F32(data.GetProperty("catchment_b32"));
-            float interchangeRadius = F32(data.GetProperty("interchange_b32"));
-            float invSelf = F32(data.GetProperty("inv_self_b32"));
-            float w3 = F32(data.GetProperty("coverage_weight_b32"));
-            float w6 = F32(data.GetProperty("interchange_weight_b32"));
-            float w7 = F32(data.GetProperty("cross_weight_b32"));
-
-            var stops = new List<(float X, float Z, float W, bool Same)>();
-            foreach (JsonElement s in data.GetProperty("stops").EnumerateArray())
-            {
-                stops.Add((F32(s.GetProperty("x_b32")), F32(s.GetProperty("z_b32")),
-                    F32(s.GetProperty("weight_b32")), s.GetProperty("same_mode").GetBoolean()));
-            }
-
-            var queries = new List<object>();
-            foreach (JsonElement q in data.GetProperty("queries").EnumerateArray())
-            {
-                float qx = F32(q.GetProperty("x_b32"));
-                float qz = F32(q.GetProperty("z_b32"));
-                float coverage = 0f;
-                float interchange = 0f;
-                float cross = 0f;
-                foreach ((float x, float z, float w, bool same) in stops)
-                {
-                    // Flat scan, distance as the ECS swap computes it
-                    // (float32 sqrt of a float32 squared sum).
-                    float dx = x - qx;
-                    float dz = z - qz;
-                    float distance = MathF.Sqrt((dx * dx) + (dz * dz));
-                    SuitabilityScoring.AccumulateStop(distance, w, same, catchment,
-                        interchangeRadius, ref coverage, ref interchange, ref cross);
-                }
-                float share = MathF.Min(coverage, 1.5f) / 1.5f;
-                float terms = SuitabilityScoring.ModeTerms(
-                    share, interchange, cross, invSelf, w3, w6, w7);
-                queries.Add(new Dictionary<string, object?>
-                {
-                    ["coverage_b32"] = B32(coverage),
-                    ["interchange_b32"] = B32(interchange),
-                    ["cross_b32"] = B32(cross),
-                    ["mode_terms_b32"] = B32(terms),
-                });
-            }
-
-            return new Dictionary<string, object?> { ["queries"] = queries };
-        }
 
         // ----------------------------------- S1 gathered terms from a real save
         //

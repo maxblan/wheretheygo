@@ -114,47 +114,6 @@ namespace StationSuitabilityOverlay
             return SelectKth(scratch, count, k);
         }
 
-        // What one existing served stop contributes to the three stop-derived terms at
-        // a point, given whether it runs the mode being placed.
-        //
-        // This is the single owner of that rule, and it has two callers that iterate
-        // very differently: the scoring job sweeps a bucket neighbourhood over ~200k
-        // cells, while stop placement scans the served-stop list flat at a few hundred
-        // points. Only the iteration differs — if they disagreed about what a stop is
-        // worth, a suggestion's stops would be nudged by a rule the map does not draw.
-        public static void AccumulateStop(
-            float distance,
-            float weight,
-            bool sameMode,
-            float catchmentRadius,
-            float interchangeRadius,
-            ref float coverage,
-            ref float interchange,
-            ref float crossCoverage)
-        {
-            if (catchmentRadius <= 0f || distance > catchmentRadius)
-            {
-                return;
-            }
-
-            float within = 1f - (distance / catchmentRadius);
-            if (sameMode)
-            {
-                // Service of the mode being placed already carries these riders.
-                coverage += weight * within;
-                return;
-            }
-
-            // How readily a rider could change here: 1 on top of the other stop, 0 once
-            // it is beyond walking range. What is too far to transfer to but still
-            // inside the catchment competes for the same riders instead.
-            float transferable = interchangeRadius > 0f && distance <= interchangeRadius
-                ? 1f - (distance / interchangeRadius)
-                : 0f;
-            interchange += weight * transferable;
-            crossCoverage += weight * within * (1f - transferable);
-        }
-
         // The part of a tile's score that depends on WHICH mode is being placed:
         // what is close enough to change to, what is close enough to compete, and how
         // much of the mode's own service is already here. `coverageShare` is the
@@ -317,22 +276,71 @@ namespace StationSuitabilityOverlay
                 return 0;
             }
 
+            int candidates = CollectSiteCandidates(
+                scores, width, height, out int[] candidateIndices, out float[] candidateScores, out truncated);
+            if (candidates == 0)
+            {
+                return 0;
+            }
+
+            // Sort candidates descending by score. Negate to get a descending sort
+            // out of the ascending Array.Sort overload.
+            var sortKeys = new float[candidates];
+            var sortValues = new int[candidates];
+            for (int i = 0; i < candidates; i++)
+            {
+                sortKeys[i] = -candidateScores[i];
+                sortValues[i] = candidateIndices[i];
+            }
+            Array.Sort(sortKeys, sortValues);
+            for (int i = 0; i < candidates; i++)
+            {
+                sortKeys[i] = -sortKeys[i];
+            }
+
+            return GreedySelect(sortValues, sortKeys, candidates, width, minSeparation, maxSites, outIndices, outScores);
+        }
+
+        // The S2 candidate set: cells with a positive score that are 3x3 local maxima,
+        // in row-major order. Shared by the greedy ranking above and the exact
+        // selection in SuitabilityExactSites, so both solve the same problem — a
+        // candidate rule that existed in one place only would let the two disagree
+        // about which cells are even eligible.
+        //
+        // `truncated` reports that the candidate buffer filled up before the whole
+        // grid was scanned, which biases the result toward low grid indices. Callers
+        // must surface that rather than presenting a partial sweep as complete.
+        public static int CollectSiteCandidates(
+            float[] scores,
+            int width,
+            int height,
+            out int[] candidateIndices,
+            out float[] candidateScores,
+            out bool truncated)
+        {
+            truncated = false;
+            candidateIndices = Array.Empty<int>();
+            candidateScores = Array.Empty<float>();
+            if (scores is null || width <= 0 || height <= 0)
+            {
+                return 0;
+            }
+
             int cells = width * height;
             if (scores.Length < cells)
             {
                 return 0;
             }
 
-            // Collect 3x3 local maxima with a positive score. The budget is well
-            // above the count a real city produces, but a noisy score field could
-            // exceed it, so overflow is reported rather than hidden.
+            // The budget is well above the count a real city produces, but a noisy
+            // score field could exceed it, so overflow is reported rather than hidden.
             //
             // Grown into rather than allocated at the bound: starting at the cap meant
             // half a megabyte of candidate buffer on every recompute, whatever the map
             // actually held.
             int cap = Math.Min(cells, MaxSiteCandidates);
-            var candidateIndices = new int[Math.Min(cap, 1024)];
-            var candidateScores = new float[candidateIndices.Length];
+            candidateIndices = new int[Math.Min(cap, 1024)];
+            candidateScores = new float[candidateIndices.Length];
             int candidates = 0;
 
             for (int y = 0; y < height; y++)
@@ -375,27 +383,27 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            if (candidates == 0)
-            {
-                return 0;
-            }
+            return candidates;
+        }
 
-            // Sort candidates descending by score. Negate to get a descending sort
-            // out of the ascending Array.Sort overload.
-            var sortKeys = new float[candidates];
-            var sortValues = new int[candidates];
-            for (int i = 0; i < candidates; i++)
-            {
-                sortKeys[i] = -candidateScores[i];
-                sortValues[i] = candidateIndices[i];
-            }
-            Array.Sort(sortKeys, sortValues);
-
+        // Best-first acceptance over candidates already ordered by descending score,
+        // rejecting anything within `minSeparation` tiles (Chebyshev) of an accepted
+        // site. Writes at most `maxSites` cell indices and their scores.
+        public static int GreedySelect(
+            int[] orderedIndices,
+            float[] orderedScores,
+            int count,
+            int width,
+            int minSeparation,
+            int maxSites,
+            int[] outIndices,
+            float[] outScores)
+        {
             int accepted = 0;
             int separation = Math.Max(0, minSeparation);
-            for (int i = 0; i < candidates && accepted < maxSites; i++)
+            for (int i = 0; i < count && accepted < maxSites; i++)
             {
-                int index = sortValues[i];
+                int index = orderedIndices[i];
                 int x = index % width;
                 int y = index / width;
 
@@ -418,7 +426,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 outIndices[accepted] = index;
-                outScores[accepted] = -sortKeys[i];
+                outScores[accepted] = orderedScores[i];
                 accepted++;
             }
 

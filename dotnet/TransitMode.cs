@@ -193,6 +193,33 @@ namespace StationSuitabilityOverlay
             return count;
         }
 
+        // Walking-time horizons of the access model (register A1.1/A1.2, decided
+        // 2026-09-05). Catchment: how long a rider walks to a stop of the mode —
+        // TCQSM's 400 m bus / 800 m rail standard read as time, stretched to the
+        // measured 85th percentiles (El-Geneidy et al. 2014: bus 484 m, metro 873 m,
+        // commuter rail 1 259 m at 1.2 m/s ≈ 6 / 11 / 16 min); ferry like metro, no
+        // source of its own. Access: the straight-line walk from a door to the
+        // pavement network beyond which a point is treated as off-network. Transfer:
+        // how long a rider walks to change vehicle (A1.11).
+        public const int AccessWalkMs = 120_000;
+        public const int TransferWalkMs = 180_000;
+
+        // The distinct catchment horizons over all modes, ascending: one access pass
+        // computes every class at once so the map (one mode) and stop placement (any
+        // mode) read the same numbers. Pinned by a test against CatchmentMs.
+        public static readonly int[] CatchmentClassesMs = { 360_000, 660_000, 960_000 };
+
+        public static int CatchmentMs(ModePreset mode)
+        {
+            switch (mode)
+            {
+                case ModePreset.Metro: return 660_000;
+                case ModePreset.Train: return 960_000;
+                case ModePreset.Ferry: return 660_000;
+                default: return 360_000;
+            }
+        }
+
         public static float CruiseSpeedFor(ModePreset mode)
         {
             switch (mode)
@@ -203,6 +230,16 @@ namespace StationSuitabilityOverlay
                 case ModePreset.Ferry: return 10f;
                 default: return 9f;
             }
+        }
+
+        // What a stop of another mode is worth as a transfer partner: its vehicle's
+        // trunk capacity relative to a bus, read from the loaded prefabs
+        // (assumptions register A1.10 — this replaced a hand-typed table of 1 / 1.2 /
+        // 1.5 / 2.5 / 3). Zero when either capacity is unknown: a mode the save has
+        // no vehicle for is not a transfer partner, and the caller logs it.
+        public static float CapacityWeight(float capacity, float busCapacity)
+        {
+            return busCapacity > 0f && capacity > 0f ? capacity / busCapacity : 0f;
         }
 
         // How far apart stops belong, in metres. Used to place them on a suggestion

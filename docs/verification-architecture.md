@@ -51,7 +51,7 @@ Two sources, same schema:
 - **Game exports** (implemented 2026-09-03, `dotnet/SuitabilityVerificationExport.cs`):
   `Options → Export verification instance` writes canonical instances of the live city
   to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Three
-  files per press — `heatmap_grid` (the Burst job's own inputs plus a sample of its
+  files per press — `heatmap_walk` (the access pass's own inputs plus a sample of its
   terms), `sites` (the real score field) and `lineset` (zones, discounted flows, the
   real transit graph and the candidate pool). Read-only: nothing in the export changes
   what the mod computes.
@@ -87,7 +87,7 @@ argument wiring the ECS half uses (documented per call in
 `docs/formal-specification.md`), and writes a solution JSON. This is the *system
 under test*; nothing in it is trusted by the verifier.
 
-Scope note: stages that live only in the ECS half (Burst heatmap job, ECS gathering,
+Scope note: stages that live only in the ECS half (ECS gathering,
 `ScoreCandidates` orchestration) are re-driven by the subject runner following the
 specification's argument-wiring; where the runner re-implements orchestration glue,
 that glue is part of the trusted-to-be-faithful boundary and is listed below.

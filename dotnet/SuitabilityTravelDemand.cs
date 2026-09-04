@@ -66,22 +66,11 @@ namespace StationSuitabilityOverlay
 
             for (int i = 0; i < citizens.Length; i++)
             {
-                // Tourists travel, but not on a commute pattern worth planning a
-                // line around, and the homeless have no stable origin.
-                CitizenFlags flags = citizens[i].m_State;
-                if ((flags & (CitizenFlags.Tourist | CitizenFlags.Homeless)) != 0)
-                {
-                    continue;
-                }
-
+                // Everyone who travels inside the map counts, tourists included
+                // (assumptions register A0.2). The only exclusion is structural: a
+                // citizen without a rented property has no fixed origin to plan from —
+                // the homeless and outside commuters both land here.
                 Entity household = members[i].m_Household;
-                if (TouristLookup.HasComponent(household))
-                {
-                    continue;
-                }
-
-                // No rented property means no fixed home: homeless households and
-                // outside commuters both land here.
                 if (!PropertyRenterLookup.HasComponent(household))
                 {
                     continue;

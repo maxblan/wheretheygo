@@ -64,8 +64,8 @@ warnings and zero errors**, which is the state to keep it in.
 
 Two deliberate asymmetries:
 
-- **`CheckForOverflowUnderflow` is on everywhere except the mod project.** `SuitabilityJob` and
-  `ExtractTripsJob` are Burst-compiled and run per cell over ~200k tiles; Burst cannot throw, so an
+- **`CheckForOverflowUnderflow` is on everywhere except the mod project.** `ExtractTripsJob` is
+  Burst-compiled and runs per citizen; Burst cannot throw, so an
   overflow check there is either a compile failure or an abort. The test project keeps it on, and
   the pure math files compile into *both*, so overflow is still checked where it is reachable.
 - **The test project relaxes four rules.** Three (`CA1303`, `CA5394`, `CA1861`) sit under a
@@ -148,9 +148,17 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Seven files are on that side, and `SuitabilityScoring.Tests.csproj` links all seven:
+project. Nine files are on that side, and `SuitabilityScoring.Tests.csproj` links all nine:
 
-- `SuitabilityScoring.cs` — percentiles, site selection, geodesic catchment, weight fitting
+- `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
+- `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
+  integer-millisecond edge costs, a bounded integer Dijkstra, node snapping, and the per-node
+  accumulation of every mode's walking-time terms. Runs on a worker thread in the game and
+  unchanged in the offline subject; integer times are what make the offline check bit-exact
+- `SuitabilityExactSites.cs` — exact site selection: branch-and-bound over a conflict graph with a
+  clique-cover bound (grid blocks, or walking-time balls on the network); proven optimum, or
+  best-found plus ceiling when the node budget runs out. The greedy ranking is its incumbent and
+  the baseline the pipeline measures
 - `SuitabilityGraphMath.cs` — CSR graph, Dijkstra, corridor growth, RDP
 - `SuitabilityTransit.cs` — transit routing and boarding counts
 - `SuitabilityLineHistory.cs` — the rolling window of line readings
@@ -181,14 +189,16 @@ growth and selection, line health, ridership calibration, infomode registration,
 terrain texture and every UI payload all live in it. The pipeline stages have clean seams
 (`UpdateTravelDemand` → `BuildTransitModel` → `BuildRoutes` → `SelectRoutes`) if it is ever split.
 
-1. **Heatmap** — terrain/water masks (`SuitabilityMasks.cs`) → a Burst job emitting seven raw terms
-   per cell (`SuitabilityJob.cs`) → per-term percentile normalization → intensities written into a
-   terrain overlay channel obtained by reflection. Channel index is `InfomodeActive.m_Index - 1`.
-   The map is built for the mode the PANEL shows. Stop placement needs the suggested line's mode
-   instead, so `ScoreForMode` swaps the three stop-derived terms at a point — the other four do not
-   depend on the mode. `SuitabilityScoring.AccumulateStop` is the single owner of what one existing
-   stop is worth; the job sweeps buckets over ~200k cells and `ScoreForMode` scans the served-stop
-   list flat, but both call it, so a suggestion cannot be nudged by a rule the map does not draw.
+1. **Heatmap** — terrain/water masks (`SuitabilityMasks.cs`) → the pedestrian network, residents
+   per home building, workplaces, zoned cells and served stops gathered into plain arrays
+   (`SuitabilityInputs.cs`) → `SuitabilityWalkAccess.Run` on a worker `Task` (integer walking-time
+   Dijkstra from every source, per-node accumulators for every mode, tile snap) → seven raw terms
+   per tile → per-term percentile normalization → intensities written into a terrain overlay
+   channel obtained by reflection. Channel index is `InfomodeActive.m_Index - 1`. The map is built
+   for the mode the PANEL shows; because the accumulators hold every mode, `ScoreForMode` is the
+   full combine of a tile's node for the suggested line's mode, not a swap. Sites are chosen
+   exactly among network nodes (`SuitabilityExactSites.SolveOnNetwork`) with the mode's stop
+   spacing as walking-time separation.
 2. **Travel demand** — real home→work/school journeys read from `Citizen`/`HouseholdMember`
    (`SuitabilityTravelDemand.cs`), aggregated into 256 m zones, discounted by whether the existing
    network can actually route them, then assigned to a network by shortest path.
@@ -215,8 +225,8 @@ must never grow a rule of its own; anything it would have to decide belongs on t
 side being verified, not here.
 
 The one thing to preserve if you touch it: the inputs are captured **inside
-`StartCompute`**, out of the values being handed to the Burst job, and the outputs are
-that job's own terms. Re-collecting them at export time is the obvious simplification
+`StartCompute`**, out of the very arrays being handed to the worker task, and the outputs are
+that run's own terms. Re-collecting them at export time is the obvious simplification
 and it is wrong — the input collections are rebuilt on their own timers, so the export
 would describe a city the exported terms were never computed from.
 
@@ -267,7 +277,7 @@ Hard-won facts worth not rediscovering:
 ## The `.claude/` directory
 
 - `rules/engineering-baseline.md` — always-on defaults, retargeted to this repo.
-- `rules/pure-math.md` — scoped to the six Unity-free files and the test project: the purity rule,
+- `rules/pure-math.md` — scoped to the Unity-free files and the test project: the purity rule,
   why it exists, and the bugs that hid without it.
 - `rules/ecs-systems.md` — scoped to the game-facing systems: decompile before using an API, mirror
   the game's own formulas, log every decision, respect the update phases, and the specific traps

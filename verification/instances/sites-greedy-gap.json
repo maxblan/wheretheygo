@@ -36,9 +36,11 @@
   "width": 9
  },
  "expect": {
+  "exact_is_optimal": true,
+  "exact_optimal_claimed": true,
   "greedy_is_optimal": false
  },
- "hash": "2a288bcc158e0e8e4cd708a10d7f0113353a96dded2ffc3019940efbce890618",
+ "hash": "b01f8b1c59d6f1a4e6bc137b2c5942c83115bc93825452e9d557b059cc65cba2",
  "kind": "sites",
  "name": "sites-greedy-gap",
  "schema_version": 1

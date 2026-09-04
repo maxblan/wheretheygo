@@ -3,7 +3,6 @@ paths:
   - "dotnet/StationSuitabilityOverlaySystem.cs"
   - "dotnet/SuitabilityRouteRenderer.cs"
   - "dotnet/SuitabilityPanelUISystem.cs"
-  - "dotnet/SuitabilityJob.cs"
   - "dotnet/SuitabilityLines.cs"
   - "dotnet/SuitabilityRoutes.cs"
   - "dotnet/SuitabilityRoadGraph.cs"

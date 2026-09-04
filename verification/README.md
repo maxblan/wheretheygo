@@ -49,11 +49,13 @@ cross-check is subject (mod code) vs evaluator, not two Python variants.
 
 | Stage | Check | Level |
 |---|---|---|
-| S1 stop terms | AccumulateStop/ModeTerms (T3/T6/T7) + kernel boundary cases | bit-exact re-evaluation |
-| S1 gathered terms | the Burst job's seven terms on a REAL city (`heatmap_grid`) | bit-exact recomputation from the job's own exported inputs |
+| S1 v1 gathered terms (historical) | the retired Burst job's seven terms on a REAL city (`heatmap_grid`) | bit-exact recomputation from the job's own exported inputs — checks old exports, not the current mod |
+| S1 v2 walking-time terms | the access pass (`heatmap_walk`): integer shortest-path times over the pedestrian graph, snapping, kernel, ordered sums | **three-way bit-exact**: game export = the mod's own pure code run offline (subject) = independent Python re-derivation (evaluator) |
 | S1/S5 order stats | SelectKth / PositivePercentile vs sorted reference | complete enumeration (bounded family) |
 | S2 sites | output feasible (candidates, separation, budget) + greedy-faithful | exact re-evaluation |
 | S2 sites | exact optimality gap vs the declared reference objective | SCIP exact + VIPR certificate, independently checked; cross-checked by enumeration on small instances |
+| S2 sites | the mod's exact selection (`SuitabilityExactSites`) hits the certified optimum (gap 0) when it reports `Optimal`; when budget-stopped, its [value, ceiling] brackets the optimum and beats greedy | `judge_exact_selection` in `run.py`; `exact_*` fields in `solution.json` |
+| S2 v2 network sites (`sites_walk`) | candidates are network nodes, conflicts are exact integer walking times below the spacing; feasibility, greedy baseline, certified optimum, mod's exact selection judged | evaluator conflicts by exact Dijkstra; SCIP exact + VIPR on pairwise-conflict MIP; brute force ≤ 40 candidates |
 | S4 lattice paths | returned path is a minimum-cost path | exact distance-label certificate (solver-free), checked by two independent checkers — a Python one and a **Lean 4 executable whose soundness is machine-proved** (`Verify.PathCert.check_sound`; the ℚ→ℤ scaling covered by `Verify.Scaling.check_scaled_sound`) |
 | S4 corridor growth | GrowCorridor/PeelFlow/DecayNovelty faithful to the spec | bit-exact independent replay (corridors, blocks, full flow/novelty arrays per round) |
 | S5 stops | offsets/gaps/must-call/termini/floor invariants | exact re-evaluation |
