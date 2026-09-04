@@ -68,11 +68,11 @@ def candidate_line(p: dict, c: dict, first_stop: int) -> transit.Line:
         wait=c["wait"], speed=c["speed"])
 
 
-def candidate_interval(p: dict, accepted: list[int], cand_index: int,
-                       base_map: tuple[list[int], list[float]]
-                       ) -> tuple[Fraction, Fraction, bool, int]:
-    """Exact credit interval for one candidate against N_{t-1} = existing +
-    accepted, mirroring the ScoreCandidates wiring."""
+def round_context(p: dict, accepted: list[int],
+                  base_map: tuple[list[int], list[float]]) -> dict:
+    """Everything about N_{t-1} = existing + accepted that every candidate of the
+    round shares: stops, lines, the round zone mapping and the baselines (with
+    their tie variants). Built once per round."""
     existing_count = len(p["existing_x"])
     acc_x, acc_z, acc_lines = [], [], []
     for a in accepted:
@@ -81,7 +81,6 @@ def candidate_interval(p: dict, accepted: list[int], cand_index: int,
         acc_lines.append(candidate_line(p, c, first))
         acc_x.extend(c["x"])
         acc_z.extend(c["z"])
-    base_stops = existing_count + len(acc_x)
     xs = p["existing_x"] + acc_x
     zs = p["existing_z"] + acc_z
     base_lines = p["existing_lines"] + acc_lines
@@ -92,7 +91,6 @@ def candidate_interval(p: dict, accepted: list[int], cand_index: int,
             p["zone_x"], p["zone_z"], base_map[0], base_map[1],
             acc_x, acc_z, existing_count, p["reach"])
 
-    # Baselines on N_{t-1} (variants over tied itineraries).
     base_net = transit.build_network(xs, zs, base_lines,
                                      p["walk_radius"], p["board_penalty"])
     dist_cache: dict = {}
@@ -104,17 +102,28 @@ def candidate_interval(p: dict, accepted: list[int], cand_index: int,
             + Fraction(transit.walk_seconds(round_sq[dest_zone]))
         baselines.append(transit.baseline_variants(
             base_net, o, dst, access, p["max_travel"], dist_cache))
+    return {
+        "xs": xs, "zs": zs, "base_lines": base_lines,
+        "base_stops": existing_count + len(acc_x),
+        "round_stop": round_stop, "round_sq": round_sq,
+        "baselines": baselines,
+    }
 
+
+def candidate_interval_ctx(p: dict, ctx: dict, cand_index: int
+                           ) -> tuple[Fraction, Fraction, bool, int]:
+    """Exact credit interval for one candidate against a prepared round."""
     cand = p["candidates"][cand_index]
-    xs2 = xs + cand["x"]
-    zs2 = zs + cand["z"]
-    lines2 = base_lines + [candidate_line(p, cand, base_stops)]
+    base_stops = ctx["base_stops"]
+    xs2 = ctx["xs"] + cand["x"]
+    zs2 = ctx["zs"] + cand["z"]
+    lines2 = ctx["base_lines"] + [candidate_line(p, cand, base_stops)]
     target = len(lines2) - 1
     net = transit.build_network(xs2, zs2, lines2,
                                 p["walk_radius"], p["board_penalty"])
 
     mapped_stop, mapped_sq = transit.remap_zones(
-        p["zone_x"], p["zone_z"], round_stop, round_sq,
+        p["zone_x"], p["zone_z"], ctx["round_stop"], ctx["round_sq"],
         cand["x"], cand["z"], base_stops, p["reach"])
 
     pairs = []
@@ -125,11 +134,46 @@ def candidate_interval(p: dict, accepted: list[int], cand_index: int,
             continue
         access = Fraction(transit.walk_seconds(mapped_sq[origin_zone])) \
             + Fraction(transit.walk_seconds(mapped_sq[dest_zone]))
-        pairs.append(transit.Pair(o, dst, weight, access, baselines[i]))
+        pairs.append(transit.Pair(o, dst, weight, access, ctx["baselines"][i]))
 
     lo, hi, ties = transit.credit_interval(net, pairs, target, p["discount"],
                                            p["max_travel"], p["margin"])
     return lo, hi, ties, len(pairs)
+
+
+def candidate_interval(p: dict, accepted: list[int], cand_index: int,
+                       base_map: tuple[list[int], list[float]]
+                       ) -> tuple[Fraction, Fraction, bool, int]:
+    """Exact credit interval for one candidate against N_{t-1} = existing +
+    accepted, mirroring the ScoreCandidates wiring."""
+    return candidate_interval_ctx(p, round_context(p, accepted, base_map), cand_index)
+
+
+# Worker plumbing for scoring a round's candidates in parallel.
+_CTX = None
+
+
+def _round_init(p: dict, ctx: dict) -> None:
+    global _CTX
+    _CTX = (p, ctx)
+
+
+def _round_eval(c: int) -> tuple:
+    p, ctx = _CTX
+    lo, hi, tie, pairs = candidate_interval_ctx(p, ctx, c)
+    return c, str(lo), str(hi), tie, pairs
+
+
+def score_round(p: dict, ctx: dict, candidates: list[int]) -> dict:
+    """Intervals for all candidates of one round, in parallel when it pays."""
+    import os
+    from multiprocessing import Pool
+    if len(candidates) < 4:
+        return {c: candidate_interval_ctx(p, ctx, c) for c in candidates}
+    workers = max(1, min(16, (os.cpu_count() or 2) - 1))
+    with Pool(workers, initializer=_round_init, initargs=(p, ctx)) as pool:
+        rows = pool.map(_round_eval, candidates)
+    return {c: (Fraction(lo), Fraction(hi), tie, pairs) for c, lo, hi, tie, pairs in rows}
 
 
 def set_objective(p: dict, subset: list[int]) -> tuple[Fraction, Fraction, bool]:
@@ -196,8 +240,8 @@ def check(instance: dict, solution: dict) -> dict:
                    for k, v in round_data["credits_b32"].items()}
         chosen = round_data["accepted"]
         intervals = {}
-        for c in credits:
-            lo, hi, tie, pairs = candidate_interval(p, accepted, c, base_map)
+        ctx = round_context(p, accepted, base_map)
+        for c, (lo, hi, tie, pairs) in score_round(p, ctx, sorted(credits)).items():
             eps = credit_budget(hi, pairs)
             intervals[c] = (lo, hi, eps, tie)
             ties_seen = ties_seen or tie

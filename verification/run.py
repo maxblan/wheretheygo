@@ -333,20 +333,42 @@ def check_lineset(instance: dict, solution: dict, out_dir: str,
     with open(os.path.join(out_dir, "enumeration.json"), "w", encoding="ascii") as f:
         json.dump(enum_result, f, indent=1)
 
+    p = ev_lineset.parse(instance)
     greedy_lo = Fraction(report["greedy_set_objective"][0])
     optimum_lo = Fraction(enum_result["optimum_lo"])
+    complete = enum_result["complete"]
+    k_enum = enum_result["enumerated_max_size"]
     verdict = {
         "evaluator": {k: v for k, v in report.items() if k != "rounds"},
         "rounds": report["rounds"],
         "pass_rounds": report["ok"],
-        "enumeration_complete": enum_result["complete"],
+        "enumeration_complete": complete,
+        "enumeration_max_size": k_enum,
+        "declared_k": enum_result["declared_k"],
+        "subsets_evaluated": enum_result["subsets_evaluated"],
         "optimum_set": enum_result["optimum_set"],
         "optimum_value": enum_result["optimum_lo"],
         "greedy_set_value": report["greedy_set_objective"][0],
-        "gap": str(optimum_lo - greedy_lo),
-        "greedy_set_is_optimal": optimum_lo == greedy_lo,
         "tie_affected": report["tie_affected"],
     }
+    if complete:
+        verdict["gap"] = str(optimum_lo - greedy_lo)
+        verdict["greedy_set_is_optimal"] = optimum_lo == greedy_lo
+    else:
+        # Bounded regime: the K-line optimum is NOT established. What IS exact is
+        # the optimum over <= k_enum lines, compared against the greedy's first
+        # k_enum acceptances at equal cardinality.
+        prefix = report["accepted"][:k_enum]
+        prefix_lo, _hi, _tie = ev_lineset.set_objective(p, prefix)
+        verdict["greedy_set_is_optimal"] = None
+        verdict["optimality_level"] = f"bounded: exact over subsets of size <= {k_enum} of {verdict['declared_k']}"
+        verdict["greedy_prefix"] = prefix
+        verdict["greedy_prefix_value"] = str(prefix_lo)
+        verdict["gap"] = str(optimum_lo - prefix_lo)
+        verdict["greedy_prefix_optimal_at_k"] = optimum_lo == prefix_lo
+        notes.append(
+            f"K={verdict['declared_k']} optimum not enumerable within budget; exact "
+            f"only for <= {k_enum} lines ({verdict['subsets_evaluated']} subsets)")
 
     data = instance["data"]
     if "staged_candidate" in data:
@@ -357,7 +379,6 @@ def check_lineset(instance: dict, solution: dict, out_dir: str,
         staged_x = [bits_to_f32(b)
                     for b in data["candidates"][staged]["stop_x_b32"]]
         verdict["staged_stops_match_plan"] = staged_x == expected
-        p = ev_lineset.parse(instance)
         staged_lo, staged_hi, _ = ev_lineset.set_objective(p, [staged])
         others = [
             (i, ev_lineset.set_objective(p, [i]))
@@ -396,7 +417,9 @@ def base_pass(kind: str, verdict: dict) -> bool:
                 "heatmap_grid", "order_stats"):
         return bool(verdict.get("evaluator", {}).get("ok"))
     if kind == "lineset":
-        return bool(verdict.get("pass_rounds") and verdict.get("enumeration_complete"))
+        return bool(verdict.get("pass_rounds")
+                    and (verdict.get("enumeration_complete")
+                         or verdict.get("enumeration_max_size", 0) >= 1))
     return False
 
 
@@ -509,14 +532,23 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
 
 
 def is_heavy(name: str) -> bool:
-    """An instance the exporter marked as a long solve (a real city's score field
-    is one binary per local maximum). Skipped by the default sweep so copying an
-    export into instances/ cannot silently turn `verify-all` into an hour."""
+    """An instance the default sweep must not pick up: flagged `heavy` by the
+    exporter (a real city's score field), or a lineset whose subset count exceeds
+    the enumeration budget (a real city's candidate pool). Both run by name."""
     try:
         with open(os.path.join(INSTANCES, name + ".json"), "r", encoding="ascii") as f:
-            return bool(json.load(f).get("heavy", False))
+            inst = json.load(f)
     except (OSError, ValueError):
         return False
+    if inst.get("heavy", False):
+        return True
+    if inst.get("kind") == "lineset":
+        from math import comb
+        from enumerate.enum_lines import DEFAULT_BUDGET
+        n = len(inst["data"]["candidates"])
+        k = inst["data"]["max_accept"]
+        return sum(comb(n, i) for i in range(k + 1)) > DEFAULT_BUDGET
+    return False
 
 
 def main() -> int:

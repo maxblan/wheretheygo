@@ -12,6 +12,7 @@ import heapq
 from fractions import Fraction
 
 from common.canonical import bits_to_fraction
+from evaluator.tolerances import distance_budget
 
 
 def exact_dijkstra(node_count: int, edges: list[tuple[int, int, Fraction]],
@@ -93,11 +94,11 @@ def check(instance: dict, solution: dict) -> tuple[dict, dict | None]:
         "exact_optimum": str(exact) if exact is not None else None,
         "path_is_optimal": cost is not None and exact is not None and cost == exact,
         "within_cap": cost is not None and cost <= max_cost,
-        # The subject's float32-accumulated distance vs the exact cost of its path:
-        # bounded by per-edge rounding, |err| <= len * 2^-24 * cost (loose bound).
+        # The subject's float32-accumulated distance vs the exact cost of its path,
+        # inside Higham's forward bound for L - 1 additions (evaluator/tolerances.py).
         "reported_distance": str(reported),
         "reported_matches_cost": cost is not None
-        and abs(reported - cost) <= Fraction(len(path), 1) * cost / Fraction(2**24),
+        and abs(reported - cost) <= distance_budget(cost, len(path) - 1),
     }
     report["ok"] = all(
         report[k] for k in ("path_valid", "path_is_optimal", "within_cap",

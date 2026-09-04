@@ -223,3 +223,47 @@ recommendation; "20–30 s per stop" as a single figure; standalone marginal mon
 cost per stop; Goossens et al. internal instance sizes; van Nes & Bovy specific
 meter optima. None of these appears as evidence anywhere in
 `docs/correctness-claims.md`.
+
+## 10. Time-based walking access and equity (added 2026-09-04, for the redesign review)
+
+**Walking access as time, not radius.** The 400 m bus / 800 m rail service-coverage
+standard is TCQSM's (TCRP Report 165, 2013, ch. 4–5, DOI 10.17226/24766), stated as
+5/10 minutes at 3 mi/h; TCQSM itself notes ~75 % of local-bus riders walk ≤ 400 m and
+that rail walks are at least double. Measured network walks (home end): Montreal 85th
+percentile bus 484 m, metro 873 m, commuter rail 1 259 m (El-Geneidy et al.,
+*Transportation* 41, 2014, DOI 10.1007/s11116-013-9508-z, Table 2); Sydney medians bus
+364 m, train 749 m (Daniels & Mulley, *JTLU* 6(2), 2013). Euclidean buffers over-count
+coverage — Madrid metro by up to 57.5 % (Gutiérrez & García-Palomares, *EPB* 35, 2008,
+DOI 10.1068/b33043); TCQSM's connectivity factors are 1.00 grid / 0.85 hybrid / 0.45
+cul-de-sac. Measured circuity 1.18–1.24 (O'Sullivan & Morrall, TRR 1538, 1996,
+DOI 10.1177/0361198196153800103; Levinson & El-Geneidy, *RSUE* 39, 2009). Walking
+speed: 1.2 m/s planning value, 1.0 m/s with ≥ 20 % elderly (TCQSM ch. 5; FHWA-RD-98-107);
+physiological comfortable speeds 1.27–1.46 m/s (Bohannon, *Age and Ageing* 26, 1997,
+DOI 10.1093/ageing/26.1.15). Perceived time weights: walk 2.2, initial wait 2.1,
+transfer time 2.5 × in-vehicle (TCQSM Exhibit 4-5). *Transfer:* the mod's Euclidean
+catchments (A1.2) should become network walking times; the finest raster in this
+literature is 30 m, so the 32 m tile is defensible as display resolution.
+
+**Equity as an objective.** Horizontal vs vertical equity: Litman, VTPI *Evaluating
+Transportation Equity*. Gini of transit supply: Delbosc & Currie, *J. Transport
+Geography* 19(6), 2011, DOI 10.1016/j.jtrangeo.2011.02.008 (Melbourne G = 0.68) — scale-
+invariant, hence a diagnostic, not a target. Theil (1967) decomposes between/within
+groups; Atkinson (*J. Econ. Theory* 2, 1970, DOI 10.1016/0022-0531(70)90039-6) tunes
+inequality aversion up to Rawlsian. Rawlsian/limited-gap: Martens, *Transportation* 39,
+2012, DOI 10.1007/s11116-012-9388-7; Martens, Golub & Robinson, *TR-A* 46, 2012,
+DOI 10.1016/j.tra.2012.01.004. Sufficientarian minimum standards: van Wee & Geurs,
+*EJTIR* 11(4), 2011; Lucas, van Wee & Maat, *Transportation* 43, 2016,
+DOI 10.1007/s11116-015-9585-2; Pereira, Schwanen & Banister, *Transport Reviews* 37(2),
+2017, DOI 10.1080/01441647.2016.1257660. Equity inside network design as a constraint:
+Camporeale et al., *TR-A* 125, 2019, DOI 10.1016/j.tra.2018.04.006; frameworks per
+justice theory: Behbahani et al., *TR-A* 125, 2019, DOI 10.1016/j.tra.2018.04.005.
+Price of fairness bounds (proportional vs max-min): Bertsimas, Farias & Trichakis,
+*Operations Research* 59(1), 2011, DOI 10.1287/opre.1100.0865. Method: ε-constraint /
+AUGMECON (Mavrotas, *Appl. Math. Comput.* 213, 2009, DOI 10.1016/j.amc.2009.03.037).
+*Transfer:* a sufficientarian floor on time-based access as an ε-constraint over the
+existing efficiency objective fits the user's stated goal literally and yields a
+well-defined problem against which S2/S7 optimality can be certified.
+
+**UNVERIFIED (not relied on):** Untermann's walking-distance percentages; any primary
+source for an "acceptable transfer walk of 2–3 minutes"; the specific inequality index
+used by Camporeale et al.; Zhao et al. 2003 numeric thresholds.

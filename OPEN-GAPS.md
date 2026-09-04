@@ -72,13 +72,17 @@ are unverified in game: `ViaReachMetres` (2000) and `ViaSampleStride` (4). The r
 generous because the detour bound scales with the line and it cannot; if bent alignments start
 looking eccentric, tighten `MaxViaDetour` before touching the reach.
 
-**A caution on the mode floors.** `TransitModes.MinCityTravelForReach` (20,000 weighted journeys)
-is the one number in this codebase that is a **judgement rather than a measurement**, and it is
-load-bearing: it sets the absolute demand floor a metro (400) and a train (800) must clear in a city
-too small for a reach share to mean anything. It was set from the Valmare failure at one end — 80
-journeys must not buy a metro — and from nothing at all at the other, because the mod has never been
-run on a city large enough to calibrate it. If suggestions in a large city start looking timid, this
-is the first constant to check, and the first to replace with a figure taken from a real save.
+**A caution on the mode floors.** The absolute floor that used to live here,
+`TransitModes.MinCityTravelForReach` (20,000 weighted journeys), **no longer exists** —
+the verification pass of 2026-09-03 found this paragraph describing code that had been
+replaced. What gates a rail mode today is a pair of rules in `TransitMode.cs`: a reach
+SHARE (`MinEnabledDemandShareFor`: train 4 %, metro 2 % of the unserved travel weight,
+halved when the alignment mostly follows existing track) and a rider floor
+(`MinRidersFor`: the journeys needed to fill one vehicle at the peak, derived from the
+loaded prefabs' capacities rather than typed in). Neither is calibrated against a large
+city, so the original caution stands in spirit: if suggestions in a big city look timid,
+these two are the first constants to check. The gate cascade itself is verified bit-exact
+against an independent re-implementation (`docs/correctness-claims.md`, C6.1).
 
 **The stop-less city, in detail.** `BuildTransitModel` returned early on `m_TransitStops.Count == 0`,
 leaving `m_TransitNetwork` and `m_BaselineSeconds` null — the two fields `ScoreCandidates` guards on.

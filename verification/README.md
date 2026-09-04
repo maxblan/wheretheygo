@@ -59,7 +59,7 @@ cross-check is subject (mod code) vs evaluator, not two Python variants.
 | S5 stops | offsets/gaps/must-call/termini/floor invariants | exact re-evaluation |
 | S6 mode | gate cascade re-evaluation | exact re-evaluation |
 | S7 routing/credit | itinerary optimality, boardings, credit formula | exact recomputation (ties reported) |
-| S7 line set | exact gap of the greedy set vs the best set | complete enumeration (bounded instances) |
+| S7 line set | exact gap of the greedy set vs the best set | complete enumeration when Σ C(n,k) fits the budget; otherwise exact over all subsets of ≤ k′ lines, compared against the greedy's first k′ acceptances — the verdict says `bounded` and never calls that the K-line optimum |
 
 The mod claims no global optimality (README); the pipeline's optimality artifacts
 quantify the *gap*, they do not certify the mod optimal.
@@ -97,6 +97,12 @@ and certified in about 5 s; larger cities will take longer). The heatmap instanc
 checks a deterministic sample of cells (the indices are in the file), which is
 exact per cell, not a whole-grid proof. The export is read-only and changes
 nothing about what the mod computes.
+
+A real city's candidate pool (Valmare: 39 candidates, K = 5 → 667,928 subsets) is
+beyond complete enumeration at seconds per subset. `run.py` then enumerates every
+subset of ≤ k′ lines for the largest k′ within `ENUM_BUDGET` (default 12,000 subsets,
+in parallel on all cores) and compares the greedy's first k′ acceptances against that
+exact k′-optimum. Such linesets count as heavy and are skipped by `verify-all`.
 
 Certificates from real models need `viprcomp`: SCIP 10 writes VIPR 1.1 "weak"
 derivations that `viprchk` alone rejects as a syntax error. `bootstrap.sh` builds
