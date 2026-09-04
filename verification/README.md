@@ -11,7 +11,8 @@ Companion documents:
 
 - `docs/formal-specification.md` — the exact problems being verified.
 - `docs/verification-architecture.md` — components, data flow, trust boundary,
-  toolchain decision (SCIP 10 exact + VIPR + viprchk, all verified runnable here).
+  toolchain decision (SCIP 10 exact + VIPR + viprcomp + viprchk, all verified
+  runnable here).
 - `docs/correctness-claims.md` — every claim and its current status. **That file is
   the only place allowed to say what has been proven.**
 - `docs/scientific-model-review.md` — the literature the models are judged against.
@@ -22,7 +23,7 @@ Companion documents:
 verification/
   README.md            this file
   bootstrap.sh         installs the project-local toolchain (micromamba → SCIP 10
-                       exact, builds viprchk); idempotent; no sudo; ~10 min
+                       exact, builds viprcomp + viprchk); idempotent; no sudo; ~10 min
   run.py               orchestrator: one verified run per instance
   Makefile             make verify-all / make instance I=<name>
   instances/           canonical JSON instances (synthetic, versioned, hashed)
@@ -90,15 +91,25 @@ the one thing they cannot — the Burst job, which does not run outside the game
    for `-lineset`. They behave like any other instance.
 
 Notes. The `-sites` file is the real score field: the resulting MIP has one
-binary per local maximum and a conflict constraint per close pair, so on a large
-city it is a long solve — run it deliberately, not as part of `verify-all`. The
-heatmap instance checks a deterministic sample of cells (the indices are in the
-file), which is exact per cell, not a whole-grid proof. The export is read-only
-and changes nothing about what the mod computes.
+binary per local maximum and a conflict constraint per close pair. It is flagged
+`heavy`, so `verify-all` skips it — run it by name (Valmare: 716 binaries, solved
+and certified in about 5 s; larger cities will take longer). The heatmap instance
+checks a deterministic sample of cells (the indices are in the file), which is
+exact per cell, not a whole-grid proof. The export is read-only and changes
+nothing about what the mod computes.
+
+Certificates from real models need `viprcomp`: SCIP 10 writes VIPR 1.1 "weak"
+derivations that `viprchk` alone rejects as a syntax error. `bootstrap.sh` builds
+it; without it the run is reported as unverified, never as passed.
+
+First real run (Valmare, 2026-09-03): heatmap 2,073/2,073 sampled cells bit-exact
+(928 unbuildable, 1,400 sources rejected by the landmass gate); lineset every
+credit inside its exact interval over 11 lines, 76 stops and 1,394 flows; sites
+certified optimum ≈ 10.4265 with a greedy gap of ≈ 0.132 (≈ 1.3 %).
 
 A run writes `runs/<instance>/<utc-stamp>/` with: `versions.json` (tool versions,
 hashes of instance, model, certificate), solver log, `.vipr` certificate,
-`viprchk.log`, subject/evaluator outputs, and `verdict.json`.
+`viprcomp.log`, `viprchk.log`, subject/evaluator outputs, and `verdict.json`.
 
 ## Exit-code contract
 
@@ -107,9 +118,9 @@ instance:
 
 1. the instance validates against the schema (canonical form, hashes match),
 2. the reference model was solved to proven optimality,
-3. the optimality certificate was independently verified (`viprchk`, non-trivial:
-   ≥ 1 derivation) — or, for the enumeration path, the enumeration completed over
-   the entire declared search space,
+3. the optimality certificate was completed (`viprcomp`) and independently verified
+   (`viprchk`, non-trivial: ≥ 1 derivation) — or, for the enumeration path, the
+   enumeration completed over the entire declared search space,
 4. the mod's solution is feasible under the specification, and
 5. the mod solution's *claimed* optimality level is confirmed (for this mod that
    claim is "heuristic, faithful to its own procedure" — faithfulness must hold;
@@ -131,8 +142,9 @@ decision that flips inside its budget is DECISION-SENSITIVE and fails strict mod
 ## Reproducibility
 
 `bootstrap.sh` pins: conda-forge scip 10.0.1 (exact mode compiled in — verified),
-gmp 6.3.0, mpfr 4.2.2; vipr checker built from a pinned commit. `/tmp` on this
-machine is noexec, so all tooling lives under `verification/.toolchain/`. Every run
-records versions and hashes; two runs on the same instance must produce identical
-`verdict.json` (modulo timestamps), and the certificate check makes the optimality
-claim independent of SCIP itself.
+gmp 6.3.0, mpfr 4.2.2; VIPR commit
+`30f2951d1e90e47afa821bdd1b12b82246656c42`. `/tmp` on this machine is noexec,
+so all tooling lives under `verification/.toolchain/`. Every run records versions
+and hashes; two runs on the same instance must produce identical `verdict.json`
+(modulo timestamps), and the certificate check makes the optimality claim
+independent of SCIP itself.

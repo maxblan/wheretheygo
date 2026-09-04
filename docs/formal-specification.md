@@ -297,8 +297,18 @@ formalization is deferred until after the pipeline (user decision, same date).
 - land: water depth ≤ 0.5 m. gentle: terrain normal.y ≥ cos(clamp(maxSlope°,1,89)).
 - buildable = land ∧ gentle; ferry additionally admits depth ≤ 0.6 m and then
   restricts to tiles with at least one non-land 8-neighbour (shoreline).
-- Connected components: 8-connected flood fill over buildable tiles, labels 1..N in
-  raster-scan seed order; non-buildable = 0.
+- Connected components: 8-connected flood fill over **land** tiles — deliberately not
+  over buildable ones (`SuitabilityMasks`, pass 2, states the reason: a steep hillside
+  still joins the valleys either side of it, whereas water genuinely separates them).
+  Labels 1..N in raster-scan seed order; non-land = 0. 8-connected to agree with
+  `AccumulateWalkDistance`, which walks diagonals.
+  Consequences, both confirmed on a real export (Valmare, 200,704 cells): buildable
+  ⟹ land ⟹ labelled holds exactly (0 violations), while labelled ⟹ buildable is
+  false by design (146,093 labelled-but-unbuildable tiles, all steep ground). In
+  FERRY mode the implication also breaks the other way: a shallow-water shoreline
+  tile is buildable while `land` is 0, so it carries no label.
+  *(This entry was wrong until the first real export: it claimed the fill ran over
+  buildable tiles. The mod was right; the specification was not.)*
 
 ### 7.2 Raw terms (Burst job, one output per tile, batch 64 — outputs independent)
 

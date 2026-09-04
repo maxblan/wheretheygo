@@ -4,7 +4,7 @@
 
 help:
 	@echo "targets:"
-	@echo "  bootstrap      install the project-local toolchain (SCIP exact + viprchk)"
+	@echo "  bootstrap      install the toolchain (SCIP exact + viprcomp + viprchk)"
 	@echo "  lean           install Lean 4 (pinned) and build the VERIFIED certificate checker"
 	@echo "  gen            regenerate the canonical instances (must be byte-identical)"
 	@echo "  build-subject  build the C# subject runner"

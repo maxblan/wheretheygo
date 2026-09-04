@@ -2229,7 +2229,7 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertEqual(
                 3600f,
-                SuitabilityTransit.ServedCeiling(new float[0], 0, 3f, 3600f, 20, out _),
+                SuitabilityTransit.ServedCeiling(Array.Empty<float>(), 0, 3f, 3600f, 20, out _),
                 1e-3f,
                 "a network carrying nothing falls back too");
         }

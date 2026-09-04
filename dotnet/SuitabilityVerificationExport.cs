@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -69,6 +69,12 @@ namespace StationSuitabilityOverlay
             public ExportPoints m_FutureJobs = new ExportPoints();
             public int[] m_Components = Array.Empty<int>();
             public byte[] m_Buildable = Array.Empty<byte>();
+            // Carried because component labelling floods over LAND, not over
+            // buildable — see SuitabilityMasks pass 2. Without it the pipeline can
+            // only check that a buildable tile is labelled; with it, it can check the
+            // labelling covers exactly the land.
+            public byte[] m_Land = Array.Empty<byte>();
+            public ModePreset m_Mode;
         }
 
         private void HandleExportRequest()
@@ -152,6 +158,8 @@ namespace StationSuitabilityOverlay
                 m_FutureJobs = CapturePoints(futureJobs),
                 m_Components = m_Components.ToArray(),
                 m_Buildable = m_Buildable.ToArray(),
+                m_Land = m_Land is null ? Array.Empty<byte>() : (byte[])m_Land.Clone(),
+                m_Mode = m_MaskMode,
             };
         }
 
@@ -349,7 +357,9 @@ namespace StationSuitabilityOverlay
                 .Add("future_homes", PointsJson(capture.m_FutureHomes))
                 .Add("future_jobs", PointsJson(capture.m_FutureJobs))
                 .Add("components", SuitabilityExportJson.IntArray(capture.m_Components))
-                .Add("buildable", BuildableJson(capture.m_Buildable))
+                .Add("buildable", MaskJson(capture.m_Buildable))
+                .Add("land", MaskJson(capture.m_Land))
+                .Add("mode", SuitabilityExportJson.Str(capture.m_Mode.ToString()))
                 .Add("sample_indices", SuitabilityExportJson.IntArray(sample))
                 .Add("sample_demand_b32", SuitabilityExportJson.BitsArray(demand))
                 .Add("sample_jobs_b32", SuitabilityExportJson.BitsArray(jobs))
@@ -367,12 +377,14 @@ namespace StationSuitabilityOverlay
                 .BuildHashed(ExportSchemaVersion);
         }
 
-        private static string BuildableJson(byte[] buildable)
+        // Serves both the buildable and the land mask, which is why it is named for
+        // neither.
+        private static string MaskJson(byte[] mask)
         {
-            var values = new int[buildable.Length];
-            for (int i = 0; i < buildable.Length; i++)
+            var values = new int[mask.Length];
+            for (int i = 0; i < mask.Length; i++)
             {
-                values[i] = buildable[i];
+                values[i] = mask[i];
             }
 
             return SuitabilityExportJson.IntArray(values);

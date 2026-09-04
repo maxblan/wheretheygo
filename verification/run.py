@@ -56,9 +56,22 @@ def find_tool(name: str) -> str | None:
     return shutil.which(name)
 
 
+def tool_env() -> dict:
+    """viprcomp links SoPlex dynamically out of the conda prefix."""
+    env = dict(os.environ)
+    for base in (os.path.join(HERE, ".toolchain"),
+                 os.path.join(HERE, "..", ".verify-toolchain")):
+        lib = os.path.join(base, "mmenv", "lib")
+        if os.path.isdir(lib):
+            env["LD_LIBRARY_PATH"] = lib + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+            break
+    return env
+
+
 def run_cmd(cmd: list[str], log_path: str | None = None,
             timeout: int = 900) -> tuple[int, str]:
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                          env=tool_env())
     output = proc.stdout + proc.stderr
     if log_path:
         with open(log_path, "w", encoding="utf-8") as f:
@@ -158,8 +171,24 @@ def check_sites(instance: dict, solution: dict, out_dir: str,
         return verdict
     verdict["certificate_hash"] = sha256_hex(cert_text.encode("ascii", "replace"))
 
+    # SCIP 10 emits VIPR 1.1 "weak" derivations — linear combinations that only
+    # weakly dominate their constraint, with the completing bounds left implicit.
+    # viprchk implements the 1.0 grammar and rejects them as a SYNTAX error, which
+    # reads like a broken proof and is not one. viprcomp is the repo's own tool for
+    # exactly this: it completes the weak steps first (and needs no LP for them,
+    # hence --soplex=off). Certificates without weak steps pass through unchanged.
     check_target = cert_file
-    if viprttn is not None:
+    viprcomp = find_tool("viprcomp")
+    verdict["weak_derivations_completed"] = False
+    if viprcomp is not None:
+        code, _ = run_cmd([viprcomp, "--soplex=off", cert_file],
+                          os.path.join(out_dir, "viprcomp.log"))
+        root, extension = os.path.splitext(cert_file)
+        completed = root + "_complete" + extension
+        if code == 0 and os.path.isfile(completed):
+            check_target = completed
+            verdict["weak_derivations_completed"] = True
+    elif viprttn is not None:
         code, _ = run_cmd([viprttn, cert_file], os.path.join(out_dir, "viprttn.log"))
         tightened = cert_file + ".opt"
         if code == 0 and os.path.isfile(tightened):

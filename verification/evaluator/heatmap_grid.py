@@ -15,10 +15,23 @@ shows up as a differing bit pattern.
 
 Also verified, as properties rather than by re-execution:
   * unbuildable cells produce all-zero terms (the job's gate),
-  * buildable and component labelling agree (component > 0 iff buildable),
+  * every buildable tile carries a component label,
   * C1.4: no source outside the scored cell's component contributes to the
     component-gated terms — implied by the bit-exact match, and additionally
     reported per cell as the number of sources the gate rejected.
+
+On the mask/label relationship, which the first real export corrected: component
+labelling floods over `land`, NOT over `buildable` (SuitabilityMasks.cs, pass 2,
+which says so and why — a steep hillside still joins the valleys either side of
+it, whereas water genuinely separates them). So only one direction is a law:
+a buildable tile is land and therefore labelled. The converse is false by design
+— Valmare has 146,093 labelled-but-unbuildable tiles, all of them steep ground —
+and a checker that demanded it would be reporting the terrain, not a defect.
+
+The one exception runs the other way: in FERRY mode a tile in shallow water is
+buildable (the stop wants the shoreline) while `land` is 0, so it carries no
+label. Where the instance names the mode, that case is reported rather than
+failed.
 """
 
 from __future__ import annotations
@@ -250,14 +263,40 @@ class Grid:
 
 
 def check(instance: dict, solution: dict) -> dict:
-    grid = Grid(instance["data"])
+    data = instance["data"]
+    grid = Grid(data)
     total_cells = grid.grid_x * grid.grid_y
+    mode = data.get("mode", "")
+    land = data.get("land")
 
-    # Structural invariant: the mask and the flood fill must agree about what is
-    # buildable, or every component gate below rests on a different map.
-    mismatched = sum(
-        1 for i in range(min(total_cells, len(grid.buildable), len(grid.components)))
-        if (grid.buildable[i] != 0) != (grid.components[i] > 0))
+    mask_lengths_match_grid = (
+        len(grid.buildable) == total_cells
+        and len(grid.components) == total_cells
+        and (land is None or len(land) == total_cells)
+    )
+    n = min(total_cells, len(grid.buildable), len(grid.components))
+    # The law: buildable implies land implies labelled.
+    unlabelled_indices = [i for i in range(n)
+                          if grid.buildable[i] != 0 and grid.components[i] == 0]
+    # Not a defect — steep ground, reported so the number is visible.
+    steep = sum(1 for i in range(n)
+                if grid.buildable[i] == 0 and grid.components[i] > 0)
+    # In ferry mode a shallow-water tile is buildable but unlabelled by design.
+    ferry_shoreline = mode == "Ferry"
+    unlabelled_expected = (
+        ferry_shoreline
+        and land is not None
+        and len(land) == total_cells
+        and all(land[i] == 0 for i in unlabelled_indices)
+    )
+
+    land_agrees = None
+    if land is not None:
+        land_agrees = (
+            len(land) == total_cells
+            and all((land[i] != 0) == (grid.components[i] > 0)
+                    for i in range(n))
+        )
 
     matched = 0
     mismatches = []
@@ -284,12 +323,21 @@ def check(instance: dict, solution: dict) -> dict:
         else:
             matched += 1
 
+    ok = (not mismatches
+          and mask_lengths_match_grid
+          and (not unlabelled_indices or unlabelled_expected)
+          and land_agrees is not False)
     return {
-        "ok": not mismatches and mismatched == 0,
+        "ok": ok,
         "cells_checked": len(solution["cells"]),
         "cells_matched": matched,
         "mismatches": mismatches,
-        "buildable_component_mismatches": mismatched,
+        "mode": mode,
+        "mask_lengths_match_grid": mask_lengths_match_grid,
+        "buildable_but_unlabelled": len(unlabelled_indices),
+        "buildable_but_unlabelled_expected": unlabelled_expected,
+        "labelled_but_unbuildable": steep,
+        "land_matches_labelling": land_agrees,
         "unbuildable_cells_checked": unbuildable_checked,
         "sources_rejected_by_component_gate": gated_total,
     }

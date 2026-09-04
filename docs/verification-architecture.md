@@ -180,10 +180,25 @@ no sudo:
   **presolving off** (`set presolving emphasis off`): with presolve on, an instance
   solved in presolve emits a `DER 0` certificate that verifies nothing. The runner
   additionally rejects any certificate with zero derivations.
-- Certificate check: `viprttn` (tighten) then `viprchk` (github.com/scipopt/vipr,
-  built locally with conda cmake/g++) — observed "Successfully verified optimal
-  value range". A formally verified VIPR checker exists in HOL4/CakeML as a further
-  escalation step (not built here).
+- Certificate check: **`viprcomp --soplex=off` then `viprchk`** (github.com/scipopt/vipr,
+  built locally). The completion step is not optional on real models: SCIP 10 writes
+  VIPR **1.1** certificates whose reasons may be `{ lin weak { 0 } … }` — linear
+  combinations that only *weakly* dominate their constraint, with the completing
+  bounds left implicit — and `viprchk` implements the **1.0** grammar, so it rejects
+  them with a *syntax* error that reads exactly like a broken proof and is not one.
+  `viprcomp` completes those steps (no LP needed for weak ones, hence `--soplex=off`).
+  Found the hard way on the first real export: 87 derivations, 4 of them weak.
+  Building `viprcomp` needs SoPlex — and therefore gfortran (PaPILO's config), zlib,
+  and the conda compilers, because that config hands the system linker `/lib64/…`
+  sysroot paths that do not exist on Debian-family layouts. `bootstrap.sh` does all
+  of it and fails if `viprcomp` is missing.
+- **A verified certificate is not automatically an optimality proof.** SCIP writes two
+  files: the certificate proper, whose `RTP range v v` is two-sided, and a `…_ori`
+  twin with `RTP range -inf v` and `DER 0`, which merely restates the primal bound.
+  `viprchk` says "Successfully verified." for the latter too. The pipeline therefore
+  requires a two-sided range that *pins the claimed optimum*, and rejects any
+  certificate with zero derivations. A formally verified VIPR checker exists in
+  HOL4/CakeML as a further escalation step (not built here).
 - Python driving (optional): PySCIPOpt from git master built against the conda SCIP
   (`SCIPOPTDIR=<env>`); in exact mode models must be loaded via `readProblem`
   (files), not built via `addVar`. The pipeline instead writes `.lp`/`.mps` files

@@ -308,10 +308,17 @@ def heatmap_grid_plumbing():
 
     components = [1 if (i % grid) <= 1 else 2 for i in range(grid * grid)]
     buildable = [1] * (grid * grid)
-    # One water/steep tile, so the job's gate (all seven terms zero) is covered
-    # and the buildable/component correspondence has something to check.
+    # Two unbuildable tiles, of the two kinds the masks actually produce, so the
+    # job's gate (all seven terms zero) is covered along with the relationship the
+    # first real export corrected:
+    #   * water — not land, so unlabelled;
+    #   * steep land — unbuildable but STILL LABELLED, because connectivity floods
+    #     over land rather than over buildable (SuitabilityMasks pass 2). A checker
+    #     that demands buildable <=> labelled fails on real terrain, and did.
     buildable[15] = 0
-    components[15] = 0
+    components[15] = 0          # water
+    buildable[9] = 0            # steep land, keeps component 1
+    land = [1 if component > 0 else 0 for component in components]
 
     # Population raster shares the tile grid, so a population cell centre IS a
     # tile centre — which keeps the expected values readable.
@@ -416,7 +423,7 @@ def heatmap_grid_plumbing():
             "cross": cross,
         }
 
-    sample = [0, 1, 5, 10, 15]
+    sample = [0, 1, 5, 9, 10, 15]
     rows = [expected(i) for i in sample]
     return {
         "kind": "heatmap_grid",
@@ -446,6 +453,8 @@ def heatmap_grid_plumbing():
             "future_jobs": bucket_set(future_jobs),
             "components": components,
             "buildable": buildable,
+            "land": land,
+            "mode": "Bus",
             "sample_indices": sample,
             "sample_demand_b32": f32_list([r["demand"] for r in rows]),
             "sample_jobs_b32": f32_list([r["jobs"] for r in rows]),

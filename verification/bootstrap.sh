@@ -18,17 +18,26 @@ mkdir -p "$TC/bin" "$TMPDIR"
 
 SCIP_PIN="10.0.1"
 VIPR_REPO="https://github.com/scipopt/vipr.git"
+VIPR_COMMIT="30f2951d1e90e47afa821bdd1b12b82246656c42"
 
 have() { [ -x "$1" ]; }
 
+have_pinned_vipr() {
+    local base="$1"
+    have "$base/vipr-build/viprchk" \
+        && have "$base/vipr-build/viprcomp" \
+        && [ -r "$base/vipr-commit.txt" ] \
+        && [ "$(cat "$base/vipr-commit.txt")" = "$VIPR_COMMIT" ]
+}
+
 # Reuse the survey toolchain if it is already present and working.
 LEGACY="$HERE/../.verify-toolchain"
-if have "$LEGACY/mmenv/bin/scip" && have "$LEGACY/vipr-build/viprchk"; then
+if have "$LEGACY/mmenv/bin/scip" && have_pinned_vipr "$LEGACY"; then
     echo "bootstrap: reusing existing toolchain at $LEGACY"
     exit 0
 fi
 
-if have "$ENV/bin/scip" && have "$TC/vipr-build/viprchk"; then
+if have "$ENV/bin/scip" && have_pinned_vipr "$TC"; then
     echo "bootstrap: toolchain already installed at $TC"
     exit 0
 fi
@@ -48,8 +57,15 @@ version_line() {
 
 if ! have "$ENV/bin/scip"; then
     echo "bootstrap: installing SCIP $SCIP_PIN (exact mode) from conda-forge"
+    # soplex/gfortran/zlib/cxx-compiler are for viprcomp, not for SCIP: SCIP 10
+    # writes VIPR 1.1 "weak" derivations that viprchk cannot parse on its own, and
+    # viprcomp (which completes them) only builds when SoPlex is found. gfortran is
+    # pulled in by SoPlex's PaPILO config; the conda compilers are needed because
+    # that config hands the system linker sysroot paths (/lib64/...) that do not
+    # exist on Debian-family layouts.
     "$MAMBA" create -y -p "$ENV" -c conda-forge \
-        "scip=$SCIP_PIN" gmp cmake "tbb-devel" "libboost-devel"
+        "scip=$SCIP_PIN" gmp cmake "tbb-devel" "libboost-devel" \
+        soplex gfortran zlib cxx-compiler
     version_line "$ENV/bin/scip" -c quit
 fi
 
@@ -59,15 +75,35 @@ if [ ! -e "$ENV/include/boost/version.hpp" ]; then
     "$MAMBA" install -y -p "$ENV" -c conda-forge "libboost-devel"
 fi
 
-if ! have "$TC/vipr-build/viprchk"; then
-    echo "bootstrap: building viprchk/viprttn"
+# Upgrade toolchains created by older bootstrap revisions. Without these
+# packages CMake silently omits viprcomp, leaving non-trivial SCIP 10
+# certificates unverifiable.
+if ! have "$TC/vipr-build/viprcomp"; then
+    "$MAMBA" install -y -p "$ENV" -c conda-forge \
+        soplex gfortran zlib cxx-compiler
+fi
+
+if ! have_pinned_vipr "$TC"; then
+    echo "bootstrap: building viprchk/viprttn/viprcomp"
     rm -rf "$TC/vipr" "$TC/vipr-build"
-    git clone --depth 1 "$VIPR_REPO" "$TC/vipr"
+    git init "$TC/vipr"
+    git -C "$TC/vipr" remote add origin "$VIPR_REPO"
+    git -C "$TC/vipr" fetch --depth 1 origin "$VIPR_COMMIT"
+    git -C "$TC/vipr" checkout --detach "$VIPR_COMMIT"
     ( cd "$TC/vipr" && git rev-parse HEAD > "$TC/vipr-commit.txt" )
     mkdir -p "$TC/vipr-build"
-    "$ENV/bin/cmake" -S "$TC/vipr/code" -B "$TC/vipr-build" \
-        -DCMAKE_PREFIX_PATH="$ENV" -DCMAKE_BUILD_TYPE=Release
-    "$ENV/bin/cmake" --build "$TC/vipr-build" -j
+    CC="$ENV/bin/x86_64-conda-linux-gnu-gcc" \
+    CXX="$ENV/bin/x86_64-conda-linux-gnu-g++" \
+    PATH="$ENV/bin:$PATH" \
+        "$ENV/bin/cmake" -S "$TC/vipr/code" -B "$TC/vipr-build" \
+            -DCMAKE_PREFIX_PATH="$ENV" -DCMAKE_BUILD_TYPE=Release
+    PATH="$ENV/bin:$PATH" "$ENV/bin/cmake" --build "$TC/vipr-build" -j
+fi
+
+if ! have_pinned_vipr "$TC"; then
+    echo "bootstrap: ERROR — the pinned VIPR checker/completer is unavailable." >&2
+    echo "Expected commit $VIPR_COMMIT with viprchk and viprcomp." >&2
+    exit 1
 fi
 
 echo "bootstrap: done"
