@@ -735,6 +735,7 @@ namespace StationSuitabilityOverlay.Verification
                 BaseStopZ = F32Array(data.GetProperty("base_stop_z_b32")),
                 MaxLines = data.GetProperty("max_lines").GetInt32(),
                 UtilisationFloor = F32(data.GetProperty("utilisation_floor_b32")),
+                UtilisationCeiling = data.TryGetProperty("utilisation_ceiling_b32", out JsonElement ceiling) ? F32(ceiling) : 0f,
                 MovementSecondsPerDay = F32(data.GetProperty("movement_seconds_per_day_b32")),
                 DuplicateShare = F32(data.GetProperty("duplicate_share_b32")),
                 EquityFloorShare = F32(data.GetProperty("equity_floor_share_b32")),

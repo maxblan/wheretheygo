@@ -62,6 +62,7 @@ def parse(instance: dict) -> dict:
         } for c in d["candidates"]],
         "max_lines": int(d["max_lines"]),
         "utilisation_floor": bits_to_f32(d["utilisation_floor_b32"]),
+        "utilisation_ceiling": bits_to_f32(d["utilisation_ceiling_b32"]) if "utilisation_ceiling_b32" in d else 0.0,
         "day": bits_to_f32(d["movement_seconds_per_day_b32"]),
         "duplicate_share": bits_to_f32(d["duplicate_share_b32"]),
         "equity_floor": bits_to_f32(d["equity_floor_share_b32"]),
@@ -219,8 +220,11 @@ def key_of(p: dict, chosen: list[int], before: list[Fraction]) -> tuple:
 
 def feasible(p: dict, chosen: list[int], ev: dict, before: list[Fraction]) -> tuple[bool, str]:
     for c in chosen:
-        if p["utilisation_floor"] > 0 and utilisation(p, c, ev["riders"][c]) < Fraction(p["utilisation_floor"]):
+        u = utilisation(p, c, ev["riders"][c])
+        if p["utilisation_floor"] > 0 and u < Fraction(p["utilisation_floor"]):
             return False, f"line {c} below the utilisation floor"
+        if p["utilisation_ceiling"] > 0 and u > Fraction(p["utilisation_ceiling"]):
+            return False, f"line {c} above the utilisation ceiling"
     if p["duplicate_share"] > 0 and len(chosen) >= 2:
         for c in chosen:
             rest = [x for x in chosen if x != c]

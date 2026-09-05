@@ -96,6 +96,7 @@
    1092616192,
    1106247680
   ],
+  "utilisation_ceiling_b32": 0,
   "utilisation_floor_b32": 1025758986,
   "walk_radius_b32": 1132068864,
   "zone_reach_b32": 1140457472
@@ -105,7 +106,7 @@
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "b52e76e157bf124ef7b92241488a0042fba44a0e6f9c5c45e340511bd4a5ff6f",
+ "hash": "f6c290c96db25f8bb79843d302c423f53bab2b3d95248d5cdceb5be227474037",
  "kind": "lineset_time",
  "name": "lineset_time-feeder",
  "schema_version": 1

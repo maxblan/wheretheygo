@@ -653,7 +653,7 @@ DAY = 4369.0666666666666   # movement seconds per game day (TimeSystem.kTicksPer
 
 
 def lt_common(name, comment, pairs, candidates, k, utilisation_floor, duplicate_share=0.5,
-              chosen=None, base_stops=None, base_lines=None, seed=None, expect=None):
+              chosen=None, base_stops=None, base_lines=None, seed=None, expect=None, utilisation_ceiling=0.0):
     inst = {
         "kind": "lineset_time",
         "name": name,
@@ -674,6 +674,7 @@ def lt_common(name, comment, pairs, candidates, k, utilisation_floor, duplicate_
             "candidates": candidates,
             "max_lines": k,
             "utilisation_floor_b32": f32_bits(utilisation_floor),
+            "utilisation_ceiling_b32": f32_bits(utilisation_ceiling),
             "movement_seconds_per_day_b32": f32_bits(DAY),
             "duplicate_share_b32": f32_bits(duplicate_share),
             "equity_floor_share_b32": f32_bits(0.8),
@@ -736,6 +737,23 @@ def lineset_time_floor():
     return lt_common("lineset_time-floor", "the line saving most time is infeasible under the utilisation floor",
                      pairs, candidates, 2, 0.10, chosen=[0],
                      expect={"pass_set": True, "pass_optimal": True})
+
+
+def lineset_time_ceiling():
+    """The utilisation ceiling: the feeder geometry with a 10 % ceiling refuses L1
+    and L2 (16.8 % each), so the optimum is L3 alone (4.6 %) although {L1, L2}
+    saves ten times more; the next mode up would be the answer in the mod."""
+    A = (0.0, 0.0); A2 = (2000.0, 0.0); M = (4000.0, 0.0); B2 = (6000.0, 0.0); B = (8000.0, 0.0)
+    C = (0.0, 3000.0); D = (3000.0, 3000.0)
+    pairs = [(A, B, 100.0), (A, M, 10.0), (M, B, 10.0), (C, D, 30.0)]
+    candidates = [
+        lt_candidate([A, A2, M], 200.0, 10.0),
+        lt_candidate([M, B2, B], 200.0, 10.0),
+        lt_candidate([C, D], 200.0, 10.0),
+    ]
+    return lt_common("lineset_time-ceiling", "a line above the utilisation ceiling makes its set infeasible",
+                     pairs, candidates, 2, 0.04, chosen=[2], utilisation_ceiling=0.10,
+                     expect={"pass_set": True, "pass_optimal": True, "enumeration_complete": True})
 
 
 def lineset_time_duplicate():
@@ -1161,6 +1179,7 @@ def main():
         lineset_time_feeder(),
         lineset_time_floor(),
         lineset_time_duplicate(),
+        lineset_time_ceiling(),
         lineset_time_tie(),
         lineset_time_random(),
     ]

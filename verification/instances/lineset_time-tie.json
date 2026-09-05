@@ -66,6 +66,7 @@
    1112014848,
    1112014848
   ],
+  "utilisation_ceiling_b32": 0,
   "utilisation_floor_b32": 1025758986,
   "walk_radius_b32": 1132068864,
   "zone_reach_b32": 1140457472
@@ -75,7 +76,7 @@
   "pass_set": true,
   "tie_affected": true
  },
- "hash": "60e9da4eebd3a567d26ef0aaec6eec7454989cc3fb42a31eb48a2c958e4a2663",
+ "hash": "73cd78d0afac31a74bd3ce03bc856795cc23176860a0cb9b458bffc9810c942a",
  "kind": "lineset_time",
  "name": "lineset_time-tie",
  "schema_version": 1

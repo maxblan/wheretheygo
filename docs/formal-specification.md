@@ -339,7 +339,11 @@ against which the 15 % floor was never calibrated; the prefab value is logged,
 register A5.5/A6.x RF), capacity_M the largest vehicle prefab's seats (carriages
 included). δ per stop = max(prefab stop duration + v/2a + v/2b, 15 s): the prefabs
 give a bus 1 s dwell at 6 m/s², which would make a stop nearly free (RF, same rows). If every mode is overloaded the
-largest is chosen; a network with no vehicle installed yields no mode. Whether the
+largest is chosen; a network with no vehicle installed yields no mode. The riders
+are re-measured after the stops are placed for the chosen mode (stops and riders
+depend on each other; one further ladder step is taken if they disagree), and the
+alignment is ALSO offered as the next mode up whenever the ladder has one, so the
+set's utilisation ceiling (§6.3 F1) can swap an overloaded bus for a tram. Whether the
 line reaches the utilisation FLOOR is not asked here — a feeder alone rarely fills
 anything — but by the set selection on the set's own riders (§6.3). A lattice
 candidate whose standalone utilisation is below the floor is additionally offered
@@ -396,7 +400,9 @@ candidates):
   walked through — only the source door expands — so two stops within reach of one
   door are not joined by a walk the transfer rule (216 m) never allows. Evaluator:
   `transit.dijkstra(..., expand_below=zone_start)`; predecessor enumeration skips
-  door predecessors;
+  door predecessors. The mod additionally relaxes into a door only when it is a
+  destination of the current origin (`DijkstraWorkspace.Run(..., wanted)`), which
+  leaves every wanted distance unchanged;
 - walkOnly(i) = √(Δx² + Δz²) / 1.2 in binary32 (`WalkOnlySeconds`);
 - after(i, A) = min(walkOnly(i), transit(i, N₀ ∪ A)); before(i) = after(i, ∅).
 
@@ -444,7 +450,10 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
   (F1) utilisation(c, A) = riders(c, A) · 2 / ((D / headway_c) · 2 · capacity_c) ≥
   the utilisation floor (0.15 default), with D = movement seconds per game day =
   4369.07 (`TimeSystem.kTicksPerDay` / 60) — riders are the set's attribution,
-  so a feeder's riders count for the trunk it feeds;
+  so a feeder's riders count for the trunk it feeds — and, since 2026-09-05 17:xx,
+  ≤ the utilisation CEILING (`MaxPlannedUtilisation` = 1.0): a line the set fills
+  past its seats is overloaded for its mode and infeasible; the same alignment is
+  offered as the next mode up (§5), which the set then takes instead;
   (F2) c is **not a duplicate**: with slowed(c) = Σ wᵢ over journeys with
   after(i, A∖{c}) > after(i, A), (riders(c) − slowed(c)) / riders(c) <
   `DuplicateShare` (0.5, A4.3); a line with no riders is a duplicate.

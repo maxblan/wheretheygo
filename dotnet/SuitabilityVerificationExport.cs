@@ -516,6 +516,7 @@ namespace StationSuitabilityOverlay
                 .Add("candidates", SuitabilityExportJson.Array(candidates))
                 .Add("max_lines", SuitabilityExportJson.Int(problem.MaxLines))
                 .Add("utilisation_floor_b32", SuitabilityExportJson.Bits(problem.UtilisationFloor))
+                .Add("utilisation_ceiling_b32", SuitabilityExportJson.Bits(problem.UtilisationCeiling))
                 .Add("movement_seconds_per_day_b32", SuitabilityExportJson.Bits(problem.MovementSecondsPerDay))
                 .Add("duplicate_share_b32", SuitabilityExportJson.Bits(problem.DuplicateShare))
                 .Add("equity_floor_share_b32", SuitabilityExportJson.Bits(problem.EquityFloorShare))

@@ -4422,6 +4422,7 @@ namespace StationSuitabilityOverlay
                 ZoneReachMetres = ZoneStopReachMetres,
                 MaxLines = maxLines,
                 UtilisationFloor = settings.UtilisationFloorPercent / 100f,
+                UtilisationCeiling = TransitModes.MaxPlannedUtilisation,
                 MovementSecondsPerDay = SuitabilityEquity.MovementSecondsPerGameDay,
                 DuplicateShare = DuplicateRiderShare,
                 EquityFloorShare = settings.EquityFloorPercent / 100f,
@@ -4570,7 +4571,7 @@ namespace StationSuitabilityOverlay
                 $"time saved {(solution.TimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day " +
                 $"{(solution.Optimal ? "(proven optimal" : $"(best found, NOT proven optimal; ceiling {(solution.UpperBoundTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)}")} " +
                 $"under equity floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} % (set reaches {(solution.Coverage * 100f).ToString("F1", CultureInfo.InvariantCulture)} %), " +
-                $"utilisation floor {settings.UtilisationFloorPercent.ToString(CultureInfo.InvariantCulture)} %, duplicate share {(DuplicateRiderShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} %), " +
+                $"utilisation floor {settings.UtilisationFloorPercent.ToString(CultureInfo.InvariantCulture)} % and ceiling {(TransitModes.MaxPlannedUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, duplicate share {(DuplicateRiderShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} %), " +
                 $"{(solution.Nodes).ToString(CultureInfo.InvariantCulture)} search nodes, {(solution.Infeasible).ToString(CultureInfo.InvariantCulture)} infeasible sets met, " +
                 $"{(elapsedMs).ToString(CultureInfo.InvariantCulture)} ms of a {(LineSetTimeBudgetSeconds).ToString(CultureInfo.InvariantCulture)} s budget{realism}");
         }
@@ -4840,12 +4841,16 @@ namespace StationSuitabilityOverlay
                 : ms / 1000.0;
         }
 
-        // Settles what mode a candidate runs as — the smallest whose vehicles its
-        // standalone riders do not overload (TransitModes.ChooseMode, register A6.x) —
-        // re-places its stops for that mode, and hands it to the line gates. A lattice
-        // alignment whose riders would leave even the smallest rail vehicle under the
-        // utilisation floor is ALSO offered re-traced along streets as a road line: the
-        // same journey, the cheaper way to carry it; the set selection keeps at most one.
+        // Settles what mode a candidate runs as and hands it to the line gates. The
+        // mode is the smallest whose vehicles the candidate's OWN standalone riders do
+        // not overload (TransitModes.ChooseMode, register A6.x), measured again after
+        // the stops are re-placed for it — a metro's doors are not a bus's. The next
+        // mode up is offered as a second candidate whenever the ladder has one, because
+        // a set can hand a line more riders than it carries alone (a feeder's trunk),
+        // and the set's utilisation ceiling then rules the smaller one out. A lattice
+        // alignment whose riders leave even the smallest rail vehicle under the
+        // utilisation floor is also offered re-traced along streets. Variants of one
+        // alignment duplicate each other, so a set holds at most one of them.
         private void ResolveCandidate(
             Setting settings,
             SuggestedRoute candidate,
@@ -4856,26 +4861,29 @@ namespace StationSuitabilityOverlay
             RejectionTally tally,
             List<SuggestedRoute> resolved)
         {
-            if (!TransitModes.ChooseMode(candidate.Network, candidate.EnabledDemand, facts, out ModePreset mode, out float utilisation))
+            if (!SettleMode(settings, candidate, index, facts, stops, out float utilisation, out ModePreset? nextUp))
             {
                 tally.Unjustified++;
-                DeferredLog.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, riders/day={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, no vehicle of any {candidate.Network} mode is installed");
                 return;
             }
 
-            if (mode != candidate.Mode)
-            {
-                SuitabilityRoutes.Restop(candidate, mode, stops);
-            }
-
-            DeferredLog.Info(
-                $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {mode}{(candidate.BentThroughHub ? " via an interchange" : string.Empty)}, " +
-                $"riders/day alone={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, utilisation alone={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
-                $"{candidate.Stops.Count} stops, len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m");
             if (PassesLineGates(candidate, index, facts, tally))
             {
                 resolved.Add(candidate);
+            }
+
+            if (nextUp is ModePreset larger)
+            {
+                SuggestedRoute variant = candidate.CopyFor(larger);
+                SuitabilityRoutes.Restop(variant, larger, stops);
+                variant.EnabledDemand = RidersAlone(settings, variant);
+                DeferredLog.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: also offered as a {larger} " +
+                    $"({variant.Stops.Count} stops, riders/day alone={(variant.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)})");
+                if (PassesLineGates(variant, index, facts, tally))
+                {
+                    resolved.Add(variant);
+                }
             }
 
             if (candidate.Network == RouteNetwork.Road || candidate.Stops.Count < 2 || utilisation >= settings.UtilisationFloorPercent / 100f)
@@ -4888,25 +4896,91 @@ namespace StationSuitabilityOverlay
             if (onRoad is null)
             {
                 DeferredLog.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: under the utilisation floor as a {mode} and no road path between its ends to offer instead");
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: under the utilisation floor as a {candidate.Mode} and no road path between its ends to offer instead");
                 return;
             }
 
-            onRoad.EnabledDemand = candidate.EnabledDemand;
-            onRoad.DemandScored = candidate.DemandScored;
-            if (TransitModes.ChooseMode(RouteNetwork.Road, onRoad.EnabledDemand, facts, out ModePreset roadMode, out float roadUtilisation) && roadMode != onRoad.Mode)
+            onRoad.DemandScored = true;
+            onRoad.EnabledDemand = RidersAlone(settings, onRoad);
+            tally.Retraced++;
+            if (!SettleMode(settings, onRoad, index, facts, stops, out _, out ModePreset? roadNextUp))
             {
-                SuitabilityRoutes.Restop(onRoad, roadMode, stops);
+                return;
             }
 
-            tally.Retraced++;
-            DeferredLog.Info(
-                $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: also offered along streets as a {onRoad.Mode} " +
-                $"({onRoad.Stops.Count} stops, len={(onRoad.Length).ToString("F0", CultureInfo.InvariantCulture)}m, utilisation alone={(roadUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %)");
             if (PassesLineGates(onRoad, index, facts, tally))
             {
                 resolved.Add(onRoad);
             }
+
+            if (roadNextUp is ModePreset largerRoad)
+            {
+                SuggestedRoute variant = onRoad.CopyFor(largerRoad);
+                SuitabilityRoutes.Restop(variant, largerRoad, stops);
+                variant.EnabledDemand = RidersAlone(settings, variant);
+                if (PassesLineGates(variant, index, facts, tally))
+                {
+                    resolved.Add(variant);
+                }
+            }
+        }
+
+        // Chooses the mode from the route's own riders, re-placing its stops for the
+        // mode and re-measuring once, since stops and riders depend on each other.
+        // False when no vehicle of any mode on the network is installed.
+        private bool SettleMode(Setting settings, SuggestedRoute route, int index, FleetFacts facts, StopContext stops, out float utilisation, out ModePreset? nextUp)
+        {
+            nextUp = null;
+            if (!TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out ModePreset mode, out utilisation))
+            {
+                DeferredLog.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {route.Network}, riders/day={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, no vehicle of any {route.Network} mode is installed");
+                return false;
+            }
+
+            if (mode != route.Mode)
+            {
+                SuitabilityRoutes.Restop(route, mode, stops);
+                route.EnabledDemand = RidersAlone(settings, route);
+                if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out ModePreset again, out utilisation) && again != mode)
+                {
+                    mode = again;
+                    SuitabilityRoutes.Restop(route, mode, stops);
+                    route.EnabledDemand = RidersAlone(settings, route);
+                    _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out _, out utilisation);
+                }
+            }
+
+            ModePreset[] ladder = TransitModes.ModesFor(route.Network);
+            int rung = Array.IndexOf(ladder, mode);
+            for (int i = rung + 1; i < ladder.Length; i++)
+            {
+                if (facts.CapacityFor(ladder[i]) > 0f)
+                {
+                    nextUp = ladder[i];
+                    break;
+                }
+            }
+
+            DeferredLog.Info(
+                $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {route.Network} -> {mode}{(route.BentThroughHub ? " via an interchange" : string.Empty)}, " +
+                $"riders/day alone={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, utilisation alone={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
+                $"{route.Stops.Count} stops, len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m");
+            return true;
+        }
+
+        // The journey weight that would ride this line on its own against the existing
+        // network (the same evaluation WeighCandidatesAlone makes for the pool).
+        private float RidersAlone(Setting settings, SuggestedRoute route)
+        {
+            if (route.Stops.Count < 2)
+            {
+                return 0f;
+            }
+
+            LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute> { route }, 1);
+            float[] before = SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
+            return (float)SuitabilityLineSet.Evaluate(probe, new[] { 0 }, 1, before).Riders[0];
         }
 
         // Demand near each network node, so corridor growth can tell a street with

@@ -178,6 +178,16 @@ namespace StationSuitabilityOverlay
         // one door were joined by an 800 m "walk" the transfer rule never allows.
         public void Run(CompactGraph graph, int source, float maxCost, int expandBelow)
         {
+            Run(graph, source, maxCost, expandBelow, null);
+        }
+
+        // As above, and a sink is only RELAXED INTO when `wanted[sink]` is set: the
+        // line-set routing asks one origin door about its own destinations, not about
+        // every door in the city, and a central stop has edges to hundreds of them.
+        // Distances to the wanted sinks are unchanged — a sink never expands, so no
+        // path runs through the ones skipped.
+        public void Run(CompactGraph graph, int source, float maxCost, int expandBelow, bool[]? wanted)
+        {
             Resize(graph.NodeCount);
             ClearTouched();
 
@@ -208,7 +218,7 @@ namespace StationSuitabilityOverlay
                     int edge = graph.AdjEdge[i];
                     int next = graph.AdjOther[i];
                     float candidate = nodeDist + graph.EdgeCost[edge];
-                    if (candidate > maxCost)
+                    if (candidate > maxCost || (wanted is not null && next >= expandBelow && !wanted[next]))
                     {
                         continue;
                     }

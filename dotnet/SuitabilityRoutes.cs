@@ -48,6 +48,26 @@ namespace StationSuitabilityOverlay
         public int[] StopPlanChosen = System.Array.Empty<int>();
         public double StopPlanGain;
         public double StopPlanDelay;
+
+        // The same alignment as a candidate of another mode: path, flow, riders and
+        // provenance copied, stops to be placed for the new mode by the caller.
+        public SuggestedRoute CopyFor(ModePreset mode)
+        {
+            var copy = new SuggestedRoute
+            {
+                Mode = mode,
+                CapturedFlow = CapturedFlow,
+                EnabledDemand = EnabledDemand,
+                DemandScored = DemandScored,
+                Length = Length,
+                Network = Network,
+                BentThroughHub = BentThroughHub,
+                Source = Source,
+            };
+            copy.Path.AddRange(Path);
+            copy.Nodes.AddRange(Nodes);
+            return copy;
+        }
     }
 
     // What every stop plan of one route pass shares: the journeys' doors (two ends per

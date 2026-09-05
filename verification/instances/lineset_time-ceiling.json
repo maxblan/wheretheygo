@@ -1,5 +1,5 @@
 {
- "comment": "a parallel slower line duplicates the faster one and is refused",
+ "comment": "a line above the utilisation ceiling makes its set infeasible",
  "data": {
   "base_lines": [],
   "base_stop_x_b32": [],
@@ -28,21 +28,36 @@
     "expected_wait_b32": 1128792064,
     "headway_b32": 1128792064,
     "ride_seconds_b32": null,
-    "speed_b32": 1090519040,
+    "speed_b32": 1092616192,
     "stop_x_b32": [
-     0,
-     1157234688,
-     1165623296
+     1165623296,
+     1169915904,
+     1174011904
     ],
     "stop_z_b32": [
      0,
      0,
      0
     ]
+   },
+   {
+    "capacity_b32": 1106247680,
+    "expected_wait_b32": 1128792064,
+    "headway_b32": 1128792064,
+    "ride_seconds_b32": null,
+    "speed_b32": 1092616192,
+    "stop_x_b32": [
+     0,
+     1161527296
+    ],
+    "stop_z_b32": [
+     1161527296,
+     1161527296
+    ]
    }
   ],
   "chosen": [
-   0
+   2
   ],
   "duplicate_share_b32": 1056964608,
   "equity": null,
@@ -51,31 +66,47 @@
   "max_travel_seconds_b32": 1163984896,
   "movement_seconds_per_day_b32": 1166575753,
   "pair_dx_b32": [
-   1165623296
+   1174011904,
+   1165623296,
+   1174011904,
+   1161527296
   ],
   "pair_dz_b32": [
-   0
+   0,
+   0,
+   0,
+   1161527296
   ],
   "pair_ox_b32": [
+   0,
+   0,
+   1165623296,
    0
   ],
   "pair_oz_b32": [
-   0
+   0,
+   0,
+   0,
+   1161527296
   ],
   "pair_w_b32": [
-   1121714176
+   1120403456,
+   1092616192,
+   1092616192,
+   1106247680
   ],
-  "utilisation_ceiling_b32": 0,
+  "utilisation_ceiling_b32": 1036831949,
   "utilisation_floor_b32": 1025758986,
   "walk_radius_b32": 1132068864,
   "zone_reach_b32": 1140457472
  },
  "expect": {
+  "enumeration_complete": true,
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "75c2b160f1ff99a4fd326161c049c896c6b9604891bb9bbf92ada53fc92695a2",
+ "hash": "0ad3efade438dd8e6681edcadaab1e339b21e36db7ee6e72e2ee0f2f52b1441c",
  "kind": "lineset_time",
- "name": "lineset_time-duplicate",
+ "name": "lineset_time-ceiling",
  "schema_version": 1
 }

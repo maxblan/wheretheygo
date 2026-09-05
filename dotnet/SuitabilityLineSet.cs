@@ -38,6 +38,9 @@ namespace StationSuitabilityOverlay
         public int MaxLines;
         // Per-line utilisation floor (boardings per game day over seats offered); 0 = none.
         public float UtilisationFloor;
+        // Per-line utilisation ceiling on the set's riders; 0 = none. A line above it is
+        // overloaded for its mode — the next mode up is offered as its own candidate.
+        public float UtilisationCeiling;
         public float MovementSecondsPerDay;
         // Share of a line's riders that may already have an equally fast route without
         // it before the line counts as a duplicate (register A4.3: 0.5).
@@ -146,6 +149,7 @@ namespace StationSuitabilityOverlay
                 After = new float[problem.PairCount],
             };
             var workspace = new DijkstraWorkspace(network.Graph.NodeCount);
+            var wanted = new bool[network.Graph.NodeCount];
             int lineOffset = problem.BaseLines.Count;
             var legs = new PairLegs(problem.PairCount);
             for (int zone = 0; zone < geometry.ZoneCount; zone++)
@@ -162,11 +166,18 @@ namespace StationSuitabilityOverlay
                 {
                     int pair = geometry.PairsByOrigin[k];
                     cap = Math.Max(cap, before is null ? geometry.WalkOnly[pair] : before[pair]);
+                    wanted[network.ZoneNodeStart + geometry.PairDestinationZone[pair]] = true;
                 }
 
                 int originNode = network.ZoneNodeStart + zone;
-                // Doors are sinks: reached, never walked through (DijkstraWorkspace.Run).
-                workspace.Run(network.Graph, originNode, Math.Min(problem.MaxTravelSeconds, cap), network.ZoneNodeStart);
+                // Doors are sinks — reached, never walked through — and only this
+                // origin's destinations are reached at all (DijkstraWorkspace.Run).
+                workspace.Run(network.Graph, originNode, Math.Min(problem.MaxTravelSeconds, cap), network.ZoneNodeStart, wanted);
+                for (int k = first; k < last; k++)
+                {
+                    wanted[network.ZoneNodeStart + geometry.PairDestinationZone[geometry.PairsByOrigin[k]]] = false;
+                }
+
                 for (int k = first; k < last; k++)
                 {
                     int pair = geometry.PairsByOrigin[k];
@@ -586,8 +597,9 @@ namespace StationSuitabilityOverlay
             {
                 for (int k = 0; k < count; k++)
                 {
-                    if (m_Problem.UtilisationFloor > 0f
-                        && Utilisation(m_Problem, chosen[k], evaluation.Riders[chosen[k]]) < m_Problem.UtilisationFloor)
+                    float utilisation = Utilisation(m_Problem, chosen[k], evaluation.Riders[chosen[k]]);
+                    if ((m_Problem.UtilisationFloor > 0f && utilisation < m_Problem.UtilisationFloor)
+                        || (m_Problem.UtilisationCeiling > 0f && utilisation > m_Problem.UtilisationCeiling))
                     {
                         return false;
                     }

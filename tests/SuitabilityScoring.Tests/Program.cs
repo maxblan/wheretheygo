@@ -69,6 +69,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Line set: time saved is monotone and rewards a trunk-and-feeder pair", LineSetTrunkAndFeeder);
             Run("Line set: the exact selection matches brute force under utilisation and duplicate rules", LineSetMatchesBruteForce);
             Run("Line set: the equity floor ranks coverage before time saved", LineSetEquityFirst);
+            Run("Line set: a line above the utilisation ceiling makes its set infeasible", LineSetCeiling);
             Run("Line set: one capped search per origin zone equals one search per pair", LineSetGroupedEqualsPerPair);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
@@ -1342,6 +1343,38 @@ namespace StationSuitabilityOverlay.Tests
                 {
                     saved += problem.PairWeight[i] * (double)(before[i] - after[i]);
                 }
+            }
+        }
+
+        private static void LineSetCeiling()
+        {
+            LineSetProblem problem = FeederProblem();
+            problem.UtilisationFloor = 0f;
+            LineSetSolution open = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetEvaluation? openEvaluation = open.Evaluation;
+            AssertTrue(open.Count == 2 && openEvaluation is not null, "without a ceiling the trunk-and-feeder pair is chosen");
+            if (openEvaluation is null)
+            {
+                return;
+            }
+
+            // A ceiling just under the busiest chosen line's utilisation in that set
+            // refuses the set; whatever is chosen instead stays under the ceiling.
+            float busiest = 0f;
+            for (int k = 0; k < open.Count; k++)
+            {
+                busiest = Math.Max(busiest, SuitabilityLineSet.Utilisation(problem, open.Chosen[k], openEvaluation.Riders[open.Chosen[k]]));
+            }
+
+            problem.UtilisationCeiling = busiest * 0.99f;
+            LineSetSolution capped = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertTrue(capped.Infeasible > 0, "the overloaded set was met and refused");
+            AssertTrue(capped.TimeSaved < open.TimeSaved, "the ceiling costs time saved");
+            LineSetEvaluation? evaluation = capped.Evaluation;
+            for (int k = 0; k < capped.Count; k++)
+            {
+                AssertTrue(evaluation is not null && SuitabilityLineSet.Utilisation(problem, capped.Chosen[k], evaluation.Riders[capped.Chosen[k]]) <= problem.UtilisationCeiling,
+                    "every chosen line stays under the ceiling");
             }
         }
 
