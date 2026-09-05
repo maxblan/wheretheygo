@@ -871,12 +871,20 @@ namespace StationSuitabilityOverlay
                 : ModePreset.Bus;
         }
 
-        // Fleet needed to hold the mode's assumed headway around the whole line.
+        // Fleet needed to hold the mode's assumed headway around the whole line, from
+        // its length at cruise speed — the estimate for alignments without streets.
         public static int EstimateVehicles(ModePreset mode, float lengthMetres, int stops, float headwaySeconds)
         {
             float speed = TransitModes.CruiseSpeedFor(mode);
-            // Out and back, dwelling at every stop in each direction.
-            float roundTrip = ((lengthMetres * 2f) / math.max(1f, speed)) + (stops * 2 * StopDwellSeconds);
+            // Out and back.
+            return EstimateVehiclesFromRoundTrip((lengthMetres * 2f) / math.max(1f, speed), stops, headwaySeconds);
+        }
+
+        // The same fleet arithmetic from a measured out-and-back driving time, dwelling
+        // at every stop in each direction.
+        public static int EstimateVehiclesFromRoundTrip(float drivingSeconds, int stops, float headwaySeconds)
+        {
+            float roundTrip = drivingSeconds + (stops * 2 * StopDwellSeconds);
             return math.max(1, (int)math.round(roundTrip / math.max(MinPlannedHeadwaySeconds, headwaySeconds)));
         }
 

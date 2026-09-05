@@ -57,6 +57,11 @@ namespace StationSuitabilityOverlay.Tests
             Run("Catchment classes are exactly the modes' horizons", CatchmentClassesMatchModes);
             Run("Observed trips are held for a game day and scaled to a day's rate", ObservedTripWindowHoldsADay);
             Run("Observed trips restart on a rewound clock and stop at the cap", ObservedTripWindowRestartsAndCaps);
+            Run("Directed roads: turn classes, arc times and the game's turn table", DirectedTurnClassesAndTimes);
+            Run("Directed roads: a one-way street is drivable one way only", DirectedOneWayStreet);
+            Run("Directed roads: turn costs steer between a short turning and a long straight route", DirectedTurnCostsSteer);
+            Run("Directed roads: fastest times match an exhaustive path enumeration", DirectedMatchesEnumeration);
+            Run("Directed roads: flow follows admitted directions and sums per street", DirectedFlowAssignment);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -789,6 +794,231 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             return dist;
+        }
+
+        // Nodes on a plane; arcs given as (from, to, metres, speed); headings from the
+        // straight chord so tests can reason about angles directly.
+        private static DirectedRoadGraph DirectedGraph(float[] x, float[] z, (int from, int to, float metres, float speed)[] arcs, int[]? edgeOf = null, float turnSecondsPerRadian = 2f)
+        {
+            int n = arcs.Length;
+            var from = new int[n];
+            var to = new int[n];
+            var edge = new int[n];
+            var ms = new int[n];
+            var odx = new float[n];
+            var odz = new float[n];
+            for (int a = 0; a < n; a++)
+            {
+                from[a] = arcs[a].from;
+                to[a] = arcs[a].to;
+                edge[a] = edgeOf is null ? a : edgeOf[a];
+                ms[a] = DirectedRoadGraph.ArcMilliseconds(arcs[a].metres, arcs[a].speed);
+                float dx = x[arcs[a].to] - x[arcs[a].from];
+                float dz = z[arcs[a].to] - z[arcs[a].from];
+                float len = (float)Math.Sqrt((dx * dx) + (dz * dz));
+                odx[a] = dx / len;
+                odz[a] = dz / len;
+            }
+
+            return DirectedRoadGraph.Build(x, z, from, to, edge, ms, odx, odz, odx, odz, DirectedRoadGraph.TurnTable(turnSecondsPerRadian), n);
+        }
+
+        private static void DirectedTurnClassesAndTimes()
+        {
+            AssertEqual(DirectedRoadGraph.Straight, DirectedRoadGraph.TurnClassOf(1.0), 0, "dead ahead");
+            AssertEqual(DirectedRoadGraph.Straight, DirectedRoadGraph.TurnClassOf(DirectedRoadGraph.CosGentle), 0, "15° is still straight (boundary inclusive)");
+            AssertEqual(DirectedRoadGraph.Gentle, DirectedRoadGraph.TurnClassOf(0.9), 0, "25° is gentle");
+            AssertEqual(DirectedRoadGraph.Turn, DirectedRoadGraph.TurnClassOf(0.0), 0, "90° is a turn");
+            AssertEqual(DirectedRoadGraph.Sharp, DirectedRoadGraph.TurnClassOf(-0.8), 0, "143° is sharp");
+            AssertEqual(DirectedRoadGraph.UTurn, DirectedRoadGraph.TurnClassOf(-1.0), 0, "reversal is a U-turn");
+
+            AssertEqual(10000, DirectedRoadGraph.ArcMilliseconds(139f, 13.9f), 0, "139 m at 13.9 m/s is 10 s");
+            AssertEqual(1, DirectedRoadGraph.ArcMilliseconds(0f, 13.9f), 0, "a zero-length arc still costs a millisecond");
+            AssertEqual(20000, DirectedRoadGraph.ArcMilliseconds(2f, 0f), 0, "a zero speed limit is floored at 0.1 m/s");
+
+            int[] table = DirectedRoadGraph.TurnTable(2f);
+            AssertEqual(0, table[0], 0, "straight costs nothing");
+            AssertEqual(1047, table[1], 0, "2 s/rad · 30°");
+            AssertEqual(3142, table[2], 0, "2 s/rad · 90°");
+            AssertEqual(4887, table[3], 0, "2 s/rad · 140°");
+            AssertEqual(6283, table[4], 0, "2 s/rad · 180°");
+        }
+
+        private static void DirectedOneWayStreet()
+        {
+            // 0 -> 1 -> 2 with the return 2 -> 1 only: node 0 is unreachable from 2.
+            var x = new[] { 0f, 100f, 200f };
+            var z = new float[3];
+            DirectedRoadGraph graph = DirectedGraph(x, z, new[] { (0, 1, 100f, 10f), (1, 2, 100f, 10f), (2, 1, 100f, 10f) });
+            var dijkstra = new DirectedDijkstra(graph.ArcCount);
+            dijkstra.Run(graph, 0, 1_000_000);
+            AssertTrue(dijkstra.TimeTo(graph, 2) == 20000, "0 to 2 is two ten-second arcs going straight on");
+            dijkstra.Run(graph, 2, 1_000_000);
+            AssertTrue(dijkstra.TimeTo(graph, 1) == 10000, "2 to 1 is allowed");
+            AssertTrue(dijkstra.TimeTo(graph, 0) == DirectedDijkstra.Unreached, "2 to 0 would need the missing 1 -> 0 arc");
+
+            var fresh = new DirectedDijkstra(graph.ArcCount);
+            fresh.Run(graph, 2, 1_000_000);
+            for (int a = 0; a < graph.ArcCount; a++)
+            {
+                AssertTrue(fresh.Dist[a] == dijkstra.Dist[a], "reused workspace equals a fresh one");
+            }
+        }
+
+        private static void DirectedTurnCostsSteer()
+        {
+            // From S=(0,0) to T=(100,100): the fast route goes east then north (200 m at
+            // 10 m/s, one 90° turn); the slow route bends gently through P=(30,70)
+            // (152.3 m at 5 m/s, one gentle bend). Cheap turns favour the fast route,
+            // dear turns the gentle one — which is what a bus planner has to weigh
+            // between an avenue and a side street.
+            var x = new[] { 0f, 100f, 100f, 30f };
+            var z = new[] { 0f, 0f, 100f, 70f };
+            float leg = (float)Math.Sqrt((30f * 30f) + (70f * 70f));
+            var arcs = new[]
+            {
+                (0, 1, 100f, 10f),   // east
+                (1, 2, 100f, 10f),   // north: 90° turn
+                (0, 3, leg, 5f),     // gently north-north-east
+                (3, 2, leg, 5f),     // gently east-north-east: bend of about 46°... see below
+            };
+            DirectedRoadGraph cheap = DirectedGraph(x, z, arcs, turnSecondsPerRadian: 2f);
+            int bend = cheap.TurnClass(2, 3);
+            AssertEqual(DirectedRoadGraph.Gentle, bend, 0, "the slow route's bend is gentle (headings 23° either side of the diagonal)");
+            var dijkstra = new DirectedDijkstra(cheap.ArcCount);
+            dijkstra.Run(cheap, 0, 1_000_000);
+            long fast = 20000 + cheap.TurnMs[DirectedRoadGraph.Turn];
+            long slow = (2L * DirectedRoadGraph.ArcMilliseconds(leg, 5f)) + cheap.TurnMs[DirectedRoadGraph.Gentle];
+            AssertTrue(fast < slow, "with cheap turns the fast route is quicker");
+            AssertTrue(dijkstra.TimeTo(cheap, 2) == fast, "and is what the search returns");
+            var trace = new List<int>();
+            AssertTrue(dijkstra.TraceArcs(cheap, 2, trace) && trace.Count == 2 && trace[0] == 0 && trace[1] == 1, "trace follows arcs 0 then 1");
+
+            DirectedRoadGraph dear = DirectedGraph(x, z, arcs, turnSecondsPerRadian: 20f);
+            dijkstra = new DirectedDijkstra(dear.ArcCount);
+            dijkstra.Run(dear, 0, 1_000_000);
+            long fastDear = 20000 + dear.TurnMs[DirectedRoadGraph.Turn];
+            long slowDear = (2L * DirectedRoadGraph.ArcMilliseconds(leg, 5f)) + dear.TurnMs[DirectedRoadGraph.Gentle];
+            AssertTrue(slowDear < fastDear, "with dear turns the gentle route is quicker");
+            AssertTrue(dijkstra.TimeTo(dear, 2) == slowDear, "and the search switches to it");
+        }
+
+        private static void DirectedMatchesEnumeration()
+        {
+            uint state = 4242u;
+            for (int trial = 0; trial < 25; trial++)
+            {
+                int n = 4 + trial % 3;
+                var x = new float[n];
+                var z = new float[n];
+                for (int i = 0; i < n; i++)
+                {
+                    state = unchecked(state * 1664525u + 1013904223u);
+                    x[i] = (state >> 8) % 500;
+                    state = unchecked(state * 1664525u + 1013904223u);
+                    z[i] = (state >> 8) % 500;
+                }
+
+                var arcs = new List<(int, int, float, float)>();
+                for (int a = 0; a < n; a++)
+                {
+                    for (int b = 0; b < n; b++)
+                    {
+                        state = unchecked(state * 1664525u + 1013904223u);
+                        if (a != b && (state >> 8) % 3 == 0 && (x[a] != x[b] || z[a] != z[b]))
+                        {
+                            float metres = (float)Math.Sqrt(((x[a] - x[b]) * (x[a] - x[b])) + ((z[a] - z[b]) * (z[a] - z[b])));
+                            arcs.Add((a, b, metres, 8f + ((state >> 12) % 10)));
+                        }
+                    }
+                }
+
+                if (arcs.Count == 0)
+                {
+                    continue;
+                }
+
+                DirectedRoadGraph graph = DirectedGraph(x, z, arcs.ToArray(), turnSecondsPerRadian: 1.5f);
+                var dijkstra = new DirectedDijkstra(graph.ArcCount);
+                for (int source = 0; source < n; source++)
+                {
+                    dijkstra.Run(graph, source, long.MaxValue / 4);
+                    for (int target = 0; target < n; target++)
+                    {
+                        if (target == source)
+                        {
+                            continue;
+                        }
+
+                        long best = EnumerateBest(graph, source, target);
+                        AssertTrue(dijkstra.TimeTo(graph, target) == best, $"trial {trial}: {source}->{target} dijkstra {dijkstra.TimeTo(graph, target)} vs enumeration {best}");
+                    }
+                }
+            }
+        }
+
+        // Every simple arc path from source to target, with turn costs.
+        private static long EnumerateBest(DirectedRoadGraph graph, int source, int target)
+        {
+            long best = DirectedDijkstra.Unreached;
+            var visited = new bool[graph.NodeCount];
+            visited[source] = true;
+            Recurse(source, -1, 0);
+            return best;
+
+            void Recurse(int node, int lastArc, long cost)
+            {
+                if (node == target)
+                {
+                    best = Math.Min(best, cost);
+                    return;
+                }
+
+                for (int slot = graph.OutOffsets[node]; slot < graph.OutOffsets[node + 1]; slot++)
+                {
+                    int arc = graph.OutArcs[slot];
+                    int next = graph.ArcTo[arc];
+                    if (visited[next])
+                    {
+                        continue;
+                    }
+
+                    long step = graph.ArcMs[arc] + (lastArc < 0 ? 0 : graph.TurnMs[graph.TurnClass(lastArc, arc)]);
+                    visited[next] = true;
+                    Recurse(next, arc, cost + step);
+                    visited[next] = false;
+                }
+            }
+        }
+
+        private static void DirectedFlowAssignment()
+        {
+            // Square 0-1-2-3 with a one-way loop 0->1->2->3->0 plus a two-way spur 0<->4.
+            // Undirected edge ids: 0:(0,1) 1:(1,2) 2:(2,3) 3:(3,0) 4:(0,4).
+            var x = new[] { 0f, 100f, 100f, 0f, -100f };
+            var z = new[] { 0f, 0f, 100f, 100f, 0f };
+            var arcs = new[] { (0, 1, 100f, 10f), (1, 2, 100f, 10f), (2, 3, 100f, 10f), (3, 0, 100f, 10f), (0, 4, 100f, 10f), (4, 0, 100f, 10f) };
+            DirectedRoadGraph graph = DirectedGraph(x, z, arcs, edgeOf: new[] { 0, 1, 2, 3, 4, 4 });
+            var dijkstra = new DirectedDijkstra(graph.ArcCount);
+            var flows = new List<ZoneFlowLike>
+            {
+                new ZoneFlowLike { Origin = 0, Destination = 1, Weight = 5f },   // 0->1 direct
+                new ZoneFlowLike { Origin = 1, Destination = 0, Weight = 7f },   // must loop 1->2->3->0
+                new ZoneFlowLike { Origin = 4, Destination = 0, Weight = 1f },
+            };
+            var zoneNodes = new[] { 0, 1, 2, 3, 4 };
+            var edgeFlow = new float[5];
+            var arcFlow = new float[graph.ArcCount];
+            int assigned = SuitabilityDirectedRoads.AssignFlow(graph, dijkstra, flows, zoneNodes, long.MaxValue / 4, edgeFlow, arcFlow, out float weight);
+            AssertEqual(3, assigned, 0, "all three flows have a directed route");
+            AssertEqual(13f, weight, 0f, "assigned weight");
+            AssertEqual(5f, edgeFlow[0], 0f, "street 0-1 carries only the 0->1 flow");
+            AssertEqual(7f, edgeFlow[1], 0f, "the return loop carries the 1->0 flow");
+            AssertEqual(7f, edgeFlow[2], 0f, "...along 2-3");
+            AssertEqual(7f, edgeFlow[3], 0f, "...and 3-0");
+            AssertEqual(1f, edgeFlow[4], 0f, "the spur carries the 4->0 flow");
+            AssertEqual(0f, arcFlow[4], 0f, "arc 0->4 is unused");
+            AssertEqual(1f, arcFlow[5], 0f, "arc 4->0 carries it");
         }
 
         private static ObservedTrip TripAt(uint frame, byte purpose)

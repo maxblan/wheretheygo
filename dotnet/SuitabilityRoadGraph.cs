@@ -33,6 +33,14 @@ namespace StationSuitabilityOverlay
 
         public RouteNetwork Network;
         public CompactGraph? Graph;
+        // The same streets as a road vehicle drives them: one arc per admitted
+        // direction, timed by speed limit and turn class (register A0.7/A0.8). Null on
+        // a lattice. Built beside Graph so an undirected edge index maps to its arcs.
+        public DirectedRoadGraph? Directed;
+        public float[] ArcFlow = Array.Empty<float>();
+        public float TurnSecondsPerRadian;
+        public int OneWayEdges;
+        public int EdgesWithoutCarLane;
         public float[] NodePositionsX = Array.Empty<float>();
         public float[] NodePositionsZ = Array.Empty<float>();
         public float[] EdgeFlow = Array.Empty<float>();
@@ -66,6 +74,7 @@ namespace StationSuitabilityOverlay
         private readonly List<int> m_EdgeB = new List<int>();
         private readonly List<float> m_EdgeCost = new List<float>();
         private DijkstraWorkspace? m_Workspace;
+        private DirectedDijkstra? m_DirectedWorkspace;
 
         // Takes ownership of a graph built elsewhere — used for the lattice networks,
         // which are not derived from road entities at all.
@@ -78,6 +87,9 @@ namespace StationSuitabilityOverlay
             // straight over water and through buildings.
             Network = network;
             Graph = graph;
+            Directed = null;
+            m_DirectedWorkspace = null;
+            ArcFlow = Array.Empty<float>();
             m_ZoneNodes = null;
             NodePositionsX = nodeX;
             NodePositionsZ = nodeZ;
@@ -174,6 +186,10 @@ namespace StationSuitabilityOverlay
             var shapeStart = new List<int>();
             var shapeCount = new List<int>();
             var noStops = new List<bool>();
+            var arcs = new ArcBuilder();
+            OneWayEdges = 0;
+            EdgesWithoutCarLane = 0;
+            TurnSecondsPerRadian = 0f;
 
             using var edges = roadEdgeQuery.ToEntityArray(Allocator.Temp);
             using var edgeData = roadEdgeQuery.ToComponentDataArray<Edge>(Allocator.Temp);
@@ -215,6 +231,7 @@ namespace StationSuitabilityOverlay
 
                 shapeStart.Add(shapeX.Count);
                 shapeCount.Add(SampleCurve(curve, shapeX, shapeZ));
+                AddArcs(entityManager, edgeEntity, m_EdgeA.Count - 1, a, b, curve, length, arcs);
             }
 
             NodePositionsX = positionsX.ToArray();
@@ -233,6 +250,159 @@ namespace StationSuitabilityOverlay
 
             EdgeFlow = new float[Graph.EdgeCount];
             m_Workspace = new DijkstraWorkspace(Graph.NodeCount);
+
+            if (TurnSecondsPerRadian <= 0f)
+            {
+                // The CarPathfind prefab's own default (decompiled Game.Prefabs.CarPathfind:
+                // m_CurveAngleCost time 2), used only if no car lane named a pathfind prefab.
+                TurnSecondsPerRadian = 2f;
+            }
+
+            Directed = arcs.Build(NodePositionsX, NodePositionsZ, DirectedRoadGraph.TurnTable(TurnSecondsPerRadian));
+            ArcFlow = new float[Directed.ArcCount];
+            m_DirectedWorkspace = new DirectedDijkstra(Directed.ArcCount);
+        }
+
+        // Plain-array accumulator for the directed arcs of the streets being read.
+        private sealed class ArcBuilder
+        {
+            public readonly List<int> From = new List<int>();
+            public readonly List<int> To = new List<int>();
+            public readonly List<int> Edge = new List<int>();
+            public readonly List<int> Ms = new List<int>();
+            public readonly List<float> Metres = new List<float>();
+            public readonly List<float> Speed = new List<float>();
+            public readonly List<float> OutDx = new List<float>();
+            public readonly List<float> OutDz = new List<float>();
+            public readonly List<float> InDx = new List<float>();
+            public readonly List<float> InDz = new List<float>();
+
+            public void Add(int from, int to, int edge, float metres, float speed, float2 outHeading, float2 inHeading)
+            {
+                From.Add(from);
+                To.Add(to);
+                Edge.Add(edge);
+                Ms.Add(DirectedRoadGraph.ArcMilliseconds(metres, speed));
+                Metres.Add(metres);
+                Speed.Add(speed);
+                OutDx.Add(outHeading.x);
+                OutDz.Add(outHeading.y);
+                InDx.Add(inHeading.x);
+                InDz.Add(inHeading.y);
+            }
+
+            public DirectedRoadGraph Build(float[] nodeX, float[] nodeZ, int[] turnMs)
+            {
+                DirectedRoadGraph graph = DirectedRoadGraph.Build(
+                    nodeX, nodeZ, From.ToArray(), To.ToArray(), Edge.ToArray(), Ms.ToArray(),
+                    OutDx.ToArray(), OutDz.ToArray(), InDx.ToArray(), InDz.ToArray(), turnMs, From.Count);
+                graph.ArcMetres = Metres.ToArray();
+                graph.ArcSpeed = Speed.ToArray();
+                return graph;
+            }
+        }
+
+        // The directions a road vehicle may drive this edge, and how fast. Each car
+        // lane (SubLane with PathMethod.Road, carrying CarLane + EdgeLane) runs from the
+        // edge's start to its end when EdgeLane.m_EdgeDelta.x < m_EdgeDelta.y, else the
+        // other way — the comparison decompiled Game.Pathfind.LaneDataSystem makes; a
+        // Twoway lane admits both. The direction's speed is the fastest of its lanes:
+        // a bus takes the lane it likes. Headings come from the edge curve's end
+        // tangents. The turn cost rate is read once from the first car lane's pathfind
+        // prefab (NetLaneData.m_PathfindPrefab -> PathfindCarData.m_CurveAngleCost.x).
+        private void AddArcs(EntityManager entityManager, Entity edgeEntity, int edge, int a, int b, Curve curve, float length, ArcBuilder arcs)
+        {
+            float forwardSpeed = 0f;
+            float backwardSpeed = 0f;
+            bool anyCarLane = false;
+            if (entityManager.TryGetBuffer(edgeEntity, isReadOnly: true, out DynamicBuffer<Game.Net.SubLane> lanes))
+            {
+                for (int i = 0; i < lanes.Length; i++)
+                {
+                    if ((lanes[i].m_PathMethods & (PathMethod.Road | PathMethod.PublicTransportDay)) == 0)
+                    {
+                        continue;
+                    }
+
+                    Entity lane = lanes[i].m_SubLane;
+                    if (!entityManager.TryGetComponent(lane, out Game.Net.CarLane carLane)
+                        || !entityManager.TryGetComponent(lane, out EdgeLane edgeLane))
+                    {
+                        continue;
+                    }
+
+                    anyCarLane = true;
+                    ReadTurnRate(entityManager, lane);
+                    bool forward = edgeLane.m_EdgeDelta.x < edgeLane.m_EdgeDelta.y;
+                    bool twoWay = (carLane.m_Flags & Game.Net.CarLaneFlags.Twoway) != 0;
+                    if (forward || twoWay)
+                    {
+                        forwardSpeed = math.max(forwardSpeed, carLane.m_SpeedLimit);
+                    }
+
+                    if (!forward || twoWay)
+                    {
+                        backwardSpeed = math.max(backwardSpeed, carLane.m_SpeedLimit);
+                    }
+                }
+            }
+
+            if (!anyCarLane)
+            {
+                EdgesWithoutCarLane++;
+                return;
+            }
+
+            float2 startTangent = math.normalizesafe(new float2(curve.m_Bezier.b.x - curve.m_Bezier.a.x, curve.m_Bezier.b.z - curve.m_Bezier.a.z));
+            float2 endTangent = math.normalizesafe(new float2(curve.m_Bezier.d.x - curve.m_Bezier.c.x, curve.m_Bezier.d.z - curve.m_Bezier.c.z));
+            if (forwardSpeed > 0f)
+            {
+                arcs.Add(a, b, edge, length, forwardSpeed, startTangent, endTangent);
+            }
+
+            if (backwardSpeed > 0f)
+            {
+                arcs.Add(b, a, edge, length, backwardSpeed, -endTangent, -startTangent);
+            }
+
+            if ((forwardSpeed > 0f) != (backwardSpeed > 0f))
+            {
+                OneWayEdges++;
+            }
+        }
+
+        private void ReadTurnRate(EntityManager entityManager, Entity lane)
+        {
+            if (TurnSecondsPerRadian > 0f
+                || !entityManager.TryGetComponent(lane, out PrefabRef prefabRef)
+                || !entityManager.TryGetComponent(prefabRef.m_Prefab, out NetLaneData laneData)
+                || !entityManager.TryGetComponent(laneData.m_PathfindPrefab, out PathfindCarData costs))
+            {
+                return;
+            }
+
+            TurnSecondsPerRadian = costs.m_CurveAngleCost.m_Value.x;
+        }
+
+        // Fastest driving time between two nodes on the directed graph, or long.MaxValue.
+        public long DirectedTimeMs(int fromNode, int toNode, long maxMs)
+        {
+            if (Directed is null || m_DirectedWorkspace is null || fromNode < 0 || toNode < 0)
+            {
+                return DirectedDijkstra.Unreached;
+            }
+
+            if (fromNode == toNode)
+            {
+                return 0;
+            }
+
+            if (m_DirectedWorkspace.Source != fromNode)
+            {
+                m_DirectedWorkspace.Run(Directed, fromNode, maxMs);
+            }
+
+            return m_DirectedWorkspace.TimeTo(Directed, toNode);
         }
 
         private bool TryAddNode(
@@ -597,6 +767,21 @@ namespace StationSuitabilityOverlay
             }
 
             System.Array.Clear(EdgeFlow, 0, EdgeFlow.Length);
+            if (Directed is not null && m_DirectedWorkspace is not null)
+            {
+                System.Array.Clear(ArcFlow, 0, ArcFlow.Length);
+                var directedFlows = new List<ZoneFlowLike>(flows.Count);
+                for (int i = 0; i < flows.Count; i++)
+                {
+                    directedFlows.Add(new ZoneFlowLike { Origin = flows[i].m_Origin, Destination = flows[i].m_Destination, Weight = flows[i].m_Weight });
+                }
+
+                // Metres of cap become milliseconds at the planning cruise speed of a
+                // bus, so the ceiling keeps its meaning of "not one line's journey".
+                long maxMs = (long)(maxCost / TransitModes.CruiseSpeedFor(ModePreset.Bus) * 1000f);
+                return SuitabilityDirectedRoads.AssignFlow(Directed, m_DirectedWorkspace, directedFlows, zoneNodes, maxMs, EdgeFlow, ArcFlow, out assignedWeight);
+            }
+
             int assignedPairs = 0;
             int currentOrigin = -1;
 

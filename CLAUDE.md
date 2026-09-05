@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Ten files are on that side, and `SuitabilityScoring.Tests.csproj` links all ten:
+project. Eleven files are on that side, and `SuitabilityScoring.Tests.csproj` links all eleven:
 
 - `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
@@ -160,6 +160,10 @@ project. Ten files are on that side, and `SuitabilityScoring.Tests.csproj` links
   best-found plus ceiling when the node budget runs out. The greedy ranking is its incumbent and
   the baseline the pipeline measures
 - `SuitabilityGraphMath.cs` — CSR graph, Dijkstra, corridor growth, RDP
+- `SuitabilityDirectedRoads.cs` — the streets as a vehicle drives them: one arc per admitted
+  direction with speed-limit times, five turn classes priced by the game's curve-angle cost, an
+  arc-state Dijkstra and directed flow assignment. Feeds ride seconds and fleet estimates of road
+  routes; the undirected graph stays the corridor search's
 - `SuitabilityTransit.cs` — transit routing and boarding counts
 - `SuitabilityLineHistory.cs` — the rolling window of line readings
 - `SuitabilityObservedTrips.cs` — the one-game-day window of observed shopping/leisure journeys and
@@ -207,7 +211,8 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    network can actually route them, then assigned to a network by shortest path.
 3. **Route suggestion** — two alignment searches in `SuitabilityRoutes.cs`, picked by network:
    `BuildForNetwork` grows a corridor with flow peeling and novelty decay on the road graph, where
-   edge flow is a real measurement; `BuildDirectForNetwork` traces straight between the two ends of
+   edge flow is a real measurement (assigned along DIRECTED fastest routes since Phase 5, summed
+   per street); `BuildDirectForNetwork` traces straight between the two ends of
    the heaviest unserved journey on the lattices, because a uniform grid has no flow ridge to grow
    along — only Dijkstra's tie-breaking. Both ends of a lattice alignment are first aimed at an
    `InterchangeMap` entry within the transfer walk, so a suggestion can offer a change of vehicle;

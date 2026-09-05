@@ -132,6 +132,12 @@ namespace StationSuitabilityOverlay
                     WriteInstance(folder, $"real-{city}-{stamp}-lineset", lineset);
                 }
 
+                string? roads = BuildRoadTimesInstance($"real-{city}-{stamp}-roads");
+                if (roads is not null)
+                {
+                    WriteInstance(folder, $"real-{city}-{stamp}-roads", roads);
+                }
+
                 Mod.Log.Info(
                     $"Verification export written to {folder} " +
                     $"(grid {(capture.m_Grid.x).ToString(CultureInfo.InvariantCulture)}x{(capture.m_Grid.y).ToString(CultureInfo.InvariantCulture)}, " +
@@ -371,6 +377,71 @@ namespace StationSuitabilityOverlay
                 .Add("heavy", SuitabilityExportJson.Bool(value: true))
                 .Add("data", data)
                 .BuildHashed(ExportSchemaVersion);
+        }
+
+        // The directed road network with the stop-to-stop driving times the last route
+        // pass asked of it — the `road_times` kind. Null before the graph exists.
+        private string? BuildRoadTimesInstance(string name)
+        {
+            DirectedRoadGraph? directed = m_RoadGraph.Directed;
+            if (directed is null || directed.ArcCount == 0)
+            {
+                return null;
+            }
+
+            var legFrom = new int[m_RoadLegs.Count];
+            var legTo = new int[m_RoadLegs.Count];
+            var legMs = new long[m_RoadLegs.Count];
+            for (int i = 0; i < m_RoadLegs.Count; i++)
+            {
+                legFrom[i] = m_RoadLegs[i].from;
+                legTo[i] = m_RoadLegs[i].to;
+                legMs[i] = m_RoadLegs[i].ms == DirectedDijkstra.Unreached ? -1L : m_RoadLegs[i].ms;
+            }
+
+            var data = new SuitabilityJsonObject()
+                .Add("node_x_b32", SuitabilityExportJson.BitsArray(directed.NodeX))
+                .Add("node_z_b32", SuitabilityExportJson.BitsArray(directed.NodeZ))
+                .Add("arc_from", SuitabilityExportJson.IntArray(directed.ArcFrom))
+                .Add("arc_to", SuitabilityExportJson.IntArray(directed.ArcTo))
+                .Add("arc_edge", SuitabilityExportJson.IntArray(directed.ArcEdge))
+                .Add("arc_metres_b32", SuitabilityExportJson.BitsArray(directed.ArcMetres))
+                .Add("arc_speed_b32", SuitabilityExportJson.BitsArray(directed.ArcSpeed))
+                .Add("arc_ms", SuitabilityExportJson.IntArray(directed.ArcMs))
+                .Add("out_dx_b32", SuitabilityExportJson.BitsArray(directed.OutDx))
+                .Add("out_dz_b32", SuitabilityExportJson.BitsArray(directed.OutDz))
+                .Add("in_dx_b32", SuitabilityExportJson.BitsArray(directed.InDx))
+                .Add("in_dz_b32", SuitabilityExportJson.BitsArray(directed.InDz))
+                .Add("turn_seconds_per_radian_b32", SuitabilityExportJson.Bits(m_RoadGraph.TurnSecondsPerRadian))
+                .Add("turn_ms", SuitabilityExportJson.IntArray(directed.TurnMs))
+                .Add("max_ms", SuitabilityExportJson.Int((long)MaxJourneySeconds * 1000L))
+                .Add("leg_from", SuitabilityExportJson.IntArray(legFrom))
+                .Add("leg_to", SuitabilityExportJson.IntArray(legTo))
+                .Add("leg_ms", LongArray(legMs))
+                .Add("legs_dropped", SuitabilityExportJson.Int(m_RoadLegsDropped))
+                .Build();
+
+            return new SuitabilityJsonObject()
+                .Add("kind", SuitabilityExportJson.Str("road_times"))
+                .Add("name", SuitabilityExportJson.Str(name))
+                .Add("data", data)
+                .BuildHashed(ExportSchemaVersion);
+        }
+
+        private static string LongArray(long[] values)
+        {
+            var builder = new StringBuilder("[");
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (i > 0)
+                {
+                    _ = builder.Append(',');
+                }
+
+                _ = builder.Append(SuitabilityExportJson.Int(values[i]));
+            }
+
+            return builder.Append(']').ToString();
         }
 
         // The routing instance is the pipeline's existing `lineset` kind. Null when

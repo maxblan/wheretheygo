@@ -804,6 +804,88 @@ def lineset_tie():
 
 
 
+# ------------------------------------------------------------- road_times (S4 v2)
+
+def road_times_oneway():
+    """A square block 0-1-2-3 driven one way (0->1->2->3->0) at 13.9 m/s, a two-way
+    spur 0<->4 at 8.3 m/s, and a fast two-way diagonal shortcut 1<->3. Legs cover a
+    direct hop, a forced loop (1 -> 0 must go round), an unreachable pair on a
+    one-way-only graph variant... (kept reachable here), and a leg where the turn
+    cost decides. Expected times are computed by hand below: arc_ms per spec and
+    turn classes from the chord headings."""
+    x = [0.0, 100.0, 100.0, 0.0, -100.0]
+    z = [0.0, 0.0, 100.0, 100.0, 0.0]
+    arcs = [(0, 1, 13.9), (1, 2, 13.9), (2, 3, 13.9), (3, 0, 13.9),
+            (0, 4, 8.3), (4, 0, 8.3), (1, 3, 13.9), (3, 1, 13.9)]
+    edge_of = [0, 1, 2, 3, 4, 4, 5, 5]
+    speed = _f32(1.2)  # unused; kept for symmetry with other generators
+    del speed
+    frm, to, metres, spd, odx, odz = [], [], [], [], [], []
+    for a, b, v in arcs:
+        dx, dz = x[b] - x[a], z[b] - z[a]
+        length = (dx * dx + dz * dz) ** 0.5
+        frm.append(a); to.append(b); metres.append(_f32(length)); spd.append(_f32(v))
+        odx.append(_f32(dx / length)); odz.append(_f32(dz / length))
+    legs = [(0, 1), (1, 0), (0, 3), (4, 2), (2, 4)]
+    return {
+        "kind": "road_times",
+        "name": "road-times-oneway",
+        "comment": "one-way block with a two-way spur and diagonal; game leg times left to the evaluator",
+        "expect": {"pass_times": True},
+        "data": {
+            "node_x_b32": f32_list(x), "node_z_b32": f32_list(z),
+            "arc_from": frm, "arc_to": to, "arc_edge": edge_of,
+            "arc_metres_b32": f32_list(metres), "arc_speed_b32": f32_list(spd),
+            "arc_ms": [max(1, int(round(m / max(0.1, v) * 1000.0))) for m, v in zip(metres, spd)],
+            "out_dx_b32": f32_list(odx), "out_dz_b32": f32_list(odz),
+            "in_dx_b32": f32_list(odx), "in_dz_b32": f32_list(odz),
+            "turn_seconds_per_radian_b32": f32_bits(2.0),
+            "turn_ms": [0, 1047, 3142, 4887, 6283],
+            "max_ms": 3600000,
+            "leg_from": [l[0] for l in legs], "leg_to": [l[1] for l in legs],
+            "leg_ms": _oneway_leg_ms(x, z, arcs, legs),
+            "legs_dropped": 0,
+        },
+    }
+
+
+def _oneway_leg_ms(x, z, arcs, legs):
+    """Hand computation of the expected leg times: enumerate simple arc paths."""
+    import itertools
+    n = len(x)
+    turn_ms = [0, 1047, 3142, 4887, 6283]
+    cos = [0.9659258262890683, 0.7071067811865476, -0.5, -0.9659258262890683]
+    def head(a):
+        dx, dz = x[arcs[a][1]] - x[arcs[a][0]], z[arcs[a][1]] - z[arcs[a][0]]
+        l = (dx * dx + dz * dz) ** 0.5
+        return _f32(dx / l), _f32(dz / l)
+    def ms(a):
+        dx, dz = x[arcs[a][1]] - x[arcs[a][0]], z[arcs[a][1]] - z[arcs[a][0]]
+        return max(1, int(round(_f32((dx * dx + dz * dz) ** 0.5) / _f32(arcs[a][2]) * 1000.0)))
+    def turn(a, b):
+        h1, h2 = head(a), head(b)
+        dot = h1[0] * h2[0] + h1[1] * h2[1]
+        cls = 0 if dot >= cos[0] else 1 if dot >= cos[1] else 2 if dot >= cos[2] else 3 if dot >= cos[3] else 4
+        return turn_ms[cls]
+    out = {i: [a for a, (f, _, _) in enumerate(arcs) if f == i] for i in range(n)}
+    result = []
+    for s_, t in legs:
+        best = None
+        def rec(node, last, cost, seen):
+            nonlocal best
+            if node == t:
+                best = cost if best is None else min(best, cost)
+                return
+            for a in out[node]:
+                nxt = arcs[a][1]
+                if nxt in seen:
+                    continue
+                rec(nxt, a, cost + ms(a) + (0 if last is None else turn(last, a)), seen | {nxt})
+        rec(s_, None, 0, {s_})
+        result.append(-1 if best is None else best)
+    return result
+
+
 # ------------------------------------------------------------ sites_walk (S2 v2)
 
 def sites_walk_gap():
@@ -964,6 +1046,7 @@ def main():
         sites_plateau(),
         heatmap_walk_plumbing(),
         sites_walk_gap(),
+        road_times_oneway(),
         lattice_path_rail(),
         lattice_path_tie(),
         calling_points_cases(),

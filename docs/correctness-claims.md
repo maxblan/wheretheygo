@@ -57,6 +57,12 @@ for what has and has not been shown; nothing else in the repo may claim more.
 
 ## S4 Alignments
 
+| C4.8 | **v2** Arc times and the turn table are exactly `max(1, round-half-even(L/v·1000))` and `round-half-even(r·θ_c·1000)` (§3.4) | **getestet** (harness `DirectedTurnClassesAndTimes`; pipeline `arc_ms_matches_spec`/`turn_ms_matches_spec` on `road-times-oneway`) | `SuitabilityDirectedRoads.cs`, `evaluator/roadtimes.py` |
+| C4.9 | **v2** The mod's directed driving time between two nodes is the exact minimum over arc-states with turn costs | **zertifikat + formal checker**: `road-times-oneway` — 5 legs three-way exact (hand computation = mod code = evaluator), a 1 ms mutation rejected; each leg's directed label certificate verified in Python and by the Lean-proved `Verify.DirPathCert.check_sound` (axioms propext, Quot.sound). Harness: 25 random graphs vs exhaustive path enumeration. **Real city: offen until the next export** (adds a `-roads` file) | `runs/road-times-oneway/*` |
+| C4.10 | **v2** A one-way street is traversed only in its admitted direction; a return leg loops | **getestet** (`DirectedOneWayStreet`, `DirectedFlowAssignment`) | — |
+| C4.11 | **v2** Turn costs can change the chosen route (fast-with-turn vs slow-and-straight) | **getestet** (`DirectedTurnCostsSteer`) | — |
+| C4.12 | **v2** Directed flow assignment puts a pair's weight on the arcs of its fastest directed route and on their streets | **getestet** (`DirectedFlowAssignment`); the real-city assignment is not yet exported for replay | `SuitabilityDirectedRoads.AssignFlow` |
+
 | # | Claim | Status | Evidence |
 |---|---|---|---|
 | C4.1 | A lattice alignment is a minimum-cost path under the lattice cost model | zertifikat (per instance: `path-rail`, `path-tie` — rational distance-label certificate checked by TWO independent checkers: `checkcert_path.py`, and the Lean executable whose checking logic is itself **formal bewiesen**, see CF.1) | `path-certificate.json`, `path-certificate-int.json`, verdicts `certificate_verified` + `lean_certificate_verified` |

@@ -29,6 +29,7 @@ namespace StationSuitabilityOverlay.Verification
             {
                 "sites" => Sites(data),
                 "sites_walk" => SitesWalk(data),
+                "road_times" => RoadTimes(data),
                 "lattice_path" => LatticePath(data),
                 "calling_points" => CallingPoints(data),
                 "mode_choice" => ModeChoice(data),
@@ -143,6 +144,64 @@ namespace StationSuitabilityOverlay.Verification
                 ["exact_scale_shift"] = exact.ScaleShift,
                 ["exact_nodes"] = exact.Nodes,
                 ["exact_candidates"] = exact.Candidates,
+            };
+        }
+
+        // --------------------------------------------------------- S4 v2 road_times
+
+        // Rebuilds the directed road graph from the exported streets (recomputing every
+        // arc time and the turn table from their inputs) and answers the exported legs
+        // with the mod's own DirectedDijkstra.
+        private static Dictionary<string, object?> RoadTimes(JsonElement data)
+        {
+            float[] nodeX = F32Array(data.GetProperty("node_x_b32"));
+            float[] nodeZ = F32Array(data.GetProperty("node_z_b32"));
+            int[] from = IntArray(data.GetProperty("arc_from"));
+            int[] to = IntArray(data.GetProperty("arc_to"));
+            int[] edge = IntArray(data.GetProperty("arc_edge"));
+            float[] metres = F32Array(data.GetProperty("arc_metres_b32"));
+            float[] speed = F32Array(data.GetProperty("arc_speed_b32"));
+            var ms = new int[from.Length];
+            for (int a = 0; a < from.Length; a++)
+            {
+                ms[a] = DirectedRoadGraph.ArcMilliseconds(metres[a], speed[a]);
+            }
+
+            int[] turnMs = DirectedRoadGraph.TurnTable(F32(data.GetProperty("turn_seconds_per_radian_b32")));
+            DirectedRoadGraph graph = DirectedRoadGraph.Build(
+                nodeX, nodeZ, from, to, edge, ms,
+                F32Array(data.GetProperty("out_dx_b32")), F32Array(data.GetProperty("out_dz_b32")),
+                F32Array(data.GetProperty("in_dx_b32")), F32Array(data.GetProperty("in_dz_b32")), turnMs, from.Length);
+            long maxMs = data.GetProperty("max_ms").GetInt64();
+
+            int[] legFrom = IntArray(data.GetProperty("leg_from"));
+            int[] legTo = IntArray(data.GetProperty("leg_to"));
+            var dijkstra = new DirectedDijkstra(graph.ArcCount);
+            var legs = new List<object>();
+            var arcs = new List<int>();
+            for (int i = 0; i < legFrom.Length; i++)
+            {
+                if (dijkstra.Source != legFrom[i])
+                {
+                    dijkstra.Run(graph, legFrom[i], maxMs);
+                }
+
+                long time = dijkstra.TimeTo(graph, legTo[i]);
+                bool reachable = dijkstra.TraceArcs(graph, legTo[i], arcs);
+                legs.Add(new Dictionary<string, object?>
+                {
+                    ["from"] = legFrom[i],
+                    ["to"] = legTo[i],
+                    ["ms"] = reachable ? time : -1L,
+                    ["arcs"] = new List<int>(arcs),
+                });
+            }
+
+            return new Dictionary<string, object?>
+            {
+                ["arc_ms"] = new List<int>(ms),
+                ["turn_ms"] = new List<int>(turnMs),
+                ["legs"] = legs,
             };
         }
 

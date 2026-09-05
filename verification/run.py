@@ -31,6 +31,8 @@ from evaluator import corridor as ev_corridor  # noqa: E402
 from evaluator import heatmap_grid as ev_heatmap_grid  # noqa: E402
 from evaluator import heatmap_walk as ev_heatmap_walk  # noqa: E402
 from evaluator import sites_walk as ev_sites_walk  # noqa: E402
+from evaluator import roadtimes as ev_roadtimes  # noqa: E402
+from evaluator.checkcert_dirpath import check_directed_certificate  # noqa: E402
 from evaluator import lineset as ev_lineset  # noqa: E402
 from evaluator import modes as ev_modes  # noqa: E402
 from evaluator import orderstats as ev_orderstats  # noqa: E402
@@ -364,6 +366,65 @@ def integer_scaled_certificate(instance: dict, certificate: dict) -> dict:
 LEAN_CHECKER = os.path.join(HERE, "lean", ".lake", "build", "bin", "verify")
 
 
+def integer_directed_certificate(certificate: dict) -> dict:
+    """Directed certificates are already integral (milliseconds); this is the
+    self-contained form the Lean checker reads, with the directed flag set."""
+    def as_int(text):
+        num, _, den = text.partition("/")
+        assert den in ("", "1")
+        return int(num)
+    return {
+        "directed": True,
+        "source": certificate["source"],
+        "target": certificate["target"],
+        "claimed_cost_int": as_int(certificate["claimed_cost"]),
+        "labels_int": [None if t is None else as_int(t) for t in certificate["labels"]],
+        "path": certificate["path"],
+        "edges_int": [[a, b, c] for a, b, c in certificate["edges"]],
+        "scale": "1",
+    }
+
+
+MAX_LEGS_CERTIFIED = 40
+
+
+def check_road_times(instance: dict, solution: dict, out_dir: str,
+                     notes: list[str]) -> dict:
+    """S4 v2: arc times and turn table re-derived, every leg's shortest directed
+    time recomputed on the explicit state graph and required to equal both the
+    game's and the subject's; the first MAX_LEGS_CERTIFIED legs get a directed
+    certificate checked in Python and by the Lean-proved directed checker."""
+    report, certificates = ev_roadtimes.check(instance, solution)
+    verdict = {"evaluator": report, "pass_times": report["ok"]}
+    python_ok = 0
+    lean_ok = 0
+    lean_ran = 0
+    for cert in certificates[:MAX_LEGS_CERTIFIED]:
+        ok, why = check_directed_certificate(cert)
+        if not ok:
+            notes.append(f"leg {cert['leg']}: directed certificate failed: {why}")
+            continue
+        python_ok += 1
+        int_path = os.path.join(out_dir, f"road-certificate-{cert['leg']}.json")
+        with open(int_path, "w", encoding="ascii") as f:
+            json.dump(integer_directed_certificate(cert), f)
+        if os.path.isfile(LEAN_CHECKER) and os.access(LEAN_CHECKER, os.X_OK):
+            lean_ran += 1
+            code, _ = run_cmd([LEAN_CHECKER, int_path], os.path.join(out_dir, "lean-checker.log"))
+            if code == 0:
+                lean_ok += 1
+            else:
+                notes.append(f"leg {cert['leg']}: Lean-verified directed checker rejected the certificate")
+    verdict["certificates"] = min(len(certificates), MAX_LEGS_CERTIFIED)
+    verdict["certificates_python_verified"] = python_ok
+    verdict["certificates_lean_verified"] = lean_ok
+    verdict["lean_checker_available"] = lean_ran > 0 or not certificates
+    if certificates and lean_ran == 0:
+        notes.append("Lean checker not built (make -C verification lean) — formally verified check skipped")
+    verdict["pass_certificates"] = python_ok == verdict["certificates"] and (lean_ran == 0 or lean_ok == lean_ran)
+    return verdict
+
+
 def check_lattice_path(instance: dict, solution: dict, out_dir: str,
                        notes: list[str]) -> dict:
     report, certificate = ev_paths.check(instance, solution)
@@ -499,6 +560,8 @@ def base_pass(kind: str, verdict: dict) -> bool:
             "pass_feasible", "pass_greedy_faithful", "pass_scores_exact",
             "refmodel_candidates_agree", "certified",
             "exact_present", "pass_exact_feasible", "pass_exact_optimal"))
+    if kind == "road_times":
+        return bool(verdict.get("pass_times") and verdict.get("pass_certificates"))
     if kind == "sites_walk":
         return all(verdict.get(k) for k in (
             "pass_feasible", "pass_greedy_faithful", "pass_scores_exact", "certified",
@@ -578,6 +641,8 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
         verdict = check_sites(instance, solution, out_dir, notes)
     elif kind == "sites_walk":
         verdict = check_sites_walk(instance, solution, out_dir, notes)
+    elif kind == "road_times":
+        verdict = check_road_times(instance, solution, out_dir, notes)
     elif kind == "lattice_path":
         verdict = check_lattice_path(instance, solution, out_dir, notes)
     elif kind == "calling_points":

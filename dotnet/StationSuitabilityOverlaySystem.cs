@@ -3830,6 +3830,7 @@ namespace StationSuitabilityOverlay
                 {
                     m_Stops = stops,
                     m_ExpectedWait = SuggestedWaitFor(candidate.Mode),
+                    m_RideSeconds = RoadRideSeconds(candidate),
                     m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(candidate.Mode),
                 };
 
@@ -4071,8 +4072,7 @@ namespace StationSuitabilityOverlay
             route.Length = length;
             route.CapturedFlow = graph.FlowAlong(scratch);
             SuitabilityRoutes.Restop(route, mode, (point, forMode) => ScoreForMode(point, m_IntensityGrid, forMode), m_Interchanges);
-            route.Vehicles = SuitabilityRoutes.EstimateVehicles(mode, length, route.Stops.Count,
-                SuggestedWaitFor(mode) * 2f);
+            route.Vehicles = RoadVehicles(route, SuggestedWaitFor(mode) * 2f);
 
             m_ImprovedRoute = route.Stops.Count >= 2 ? route : null;
             s_ImprovedRouteDrawn = m_ImprovedRoute is not null;
@@ -4263,6 +4263,8 @@ namespace StationSuitabilityOverlay
 
             m_RoadGraph.Build(EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
                 m_PrefabRefLookup, m_RoadDataLookup);
+            m_RoadLegs.Clear();
+            m_RoadLegsDropped = 0;
             m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
 
             int cells = gridSize.x * gridSize.y;
@@ -4297,7 +4299,10 @@ namespace StationSuitabilityOverlay
                 $"Networks built: road {(m_RoadGraph.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_RoadGraph.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
                 $"rail {(m_TrainNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_TrainNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
                 $"water {(m_WaterNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_WaterNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
-                $"trackSegments={m_TrackStarts.Count}");
+                $"trackSegments={m_TrackStarts.Count}; directed road arcs {(m_RoadGraph.Directed?.ArcCount ?? 0).ToString(CultureInfo.InvariantCulture)}, " +
+                $"one-way streets {(m_RoadGraph.OneWayEdges).ToString(CultureInfo.InvariantCulture)}, " +
+                $"streets without a car lane {(m_RoadGraph.EdgesWithoutCarLane).ToString(CultureInfo.InvariantCulture)}, " +
+                $"turn cost {(m_RoadGraph.TurnSecondsPerRadian).ToString("F2", CultureInfo.InvariantCulture)} s/rad from the car pathfind prefab");
         }
 
         private void AssignLatticeFlow(SuitabilityRoadGraph network, float2 worldMin, List<ZoneFlow> flows)
@@ -4745,9 +4750,7 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                candidate.Vehicles = SuitabilityRoutes.EstimateVehicles(
-                    candidate.Mode, candidate.Length, candidate.Stops.Count,
-                    SuggestedWaitFor(candidate.Mode) * 2f);
+                candidate.Vehicles = RoadVehicles(candidate, SuggestedWaitFor(candidate.Mode) * 2f);
 
                 Mod.Log.Info(
                     $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
@@ -4779,8 +4782,120 @@ namespace StationSuitabilityOverlay
             {
                 m_Stops = stops,
                 m_ExpectedWait = SuggestedWaitFor(route.Mode),
+                m_RideSeconds = RoadRideSeconds(route),
                 m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(route.Mode),
             });
+        }
+
+        // Stops on the road network sit on or beside a road node; further than this
+        // the stop is not on the street it was placed along.
+        private const float StopNodeSnapMetres = 64f;
+
+        // Driving time into each stop of a road route from the stop before it, along
+        // the fastest DIRECTED path with the street's speed limits and turn costs
+        // (register A0.7/A0.8). Index i is the ride into stop i; 0 where no directed
+        // path exists, which SuitabilityTransit reads as "fall back to distance over
+        // cruise speed" — and which is logged, because a stop pair with no drivable
+        // path between them is a line the game cannot run either. Null for lattice
+        // routes, whose alignments have no streets.
+        private float[]? RoadRideSeconds(SuggestedRoute route)
+        {
+            if (route.Network != RouteNetwork.Road || m_RoadGraph.Directed is null || route.Stops.Count < 2)
+            {
+                return null;
+            }
+
+            var seconds = new float[route.Stops.Count];
+            int unreachable = 0;
+            for (int i = 1; i < route.Stops.Count; i++)
+            {
+                long ms = RoadLegMs(route.Stops[i - 1], route.Stops[i]);
+                if (ms == DirectedDijkstra.Unreached)
+                {
+                    unreachable++;
+                    continue;
+                }
+
+                seconds[i] = ms / 1000f;
+            }
+
+            if (unreachable > 0)
+            {
+                Mod.Log.Warn(
+                    $"Road route {route.Mode} with {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops: " +
+                    $"{(unreachable).ToString(CultureInfo.InvariantCulture)} stop-to-stop legs have no drivable directed path (one-way streets?); cruise-speed fallback used for them.");
+            }
+
+            return seconds;
+        }
+
+        private long RoadLegMs(float2 from, float2 to)
+        {
+            int fromNode = m_RoadGraph.NearestNode(from, StopNodeSnapMetres);
+            int toNode = m_RoadGraph.NearestNode(to, StopNodeSnapMetres);
+            long ms = m_RoadGraph.DirectedTimeMs(fromNode, toNode, (long)MaxJourneySeconds * 1000L);
+            RememberRoadLeg(fromNode, toNode, ms);
+            return ms;
+        }
+
+        // The stop-to-stop legs the last route pass asked the directed graph for, with
+        // the answers it got: what the export hands the pipeline to certify. Bounded,
+        // and reset whenever the graph is rebuilt so no leg outlives its graph.
+        private const int MaxRememberedRoadLegs = 400;
+        private readonly List<(int from, int to, long ms)> m_RoadLegs = new List<(int, int, long)>();
+        private int m_RoadLegsDropped;
+
+        private void RememberRoadLeg(int fromNode, int toNode, long ms)
+        {
+            if (fromNode < 0 || toNode < 0 || fromNode == toNode)
+            {
+                return;
+            }
+
+            for (int i = 0; i < m_RoadLegs.Count; i++)
+            {
+                if (m_RoadLegs[i].from == fromNode && m_RoadLegs[i].to == toNode)
+                {
+                    return;
+                }
+            }
+
+            if (m_RoadLegs.Count >= MaxRememberedRoadLegs)
+            {
+                m_RoadLegsDropped++;
+                return;
+            }
+
+            m_RoadLegs.Add((fromNode, toNode, ms));
+        }
+
+        // Out and back over the directed network — the return leg may take other
+        // streets than the outward one — plus a dwell at every call each way. Falls
+        // back to the cruise-speed estimate where a leg has no directed path.
+        private int RoadVehicles(SuggestedRoute route, float headwaySeconds)
+        {
+            if (route.Network != RouteNetwork.Road || m_RoadGraph.Directed is null || route.Stops.Count < 2)
+            {
+                return SuitabilityRoutes.EstimateVehicles(route.Mode, route.Length, route.Stops.Count, headwaySeconds);
+            }
+
+            float speed = TransitModes.CruiseSpeedFor(route.Mode);
+            double roundTrip = 0.0;
+            for (int i = 1; i < route.Stops.Count; i++)
+            {
+                roundTrip += LegSeconds(route.Stops[i - 1], route.Stops[i], speed);
+                roundTrip += LegSeconds(route.Stops[i], route.Stops[i - 1], speed);
+            }
+
+            return SuitabilityRoutes.EstimateVehiclesFromRoundTrip((float)roundTrip, route.Stops.Count, headwaySeconds);
+        }
+
+        private double LegSeconds(float2 from, float2 to, float cruiseSpeed)
+        {
+            long ms = RoadLegMs(from, to);
+            return ms == DirectedDijkstra.Unreached
+                ? math.distance(from, to) / math.max(1f, cruiseSpeed)
+                : ms / 1000.0;
         }
 
         // Settles what mode a candidate would run as, and on what alignment.

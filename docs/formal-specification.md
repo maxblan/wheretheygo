@@ -208,6 +208,49 @@ Feasibility invariants: bent length ≤ 1.25 × direct length (`MaxViaDetour`), 
 maxRouteLength, legs share no node but the via, directness ≥ 0.45, hub sampled every
 4th node within 2000 m reach, via node within 250 m of the hub.
 
+### 3.4 Directed road graph and driving times (v2, Phase 5, 2026-09-05; A0.7/A0.8)
+
+Instance kind `road_times`. Alongside the undirected CompactGraph the corridor search
+grows on (unchanged), the mod builds the streets as a road vehicle drives them:
+
+- **Arcs.** For every road edge and every car lane on it (SubLane with `Road` or
+  `PublicTransportDay` in its path methods, carrying `CarLane` and `EdgeLane`): the
+  lane runs start→end iff `EdgeLane.m_EdgeDelta.x < m_EdgeDelta.y` (the comparison
+  decompiled `Game.Pathfind.LaneDataSystem` makes); a `Twoway` lane admits both. A
+  direction exists iff at least one lane admits it; its speed v = max `m_SpeedLimit`
+  (m/s) over those lanes. Arc time `ms = max(1, round_half_even(L / max(0.1, v) ·
+  1000))` in double with L = `Curve.m_Length` (binary32). Headings: unit tangents of
+  the edge's Bézier at its ends (binary32, `math.normalizesafe`), negated for the
+  backward arc; they are instance data.
+- **Turns.** Arriving along arc a and leaving along arc b at a's head costs
+  `turn_ms[class]`, class from the double dot product of a's arriving and b's
+  departing headings: ≥ cos 15° straight, ≥ cos 45° gentle, ≥ cos 120° turn,
+  ≥ cos 165° sharp, else U-turn (cosines as the exact double literals in
+  `DirectedRoadGraph`). `turn_ms[c] = round_half_even(r · θ_c · 1000)` with θ =
+  0, π/6, π/2, 7π/9, π and r = `PathfindCarData.m_CurveAngleCost.m_Value.x` of the
+  first car lane's pathfind prefab (the game's time cost per radian of curvature;
+  default 2 s/rad from the `CarPathfind` prefab class). All turns are admitted; the
+  game's comfort/behaviour/money cost components are not modelled (they steer
+  cars, not a planner's travel time).
+- **Shortest driving time** from node s to node t: the minimum over arc-states of
+  the integer Dijkstra whose state is the arc last driven — equivalently, the
+  shortest path S→T on the explicit state graph with nodes = arcs ∪ {S, T}, edges
+  S→a (a leaves s, cost ms_a), a→b (b leaves a's head, cost turn_ms(a,b) + ms_b),
+  a→T (a's head = t, cost 0). Ties settle the lower arc index. Cap 3 600 000 ms.
+- **Uses.** S3 flow assignment routes every zone pair along its fastest directed
+  path (cap 20 000 m ÷ 9 m/s), summing each pair's weight onto the undirected
+  street the arc runs along (so the corridor search still sees one figure per
+  street) and onto the arc. Suggested road lines get `m_RideSeconds[i]` = fastest
+  directed time from stop i−1 to stop i (stops snapped to the nearest node within
+  64 m; 0 → cruise-speed fallback, logged), and their fleet from the out-and-back
+  directed driving time plus dwell.
+- **Verification.** The instance carries the arcs with their inputs, the turn rate,
+  and the legs the mod asked for with its answers. The evaluator re-derives every
+  `arc_ms` and the turn table, builds each leg's state graph and requires
+  game = subject = exact; per leg a directed label certificate is checked in Python
+  and by the Lean-proved directed checker (`Verify.DirPathCert.check_sound`, axioms
+  propext and Quot.sound only).
+
 ## 4. S5 — Stop placement along a fixed alignment
 
 Given polyline P with total length T (metres, ℚ), mode spacing σ
@@ -537,6 +580,7 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-04 | Transfer walk radius 250 m → **180 s × 1.2 m/s = 216 m** (one constant for the routing's walk edges, the interchange map and the heatmap's transfer distance); zone→stop reach = 2× = 432 m | A1.11 | instance data — exported v1 instances keep their own values |
 | 2026-09-04 | Trip weights: school 0.6 → **1.0**; tourists/homeless no longer filtered (only "no rented property" excludes, structurally) | A0.2, A0.3 | none offline (ECS extraction) |
 | 2026-09-04 | Ferry shoreline **+1 bonus removed** | A1.13 | none offline (ECS) |
+| 2026-09-05 | **Roads are directed for vehicles** (§3.4: one arc per admitted direction from the car lanes, speed-limit times, five turn classes priced by the game's curve-angle cost; S3 assignment, road ride seconds and fleet estimates use them) | A0.7, A0.8, A5.5 | new kind `road_times`: three-way exact leg times, per-leg directed certificates, Lean `DirPathCert` |
 | 2026-09-05 | **S3 demand adds observed shopping/leisure journeys** (Phase 4: live-city scan, one-game-day window, per-day scaling ≤ 4×, merged with home-work/school at equal weight; panel shows the count and coverage) | A0.1 | ECS-side observation is unverifiable offline; the window logic is pure and harness-tested (`ObservedTripWindow`) |
 | 2026-09-05 | **Heatmap arithmetic pinned to double with one rounding per store** (see §7 v2 arithmetic rule) — after the first real `heatmap_walk` export showed Mono keeping float intermediates at higher precision | — | evaluator/generator follow; a re-export is needed before the real-city three-way check can pass |
 | 2026-09-05 | **S1 heatmap terms are walking times over the pedestrian network** (`SuitabilityWalkAccess`; Burst job `SuitabilityJob` deleted; residents per home building replace the 224 m population raster; access = network node within 2 min; catchments 6/11/16 min as linear time kernels; transfer 3 min; road gate replaced by "has a node"; site refinement pass removed) | A1.1, A1.2, A1.4, A1.5, A1.6, A0.5, A0.6, Phase-3 values | new kind `heatmap_walk` with three-way bit-exact check; v1 `heatmap_grid`/`heatmap_point` evaluators retired or historical |

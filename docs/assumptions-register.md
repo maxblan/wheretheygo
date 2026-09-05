@@ -160,8 +160,8 @@ zu belegen sind, verweisen auf die laufende Literaturrecherche (LR).
 | A0.4 | Rückfrage — erklärt in der Antwort; Entscheidung offen | Betrifft nur den Fahrgast-Floor je Fahrzeug (A6.4) |
 | A0.5 | Unsicher; anderer Ansatz möglich | Vorschlag in der Antwort (Ziele nicht auf Zonenzentren kollabieren, sondern am Netz verorten) |
 | A0.6 | Kleinere Auflösung erwogen; sinnvolle Werte gefragt | Vorschlag in der Antwort; Zahlen aus LR |
-| A0.7 | **Einbahnstraßen, Kreuzungskosten, Spurregeln müssen rein** | Straßengraph wird gerichtet, pro Fahrspur; Kostenmodell des Spiel-Pathfinders (`PathfindCosts`: Zeit/Verhalten/Geld/Komfort) als Vorlage |
-| A0.8 | **Straßenklassen-Geschwindigkeiten sind wichtig** | Datenquelle vorhanden: `Game.Net.CarLane.m_SpeedLimit` je Fahrspur |
+| A0.7 ✅ umgesetzt (Phase 5: Fahrspurrichtungen, Abbiegeklassen mit der Kurvenwinkel-Zeitkostenrate des Spiels; Spurwechselregeln nicht modelliert) | **Einbahnstraßen, Kreuzungskosten, Spurregeln müssen rein** | Straßengraph wird gerichtet, pro Fahrspur; Kostenmodell des Spiel-Pathfinders (`PathfindCosts`: Zeit/Verhalten/Geld/Komfort) als Vorlage |
+| A0.8 ✅ umgesetzt (Phase 5: `CarLane.m_SpeedLimit` je Richtung, schnellste Spur) | **Straßenklassen-Geschwindigkeiten sind wichtig** | Datenquelle vorhanden: `Game.Net.CarLane.m_SpeedLimit` je Fahrspur |
 | A0.9 | Bleibt | — |
 | A1.1 ✅ umgesetzt (Phase 3) | **Zeitbasierte Bewertung** statt Luftlinie | Einzugsbereiche werden Gehzeit-Isochronen über das Fußwegenetz; Kern ist dann eine Zeitfunktion. Berechnung von den Quellen aus (≈ 5 000 Dijkstras) statt von jeder Kachel |
 | A1.2 ✅ umgesetzt (Phase 3: 6/11/16 min) | Werte prüfen | LR: gemessene Gehdistanzen/-zeiten je Modus |
