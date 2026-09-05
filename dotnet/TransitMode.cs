@@ -44,96 +44,74 @@ namespace StationSuitabilityOverlay
         Water = 2,
     }
 
-    // Why no mode on an alignment was justified. One `false` from ChooseMode used to
-    // cover both, and the log always blamed demand: four corridors carrying 965-1488
-    // against a tram floor of 938 were reported as "below every floor" when every one
-    // of them had failed on LENGTH. A wrong reason in the log sends the next person
-    // diagnosing this at the wrong half of the pipeline.
-    internal enum ModeRejection
+    // What a suggested route is grown to maximise.
+    // What the game's own prefabs say about one mode's vehicles and lines: seats per
+    // vehicle (carriages included), the line prefab's default interval and stop
+    // duration, and the vehicle's acceleration and braking. Zero where no prefab of
+    // that mode is loaded; the readers fall back to the tables below and say so.
+    internal sealed class ModeFacts
     {
-        None = 0,
-        DemandTooLow = 1,
-        TooShort = 2,
+        public float Capacity;
+        public float HeadwaySeconds;
+        public float StopDurationSeconds;
+        public float Acceleration;
+        public float Braking;
     }
 
-    // What is known about a grown corridor when its mode is chosen.
-    //
-    // Passed as one value because the decision consumes them together: a mode is
-    // justified by evidence, and which evidence counts differs by mode.
-    internal readonly struct CorridorEvidence
+    internal readonly struct FleetFacts
     {
-        public CorridorEvidence(
-            float flow, float length, float enabledDemand, float cityTravelWeight,
-            float trackShare, bool demandScored)
-        {
-            Flow = flow;
-            Length = length;
-            EnabledDemand = enabledDemand;
-            CityTravelWeight = cityTravelWeight;
-            TrackShare = trackShare;
-            DemandScored = demandScored;
-        }
+        private readonly ModeFacts[] m_ByMode;
 
-        // Length-weighted mean demand per network edge along the corridor.
-        public float Flow { get; }
-
-        public float Length { get; }
-
-        // Journey weight this line would newly serve, counting journeys it forms any
-        // leg of. Zero before transfer scoring has run. Same units as
-        // CityTravelWeight: weighted one-way journeys, a commute counting 1 and a
-        // school run 0.6.
-        public float EnabledDemand { get; }
-
-        // The pool EnabledDemand was taken out of — the travel the city still cannot
-        // carry. Carried alongside rather than divided out at the call site so the two
-        // cannot drift apart, and because a share alone cannot say how big the city is.
-        public float CityTravelWeight { get; }
-
-        // Share of that pool. Zero before transfer scoring has run.
-        public float EnabledDemandShare =>
-            CityTravelWeight > 0f ? EnabledDemand / CityTravelWeight : 0f;
-
-        // Whether EnabledDemand was measured at all. A candidate past the transfer
-        // scoring window carries a zero that was never routed, and a zero nobody
-        // measured is not evidence that nobody would ride — the rider floor has to let
-        // it by and let flow speak instead.
-        public bool DemandScored { get; }
-
-        // Share of the corridor that runs along rail that already exists. Only
-        // meaningful on the rail lattice; zero everywhere else.
-        public float TrackShare { get; }
-    }
-
-    // Passenger capacity of one vehicle of each mode, as the game's own prefabs report
-    // it — a whole consist, carriages included, which is what a CS2 subway's 1,080
-    // against a bus's 80 actually is.
-    //
-    // Read from the loaded prefabs rather than written down here, because the figures
-    // belong to the assets the player has installed and a table in this file would be
-    // a second copy of them that nothing keeps in step. The mod logs what it found.
-    //
-    // Indexed by ModePreset so the array and the enum cannot drift; a mode the save has
-    // no vehicle for reports zero, and every bar derived from a zero capacity is zero,
-    // which lets that mode through on its other evidence rather than silently blocking
-    // it on a number nobody could read.
-    internal readonly struct FleetCapacity
-    {
-        private readonly float[] m_ByMode;
-
-        public FleetCapacity(float[] byMode)
+        public FleetFacts(ModeFacts[] byMode)
         {
             m_ByMode = byMode;
         }
 
-        public float For(ModePreset mode)
+        private ModeFacts? Of(ModePreset mode)
         {
             int index = (int)mode;
-            return m_ByMode is not null && index >= 0 && index < m_ByMode.Length ? m_ByMode[index] : 0f;
+            return m_ByMode is not null && index >= 0 && index < m_ByMode.Length ? m_ByMode[index] : null;
+        }
+
+        public float CapacityFor(ModePreset mode)
+        {
+            return Of(mode)?.Capacity ?? 0f;
+        }
+
+        // The planning headway of a suggested line: the line prefab's default vehicle
+        // interval (register A5.5, A6.x), the table when the prefab is not loaded.
+        public float HeadwayFor(ModePreset mode)
+        {
+            float headway = Of(mode)?.HeadwaySeconds ?? 0f;
+            return headway > 0f ? headway : TransitModes.TargetHeadwayFor(mode);
+        }
+
+        // Vanilla's wait model: half the interval.
+        public float ExpectedWaitFor(ModePreset mode)
+        {
+            return HeadwayFor(mode) * 0.5f;
+        }
+
+        public float StopDurationFor(ModePreset mode)
+        {
+            float duration = Of(mode)?.StopDurationSeconds ?? 0f;
+            return duration > 0f ? duration : TransitModes.DefaultStopDurationSeconds;
+        }
+
+        // What one intermediate stop costs everyone riding through it: the dwell plus
+        // the time lost braking from and accelerating back to cruise speed. Braking
+        // from v at b covers v²/2b in v/b seconds, which at cruise would have taken
+        // v/2b — so the loss is v/2b, and the same again for the acceleration.
+        public float DelayPerStopSeconds(ModePreset mode)
+        {
+            ModeFacts? facts = Of(mode);
+            float speed = TransitModes.CruiseSpeedFor(mode);
+            float acceleration = facts is not null && facts.Acceleration > 0f ? facts.Acceleration : TransitModes.DefaultAcceleration;
+            float braking = facts is not null && facts.Braking > 0f ? facts.Braking : TransitModes.DefaultAcceleration;
+            return StopDurationFor(mode) + (speed / (2f * acceleration)) + (speed / (2f * braking));
         }
     }
 
-    // What a suggested route is grown to maximise.
     public enum RouteGoal
     {
         Ridership = 0,
@@ -256,28 +234,6 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // Below these lengths the mode is not worth building, whatever the demand.
-        //
-        // Roughly five calls at the mode's own stop spacing: a line that stops fewer
-        // times than that is a pair of stops, not a service. These had been lowered
-        // until almost anything qualified, and the result was a 659 m bus line looping
-        // around one residential block and a 4 km "train" with three stops in a city
-        // whose real trains run 25 and 33 km.
-        //
-        // The ferry is the exception, and deliberately: a crossing is two stops by
-        // nature, and every ferry in a real city here is a 1.7-2.7 km hop.
-        public static float MinLengthFor(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Tram: return 1800f;
-                case ModePreset.Metro: return 3200f;
-                case ModePreset.Train: return 10000f;
-                case ModePreset.Ferry: return 1200f;
-                default: return 1400f;
-            }
-        }
-
         // Past this length a line cannot hold a headway and should be split.
         public static float MaxSensibleLength(ModePreset mode)
         {
@@ -304,22 +260,6 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // Capacity floors, expressed as a multiple of a network's own mean edge flow
-        // so they hold on any size of city: a metro built for 361 trips while a tram
-        // carries 1633 is the wrong way round. A bus has no floor, which is what makes
-        // every road corridor yield a usable suggestion.
-        public static float MinFlowMultipleFor(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Tram: return 1.5f;
-                case ModePreset.Metro: return 5f;
-                case ModePreset.Train: return 8f;
-                case ModePreset.Ferry: return 1f;
-                default: return 0f;
-            }
-        }
-
         // Modes a given alignment can carry, best capacity first. Choosing among these
         // is what lets an under-used road corridor come back as something feasible
         // instead of being dropped for not justifying a tram.
@@ -327,204 +267,114 @@ namespace StationSuitabilityOverlay
         // Streets carry no mode-specific cost, so a road corridor is genuinely open to
         // either mode that can drive it. A LATTICE alignment is not: see
         // ModesForTraced.
+        // The modes a network can carry, smallest vehicle first: the ladder ChooseMode
+        // climbs until the riders fit.
         public static ModePreset[] ModesFor(RouteNetwork network)
         {
             switch (network)
             {
                 case RouteNetwork.Rail:
-                    return new[] { ModePreset.Train, ModePreset.Metro };
+                    return new[] { ModePreset.Metro, ModePreset.Train };
                 case RouteNetwork.Water:
                     return new[] { ModePreset.Ferry };
                 default:
-                    // Streets can host either, and a bus has no capacity floor, so a
-                    // road corridor always yields a usable suggestion.
-                    return new[] { ModePreset.Tram, ModePreset.Bus };
+                    return new[] { ModePreset.Bus, ModePreset.Tram };
             }
         }
 
-        // Modes an alignment may be SUGGESTED as, given the mode whose lattice traced
-        // it. This is narrower than ModesFor on the lattices, and deliberately so.
-        //
-        // A lattice path is only valid for the cost model that produced it.
-        // SuitabilityLattice.RailCostScale makes existing track 0.35 against 1.6 for
-        // fresh ground on the TRAIN lattice — a 4.6x preference — because heavy rail
-        // reuses track. The metro lattice is nearly indifferent (0.9 against 1.0)
-        // because a tunnel goes where it likes. So a train-lattice path follows the
-        // railway around the countryside, and a metro-lattice path between the same two
-        // places runs more or less straight between them. They are different shapes for
-        // different reasons.
-        //
-        // Letting a rail alignment pick either mode by LENGTH therefore relabelled
-        // track-hugging train paths as metros: observed in Valmare as a 3.4 km "U-Bahn"
-        // taking a mainline detour around open farmland between two villages a
-        // kilometre apart, chosen because 3392 m clears the metro minimum and falls far
-        // under the train's. That relabelling was a workaround for the metro lattice
-        // never producing candidates at all — BuildDirectForNetwork counted its budget
-        // against the shared output list, so train filled it and metro never ran. With
-        // that fixed the metro lattice traces its own alignments, and the workaround is
-        // free to go.
-        public static ModePreset[] ModesForTraced(RouteNetwork network, ModePreset tracedMode)
-        {
-            return network == RouteNetwork.Road ? ModesFor(network) : new[] { tracedMode };
-        }
-
-        // Minimum length of the least demanding mode this network can host.
-        public static float ShortestModeLength(RouteNetwork network)
-        {
-            ModePreset[] options = ModesFor(network);
-            float shortest = float.MaxValue;
-            for (int i = 0; i < options.Length; i++)
-            {
-                shortest = Math.Min(shortest, MinLengthFor(options[i]));
-            }
-
-            return shortest;
-        }
-
-        // Share of the UNSERVED demand a line must unlock before its REACH alone can
-        // justify the mode, with no demand floor met on any single edge.
-        //
-        // Against the demand the existing network has already taken its share of, not
-        // against every journey in the city: the numerator is credited out of the
-        // discounted pool, and measuring it against the undiscounted total compared two
-        // different quantities. These bars are stated in the honest units and chosen to
-        // sit where the old ones effectively did.
-        //
-        // Both RAIL modes have one. A rail alignment is justified by the places it
-        // connects, and a corridor spanning a city necessarily spreads its flow thin
-        // over every one of its edges — judging it on flow alone made it unreachable.
-        // On a real city the rail lattice's mean edge flow was 224, so the train's 8x
-        // multiple asked for 1796 while the best rail corridor anywhere carried 264.
-        //
-        // A road mode keeps flow as its only evidence. Density is the right test for a
-        // tram or a bus, and letting reach speak for them would put a tram down an
-        // empty street because the line happens to touch a busy interchange.
-        //
-        // The train's bar is the higher of the two: it is much the larger commitment.
-        // Both rail modes need one because each lattice now proposes only its own mode
-        // (ModesForTraced), so a metro alignment that cannot clear the metro bar is
-        // rejected rather than falling through to the other rail mode. Length used to
-        // separate the two, which was only ever a stand-in for the lattice a path came
-        // from — and it separated them wrongly, labelling track-hugging train paths as
-        // metros.
-        public static float MinEnabledDemandShareFor(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Train: return 0.04f;
-                case ModePreset.Metro: return 0.02f;
-                default: return 0f;
-            }
-        }
-
-        // Share of a day's boardings that fall in the peak hour, and rides per journey.
-        //
-        // A journey in this model is one citizen's home-to-work or home-to-school trip
-        // (SuitabilityTravelDemand), which they make in both directions, so it is two
-        // boardings. The peak share is the ordinary commuting shape — a fifth of the
-        // day's travel in the busiest hour. Together they turn a count of journeys into
-        // the load a line actually has to carry when it is busiest.
-        public const float PeakShareOfDay = 0.2f;
         public const float RidesPerJourney = 2f;
-
-        // Journeys needed to fill one vehicle of this capacity at the peak.
-        //
-        // This is what replaced a guessed scale floor. Every bar in the mode decision
-        // is relative — flow floors are multiples of the network's own mean edge, reach
-        // bars are shares of the city's unserved travel — which holds the RATIO on any
-        // size of city and says nothing about whether the vehicles would be full. So a
-        // village of 1,663 was offered a metro for 80 journeys, and a town of 6,120 one
-        // for 484: 484 journeys is about 970 boardings a DAY, and a CS2 subway train
-        // holds 1,080. The whole day's ridership fitted in one train.
-        //
-        // Anchored on the game's own vehicle capacities, read off the loaded prefabs
-        // rather than typed in here, so this scales with whatever assets are installed.
-        public static float RidersToFillOne(float vehicleCapacity)
-        {
-            float perJourney = PeakShareOfDay * RidesPerJourney;
-            return perJourney > 0f ? vehicleCapacity / perJourney : 0f;
-        }
-
-        // Journeys a MODE must show before it may be suggested, whatever its flow.
-        //
-        // NECESSARY, where MinEnabledDemandShareFor is SUFFICIENT: that one is a second
-        // way to clear the bar, this is a condition on clearing it at all. A mode whose
-        // vehicles would run near-empty is the wrong mode, however busy the road under
-        // it or however large a share of a small city it would serve.
-        //
-        // The bus is floorless here, which is what keeps every road corridor yielding a
-        // usable suggestion — and is what lets an over-ambitious rail alignment come
-        // back as a bus rather than as nothing. Whether that bus is worth offering is
-        // the acceptance gate's decision, and it uses RidersToFillOne directly.
-        public static float MinRidersFor(ModePreset mode, float vehicleCapacity)
-        {
-            return mode == ModePreset.Bus ? 0f : RidersToFillOne(vehicleCapacity);
-        }
-
-        // How much of the corridor has to run along existing track before it counts as
-        // extending the rail network rather than laying a new one.
-        public const float MostlyOnTrackShare = 0.6f;
-
-        // What that earns: a train following track the city already has is an
-        // extension, which is cheaper to build and likelier to be wanted, so it clears
-        // the reach bar on half the demand. A preference, not a gate — a genuinely
-        // good alignment across fresh ground is still allowed to justify itself.
-        public const float OnTrackReachRelief = 0.5f;
-
-        // Highest-capacity mode whose evidence and minimum length this corridor
-        // actually meets. Returns false when nothing on this alignment is justified,
-        // and says which test did the rejecting.
-        public static bool ChooseMode(
-            RouteNetwork network,
-            ModePreset tracedMode,
-            CorridorEvidence evidence,
-            float referenceFlow,
-            FleetCapacity capacities,
-            out ModePreset mode,
-            out ModeRejection rejection)
-        {
-            ModePreset[] options = ModesForTraced(network, tracedMode);
-            bool metSomeBar = false;
-            for (int i = 0; i < options.Length; i++)
-            {
-                ModePreset option = options[i];
-                bool byFlow = evidence.Flow >= referenceFlow * MinFlowMultipleFor(option);
-
-                float reachBar = MinEnabledDemandShareFor(option);
-                if (reachBar > 0f && evidence.TrackShare >= MostlyOnTrackShare)
-                {
-                    reachBar *= OnTrackReachRelief;
-                }
-
-                bool byReach = reachBar > 0f && evidence.EnabledDemandShare >= reachBar;
-
-                // Whatever the flow or the share says, a mode whose vehicles would run
-                // near-empty is not that mode. Skipped when the demand was never
-                // measured: an unscored candidate ranks on flow alone, and reading its
-                // zero as "nobody would ride" would reject it for a measurement nobody
-                // took.
-                bool enoughRiders = !evidence.DemandScored
-                    || evidence.EnabledDemand >= MinRidersFor(option, capacities.For(option));
-
-                metSomeBar |= (byFlow || byReach) && enoughRiders;
-                if ((byFlow || byReach) && enoughRiders && evidence.Length >= MinLengthFor(option))
-                {
-                    mode = option;
-                    rejection = ModeRejection.None;
-                    return true;
-                }
-            }
-
-            // A corridor that cleared some mode's bar and still found nothing to run
-            // was rejected for being short, not for carrying nobody.
-            rejection = metSomeBar ? ModeRejection.TooShort : ModeRejection.DemandTooLow;
-            mode = options[options.Length - 1];
-            return false;
-        }
 
         // The mode a struggling line should grow into. Ordered by capacity, so a bus
         // becomes a tram before it becomes a metro — suggesting the largest possible
         // jump would rarely be actionable.
+        // Fallbacks for prefab facts the save does not carry (A5.5: the game's own
+        // values are read at run time and logged; these only stand in for a missing
+        // vehicle or line prefab).
+        public const float DefaultStopDurationSeconds = 15f;
+        public const float DefaultAcceleration = 1.5f;
+
+        // A suggested line has at least this many stops: two stops are a shuttle, not a
+        // service (register A4.6/A6.1, 2026-09-05).
+        public const int MinStops = 3;
+
+        // End-to-end ride time a line of this mode may ask of its riders, replacing the
+        // length floors and ceilings (A4.6/A6.1): Bus 30, Tram 35, Metro 30, Train 60,
+        // Ferry 45 minutes.
+        public static float MaxRideSecondsFor(ModePreset mode)
+        {
+            switch (mode)
+            {
+                case ModePreset.Tram: return 35f * 60f;
+                case ModePreset.Metro: return 30f * 60f;
+                case ModePreset.Train: return 60f * 60f;
+                case ModePreset.Ferry: return 45f * 60f;
+                default: return 30f * 60f;
+            }
+        }
+
+        // The longest alignment a mode's ride limit can hold at cruise speed with no
+        // stops — the growth and trace bound; the real limit is checked with stops.
+        public static float MaxAlignmentMetresFor(RouteNetwork network)
+        {
+            ModePreset[] modes = ModesFor(network);
+            float longest = 0f;
+            for (int i = 0; i < modes.Length; i++)
+            {
+                longest = Math.Max(longest, MaxRideSecondsFor(modes[i]) * CruiseSpeedFor(modes[i]));
+            }
+
+            return longest;
+        }
+
+        // Ride time of a line: driving plus one stop delay per intermediate stop.
+        public static float RideSeconds(float lengthMetres, int stops, float cruiseSpeed, float delayPerStop)
+        {
+            float driving = lengthMetres / Math.Max(1f, cruiseSpeed);
+            return driving + (Math.Max(0, stops - 2) * delayPerStop);
+        }
+
+        // Past this share of its seats a mode is overloaded and the next one up is
+        // wanted (A6.x: the game's own capacities decide the mode).
+        public const float MaxPlannedUtilisation = 1f;
+
+        // Picks the smallest mode the network can carry whose vehicles are not
+        // overloaded by the riders at the mode's own headway; the largest when every
+        // mode is. Whether the riders also reach the utilisation FLOOR is the set
+        // selection's question, asked on the set's riders — a feeder alone rarely
+        // fills anything and still belongs in the set beside its trunk. Returns false
+        // only when no mode on the network has a vehicle installed.
+        public static bool ChooseMode(
+            RouteNetwork network,
+            float ridersPerDay,
+            FleetFacts facts,
+            out ModePreset mode,
+            out float utilisation)
+        {
+            ModePreset[] ladder = ModesFor(network);
+            mode = ladder[0];
+            utilisation = 0f;
+            bool anyVehicle = false;
+            for (int i = 0; i < ladder.Length; i++)
+            {
+                ModePreset option = ladder[i];
+                float capacity = facts.CapacityFor(option);
+                if (capacity <= 0f)
+                {
+                    continue;
+                }
+
+                anyVehicle = true;
+                mode = option;
+                utilisation = SuitabilityEquity.Utilisation(ridersPerDay, facts.HeadwayFor(option), capacity);
+                if (utilisation <= MaxPlannedUtilisation)
+                {
+                    return true;
+                }
+            }
+
+            return anyVehicle;
+        }
+
         public static ModePreset NextModeUp(ModePreset mode)
         {
             switch (mode)

@@ -39,7 +39,7 @@ from evaluator import modes as ev_modes  # noqa: E402
 from evaluator import orderstats as ev_orderstats  # noqa: E402
 from evaluator import paths as ev_paths  # noqa: E402
 from evaluator import sites as ev_sites  # noqa: E402
-from evaluator import stops as ev_stops  # noqa: E402
+from evaluator import stop_plan as ev_stop_plan  # noqa: E402
 from evaluator.checkcert_path import check_certificate  # noqa: E402
 from enumerate.enum_lines import enumerate_optimum  # noqa: E402
 from refmodel.sites_milp import build_lp, build_walk_lp  # noqa: E402
@@ -552,7 +552,7 @@ def base_pass(kind: str, verdict: dict) -> bool:
         lean_ok = verdict.get("lean_certificate_verified", None)
         return bool(verdict.get("pass_path") and verdict.get("certificate_verified")
                     and lean_ok is not False)
-    if kind in ("calling_points", "mode_choice", "corridor",
+    if kind in ("stop_plan", "mode_choice", "corridor",
                 "heatmap_grid", "heatmap_walk", "order_stats", "coverage"):
         return bool(verdict.get("evaluator", {}).get("ok"))
     if kind == "lineset_time":
@@ -626,10 +626,12 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
         verdict = {"evaluator": report, "three_way_exact": report["three_way_exact"]}
     elif kind == "lattice_path":
         verdict = check_lattice_path(instance, solution, out_dir, notes)
-    elif kind == "calling_points":
-        verdict = {"evaluator": ev_stops.check(instance, solution)}
+    elif kind == "stop_plan":
+        report = ev_stop_plan.check(instance, solution)
+        verdict = {"evaluator": report, "pass": report["ok"], "tie_affected": report["tie_affected"]}
     elif kind == "mode_choice":
-        verdict = {"evaluator": ev_modes.check(instance, solution)}
+        report = ev_modes.check(instance, solution)
+        verdict = {"evaluator": report, "pass": report["ok"]}
     elif kind == "corridor":
         report = ev_corridor.check(instance, solution)
         verdict = {"evaluator": report}

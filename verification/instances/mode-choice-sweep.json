@@ -1,126 +1,86 @@
 {
+ "comment": "capacity ladder over the game's fleet facts; Water has no line prefab (table headway)",
  "data": {
-  "capacities_b32": {
-   "Bus": 1117782016,
-   "Ferry": 1120403456,
-   "Metro": 1149698048,
-   "Train": 1147207680,
-   "Tram": 1128792064
+  "facts": {
+   "Bus": {
+    "acceleration_b32": 1069547520,
+    "braking_b32": 1069547520,
+    "capacity_b32": 1117782016,
+    "headway_b32": 1133903872,
+    "stop_duration_b32": 1097859072
+   },
+   "Ferry": {
+    "acceleration_b32": 1056964608,
+    "braking_b32": 1056964608,
+    "capacity_b32": 1137180672,
+    "headway_b32": 0,
+    "stop_duration_b32": 1109393408
+   },
+   "Metro": {
+    "acceleration_b32": 1067030938,
+    "braking_b32": 1067030938,
+    "capacity_b32": 1141309440,
+    "headway_b32": 1128792064,
+    "stop_duration_b32": 1101004800
+   },
+   "Train": {
+    "acceleration_b32": 1065353216,
+    "braking_b32": 1065353216,
+    "capacity_b32": 1154613248,
+    "headway_b32": 1139802112,
+    "stop_duration_b32": 1106247680
+   },
+   "Tram": {
+    "acceleration_b32": 1067030938,
+    "braking_b32": 1067030938,
+    "capacity_b32": 1131413504,
+    "headway_b32": 1131413504,
+    "stop_duration_b32": 1097859072
+   }
   },
   "rows": [
    {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1140457472,
-    "flow_b32": 1126170624,
-    "length_b32": 1159479296,
     "network": "Road",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Bus",
-    "track_share_b32": 0
+    "riders_b32": 1120403456
    },
    {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1140457472,
-    "flow_b32": 1123024896,
-    "length_b32": 1159479296,
     "network": "Road",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Bus",
-    "track_share_b32": 0
+    "riders_b32": 1150681088
    },
    {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1140457472,
-    "flow_b32": 1126170624,
-    "length_b32": 1147207680,
     "network": "Road",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Bus",
-    "track_share_b32": 0
+    "riders_b32": 1157234688
    },
    {
-    "city_travel_weight_b32": 1198153728,
-    "demand_scored": true,
-    "enabled_demand_b32": 1159069696,
-    "flow_b32": 1092616192,
-    "length_b32": 1178304512,
+    "network": "Road",
+    "riders_b32": 1203982336
+   },
+   {
     "network": "Rail",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Train",
-    "track_share_b32": 0
+    "riders_b32": 1167867904
    },
    {
-    "city_travel_weight_b32": 1206542336,
-    "demand_scored": true,
-    "enabled_demand_b32": 1159069696,
-    "flow_b32": 1092616192,
-    "length_b32": 1178304512,
     "network": "Rail",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Train",
-    "track_share_b32": 1058642330
+    "riders_b32": 1189765120
    },
    {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1137180672,
-    "flow_b32": 1092616192,
-    "length_b32": 1178304512,
     "network": "Rail",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Train",
-    "track_share_b32": 0
+    "riders_b32": 1315859240
    },
    {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1120403456,
-    "flow_b32": 1142292480,
-    "length_b32": 1165623296,
-    "network": "Rail",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Metro",
-    "track_share_b32": 0
-   },
-   {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": false,
-    "enabled_demand_b32": 0,
-    "flow_b32": 1142292480,
-    "length_b32": 1165623296,
-    "network": "Rail",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Metro",
-    "track_share_b32": 0
-   },
-   {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1133903872,
-    "flow_b32": 1120403456,
-    "length_b32": 1153138688,
     "network": "Water",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Ferry",
-    "track_share_b32": 0
+    "riders_b32": 1092616192
    },
    {
-    "city_travel_weight_b32": 1176256512,
-    "demand_scored": true,
-    "enabled_demand_b32": 1133903872,
-    "flow_b32": 1120403456,
-    "length_b32": 1149861888,
     "network": "Water",
-    "reference_flow_b32": 1120403456,
-    "traced_mode": "Ferry",
-    "track_share_b32": 0
+    "riders_b32": 1167867904
    }
   ]
  },
- "hash": "3dc6ec18e4b380b282c4f34ee01d56d93bf85eacd00fbb0426b11f269949666e",
+ "expect": {
+  "pass": true
+ },
+ "hash": "9eab7df5ed285d76d5eb3399878370322ee440c0a71c3a87941506b6d9e7bdaa",
  "kind": "mode_choice",
  "name": "mode-choice-sweep",
  "schema_version": 1

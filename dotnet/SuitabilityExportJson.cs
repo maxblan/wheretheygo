@@ -133,6 +133,23 @@ namespace StationSuitabilityOverlay
             return builder.Append(']').ToString();
         }
 
+        public static string BoolArray(IReadOnlyList<bool> values)
+        {
+            var builder = new StringBuilder();
+            _ = builder.Append('[');
+            for (int i = 0; i < values.Count; i++)
+            {
+                if (i > 0)
+                {
+                    _ = builder.Append(',');
+                }
+
+                _ = builder.Append(Bool(values[i]));
+            }
+
+            return builder.Append(']').ToString();
+        }
+
         public static string IntArray(IReadOnlyList<int> values)
         {
             var builder = new StringBuilder();

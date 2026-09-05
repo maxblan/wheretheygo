@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Thirteen files are on that side, and `SuitabilityScoring.Tests.csproj` links all thirteen:
+project. Fourteen files are on that side, and `SuitabilityScoring.Tests.csproj` links all fourteen:
 
 - `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
@@ -174,6 +174,9 @@ project. Thirteen files are on that side, and `SuitabilityScoring.Tests.csproj` 
   transit graph with zone nodes, passenger time saved, riders per line, the utilisation and
   duplicate feasibility of a set, and the branch-and-bound that picks the exact best set (or the
   best found plus a ceiling when the node budget runs out)
+- `SuitabilityStopPlan.cs` — where a line calls: the exact dynamic programme over candidate
+  positions that trades the boarders' access gain against the through-riders' delay, with
+  forced interchanges and the gap floor
 - `SuitabilityLineHealth.cs` — verdicts and improvement plans
 - `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
 - `SuitabilityExportJson.cs` — the verification export's canonical JSON and its digest.
@@ -223,9 +226,13 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    along — only Dijkstra's tie-breaking. Both ends of a lattice alignment are first aimed at an
    `InterchangeMap` entry within the transfer walk, so a suggestion can offer a change of vehicle;
    the map unions modes over neighbouring stops because a CS2 hub is several stop entities metres
-   apart. Stops are then placed at mode spacing, skipping any window
-   the suitability score says is not worth calling at (`SuitabilityScoring.SelectCallingPoints`);
-   mode is chosen from flow against city-wide floors; and the set of suggestions is chosen exactly
+   apart. An alignment that passes a hub further along is offered twice, direct and bent through
+   the hub; the set selection decides, not a length ratio. Stops come from a stop plan per alignment
+   (`SuitabilityStopPlan`): candidates every 50 m, journey doors within the mode's horizon as
+   boarders, the corridor flow as through-riders, the prefabs' stop delay, forced interchanges,
+   the gap floor; the mode is the smallest whose vehicles the standalone riders do not
+   overload at the prefab headway (`TransitModes.ChooseMode`), a line needs three stops and
+   a ride within its mode's limit; and the set of suggestions is chosen exactly
    (`SuitabilityLineSet.Solve`): every journey is routed door-to-door over the existing lines plus a
    candidate set, the objective is the passenger time saved against the best of walking and the
    existing network, ranked lexicographically after the equity share capped at its floor, and every

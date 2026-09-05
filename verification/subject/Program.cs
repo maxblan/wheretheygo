@@ -32,7 +32,7 @@ namespace StationSuitabilityOverlay.Verification
                 "road_times" => RoadTimes(data),
                 "coverage" => Coverage(data),
                 "lattice_path" => LatticePath(data),
-                "calling_points" => CallingPoints(data),
+                "stop_plan" => StopPlan(data),
                 "mode_choice" => ModeChoice(data),
                 "lineset_time" => LineSetTime(data),
                 "corridor" => CorridorGrowth(data),
@@ -442,75 +442,80 @@ namespace StationSuitabilityOverlay.Verification
 
         // --------------------------------------------------- S5 calling points
 
-        private static Dictionary<string, object?> CallingPoints(JsonElement data)
+        // Re-solves every exported stop plan with the mod's own dynamic programme.
+        private static Dictionary<string, object?> StopPlan(JsonElement data)
         {
             var plans = new List<object>();
             foreach (JsonElement plan in data.GetProperty("plans").EnumerateArray())
             {
-                float length = F32(plan.GetProperty("length_b32"));
-                float spacing = F32(plan.GetProperty("spacing_b32"));
-                int buffer = plan.GetProperty("buffer").GetInt32();
-                var into = new float[buffer];
-                int count = SuitabilityScoring.PlanCallingPoints(length, spacing, into);
+                var problem = new StopPlanProblem
+                {
+                    CandidateAt = F32Array(plan.GetProperty("candidate_at_b32")),
+                    CandidateX = F32Array(plan.GetProperty("candidate_x_b32")),
+                    CandidateZ = F32Array(plan.GetProperty("candidate_z_b32")),
+                    MustCall = BoolArray(plan.GetProperty("must_call")),
+                    ThroughFlow = F32Array(plan.GetProperty("through_flow_b32")),
+                    EndAt = F32Array(plan.GetProperty("end_at_b32")),
+                    EndX = F32Array(plan.GetProperty("end_x_b32")),
+                    EndZ = F32Array(plan.GetProperty("end_z_b32")),
+                    EndWeight = F32Array(plan.GetProperty("end_w_b32")),
+                    MinGapMetres = F32(plan.GetProperty("min_gap_b32")),
+                    DelaySecondsPerStop = F32(plan.GetProperty("delay_per_stop_b32")),
+                    AccessHorizonSeconds = F32(plan.GetProperty("horizon_b32")),
+                    WalkMetresPerSecond = F32(plan.GetProperty("walk_speed_b32")),
+                };
+                problem.CandidateCount = problem.CandidateAt.Length;
+                problem.EndCount = problem.EndAt.Length;
+                StopPlanSolution solution = SuitabilityStopPlan.Solve(problem);
                 plans.Add(new Dictionary<string, object?>
                 {
-                    ["count"] = count,
-                    ["offsets_b32"] = Bits(into, count),
+                    ["chosen"] = solution.Chosen,
+                    ["gain"] = solution.Gain.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                    ["delay"] = solution.Delay.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                    ["value"] = solution.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
                 });
             }
 
-            var selections = new List<object>();
-            foreach (JsonElement sel in data.GetProperty("selections").EnumerateArray())
-            {
-                float[] scores = F32Array(sel.GetProperty("scores_b32"));
-                float floorShare = F32(sel.GetProperty("floor_share_b32"));
-                bool[] mustCall = BoolArray(sel.GetProperty("must_call"));
-                var keep = new bool[scores.Length];
-                SuitabilityScoring.SelectCallingPoints(
-                    scores, scores.Length, floorShare, new float[scores.Length], mustCall, keep);
-                selections.Add(new Dictionary<string, object?> { ["keep"] = new List<bool>(keep) });
-            }
-
-            return new Dictionary<string, object?>
-            {
-                ["plans"] = plans,
-                ["selections"] = selections,
-            };
+            return new Dictionary<string, object?> { ["plans"] = plans };
         }
 
         // ------------------------------------------------------- S6 mode choice
 
+        // The capacity ladder (S6 v2): riders per day against each mode's seats at its
+        // headway, read from the instance's fleet facts.
         private static Dictionary<string, object?> ModeChoice(JsonElement data)
         {
-            JsonElement caps = data.GetProperty("capacities_b32");
-            var byMode = new float[5];
-            foreach (JsonProperty p in caps.EnumerateObject())
+            var byMode = new ModeFacts[TransitModes.All.Length];
+            for (int m = 0; m < byMode.Length; m++)
+            {
+                byMode[m] = new ModeFacts();
+            }
+
+            foreach (JsonProperty p in data.GetProperty("facts").EnumerateObject())
             {
                 var mode = (ModePreset)Enum.Parse(typeof(ModePreset), p.Name);
-                byMode[(int)mode] = BitConverter.UInt32BitsToSingle(p.Value.GetUInt32());
+                byMode[(int)mode] = new ModeFacts
+                {
+                    Capacity = F32(p.Value.GetProperty("capacity_b32")),
+                    HeadwaySeconds = F32(p.Value.GetProperty("headway_b32")),
+                    StopDurationSeconds = F32(p.Value.GetProperty("stop_duration_b32")),
+                    Acceleration = F32(p.Value.GetProperty("acceleration_b32")),
+                    Braking = F32(p.Value.GetProperty("braking_b32")),
+                };
             }
-            var capacities = new FleetCapacity(byMode);
 
+            var facts = new FleetFacts(byMode);
             var rows = new List<object>();
             foreach (JsonElement row in data.GetProperty("rows").EnumerateArray())
             {
                 var network = (RouteNetwork)Enum.Parse(typeof(RouteNetwork), row.GetProperty("network").GetString() ?? "Road");
-                var traced = (ModePreset)Enum.Parse(typeof(ModePreset), row.GetProperty("traced_mode").GetString() ?? "Bus");
-                var evidence = new CorridorEvidence(
-                    F32(row.GetProperty("flow_b32")),
-                    F32(row.GetProperty("length_b32")),
-                    F32(row.GetProperty("enabled_demand_b32")),
-                    F32(row.GetProperty("city_travel_weight_b32")),
-                    F32(row.GetProperty("track_share_b32")),
-                    row.GetProperty("demand_scored").GetBoolean());
-                bool ok = TransitModes.ChooseMode(
-                    network, traced, evidence, F32(row.GetProperty("reference_flow_b32")),
-                    capacities, out ModePreset mode, out ModeRejection why);
+                bool ok = TransitModes.ChooseMode(network, F32(row.GetProperty("riders_b32")), facts, out ModePreset mode, out float utilisation);
                 rows.Add(new Dictionary<string, object?>
                 {
                     ["ok"] = ok,
                     ["mode"] = mode.ToString(),
-                    ["rejection"] = why.ToString(),
+                    ["utilisation_b32"] = B32(utilisation),
+                    ["delay_per_stop_b32"] = B32(facts.DelayPerStopSeconds(mode)),
                 });
             }
 

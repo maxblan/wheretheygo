@@ -639,6 +639,52 @@ namespace StationSuitabilityOverlay
         }
 
         // Mean flow along a traced path, matching how corridor flow is measured.
+        // The assigned flow of the path edge nearest to `point`: what rides through
+        // that point of the line. Zero off the path or without flow.
+        public float FlowNear(List<int> nodes, float2 point)
+        {
+            if (Graph is null || EdgeFlow is null || nodes.Count < 2)
+            {
+                return 0f;
+            }
+
+            float bestSq = float.MaxValue;
+            int bestEdge = -1;
+            for (int i = 1; i < nodes.Count; i++)
+            {
+                int a = nodes[i - 1];
+                int b = nodes[i];
+                if (a < 0 || b < 0 || a >= NodeCount || b >= NodeCount)
+                {
+                    continue;
+                }
+
+                var from = new float2(NodePositionsX[a], NodePositionsZ[a]);
+                var to = new float2(NodePositionsX[b], NodePositionsZ[b]);
+                float lengthSq = math.distancesq(from, to);
+                float t = lengthSq > 0f ? math.saturate(math.dot(point - from, to - from) / lengthSq) : 0f;
+                float distSq = math.distancesq(point, math.lerp(from, to, t));
+                if (distSq >= bestSq)
+                {
+                    continue;
+                }
+
+                int start = Graph.NodeOffsets[a];
+                int end = Graph.NodeOffsets[a + 1];
+                for (int k = start; k < end; k++)
+                {
+                    if (Graph.AdjOther[k] == b)
+                    {
+                        bestSq = distSq;
+                        bestEdge = Graph.AdjEdge[k];
+                        break;
+                    }
+                }
+            }
+
+            return bestEdge >= 0 && bestEdge < EdgeFlow.Length ? EdgeFlow[bestEdge] : 0f;
+        }
+
         public float FlowAlong(List<int> nodes)
         {
             if (Graph is null || EdgeFlow is null || nodes.Count < 2)

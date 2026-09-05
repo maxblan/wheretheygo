@@ -1,71 +1,73 @@
-"""S6 mode choice: independent exact re-implementation of the gate cascade
-(docs/formal-specification.md §5, constants from TransitMode.cs), in exact
-binary32 semantics — subject and evaluator must agree exactly."""
+"""S6 v2 mode choice (docs/formal-specification.md §5 v2): the capacity ladder,
+re-derived in exact binary32 semantics from the instance's fleet facts. Subject and
+evaluator must agree exactly on the mode; utilisation and the delay per stop are
+compared as binary32 too."""
 
 from __future__ import annotations
 
-from common.canonical import bits_to_f32
+from common.canonical import bits_to_f32, f32_bits
 from evaluator import f32
 
-MODES = ["Bus", "Metro", "Tram", "Train", "Ferry"]
-
-MIN_LENGTH = {"Tram": 1800.0, "Metro": 3200.0, "Train": 10000.0,
-              "Ferry": 1200.0, "Bus": 1400.0}
-MIN_FLOW_MULTIPLE = {"Tram": 1.5, "Metro": 5.0, "Train": 8.0,
-                     "Ferry": 1.0, "Bus": 0.0}
-MIN_ENABLED_SHARE = {"Train": 0.04, "Metro": 0.02}
-MOSTLY_ON_TRACK = 0.6
-ON_TRACK_RELIEF = 0.5
-PEAK_SHARE = 0.2
+LADDER = {"Road": ["Bus", "Tram"], "Rail": ["Metro", "Train"], "Water": ["Ferry"]}
+TARGET_HEADWAY = {"Bus": 300.0, "Tram": 240.0, "Metro": 200.0, "Train": 480.0, "Ferry": 600.0}
+CRUISE = {"Bus": 9.0, "Tram": 12.0, "Metro": 18.0, "Train": 28.0, "Ferry": 10.0}
+DEFAULT_STOP = 15.0
+DEFAULT_ACCEL = 1.5
+DAY = f32.r(262144.0 / 60.0)   # SuitabilityEquity.MovementSecondsPerGameDay (binary32)
 RIDES_PER_JOURNEY = 2.0
+MAX_UTILISATION = 1.0
 
 
-def modes_for_traced(network: str, traced: str) -> list[str]:
-    if network == "Road":
-        return ["Tram", "Bus"]
-    return [traced]
+def headway(facts: dict, mode: str) -> float:
+    h = facts[mode]["headway"]
+    return h if h > 0.0 else f32.r(TARGET_HEADWAY[mode])
 
 
-def riders_to_fill_one(capacity: float) -> float:
-    per_journey = f32.mul(f32.r(PEAK_SHARE), f32.r(RIDES_PER_JOURNEY))
-    return f32.div(capacity, per_journey) if per_journey > 0.0 else 0.0
+def utilisation(riders: float, hw: float, capacity: float) -> float:
+    if hw <= 0.0 or capacity <= 0.0:
+        return 0.0
+    boardings = f32.mul(riders, f32.r(RIDES_PER_JOURNEY))
+    seats = f32.mul(f32.mul(f32.div(DAY, hw), f32.r(2.0)), capacity)
+    return f32.div(boardings, seats)
 
 
-def choose_mode(network: str, traced: str, flow: float, length: float,
-                enabled: float, city: float, track_share: float, scored: bool,
-                reference: float, capacities: dict[str, float]) -> tuple[bool, str, str]:
-    enabled_share = f32.div(enabled, city) if city > 0.0 else 0.0
-    met_some_bar = False
-    options = modes_for_traced(network, traced)
-    for option in options:
-        by_flow = flow >= f32.mul(reference, f32.r(MIN_FLOW_MULTIPLE[option]))
-        reach_bar = f32.r(MIN_ENABLED_SHARE.get(option, 0.0))
-        if reach_bar > 0.0 and track_share >= f32.r(MOSTLY_ON_TRACK):
-            reach_bar = f32.mul(reach_bar, f32.r(ON_TRACK_RELIEF))
-        by_reach = reach_bar > 0.0 and enabled_share >= reach_bar
-        min_riders = 0.0 if option == "Bus" else riders_to_fill_one(
-            capacities.get(option, 0.0))
-        enough_riders = (not scored) or enabled >= min_riders
-        met_some_bar = met_some_bar or ((by_flow or by_reach) and enough_riders)
-        if (by_flow or by_reach) and enough_riders and length >= f32.r(MIN_LENGTH[option]):
-            return True, option, "None"
-    return False, options[-1], "TooShort" if met_some_bar else "DemandTooLow"
+def delay_per_stop(facts: dict, mode: str) -> float:
+    fx = facts[mode]
+    speed = f32.r(CRUISE[mode])
+    a = fx["acceleration"] if fx["acceleration"] > 0.0 else f32.r(DEFAULT_ACCEL)
+    b = fx["braking"] if fx["braking"] > 0.0 else f32.r(DEFAULT_ACCEL)
+    stop = fx["stop_duration"] if fx["stop_duration"] > 0.0 else f32.r(DEFAULT_STOP)
+    return f32.add(f32.add(stop, f32.div(speed, f32.mul(f32.r(2.0), a))), f32.div(speed, f32.mul(f32.r(2.0), b)))
+
+
+def choose(network: str, riders: float, facts: dict) -> tuple[bool, str, float]:
+    ladder = LADDER[network]
+    mode, util, any_vehicle = ladder[0], 0.0, False
+    for option in ladder:
+        cap = facts[option]["capacity"]
+        if cap <= 0.0:
+            continue
+        any_vehicle = True
+        mode = option
+        util = utilisation(riders, headway(facts, option), cap)
+        if util <= MAX_UTILISATION:
+            return True, mode, util
+    return any_vehicle, mode, util
 
 
 def check(instance: dict, solution: dict) -> dict:
     data = instance["data"]
-    capacities = {k: bits_to_f32(v) for k, v in data["capacities_b32"].items()}
+    facts = {}
+    for mode in ["Bus", "Tram", "Metro", "Train", "Ferry"]:
+        raw = data["facts"].get(mode)
+        facts[mode] = {k: (bits_to_f32(raw[k + "_b32"]) if raw else 0.0)
+                       for k in ["capacity", "headway", "stop_duration", "acceleration", "braking"]}
     rows = []
     all_ok = True
     for spec, subject in zip(data["rows"], solution["rows"]):
-        expected = choose_mode(
-            spec["network"], spec["traced_mode"],
-            bits_to_f32(spec["flow_b32"]), bits_to_f32(spec["length_b32"]),
-            bits_to_f32(spec["enabled_demand_b32"]),
-            bits_to_f32(spec["city_travel_weight_b32"]),
-            bits_to_f32(spec["track_share_b32"]), spec["demand_scored"],
-            bits_to_f32(spec["reference_flow_b32"]), capacities)
-        got = (subject["ok"], subject["mode"], subject["rejection"])
+        ok, mode, util = choose(spec["network"], bits_to_f32(spec["riders_b32"]), facts)
+        expected = (ok, mode, f32_bits(util), f32_bits(delay_per_stop(facts, mode)))
+        got = (subject["ok"], subject["mode"], subject["utilisation_b32"], subject["delay_per_stop_b32"])
         match = expected == got
         rows.append({"expected": list(expected), "subject": list(got), "match": match})
         all_ok = all_ok and match

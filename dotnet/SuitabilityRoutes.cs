@@ -35,13 +35,31 @@ namespace StationSuitabilityOverlay
         // genuine corner at the hub, and telling that apart from a lattice staircase
         // the simplifier failed to straighten is otherwise guesswork.
         public bool BentThroughHub;
-        // The mode whose lattice traced this alignment. A lattice path is only valid
-        // for the cost model that produced it, so this is the only mode it may be
-        // suggested as — see TransitModes.ModesForTraced. Meaningless for a road
-        // corridor, where growth carries no mode-specific cost.
-        public ModePreset TracedMode;
         // Fleet the line would need to hold its assumed headway.
         public int Vehicles;
+        // The graph the alignment was traced on and its node path, kept so the stop
+        // planner can read the corridor flow at any point of the line — including
+        // after a mode change re-places the stops.
+        public SuitabilityRoadGraph? Source;
+        public readonly List<int> Nodes = new List<int>();
+        // The stop plan the stops came from (SuitabilityStopPlan), for the log and the
+        // verification export.
+        public StopPlanProblem? StopPlan;
+        public int[] StopPlanChosen = System.Array.Empty<int>();
+        public double StopPlanGain;
+        public double StopPlanDelay;
+    }
+
+    // What every stop plan of one route pass shares: the journeys' doors (two ends per
+    // journey, each with the journey's weight), the game's fleet facts, the score
+    // oracle that says whether a point can hold a stop at all, and the interchanges.
+    internal sealed class StopContext
+    {
+        public float2[] Ends = System.Array.Empty<float2>();
+        public float[] EndWeights = System.Array.Empty<float>();
+        public FleetFacts Facts;
+        public System.Func<float2, ModePreset, float>? ScoreAt;
+        public InterchangeMap Hubs;
     }
 
     internal static class SuitabilityRoutes
@@ -57,20 +75,19 @@ namespace StationSuitabilityOverlay
         // Corners closer than this to the straight line between their neighbours are
         // lattice artefacts rather than real alignment.
         private const float SimplifyTolerance = 120f;
-        // How far along the line a stop may be nudged to find a better score,
-        // as a fraction of the spacing. It never leaves the line.
-        private const float StopSearchFraction = 0.35f;
-
-        // Two consecutive calls may never end up closer than this share of the line's
-        // own interval. Adjacent windows can each nudge by StopSearchFraction, so
-        // without a floor they can close to 30% of the interval — a tram calling twice
-        // within sight of itself, which is what the player saw.
-        private const float MinStopGapShare = 0.6f;
-
         // A line passing this close to an existing served stop calls AT it rather than
         // beside it. Any player would put the stop at the station; doing otherwise
         // leaves two stops a short walk apart and no reason for either.
         private const float StationCallMetres = 150f;
+
+        // Candidate stop positions along an alignment are this far apart; the stop plan
+        // decides which of them are called at. Fine enough that a door is never more
+        // than half a step from the position that would serve it best.
+        private const float CandidateStepMetres = 50f;
+
+        // Hard floor between consecutive stops: half the mode's nominal spacing
+        // (register A5.1, decided 2026-09-05).
+        private const float MinGapShareOfSpacing = 0.5f;
         // Two stops closer than this are the same stop: the along-line search can land
         // consecutive placements on nearly the same spot.
         private const float MinStopSeparationMetres = 20f;
@@ -78,9 +95,6 @@ namespace StationSuitabilityOverlay
         // long the re-traced path may be.
         private const float RetraceSnapMetres = 600f;
         private const float RetraceMaxPathMetres = 30000f;
-        // Dwell at each stop when estimating a fleet, in seconds, and the shortest
-        // headway worth planning around.
-        private const float StopDwellSeconds = 15f;
         private const float MinPlannedHeadwaySeconds = 30f;
         // Share of a candidate's stops that must already have service on the same
         // alignment before it counts as a line the player has already built.
@@ -100,8 +114,7 @@ namespace StationSuitabilityOverlay
             float demandFloor,
             ModePreset? forcedMode,
             List<SuggestedRoute> output,
-            System.Func<float2, ModePreset, float> scoreAt,
-            InterchangeMap hubs,
+            StopContext stops,
             out int grown,
             out int tooShort,
             out int atInterchange)
@@ -200,7 +213,7 @@ namespace StationSuitabilityOverlay
 
                 grown++;
                 SuggestedRoute? candidate = BuildCandidate(
-                    network, corridor, meanFlow, forcedMode, scoreAt, hubs,
+                    network, corridor, forcedMode, stops,
                     out bool shorterThanAnyMode, out int aimedAtInterchange);
                 if (candidate is not null)
                 {
@@ -269,8 +282,7 @@ namespace StationSuitabilityOverlay
             float maxRouteLength,
             ModePreset forcedMode,
             List<SuggestedRoute> output,
-            System.Func<float2, ModePreset, float> scoreAt,
-            InterchangeMap hubs,
+            StopContext stops,
             out int considered,
             out int tooShort,
             out int atInterchange)
@@ -279,6 +291,7 @@ namespace StationSuitabilityOverlay
             tooShort = 0;
             atInterchange = 0;
             int bent = 0;
+            InterchangeMap hubs = stops.Hubs;
             if (network?.Graph is null || zoneNodes is null || flows.Count == 0)
             {
                 return;
@@ -354,53 +367,41 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                // Bend the middle of the alignment through an interchange if one is
-                // worth reaching. Aiming the ENDS at a hub has never helped a line that
-                // simply passes a station two kilometres off to one side.
-                bool wasBent = BendThroughInterchange(network, hubs, forcedMode, from, to, maxRouteLength, scratch);
-                if (wasBent)
+                // The direct alignment, and — where an interchange is worth bending
+                // towards — the same journey traced through that hub as a SECOND
+                // candidate (register A4.7). Whether the detour pays is not a question
+                // a length ratio can answer: a metro bent 700 m out to a ferry pier and
+                // back stayed inside the ratio and was drawn as a spur into the fields.
+                // Both go to the set selection, which routes every journey over each
+                // and keeps the one that saves more time; they cannot both be chosen,
+                // because the second duplicates the first.
+                SuggestedRoute? direct = TraceCandidate(network, forcedMode, scratch, bentThroughHub: false, stops, ref tooShort);
+                var bentPath = new List<int>(scratch);
+                SuggestedRoute? viaHub = BendThroughInterchange(network, hubs, forcedMode, from, to, maxRouteLength, bentPath)
+                    ? TraceCandidate(network, forcedMode, bentPath, bentThroughHub: true, stops, ref tooShort)
+                    : null;
+                if (viaHub is not null)
                 {
                     bent++;
                 }
 
-                var route = new SuggestedRoute
-                {
-                    Network = network.Network,
-                    Mode = forcedMode,
-                    TracedMode = forcedMode,
-                    BentThroughHub = wasBent,
-                };
-                network.MaterialisePath(scratch, route.Path);
-
-                // A shortest path on a uniform grid is a minimal staircase; straightening
-                // it leaves the near-straight alignment a tunnel or a crossing actually
-                // takes.
-                Simplify(route.Path, SimplifyTolerance);
-                route.Length = PathLength(route.Path);
-                route.CapturedFlow = network.FlowAlong(scratch);
-
-                // The traced mode's OWN minimum, not the shortest any mode on this
-                // network could use. Since a lattice alignment may only be suggested as
-                // the mode that traced it (TransitModes.ModesForTraced), measuring it
-                // against the other rail mode's floor only carried paths forward that
-                // ChooseMode was then certain to reject: 1320 of 1329 train paths in one
-                // cycle were under the 3200 m metro floor, and every one of the nine
-                // survivors was under the train's own 10000 m.
-                if (route.Length < TransitModes.MinLengthFor(forcedMode))
-                {
-                    tooShort++;
-                    continue;
-                }
-
-                PlaceStops(route, forcedMode, scoreAt, hubs);
-                if (route.Stops.Count < 2)
+                if (direct is null && viaHub is null)
                 {
                     continue;
                 }
 
                 takenFrom.Add(fromPoint);
                 takenTo.Add(toPoint);
-                output.Add(route);
+                if (direct is not null)
+                {
+                    output.Add(direct);
+                }
+
+                if (viaHub is not null)
+                {
+                    output.Add(viaHub);
+                }
+
                 added++;
                 atInterchange += aimedAtInterchange;
             }
@@ -408,10 +409,47 @@ namespace StationSuitabilityOverlay
             if (bent > 0)
             {
                 DeferredLog.Info(
-                    $"  {forcedMode} alignments bent through an interchange: {(bent).ToString(CultureInfo.InvariantCulture)} " +
+                    $"  {forcedMode} alignments also offered bent through an interchange: {(bent).ToString(CultureInfo.InvariantCulture)} " +
                     $"of {(considered).ToString(CultureInfo.InvariantCulture)} traced, within " +
-                    $"{(SuitabilityGraphMath.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment");
+                    $"{(SuitabilityGraphMath.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment; the set selection decides between the two");
             }
+        }
+
+        // One lattice alignment made into a candidate: materialised, straightened and
+        // given its stops. Null when it cannot hold a line's worth of stops.
+        private static SuggestedRoute? TraceCandidate(
+            SuitabilityRoadGraph network,
+            ModePreset mode,
+            List<int> nodes,
+            bool bentThroughHub,
+            StopContext stops,
+            ref int tooShort)
+        {
+            var route = new SuggestedRoute
+            {
+                Network = network.Network,
+                Mode = mode,
+                BentThroughHub = bentThroughHub,
+                Source = network,
+            };
+            route.Nodes.AddRange(nodes);
+            network.MaterialisePath(nodes, route.Path);
+
+            // A shortest path on a uniform grid is a minimal staircase; straightening
+            // it leaves the near-straight alignment a tunnel or a crossing actually
+            // takes.
+            Simplify(route.Path, SimplifyTolerance);
+            route.Length = PathLength(route.Path);
+            route.CapturedFlow = network.FlowAlong(nodes);
+
+            PlaceStops(route, mode, stops);
+            if (route.Stops.Count < TransitModes.MinStops)
+            {
+                tooShort++;
+                return null;
+            }
+
+            return route;
         }
 
         // How far off an alignment an interchange may sit and still be worth bending
@@ -695,75 +733,55 @@ namespace StationSuitabilityOverlay
         private static SuggestedRoute? BuildCandidate(
             SuitabilityRoadGraph network,
             Corridor corridor,
-            float meanFlow,
             ModePreset? forcedMode,
-            System.Func<float2, ModePreset, float> scoreAt,
-            InterchangeMap hubs,
+            StopContext stops,
             out bool shorterThanAnyMode,
             out int aimedAtInterchange)
         {
             shorterThanAnyMode = false;
-            ModePreset mode = forcedMode ?? ClassifyStreetMode(corridor.CapturedFlow, meanFlow);
+            // The smallest mode the network carries; the riders decide the real one
+            // once the candidate has been weighed (TransitModes.ChooseMode).
+            ModePreset mode = forcedMode ?? TransitModes.ModesFor(network.Network)[0];
             var route = new SuggestedRoute
             {
                 CapturedFlow = corridor.CapturedFlow,
                 Length = corridor.Length,
                 Network = network.Network,
                 Mode = mode,
-                TracedMode = mode,
+                Source = network,
             };
 
-            // A terminus is where every rider must finish or change vehicle, so it is
-            // the most valuable point on the line to put within a walk of another mode.
-            // The lattices have aimed their ends at a hub since SnapToInterchange was
-            // written; a grown corridor's ends were wherever growth happened to stop,
-            // because they are an OUTPUT of flow peeling rather than an input.
-            int extended = AimEndsAtInterchange(network, hubs, route.Mode, corridor.Nodes);
+            int extended = AimEndsAtInterchange(network, stops.Hubs, route.Mode, corridor.Nodes);
             aimedAtInterchange = extended;
+            route.Nodes.AddRange(corridor.Nodes);
 
-
-            // Follow each edge's real centreline where there is one, so a street
-            // route stays on the street instead of cutting every corner.
             network.MaterialisePath(corridor.Nodes, route.Path);
 
-            // Only when the ends actually moved: corridor.Length is the graph's own
-            // edge total, and re-measuring the materialised polyline for every
-            // candidate would quietly change every length floor at once.
             if (extended > 0)
             {
                 route.Length = PathLength(route.Path);
             }
 
-            // Lattice corridors are 8-connected staircases; straighten them before
-            // measuring or drawing so a tunnel does not zig-zag.
             if (route.Mode is not (ModePreset.Bus or ModePreset.Tram))
             {
                 Simplify(route.Path, SimplifyTolerance);
             }
 
-            if (route.Length < TransitModes.ShortestModeLength(network.Network))
-            {
-                shorterThanAnyMode = true;
-                return null;
-            }
-
-            // A line that comes back on itself is a ring, not a route. Growth prefers
-            // to head away from where it started, but on a corridor with nowhere else
-            // to go it still curls round — a metro was proposed as a box around an
-            // empty field, and another as a ring about the whole city.
             if (!SuitabilityGraphMath.IsDirectEnough(EndToEnd(route.Path), route.Length))
             {
                 return null;
             }
 
-            PlaceStops(route, route.Mode, scoreAt, hubs);
-            return route.Stops.Count >= 2 ? route : null;
+            PlaceStops(route, route.Mode, stops);
+            if (route.Stops.Count < TransitModes.MinStops)
+            {
+                shorterThanAnyMode = true;
+                return null;
+            }
+
+            return route;
         }
 
-        // How far along the streets a corridor's end may be extended to reach a hub.
-        // The hub itself is within one transfer walk, but the road route to the node
-        // beside it can go round a block, so the allowance is wider than the walk —
-        // and still short enough that the extension is local rather than a second leg.
         private const float InterchangeReachMetres = 500f;
 
         // Extends a grown corridor's ends onto the road node nearest a usable
@@ -862,29 +880,20 @@ namespace StationSuitabilityOverlay
             return true;
         }
 
-        // On the street network the only choice is how heavy the corridor is, and the
-        // bar is the tram's own capacity floor rather than a second copy of it.
-        private static ModePreset ClassifyStreetMode(float corridorFlow, float meanFlow)
-        {
-            return corridorFlow >= meanFlow * TransitModes.MinFlowMultipleFor(ModePreset.Tram)
-                ? ModePreset.Tram
-                : ModePreset.Bus;
-        }
-
         // Fleet needed to hold the mode's assumed headway around the whole line, from
         // its length at cruise speed — the estimate for alignments without streets.
-        public static int EstimateVehicles(ModePreset mode, float lengthMetres, int stops, float headwaySeconds)
+        public static int EstimateVehicles(ModePreset mode, float lengthMetres, int stops, float headwaySeconds, float delayPerStopSeconds)
         {
             float speed = TransitModes.CruiseSpeedFor(mode);
             // Out and back.
-            return EstimateVehiclesFromRoundTrip((lengthMetres * 2f) / math.max(1f, speed), stops, headwaySeconds);
+            return EstimateVehiclesFromRoundTrip((lengthMetres * 2f) / math.max(1f, speed), stops, headwaySeconds, delayPerStopSeconds);
         }
 
         // The same fleet arithmetic from a measured out-and-back driving time, dwelling
         // at every stop in each direction.
-        public static int EstimateVehiclesFromRoundTrip(float drivingSeconds, int stops, float headwaySeconds)
+        public static int EstimateVehiclesFromRoundTrip(float drivingSeconds, int stops, float headwaySeconds, float delayPerStopSeconds)
         {
-            float roundTrip = drivingSeconds + (stops * 2 * StopDwellSeconds);
+            float roundTrip = drivingSeconds + (stops * 2 * delayPerStopSeconds);
             return math.max(1, (int)math.round(roundTrip / math.max(MinPlannedHeadwaySeconds, headwaySeconds)));
         }
 
@@ -893,14 +902,13 @@ namespace StationSuitabilityOverlay
         // Needed because falling back across mode families changes what the alignment
         // may be: a metro corridor is a tunnel path, and a bus cannot drive it. So the
         // route is genuinely recalculated along streets rather than merely relabelled.
+        // The same journey traced along streets, as the smallest road mode: what a
+        // lattice alignment falls back to when its riders would not fill a rail vehicle.
         public static SuggestedRoute? RetraceOnRoad(
             SuitabilityRoadGraph roads,
             float2 from,
             float2 to,
-            float referenceFlow,
-            FleetCapacity capacities,
-            System.Func<float2, ModePreset, float> scoreAt,
-            InterchangeMap hubs,
+            StopContext stops,
             List<int> scratch)
         {
             if (roads?.Graph is null)
@@ -915,60 +923,32 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            var route = new SuggestedRoute { Network = RouteNetwork.Road, TracedMode = ModePreset.Bus };
+            var route = new SuggestedRoute { Network = RouteNetwork.Road, Mode = TransitModes.ModesFor(RouteNetwork.Road)[0], Source = roads };
+            route.Nodes.AddRange(scratch);
             roads.MaterialisePath(scratch, route.Path);
-
-            float length = 0f;
-            for (int i = 1; i < route.Path.Count; i++)
-            {
-                length += math.distance(route.Path[i - 1], route.Path[i]);
-            }
-
-            route.Length = length;
+            route.Length = PathLength(route.Path);
             route.CapturedFlow = roads.FlowAlong(scratch);
-
-            // No track share, and the demand is deliberately marked UNMEASURED rather
-            // than zero: the caller carries the original candidate's enabled demand
-            // across afterwards, because the re-trace is the same journey on a
-            // different alignment. Passing a measured zero here would let the rider
-            // floor reject a road mode for a figure that has not been taken yet.
-            var evidence = new CorridorEvidence(
-                route.CapturedFlow, route.Length, 0f, 0f, 0f, demandScored: false);
-            if (!TransitModes.ChooseMode(RouteNetwork.Road, route.TracedMode, evidence, referenceFlow,
-                    capacities, out ModePreset mode, out ModeRejection why))
-            {
-                DeferredLog.Info(
-                    $"Re-trace on road found a {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m path " +
-                    $"carrying {(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)} against a reference of " +
-                    $"{(referenceFlow).ToString("F0", CultureInfo.InvariantCulture)}, but no road mode is justified: " +
-                    $"{(why == ModeRejection.TooShort ? "too short for any road mode" : "below every demand floor")}.");
-                return null;
-            }
-
-            Restop(route, mode, scoreAt, hubs);
-            return KeepsItsFloor(route) ? route : null;
+            PlaceStops(route, route.Mode, stops);
+            return route.Stops.Count >= TransitModes.MinStops ? route : null;
         }
 
-        // A route still clears the floor its mode was chosen against.
-        //
-        // ChooseMode is necessarily asked BEFORE the stops exist — the mode is what
-        // decides their spacing — but PlaceStops then trims the polyline back to its
-        // end stops, and that can pull a route under the very floor that approved it.
-        // That is how a 350 m corridor reached the map as a bus line against a 500 m
-        // minimum. Re-verify once the stops are placed.
-        public static bool KeepsItsFloor(SuggestedRoute route)
+        // A line's shape after its stops are placed: at least MinStops calls, and an
+        // end-to-end ride within the mode's limit (register A4.6/A6.1). `rideSeconds`
+        // is the caller's — the directed driving time where streets exist, cruise
+        // speed otherwise — so the same figure the rider is quoted is the one judged.
+        public static bool KeepsItsShape(SuggestedRoute route, float rideSeconds)
         {
             return route is not null
-                && route.Stops.Count >= 2
-                && route.Length >= TransitModes.MinLengthFor(route.Mode);
+                && route.Stops.Count >= TransitModes.MinStops
+                && rideSeconds <= TransitModes.MaxRideSecondsFor(route.Mode);
         }
 
-        // Re-places stops after a mode change, since spacing is mode-specific.
-        public static void Restop(
-            SuggestedRoute route, ModePreset mode, System.Func<float2, ModePreset, float> scoreAt, InterchangeMap hubs)
+        // Re-places stops after a mode change, since spacing, access horizon and the
+        // delay a stop costs are all mode-specific.
+        public static void Restop(SuggestedRoute route, ModePreset mode, StopContext stops)
         {
             route.Mode = mode;
-            PlaceStops(route, mode, scoreAt, hubs);
+            PlaceStops(route, mode, stops);
         }
 
         // True when this candidate essentially retraces a line that already exists.
@@ -1016,25 +996,18 @@ namespace StationSuitabilityOverlay
             return false;
         }
 
-        // A window with nothing worth stopping at is skipped rather than served. The
-        // line still crosses the ground, it just does not call there — which is what a
-        // real metro does under a park. The bar is a share of the route's OWN median
-        // window, not an absolute score: a line through uniformly thin land keeps its
-        // stops, and only a genuine outlier is dropped. That is the case the player
-        // reported — a suggested station standing on a solar power plant, where the
-        // line had to cross open industrial ground and the spacing called for a stop
-        // regardless of there being nobody to serve.
-        private const float StopScoreFloorShare = 0.35f;
-
-        // Walks the polyline dropping a stop every `spacing` metres. At each one it
-        // searches a short way forwards and backwards ALONG the line for the
-        // best-scoring position — so the flow still decides where the line runs and
-        // the suitability score still decides exactly where a stop sits, but a stop
-        // can never end up beside its own route.
-        internal static void PlaceStops(
-            SuggestedRoute route, ModePreset mode, System.Func<float2, ModePreset, float> scoreAt, InterchangeMap hubs)
+        // Places the stops of a route by the stop plan (SuitabilityStopPlan, register
+        // A5.1/A5.4): candidates every CandidateStepMetres along the polyline, the
+        // termini and every interchange within StationCallMetres forced, anything the
+        // score oracle says cannot hold a stop (open water for a ferry, unbuildable
+        // ground) excluded; every journey door within the mode's access horizon is a
+        // potential boarder, the corridor flow at a candidate its through-riders. The
+        // path is then trimmed to the first and last call.
+        internal static void PlaceStops(SuggestedRoute route, ModePreset mode, StopContext context)
         {
             route.Stops.Clear();
+            route.StopPlan = null;
+            route.StopPlanChosen = System.Array.Empty<int>();
             if (route.Path.Count < 2)
             {
                 return;
@@ -1046,201 +1019,213 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            float spacing = TransitModes.StopSpacingFor(mode);
-            int windows = (int)(total / spacing) + 2;
-            var offsets = new float[windows];
-            var scores = new float[windows];
-            var mustCall = new bool[windows];
-            int count = ScanStopWindows(route.Path, total, mode, scoreAt, hubs, offsets, scores, mustCall);
+            StopPlanProblem? problem = BuildStopPlan(route, mode, total, context);
+            if (problem is null)
+            {
+                return;
+            }
 
-            var keep = new bool[count];
-            SuitabilityScoring.SelectCallingPoints(
-                scores, count, StopScoreFloorShare, new float[count], mustCall, keep);
+            StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+            route.StopPlan = problem;
+            route.StopPlanChosen = plan.Chosen;
+            route.StopPlanGain = plan.Gain;
+            route.StopPlanDelay = plan.Delay;
 
             float firstAt = -1f;
             float lastAt = -1f;
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < plan.Count; i++)
             {
-                if (!keep[i] || !AddStop(route, PointAlong(route.Path, offsets[i])))
+                int c = plan.Chosen[i];
+                if (!AddStop(route, new float2(problem.CandidateX[c], problem.CandidateZ[c])))
                 {
                     continue;
                 }
 
                 if (firstAt < 0f)
                 {
-                    firstAt = offsets[i];
+                    firstAt = problem.CandidateAt[c] + problem.PathOffset;
                 }
 
-                lastAt = offsets[i];
+                lastAt = problem.CandidateAt[c] + problem.PathOffset;
             }
 
-            // The line is drawn between its termini. The nudge search can pull the end
-            // stops inward, and a rejected near-duplicate can drop the final one
-            // altogether, both of which left the polyline running on past the last stop
-            // marker with nothing to serve out there.
+            // The line is drawn between its termini, not on past the last call.
             if (firstAt >= 0f && lastAt > firstAt)
             {
                 TrimPath(route, firstAt, lastAt);
             }
         }
 
-        // One candidate position per interval, with the score it was chosen for.
-        // Deciding which of them are worth a stop is the caller's job.
-        //
-        // The intervals are EVEN, not a fixed grid with a clamped tail. At 450 m
-        // spacing a 2150 m tram put its last two windows 2150 mod 450 = 350 m apart and
-        // the nudge closed that to 190 m; five even intervals of 430 m carry the same
-        // six stops with none of them bunched.
-        private static int ScanStopWindows(
-            List<float2> path,
-            float total,
-            ModePreset mode,
-            System.Func<float2, ModePreset, float> scoreAt,
-            InterchangeMap hubs,
-            float[] offsets,
-            float[] scores,
-            bool[] mustCall)
+        private static StopPlanProblem? BuildStopPlan(SuggestedRoute route, ModePreset mode, float total, StopContext context)
         {
             float spacing = TransitModes.StopSpacingFor(mode);
-            var planned = new float[offsets.Length];
-            int windows = SuitabilityScoring.PlanCallingPoints(total, spacing, planned);
-            if (windows < 2)
+            float horizon = TransitModes.CatchmentMs(mode) / 1000f;
+            float reach = horizon * SuitabilityTransit.WalkSpeed;
+
+            // Candidate positions: every step along the line, the far end always.
+            var at = new List<float>();
+            for (float offset = 0f; offset < total - (CandidateStepMetres * 0.5f); offset += CandidateStepMetres)
             {
-                return 0;
+                at.Add(offset);
             }
 
-            float step = total / (windows - 1);
-            float search = step * StopSearchFraction;
-            float minGap = step * MinStopGapShare;
-            int count = 0;
-            float previous = float.NegativeInfinity;
+            at.Add(total);
 
-            for (int window = 0; window < windows; window++)
+            var points = new List<float2>(at.Count);
+            var admissible = new List<bool>(at.Count);
+            var hubDistance = new List<float>(at.Count);
+            for (int i = 0; i < at.Count; i++)
             {
-                float at = planned[window];
-                bool terminus = window == 0 || window == windows - 1;
+                float2 point = PointAlong(route.Path, at[i]);
+                points.Add(point);
+                admissible.Add(context.ScoreAt is null || context.ScoreAt(point, mode) > 0f);
+                hubDistance.Add(context.Hubs.Count > 0 && context.Hubs.TryNearest(point.x, point.y, StationCallMetres, out float distanceSq)
+                    ? distanceSq
+                    : float.MaxValue);
+            }
 
-                // A terminus is pinned where the alignment ends, and only moves if it
-                // cannot be used where it is.
-                //
-                // Pinning matters because the nudge window is clamped to the polyline:
-                // at distance 0 it can only search FORWARD and at the far end only
-                // BACKWARD, so the end stops could only ever move inward, and TrimPath
-                // then cut the line back to them. Every route lost up to two nudge
-                // windows of length (245 m for a bus) and died against the very length
-                // floor that had just approved it — corridors that cleared the 500 m
-                // bus minimum came out at 309 m, 228 m and 391 m and were dropped,
-                // leaving whole refreshes with nothing to suggest. The ends are also
-                // where the search is least welcome: growth chose them because that is
-                // where the demand is.
-                //
-                // But pinning alone put a stop wherever the corridor happened to stop,
-                // and on a free-form lattice that is not necessarily a place a stop can
-                // exist: a suggested ferry ended in open water, hundreds of metres from
-                // any shore, because its terminus scored zero and was pinned there
-                // anyway. So a terminus that scores nothing searches for the nearest
-                // position along the line that scores at all.
-                float lower = math.max(at - search, 0f);
-                float upper = math.min(at + search, total);
-                if (!terminus && count > 0)
+            // Termini: the first and last positions that can hold a stop.
+            int first = admissible.IndexOf(true);
+            int last = admissible.LastIndexOf(true);
+            if (first < 0 || last <= first)
+            {
+                return null;
+            }
+
+            // One forced call per interchange: within a run of candidates that see a
+            // station, the nearest one. Forced calls keep the gap floor among
+            // themselves; a second station inside the gap is served by the first.
+            var mustCall = new bool[last - first + 1];
+            int runBest = -1;
+            for (int i = first; i <= last + 1; i++)
+            {
+                bool seesHub = i <= last && hubDistance[i] < float.MaxValue;
+                if (seesHub)
                 {
-                    lower = math.max(lower, previous + minGap);
-                    if (lower > upper)
+                    if (runBest < 0 || hubDistance[i] < hubDistance[runBest])
                     {
-                        // No position in this window is far enough from the last call.
-                        // Skipping it is the point: the line runs on to the next one.
-                        continue;
+                        runBest = i;
                     }
+
+                    continue;
                 }
 
-                float best = math.clamp(at, lower, upper);
-                float bestScore = scoreAt is null ? 0f : scoreAt(PointAlong(path, best), mode);
-                bool pinned = terminus && bestScore > 0f;
-                bool atStation = false;
-
-                if (scoreAt is not null && upper > lower && !pinned)
+                if (runBest >= 0)
                 {
-                    atStation = ChooseInWindow(path, mode, scoreAt, hubs, lower, upper, ref best, ref bestScore);
-                }
-
-                offsets[count] = best;
-                scores[count] = bestScore;
-                mustCall[count] = atStation;
-                previous = best;
-                count++;
-
-                if (at >= total)
-                {
-                    break;
+                    mustCall[runBest - first] = true;
+                    runBest = -1;
                 }
             }
 
-            return count;
-        }
-
-        // The position within one window a stop belongs at. Normally the best-scoring
-        // one; but where the line passes an existing served stop, the position nearest
-        // that stop wins — a call at the station is worth more than a slightly better
-        // tile beside it, because it is what turns two lines into a network.
-        // Returns true when the chosen position is at an existing served stop, which
-        // the caller records so the score floor cannot drop the call afterwards.
-        private static bool ChooseInWindow(
-            List<float2> path,
-            ModePreset mode,
-            System.Func<float2, ModePreset, float> scoreAt,
-            InterchangeMap hubs,
-            float lower,
-            float upper,
-            ref float best,
-            ref float bestScore)
-        {
-            float stationBest = 0f;
-            float stationDistSq = StationCallMetres * StationCallMetres;
-            float stationScore = 0f;
-            bool atStation = false;
-
-            // Sample a handful of positions in the window; more would not change the
-            // outcome at 32 m tile resolution.
-            const int Samples = 6;
-            for (int step = 0; step <= Samples; step++)
+            float minGap = spacing * MinGapShareOfSpacing;
+            float previousForced = float.NegativeInfinity;
+            for (int i = 0; i < mustCall.Length; i++)
             {
-                float candidate = lower + ((upper - lower) * step / Samples);
-                float2 point = PointAlong(path, candidate);
-                float score = scoreAt(point, mode);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    best = candidate;
-                }
-
-                // A stop over ground nothing can use is not a call, however close the
-                // station: the terminus repair above exists for exactly that reason.
-                if (score <= 0f || hubs.Count == 0
-                    || !hubs.TryNearest(point.x, point.y, StationCallMetres, out float distanceSq))
+                if (!mustCall[i])
                 {
                     continue;
                 }
 
-                if (distanceSq < stationDistSq)
+                if (at[first + i] - previousForced < minGap)
                 {
-                    atStation = true;
-                    stationDistSq = distanceSq;
-                    stationBest = candidate;
-                    stationScore = score;
+                    mustCall[i] = false;
+                    continue;
+                }
+
+                previousForced = at[first + i];
+            }
+
+            // Positions that cannot hold a stop stay out of the plan; arc lengths are
+            // kept exact, measured from the first terminus.
+            var keep = new List<int>();
+            for (int i = first; i <= last; i++)
+            {
+                if (admissible[i] || mustCall[i - first])
+                {
+                    keep.Add(i);
                 }
             }
 
-            if (atStation)
+            var problem = new StopPlanProblem
             {
-                best = stationBest;
-                bestScore = stationScore;
+                CandidateCount = keep.Count,
+                CandidateAt = new float[keep.Count],
+                CandidateX = new float[keep.Count],
+                CandidateZ = new float[keep.Count],
+                MustCall = new bool[keep.Count],
+                ThroughFlow = new float[keep.Count],
+                MinGapMetres = minGap,
+                DelaySecondsPerStop = context.Facts.DelayPerStopSeconds(mode),
+                AccessHorizonSeconds = horizon,
+                WalkMetresPerSecond = SuitabilityTransit.WalkSpeed,
+                PathOffset = at[first],
+            };
+            for (int k = 0; k < keep.Count; k++)
+            {
+                int i = keep[k];
+                problem.CandidateAt[k] = at[i] - at[first];
+                problem.CandidateX[k] = points[i].x;
+                problem.CandidateZ[k] = points[i].y;
+                problem.MustCall[k] = mustCall[i - first];
+                problem.ThroughFlow[k] = route.Source?.FlowNear(route.Nodes, points[i]) ?? route.CapturedFlow;
             }
 
-            return atStation;
+            CollectEnds(route.Path, at[first], at[last], reach, context, problem);
+            return problem;
         }
 
-        // Keeps only the stretch of the polyline between two distances along it,
-        // inserting exact endpoints so the drawn line starts and ends on a stop.
+        // Every journey door within `reach` of the polyline between the two termini,
+        // with the arc length of its projection (relative to the first terminus).
+        private static void CollectEnds(List<float2> path, float fromAt, float toAt, float reach, StopContext context, StopPlanProblem into)
+        {
+            var endAt = new List<float>();
+            var endX = new List<float>();
+            var endZ = new List<float>();
+            var endWeight = new List<float>();
+            float reachSq = reach * reach;
+            for (int e = 0; e < context.Ends.Length; e++)
+            {
+                float2 door = context.Ends[e];
+                float bestSq = float.MaxValue;
+                float bestAt = 0f;
+                float travelled = 0f;
+                for (int i = 1; i < path.Count; i++)
+                {
+                    float2 a = path[i - 1];
+                    float2 b = path[i];
+                    float segment = math.distance(a, b);
+                    if (segment > 0f)
+                    {
+                        float t = math.saturate(math.dot(door - a, b - a) / (segment * segment));
+                        float distSq = math.distancesq(door, math.lerp(a, b, t));
+                        if (distSq < bestSq)
+                        {
+                            bestSq = distSq;
+                            bestAt = travelled + (t * segment);
+                        }
+                    }
+
+                    travelled += segment;
+                }
+
+                if (bestSq > reachSq || bestAt < fromAt || bestAt > toAt)
+                {
+                    continue;
+                }
+
+                endAt.Add(bestAt - fromAt);
+                endX.Add(door.x);
+                endZ.Add(door.y);
+                endWeight.Add(context.EndWeights[e]);
+            }
+
+            into.EndCount = endAt.Count;
+            into.EndAt = endAt.ToArray();
+            into.EndX = endX.ToArray();
+            into.EndZ = endZ.ToArray();
+            into.EndWeight = endWeight.ToArray();
+        }
+
         private static void TrimPath(SuggestedRoute route, float from, float to)
         {
             var trimmed = new List<float2> { PointAlong(route.Path, from) };

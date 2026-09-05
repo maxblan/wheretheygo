@@ -265,15 +265,11 @@ namespace StationSuitabilityOverlay
         // acquire, but will strike out on fresh alignment when it has to. Metro is the
         // other way round: tunnelling is its normal mode, and existing track is merely
         // an option. Both stay usable on either.
-        public static float RailCostScale(ModePreset mode, bool onExistingTrack)
+        public static float RailCostScale(bool onExistingTrack)
         {
-            if (mode == ModePreset.Train)
-            {
-                return onExistingTrack ? 0.35f : 1.6f;
-            }
-
-            // Metro
-            return onExistingTrack ? 0.9f : 1f;
+            // Train and metro alike (register A4.5, decided 2026-09-05): an alignment
+            // along track the city already has is cheap to build for either.
+            return onExistingTrack ? 0.35f : 1.6f;
         }
     }
 }

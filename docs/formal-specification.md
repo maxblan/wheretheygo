@@ -211,6 +211,12 @@ Feasibility invariants: bent length ≤ 1.25 × direct length (`MaxViaDetour`), 
 maxRouteLength, legs share no node but the via, directness ≥ 0.45, hub sampled every
 4th node within 2000 m reach, via node within 250 m of the hub.
 
+Since 2026-09-05 (A4.7) the bent alignment does not REPLACE the direct one: both are
+emitted as candidates of the same journey pair, and the S7 set selection decides
+between them on passenger time (they duplicate each other under §6.3 F2, so a set
+holds at most one). The invariants above are now the admissibility of the via
+variant only.
+
 ### 3.4 Directed road graph and driving times (v2, Phase 5, 2026-09-05; A0.7/A0.8)
 
 Instance kind `road_times`. Alongside the undirected CompactGraph the corridor search
@@ -265,45 +271,91 @@ grows on (unchanged), the mod builds the streets as a road vehicle drives them:
   and by the Lean-proved directed checker (`Verify.DirPathCert.check_sound`, axioms
   propext and Quot.sound only).
 
-## 4. S5 — Stop placement along a fixed alignment
+## 4. S5 — Stop placement along a fixed alignment (v2, Phase 7, 2026-09-05; A5.1, A5.2, A5.4)
 
-Given polyline P with total length T (metres, ℚ), mode spacing σ
-(`TransitModes.StopSpacingFor`), the mod computes:
+Given polyline P (metres), mode spacing σ (`StopSpacingFor`), access horizon H =
+`CatchmentMs(mode)`/1000 s, walking speed 1.2 m/s, the fleet's delay per stop δ
+(`FleetFacts.DelayPerStopSeconds` = line prefab stop duration + v/2a + v/2b, v the
+cruise speed, a/b the vehicle prefab's acceleration and braking), and the journeys
+(each contributing its origin and its destination as a *door* with the journey's
+weight):
 
-1. intervals n = max(1, round(T/σ, away-from-zero)); calling offsets
-   o_i = T·i/n for i < n, o_n = T (`PlanCallingPoints`). Property: offsets strictly
-   increasing, first = 0, last = T, count = min(n+1, buffer).
-2. Per window: nudge search within ±0.35·step clamped to [0, T] and to
-   ≥ previous + 0.6·step (`MinStopGapShare`); 7 samples (step/6) per window; termini
-   pinned when their pinned score > 0; a sampled position within 150 m of an existing
-   served stop forces `mustCall` and snaps to the nearest such sample.
-3. `SelectCallingPoints`: keep window i iff i ∈ {0, count−1} ∨ mustCall_i ∨
-   score_i ≥ 0.35 · median⁺(scores), where median⁺ is the k = ⌊count/2⌋-th smallest
-   of the strictly positive scores (0 if none).
-4. Stops closer than 20 m to an already-added stop are dropped; path trimmed to
-   [first kept offset, last kept offset]; Length recomputed from the trimmed polyline.
+1. **Candidates** (`SuitabilityRoutes.BuildStopPlan`): positions every 50 m along P
+   plus the far end; a position is *admissible* iff the score oracle is positive
+   there (for ferries: shoreline; for rail/road: a scored tile). The first and last
+   admissible positions are the termini. Within every maximal run of candidates that
+   lie within 150 m of an interchange, the nearest one is *forced*; forced calls
+   closer than the gap floor to an earlier forced call lose the flag. Inadmissible
+   positions between the termini are dropped; arc lengths are measured from the
+   first terminus. `through_c` = the assigned flow of the path edge nearest to
+   candidate c (`SuitabilityRoadGraph.FlowNear`).
+2. **Doors**: every journey end within H·1.2 m of P between the termini, with the
+   arc length of its projection.
+3. **Objective** (`SuitabilityStopPlan.Solve`), for a chosen set S containing both
+   termini and every forced candidate, consecutive members ≥ σ/2 apart unless both
+   are forced:
+   value(S) = Σ_doors w·max(0, H − t_e(S)) − Σ_{c∈S} through_c·δ,
+   where t_e(S) is the straight-line walking time from door e to the nearer of the
+   two members of S bracketing its projection (ends before the first / after the
+   last member see that member only). "A stop exactly where the boarders' access
+   gain outweighs the through-riders' delay" (A5.4) is this objective's marginal
+   condition.
+4. **Exact maximisation**: dynamic programme over candidates in arc order,
+   f(k) = max over admissible predecessors i of f(i) + gain(i,k) − through_k·δ, with
+   gain(i,k) the doors projecting into (at_i, at_k]; a transition may not skip a
+   forced candidate. Exact because a door's gain depends only on the two members
+   around it. When no plan honours the gap between forced calls the termini alone
+   are the plan.
+5. Stops closer than 20 m to an already-added stop are dropped; the path is trimmed
+   to [first call, last call]; Length recomputed.
 
-All deterministic given the score oracle; verification target: independent
-re-evaluation + invariant checking (gap ≥ 0.6·step between consecutive kept calls
-except across skipped windows — note the invariant the code actually maintains is on
-*chosen positions of consecutive kept windows*, verified as such).
+The line then needs ≥ `MinStops` = 3 calls and an end-to-end ride within the mode's
+limit (§5). Verification (`stop_plan`): the exported plans carry candidates, forced
+flags, through-flow, doors and the mod's choice; the subject re-solves with the mod's
+DP, the evaluator computes the exact optimum (complete enumeration of the free
+candidates when ≤ 14, otherwise an independent DP over the same definition) and
+requires the mod's choice to be feasible and of optimal value; ties are reported.
+Three synthetic instances pass; a real-city `-stops` export is pending.
 
-## 5. S6 — Mode choice (`ChooseMode`)
+### 4.1 History: v1 windows (verified 2026-09-03, retired 2026-09-05)
 
-For network-permitted modes in capacity order: mode M is chosen iff
-(flow ≥ refFlow · MinFlowMultiple(M) ∨ (reachBar(M) > 0 ∧ enabledShare ≥ reachBar(M)))
-∧ (¬demandScored ∨ enabledDemand ≥ MinRiders(M, capacity)) ∧ length ≥ MinLength(M),
-first match wins; reachBar halved when trackShare ≥ 0.6. Constant tables in
-`TransitMode.cs`. enabledShare = EnabledDemand / m_UnservedTravelWeight (the
-post-discount city-wide sum). trackShare is the fraction of *path vertices* whose
-32 m tile has the track mask set (vertex- not length-weighted — a documented bias).
-MinRiders(M, cap) = cap / (0.2 · 2) for non-bus modes; vehicle capacity is read from
-the largest loaded prefab per mode, minimum consist count. Deterministic gate
-cascade — verification target: re-evaluation. (Note: `MinCityTravelForReach = 20000`
-mentioned in `OPEN-GAPS.md` no longer exists in the code; the reach gate is the share
-above.) On rejection, a non-road candidate is re-traced on the road graph between its
-two end stops (`RetraceOnRoad`, snap 600 m, path cap 30000 m), inheriting
-EnabledDemand/DemandScored unchanged.
+v1 placed calling offsets o_i = T·i/n (n = round(T/σ)), nudged each within
+±0.35·step to the best-scoring sample, forced stations within 150 m, and kept a
+window iff terminus ∨ forced ∨ score ≥ 0.35·median⁺ (`PlanCallingPoints`,
+`SelectCallingPoints`, Lean `Verify.CallingPoints`). C7.5 showed that stops placed
+by spacing alone miss the joint optimum; the v2 plan optimises the declared
+objective instead. The Lean theorems remain valid statements about the v1 rules.
+
+## 5. S6 — Mode choice (`ChooseMode`, v2, Phase 7, 2026-09-05; A6.x, A4.6/A6.1, A5.5)
+
+For the network's ladder — Road: Bus, Tram; Rail: Metro, Train (one rail lattice,
+A4.5); Water: Ferry — the mode is the first whose vehicles are not overloaded by the
+candidate's standalone riders:
+utilisation(M) = riders·2 / ((D / headway_M) · 2 · capacity_M) ≤ 1, with D = 4369.07
+movement seconds per game day, headway_M the line prefab's default interval
+(`TransportLineData.m_DefaultVehicleInterval`; table fallback), capacity_M the
+largest vehicle prefab's seats (carriages included). If every mode is overloaded the
+largest is chosen; a network with no vehicle installed yields no mode. Whether the
+line reaches the utilisation FLOOR is not asked here — a feeder alone rarely fills
+anything — but by the set selection on the set's own riders (§6.3). A lattice
+candidate whose standalone utilisation is below the floor is additionally offered
+re-traced along streets (A4.7-style second candidate).
+
+**Shape gates** (`KeepsItsShape`): ≥ 3 stops and ride time ≤ Bus 30 / Tram 35 /
+Metro 30 / Train 60 / Ferry 45 min, ride time = directed street legs (or length at
+cruise speed) + (stops − 2)·δ. The length floors and ceilings of v1
+(`MinLengthFor`, `MaxRouteMetres`), the flow multiples, reach shares, track relief
+and one-bus rider floor are removed; corridor growth and lattice traces are bounded
+by the longest ride the network's modes allow at cruise speed
+(`MaxAlignmentMetresFor`). Verification (`mode_choice`): binary32 re-derivation of
+the ladder, utilisation and δ; bit-exact on the sweep instance.
+
+### 5.1 History: v1 gate cascade (retired 2026-09-05)
+
+M was chosen iff (flow ≥ refFlow·MinFlowMultiple(M) ∨ enabledShare ≥ reachBar(M))
+∧ (¬demandScored ∨ enabledDemand ≥ MinRiders(M)) ∧ length ≥ MinLength(M), first
+match; reachBar halved when trackShare ≥ 0.6. Bit-exact agreement was verified on
+`mode-choice-sweep` (v1).
 
 ## 6. S7 — Transit routing, candidate credit, greedy acceptance
 
@@ -687,4 +739,6 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-05 | **S2 candidates are network nodes; separation is walking time ≥ stop spacing** (`SolveOnNetwork`, ball clique-cover bound) | A2.1, A2.2, A2.4 | new kind `sites_walk`: exact Dijkstra conflicts, SCIP/VIPR on pairwise MIP, exact selection judged |
 | 2026-09-05 | **S2 site selection is exact** (`SuitabilityExactSites`, branch-and-bound with block-partition bound, integer-scaled scores, node budget 2·10⁶ with reported ceiling); the greedy ranking stays as incumbent and measured baseline | A2.3 | subject reports `exact_*` fields; `run.py` requires gap 0 against the certified optimum when the search closed, else a sound bracket — 6/6 instances closed (two real cities: 14 and 0 nodes) |
 | 2026-09-05 | **S7 selects the line set exactly under the passenger-time objective** (§6.2–6.3: zone-node routing, before/after door-to-door, saved = Σ w·(before−after), lexicographic with the capped equity share, utilisation and duplicate feasibility on the set, branch-and-bound with the monotone union bound, node budget → optimum or best + ceiling; greedy rounds, `CreditLine`, the transfer discount/`TransferPenalty` setting, switch margin and the 150 m duplicate rule removed; utilisation floor default 15 % with the 4369 s game day) | A7.5, A4.1, A1.8, A3.1, A3.3, A4.2, A4.3, A4.4, A7.2, A7.4 | new kind `lineset_time` (subject = mod `Solve`; exact evaluator; complete or bounded enumeration over feasible subsets; key ties reported); v1 kind `lineset` and its evaluator removed |
+| 2026-09-05 | **S5 stop plan** (§4 v2: candidates every 50 m, forced interchanges, doors within the access horizon, through-flow at the candidate, δ from the prefabs; exact DP of Σ w·max(0, H − t) − Σ through·δ under the σ/2 gap floor) replaces the v1 windows | A5.1, A5.2, A5.4, A5.5 | new kind `stop_plan` (subject DP vs exact optimum by enumeration/independent DP); `calling_points` kind removed; Lean `CallingPoints` theorems historical |
+| 2026-09-05 | **S6 capacity ladder** (§5 v2: smallest mode not overloaded at the prefab headway; ≥ 3 stops; ride limits 30/35/30/60/45 min; one rail lattice with the train's track preference for metro too; ferries offered every journey; journeys as door-to-door pairs in the set objective) | A6.x, A4.6, A6.1, A4.5, A3.4, A0.5 | `mode_choice` kind rewritten (bit-exact ladder); `lineset_time` pairs are now journeys |
 | 2026-09-04 | Interchange/coverage weight of another mode's stop = **vehicle capacity ÷ bus capacity from the loaded prefabs** (`TransitModes.CapacityWeight`), replacing the table 1/1.2/1.5/2.5/3; a type without a loaded vehicle weighs 0 | A1.10 | heatmap `w_b32` remain instance data; new pure function unit-tested |

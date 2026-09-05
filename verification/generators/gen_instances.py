@@ -8,8 +8,8 @@ Instance kinds and what they verify (see docs/formal-specification.md):
   sites          S2  FindTopSites: feasibility, greedy faithfulness, exact gap
                      to the certified max-sum optimum (SCIP exact + VIPR).
   lattice_path   S4  Dijkstra path optimality (exact distance-label certificate).
-  calling_points S5  PlanCallingPoints / SelectCallingPoints invariants.
-  mode_choice    S6  ChooseMode gate cascade re-evaluation.
+  stop_plan      S5 v2  the stop-plan objective: mod DP vs exact optimum (enumeration/DP).
+  mode_choice    S6 v2  the capacity ladder re-evaluated in binary32.
   lineset_time   S7 v2  passenger-time set objective: the mod's exact B&B against a
                      complete enumeration of feasible subsets.
 """
@@ -187,33 +187,58 @@ def lattice_path_tie():
 
 # ------------------------------------------------------- calling_points (S5)
 
-def calling_points_cases():
-    """PlanCallingPoints length/spacing cases incl. the README's 2150/450
-    example, plus SelectCallingPoints score profiles."""
-    return {
-        "kind": "calling_points",
-        "name": "calling-points",
-        "data": {
-            "plans": [
-                {"length_b32": f32_bits(2150.0), "spacing_b32": f32_bits(450.0), "buffer": 32},
-                {"length_b32": f32_bits(6000.0), "spacing_b32": f32_bits(800.0), "buffer": 32},
-                {"length_b32": f32_bits(100.0), "spacing_b32": f32_bits(450.0), "buffer": 32},
-                {"length_b32": f32_bits(2150.0), "spacing_b32": f32_bits(450.0), "buffer": 3},
-            ],
-            "selections": [
-                {
-                    "scores_b32": f32_list([1.0, 0.0, 4.0, 0.1, 3.0, 0.0, 2.0]),
-                    "floor_share_b32": f32_bits(0.35),
-                    "must_call": [False, False, False, False, False, True, False],
-                },
-                {
-                    "scores_b32": f32_list([0.0, 0.0, 0.0, 0.0]),
-                    "floor_share_b32": f32_bits(0.35),
-                    "must_call": [False, False, False, False],
-                },
-            ],
-        },
+def _stop_plan(name, comment, cands, ends, gap, delay, horizon, chosen=None, expect=None):
+    """cands: list of (at, x, z, must, through); ends: list of (at, x, z, w)."""
+    inst = {
+        "kind": "stop_plan", "name": name, "comment": comment,
+        "data": {"plans": [{
+            "mode": "Bus",
+            "candidate_at_b32": f32_list([c[0] for c in cands]), "candidate_x_b32": f32_list([c[1] for c in cands]),
+            "candidate_z_b32": f32_list([c[2] for c in cands]), "must_call": [bool(c[3]) for c in cands],
+            "through_flow_b32": f32_list([c[4] for c in cands]),
+            "end_at_b32": f32_list([e[0] for e in ends]), "end_x_b32": f32_list([e[1] for e in ends]),
+            "end_z_b32": f32_list([e[2] for e in ends]), "end_w_b32": f32_list([e[3] for e in ends]),
+            "min_gap_b32": f32_bits(gap), "delay_per_stop_b32": f32_bits(delay),
+            "horizon_b32": f32_bits(horizon), "walk_speed_b32": f32_bits(1.2),
+            "chosen": chosen,
+        }]},
     }
+    if expect:
+        inst["expect"] = expect
+    return inst
+
+
+def stop_plan_cases():
+    """The README's rule by construction: a 3 km bus line, candidates every 100 m,
+    200 through-riders and 20 s a stop (4000 s·journeys per call). A door of 50
+    journeys 60 m off the line at 1000 m saves 50 × (360 − 50) = 15 500: called
+    at. Ten journeys at 2000 m save 3100: not worth a call. Termini forced."""
+    cands = [(100.0 * i, 100.0 * i, 0.0, False, 200.0) for i in range(31)]
+    ends = [(1000.0, 1000.0, 60.0, 50.0), (2000.0, 2000.0, 60.0, 10.0)]
+    return _stop_plan("stop-plan-boarders", "a call where boarders outweigh through-riders, none where they do not",
+                      cands, ends, 175.0, 20.0, 360.0, chosen=[0, 10, 30], expect={"pass": True})
+
+
+def stop_plan_forced():
+    """An interchange at 700 m with nobody boarding is still called at; a door 200 m
+    past it cannot get its own stop inside the 400 m gap floor."""
+    cands = [(100.0 * i, 100.0 * i, 0.0, i == 7, 1000.0) for i in range(21)]
+    ends = [(900.0, 900.0, 10.0, 80.0)]
+    return _stop_plan("stop-plan-forced", "forced interchange call and the gap floor",
+                      cands, ends, 400.0, 30.0, 360.0, chosen=None, expect={"pass": True})
+
+
+def stop_plan_random():
+    """Seeded: 11 candidates, 9 doors, random through-flow and one forced call;
+    exact optimum by complete enumeration of the free candidates."""
+    rng = random.Random(20260905)
+    cands = [(100.0 * i, 100.0 * i, 0.0, i == 5, float(rng.randint(20, 300))) for i in range(11)]
+    ends = [(rng.uniform(0.0, 1000.0), 0.0, 0.0, float(rng.randint(1, 60))) for _ in range(9)]
+    ends = [(a, a, rng.uniform(-150.0, 150.0), w) for (a, _, _, w) in ends]
+    inst = _stop_plan("stop-plan-random", "seeded plan, exact optimum by enumeration",
+                      cands, ends, 250.0, 25.0, 420.0, chosen=None, expect={"pass": True})
+    inst["seed"] = 20260905
+    return inst
 
 
 # ------------------------------------------------------- heatmap point (S1)
@@ -468,51 +493,29 @@ def order_stats():
 # ----------------------------------------------------------- mode_choice (S6)
 
 def mode_choice_sweep():
-    """Evidence rows sweeping every gate: flow bar, reach bar (with and without
-    track relief), rider floor, length floors, unscored-demand bypass."""
-    def row(network, traced, flow, length, enabled, city, track, scored, ref):
-        return {
-            "network": network, "traced_mode": traced,
-            "flow_b32": f32_bits(flow), "length_b32": f32_bits(length),
-            "enabled_demand_b32": f32_bits(enabled),
-            "city_travel_weight_b32": f32_bits(city),
-            "track_share_b32": f32_bits(track),
-            "demand_scored": scored,
-            "reference_flow_b32": f32_bits(ref),
-        }
-
-    rows = [
-        # Road: tram by flow (1.5x ref), long enough.
-        row("Road", "Bus", 160.0, 2500.0, 500.0, 10000.0, 0.0, True, 100.0),
-        # Road: bus fallback (below tram flow bar).
-        row("Road", "Bus", 120.0, 2500.0, 500.0, 10000.0, 0.0, True, 100.0),
-        # Road: too short for any road mode.
-        row("Road", "Bus", 160.0, 900.0, 500.0, 10000.0, 0.0, True, 100.0),
-        # Rail/Train: by reach share exactly at the 0.04 bar, riders above the
-        # floor (train floor = 900/0.4 = 2250 journeys).
-        row("Rail", "Train", 10.0, 12000.0, 2400.0, 60000.0, 0.0, True, 100.0),
-        # Rail/Train: reach bar halved on track share 0.6 (share 0.02 suffices).
-        row("Rail", "Train", 10.0, 12000.0, 2400.0, 120000.0, 0.6, True, 100.0),
-        # Rail/Train: reach met but riders below the floor -> DemandTooLow.
-        row("Rail", "Train", 10.0, 12000.0, 400.0, 10000.0, 0.0, True, 100.0),
-        # Rail/Metro: rider floor rejects (enabled < capacity/0.4).
-        row("Rail", "Metro", 600.0, 4000.0, 100.0, 10000.0, 0.0, True, 100.0),
-        # Rail/Metro: unscored demand bypasses the rider floor.
-        row("Rail", "Metro", 600.0, 4000.0, 0.0, 10000.0, 0.0, False, 100.0),
-        # Water/Ferry: flow multiple 1, min length 1200, riders above 100/0.4.
-        row("Water", "Ferry", 100.0, 1500.0, 300.0, 10000.0, 0.0, True, 100.0),
-        # Water/Ferry: riders fine, but too short -> TooShort.
-        row("Water", "Ferry", 100.0, 1100.0, 300.0, 10000.0, 0.0, True, 100.0),
-    ]
-    capacities = {"Bus": 80.0, "Metro": 1080.0, "Tram": 200.0,
-                  "Train": 900.0, "Ferry": 100.0}
+    """The capacity ladder (S6 v2): riders per day climb from bus to tram and from
+    metro to train as the smaller vehicle overloads at its own headway; a network
+    with no vehicle installed yields no mode; a missing line prefab falls back to
+    the table headway."""
+    def facts(cap, hw, stop, acc, brk):
+        return {"capacity_b32": f32_bits(cap), "headway_b32": f32_bits(hw), "stop_duration_b32": f32_bits(stop),
+                "acceleration_b32": f32_bits(acc), "braking_b32": f32_bits(brk)}
+    rows = [{"network": n, "riders_b32": f32_bits(r)} for n, r in [
+        ("Road", 100.0), ("Road", 1200.0), ("Road", 2000.0), ("Road", 100000.0),
+        ("Rail", 5000.0), ("Rail", 30000.0), ("Rail", 1e9),
+        ("Water", 10.0), ("Water", 5000.0)]]
     return {
-        "kind": "mode_choice",
-        "name": "mode-choice-sweep",
+        "kind": "mode_choice", "name": "mode-choice-sweep",
+        "comment": "capacity ladder over the game's fleet facts; Water has no line prefab (table headway)",
         "data": {
             "rows": rows,
-            "capacities_b32": {k: f32_bits(v) for k, v in capacities.items()},
+            "facts": {
+                "Bus": facts(80.0, 300.0, 15.0, 1.5, 1.5), "Tram": facts(240.0, 240.0, 15.0, 1.2, 1.2),
+                "Metro": facts(540.0, 200.0, 20.0, 1.2, 1.2), "Train": facts(1680.0, 480.0, 30.0, 1.0, 1.0),
+                "Ferry": facts(400.0, 0.0, 40.0, 0.5, 0.5),
+            },
         },
+        "expect": {"pass": True},
     }
 
 
@@ -1145,7 +1148,9 @@ def main():
         coverage_line(),
         lattice_path_rail(),
         lattice_path_tie(),
-        calling_points_cases(),
+        stop_plan_cases(),
+        stop_plan_forced(),
+        stop_plan_random(),
         mode_choice_sweep(),
         corridor_street(),
         corridor_bridge(),

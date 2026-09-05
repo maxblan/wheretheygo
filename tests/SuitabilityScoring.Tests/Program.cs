@@ -122,14 +122,6 @@ namespace StationSuitabilityOverlay.Tests
             Run("A plan never asks for fewer vehicles than the game already wants", PlanRespectsTheGamesTarget);
             Run("A plan is sized from the peak, not from one reading", PlanSizesFromThePeak);
             Run("A plan quotes the interval that yields its fleet", PlanQuotesAnInterval);
-            Run("A train is justified by reach where flow alone never could", TrainJustifiedByReach);
-            Run("Reach cannot justify a mode that is still too short", ReachDoesNotExcuseLength);
-            Run("Following existing track lowers a train's reach bar", TrackFollowingEasesTheTrainBar);
-            Run("A lattice alignment keeps the mode that traced it", ALatticeAlignmentKeepsTheModeThatTracedIt);
-            Run("A mode must fill its own vehicles", AModeMustFillItsOwnVehicles);
-            Run("Flow alone does not buy a tram", FlowAloneDoesNotBuyATram);
-            Run("Only a rail mode may be justified by reach", ReachIsRailOnly);
-            Run("A sub-kilometre stub is not a line", ShortStubsAreNotLines);
             Run("Growth carries straight on unless a turn is worth it", GrowthPrefersToCarryStraightOn);
             Run("Growth heads away from where it started", GrowthHeadsAwayFromItsOtherEnd);
             Run("A detour to an interchange is worth only so much", ADetourIsWorthOnlySoMuch);
@@ -137,12 +129,13 @@ namespace StationSuitabilityOverlay.Tests
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
             Run("A hub is every mode within a walk, not one stop's own", AHubIsTheUnionOverAWalk);
-            Run("Calls are spread evenly, never bunched at the end", CallsAreSpreadEvenly);
             Run("The bigger interchange beats the nearer one", TheBiggerInterchangeWins);
-            Run("An interchange call survives a thin score", AnInterchangeCallSurvivesAThinScore);
-            Run("A line does not call where there is nothing", EmptyGroundGetsNoStop);
-            Run("A line with nothing along it keeps all its stops", NothingScoringKeepsEveryStop);
             Run("The plan payload carries every field the panel reads", PlanPayloadIsComplete);
+            Run("Mode: the ladder climbs by the game's capacities until the riders fit", ModeClimbsTheLadderByCapacity);
+            Run("Mode: one stop costs the dwell plus braking and acceleration losses, and ride limits hold", StopDelayAndRideLimits);
+            Run("Stop plan: a call is made where boarders outweigh the through-riders' delay", StopPlanWeighsBoardersAgainstThrough);
+            Run("Stop plan: termini and interchanges are forced, the gap floor holds", StopPlanForcesTerminiAndHubs);
+            Run("Stop plan: the dynamic programme matches brute force", StopPlanMatchesBruteForce);
 
             Run("Interchange weight is capacity relative to a bus, zero when unknown", CapacityWeightIsRelativeToBus);
             Run("Export JSON matches the canonical form byte for byte", ExportJsonIsCanonical);
@@ -2847,396 +2840,257 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(expected > 20, $"the fixture must actually produce interchanges, got {expected}");
         }
 
-        // A train's value is the distance it spans, and a corridor spanning twenty
-        // kilometres necessarily spreads its flow thin over every one of its edges. On
-        // a real city the rail lattice's mean edge flow was 96, so the 8x multiple
-        // asked for 764 while the best rail corridor anywhere carried 131 — no train
-        // candidate ever reached scoring, and the log blamed length because that gate
-        // failed first.
-        // A city with enough travel that a reach SHARE is the binding test rather than
-        // the rider floor, so these tests exercise the share bars.
-        private const float BigCity = 100000f;
-
-        // Cities: Skylines II's own vehicle capacities, which the mod reads off the
-        // loaded prefabs at run time. Written down HERE only, and only so the harness
-        // has something to feed ChooseMode: nothing in the mod carries a copy.
-        private static FleetCapacity RealCapacities()
+        private static FleetFacts RealFacts()
         {
-            var byMode = new float[TransitModes.All.Length];
-            byMode[(int)ModePreset.Bus] = 80f;
-            byMode[(int)ModePreset.Tram] = 240f;
-            byMode[(int)ModePreset.Train] = 840f;
-            byMode[(int)ModePreset.Metro] = 1080f;
-            byMode[(int)ModePreset.Ferry] = 2800f;
-            return new FleetCapacity(byMode);
+            // Cities: Skylines II's own vehicle capacities and default intervals as the
+            // mod reads them off the loaded prefabs; written down here only so the
+            // harness has something to feed ChooseMode.
+            var byMode = new ModeFacts[TransitModes.All.Length];
+            byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, HeadwaySeconds = 300f, StopDurationSeconds = 15f, Acceleration = 1.5f, Braking = 1.5f };
+            byMode[(int)ModePreset.Tram] = new ModeFacts { Capacity = 240f, HeadwaySeconds = 240f, StopDurationSeconds = 15f, Acceleration = 1.2f, Braking = 1.2f };
+            byMode[(int)ModePreset.Metro] = new ModeFacts { Capacity = 540f, HeadwaySeconds = 200f, StopDurationSeconds = 20f, Acceleration = 1.2f, Braking = 1.2f };
+            byMode[(int)ModePreset.Train] = new ModeFacts { Capacity = 1680f, HeadwaySeconds = 480f, StopDurationSeconds = 30f, Acceleration = 1f, Braking = 1f };
+            byMode[(int)ModePreset.Ferry] = new ModeFacts { Capacity = 400f, HeadwaySeconds = 600f, StopDurationSeconds = 40f, Acceleration = 0.5f, Braking = 0.5f };
+            return new FleetFacts(byMode);
         }
 
-        private static void TrainJustifiedByReach()
+        private static void ModeClimbsTheLadderByCapacity()
         {
-            const float reference = 96f;
+            FleetFacts facts = RealFacts();
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100f, facts, out ModePreset mode, out float utilisation) && mode == ModePreset.Bus,
+                "a hundred riders a day fit a bus");
+            AssertTrue(utilisation is > 0f and < 0.1f, $"bus utilisation {utilisation}");
+            // 2000 riders: 4000 boardings against 4369/300·2·80 = 2330 bus seats a day.
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 2000f, facts, out mode, out utilisation) && mode == ModePreset.Tram,
+                "two thousand riders overload a bus and take the tram");
+            AssertTrue(utilisation is > 0.4f and < 0.5f, $"tram utilisation {utilisation}");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100000f, facts, out mode, out _) && mode == ModePreset.Tram,
+                "when every road mode is overloaded the largest is still named");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 5000f, facts, out mode, out _) && mode == ModePreset.Metro,
+                "the rail ladder starts at the metro");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 30000f, facts, out mode, out _) && mode == ModePreset.Train,
+                "thirty thousand riders a day overload a metro and take the train");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Water, 10f, facts, out mode, out _) && mode == ModePreset.Ferry, "water carries ferries only");
 
-            // Long, thin, and unlocking more of the unserved demand than even a train
-            // is asked for. Stated against the bar itself rather than a number of its
-            // own, so re-basing the bars cannot silently change what this asserts.
-            float trainBar = TransitModes.MinEnabledDemandShareFor(ModePreset.Train);
-            var byReach = new CorridorEvidence(
-                flow: 131f, length: 12000f, enabledDemand: trainBar * 1.5f * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, byReach, reference, RealCapacities(), out ModePreset mode, out ModeRejection why),
-                $"a long corridor unlocking real travel must justify something, got {why}");
-            AssertTrue(mode == ModePreset.Train, $"expected Train, got {mode}");
-
-            // The same corridor unlocking almost nothing still cannot.
-            float floor = TransitModes.MinEnabledDemandShareFor(ModePreset.Train) * 0.1f;
-            var noReach = new CorridorEvidence(
-                flow: 131f, length: 12000f, enabledDemand: floor * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, noReach, reference, RealCapacities(), out _, out ModeRejection quiet),
-                "reach below the bar and flow below every floor justifies nothing");
-            AssertTrue(quiet == ModeRejection.DemandTooLow, $"expected DemandTooLow, got {quiet}");
-
-            // Sheer volume is still a way through — for a candidate whose demand was
-            // never measured, which is the case it exists for: one past the transfer
-            // scoring window, ranking on flow alone. A MEASURED zero is a rejection
-            // now, and "A mode must fill its own vehicles" pins both halves.
-            var byVolume = new CorridorEvidence(
-                flow: reference * 9f, length: 12000f, enabledDemand: 0f,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: false);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, byVolume, reference, RealCapacities(), out ModePreset heavy, out _),
-                "a corridor carrying nine times the typical edge still justifies a train");
-            AssertTrue(heavy == ModePreset.Train, $"expected Train, got {heavy}");
+            var none = new FleetFacts(new ModeFacts[TransitModes.All.Length]);
+            AssertTrue(!TransitModes.ChooseMode(RouteNetwork.Road, 100f, none, out _, out _), "no vehicle installed, no mode");
+            AssertEqual(TransitModes.TargetHeadwayFor(ModePreset.Bus), none.HeadwayFor(ModePreset.Bus), 0f, "a missing line prefab falls back to the table headway");
         }
 
-        // Reach is a second way to clear the DEMAND bar, not a way past the length one.
-        private static void ReachDoesNotExcuseLength()
+        private static void StopDelayAndRideLimits()
         {
-            // 1500 m is under the minimum for either rail mode.
-            var evidence = new CorridorEvidence(
-                flow: 1f, length: 1500f, enabledDemand: 0.5f * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, evidence, 96f, RealCapacities(), out _, out ModeRejection why),
-                "a short corridor cannot become a train however much it would unlock");
-            AssertTrue(why == ModeRejection.TooShort,
-                $"and the rejection must name length, not demand — got {why}");
+            FleetFacts facts = RealFacts();
+            // Bus: dwell 15 s, cruise 9 m/s, 1.5 m/s² each way: 15 + 3 + 3.
+            AssertEqual(21f, facts.DelayPerStopSeconds(ModePreset.Bus), 1e-4f, "bus stop delay");
+            AssertEqual(30f * 60f, TransitModes.MaxRideSecondsFor(ModePreset.Bus), 0f, "bus ride limit");
+            AssertEqual(60f * 60f, TransitModes.MaxRideSecondsFor(ModePreset.Train), 0f, "train ride limit");
+            // 9 km bus with 5 stops: 1000 s driving + 3 × 21 s.
+            AssertEqual(1063f, TransitModes.RideSeconds(9000f, 5, 9f, 21f), 1e-3f, "ride seconds count intermediate stops only");
+            AssertEqual(35f * 60f * 12f, TransitModes.MaxAlignmentMetresFor(RouteNetwork.Road), 1e-2f, "the road alignment bound is the tram's limit at cruise");
         }
 
-        // A train running along track the city already has is an extension rather than
-        // a new alignment: cheaper to build, likelier to be wanted, so it clears the
-        // reach bar on half the demand. A preference, not a requirement — and what it
-        // buys is the TRAIN over the metro, since both are justified by reach and the
-        // bigger commitment asks for more evidence.
-        private static void TrackFollowingEasesTheTrainBar()
+        private static StopPlanProblem StraightLine(float length, float step, float minGap, float delay, float horizon)
         {
-            float trainBar = TransitModes.MinEnabledDemandShareFor(ModePreset.Train);
-            float between = trainBar * 0.75f;
-
-            // Long enough for a train, unlocking three quarters of what one is asked
-            // for — so the relief for following existing track is exactly what decides
-            // it. Both cases are traced on the train lattice; what changes is the
-            // ground the alignment runs over.
-            var offTrack = new CorridorEvidence(
-                flow: 1f, length: 14000f, enabledDemand: between * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, offTrack, 224f, RealCapacities(), out _, out ModeRejection thin),
-                "across fresh ground this evidence does not buy heavy rail");
-            AssertTrue(thin == ModeRejection.DemandTooLow, $"and it is the demand that is short — got {thin}");
-
-            var onTrack = new CorridorEvidence(
-                flow: 1f, length: 14000f, enabledDemand: between * BigCity,
-                cityTravelWeight: BigCity, trackShare: TransitModes.MostlyOnTrackShare, demandScored: true);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, onTrack, 224f, RealCapacities(), out ModePreset extension, out _),
-                "and along existing track the same evidence is enough");
-            AssertTrue(extension == ModePreset.Train,
-                $"following the track the city already has is what earns the train — got {extension}");
-        }
-
-        // REPLACES "Rail scale decides whether it is a train or a metro", which pinned
-        // the opposite rule: that a rail alignment picks its mode by LENGTH, becoming a
-        // metro under the train's minimum and a train over it. That was only ever a
-        // stand-in for which lattice traced the path, and it stood in wrongly.
-        //
-        // The train lattice makes existing track 0.35 against 1.6 for fresh ground, so
-        // its alignments follow the railway; the metro lattice is near-indifferent at
-        // 0.9 against 1.0, so its alignments go more or less straight. Choosing by
-        // length therefore relabelled track-hugging train paths as metros whenever they
-        // fell between the two minima — which is how a 3392 m "U-Bahn" came to take a
-        // mainline detour around open farmland between two villages a kilometre apart.
-        private static void ALatticeAlignmentKeepsTheModeThatTracedIt()
-        {
-            const float reference = 110f;
-
-            // Valmare's candidate 6, at a city size where its 7.2% reach is real money.
-            var evidence = new CorridorEvidence(
-                flow: 235f, length: 3392f, enabledDemand: 0.072f * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-
-            // Traced on the metro lattice it is a metro: over the 3200 m minimum, and
-            // its reach clears the metro bar even though its flow is far under the floor.
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Metro, evidence, reference, RealCapacities(), out ModePreset metro, out _),
-                "a metro-traced alignment of this length and reach is a metro");
-            AssertTrue(metro == ModePreset.Metro, $"expected Metro, got {metro}");
-
-            // The same evidence traced on the train lattice is NOT a metro. It is a
-            // train alignment too short to be a train, and that is the whole finding.
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, evidence, reference, RealCapacities(), out _, out ModeRejection why),
-                "a train-traced alignment must never come back as a metro");
-            AssertTrue(why == ModeRejection.TooShort,
-                $"it is rejected for being short of the train's own minimum — got {why}");
-
-            // A road corridor still chooses freely between the modes that can drive it:
-            // streets carry no mode-specific cost, so nothing about the alignment
-            // belongs to one mode rather than the other.
-            ModePreset[] road = TransitModes.ModesForTraced(RouteNetwork.Road, ModePreset.Bus);
-            AssertTrue(road.Length == 2, $"a street is open to both road modes, got {road.Length}");
-
-            ModePreset[] rail = TransitModes.ModesForTraced(RouteNetwork.Rail, ModePreset.Metro);
-            AssertTrue(rail.Length == 1 && rail[0] == ModePreset.Metro,
-                "a lattice offers only the mode whose cost model traced it");
-        }
-
-        // REPLACES "A reach share needs a city big enough to have one", which floored
-        // the reach bars against a guessed city scale of 20,000 journeys. The idea was
-        // right and the number was wrong: it put the metro's floor at 400 journeys,
-        // and a town of 6,120 promptly cleared it with 484 — about 970 boardings a day,
-        // against a CS2 subway train that holds 1,080. The line's entire daily
-        // ridership fitted in one train, with places to spare.
-        //
-        // Anchored on the game's real capacities instead. A mode has to fill one of its
-        // own vehicles at the peak, which needs no judgement about how big a city ought
-        // to be and scales with whatever assets are installed.
-        private static void AModeMustFillItsOwnVehicles()
-        {
-            const float reference = 114f;
-            FleetCapacity capacities = RealCapacities();
-
-            // Valmare exactly: 484 journeys out of 1,512 still unserved — 32%, which
-            // clears the metro's 2% reach bar more than fifteen times over.
-            const float unserved = 1512f;
-            var town = new CorridorEvidence(
-                flow: 325f, length: 3373f, enabledDemand: 484f,
-                cityTravelWeight: unserved, trackShare: 0f, demandScored: true);
-            AssertTrue(town.EnabledDemandShare > TransitModes.MinEnabledDemandShareFor(ModePreset.Metro) * 10f,
-                "the fixture must clear the reach bar comfortably, or it tests nothing");
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Metro, town, reference, capacities, out _, out ModeRejection why),
-                "484 journeys do not fill a 1,080-place subway train, whatever share of the town they are");
-            AssertTrue(why == ModeRejection.DemandTooLow, $"and the reason is demand, not length — got {why}");
-
-            // What a metro actually needs: one train's worth at the peak.
-            float metroFloor = TransitModes.MinRidersFor(ModePreset.Metro, capacities.For(ModePreset.Metro));
-            AssertTrue(metroFloor > 2000f, $"a 1,080-place train is a serious bar, got {metroFloor}");
-
-            var city = new CorridorEvidence(
-                flow: 325f, length: 3373f, enabledDemand: metroFloor * 1.01f,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Metro, city, reference, capacities, out ModePreset mode, out _),
-                "a corridor that would fill its trains is a metro");
-            AssertTrue(mode == ModePreset.Metro, $"expected Metro, got {mode}");
-
-            // Bigger vehicle, higher bar — the floors follow the capacities rather than
-            // a table anyone has to keep in step with them.
-            AssertTrue(
-                TransitModes.MinRidersFor(ModePreset.Metro, capacities.For(ModePreset.Metro))
-                    > TransitModes.MinRidersFor(ModePreset.Train, capacities.For(ModePreset.Train)),
-                "a 1,080-place subway asks more than an 840-place train");
-            AssertTrue(
-                TransitModes.MinRidersFor(ModePreset.Train, capacities.For(ModePreset.Train))
-                    > TransitModes.MinRidersFor(ModePreset.Tram, capacities.For(ModePreset.Tram)),
-                "and a train more than a 240-place tram");
-
-            // A mode the save has no vehicle for reports zero capacity, and must not be
-            // blocked on a figure nobody could read.
-            AssertEqual(0f, TransitModes.MinRidersFor(ModePreset.Metro, 0f), 0f,
-                "no vehicle installed, no rider floor");
-
-            // A demand nobody measured is not a demand of zero. An unscored candidate
-            // ranks on flow alone and the floor must let it through.
-            var unscored = new CorridorEvidence(
-                flow: reference * 9f, length: 12000f, enabledDemand: 0f,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: false);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, unscored, reference, capacities, out _, out _),
-                "sheer volume still carries a candidate whose demand was never scored");
-
-            // The same zero, once it HAS been measured, is a rejection.
-            var measuredZero = new CorridorEvidence(
-                flow: reference * 9f, length: 12000f, enabledDemand: 0f,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Rail, ModePreset.Train, measuredZero, reference, capacities, out _, out _),
-                "but a measured zero means nobody would ride it, however busy the corridor");
-        }
-
-        // Corridor flow is traffic on the ROAD, not people who would ride, and the two
-        // come apart hardest where a corridor is the only way through. The single road
-        // west out of Valmare carried 129 per edge against a city mean of 67 purely
-        // because every westbound journey funnels down it — and 129 over the tram's
-        // 1.5x multiple bought a TRAM whose entire enabled demand was six journeys,
-        // running two kilometres into open country to end at a pump station.
-        private static void FlowAloneDoesNotBuyATram()
-        {
-            const float reference = 67f;
-            const float village = 568f;
-            FleetCapacity capacities = RealCapacities();
-
-            // The corridor exactly as it was: well over the tram's flow floor of 100,
-            // long enough for a tram, and carrying almost nobody.
-            var throughTraffic = new CorridorEvidence(
-                flow: 129f, length: 1957f, enabledDemand: 6f,
-                cityTravelWeight: village, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                throughTraffic.Flow >= reference * TransitModes.MinFlowMultipleFor(ModePreset.Tram),
-                "the fixture must clear the tram's flow floor, or it tests nothing");
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, throughTraffic, reference, capacities, out ModePreset mode, out _),
-                "a road corridor still yields something — a bus has no rider floor by design");
-            AssertTrue(mode == ModePreset.Bus,
-                $"but six riders do not make it a tram, however busy the road is — got {mode}");
-
-            // A tram is justified once it would fill a 240-place tram at the peak.
-            float tramFloor = TransitModes.MinRidersFor(ModePreset.Tram, capacities.For(ModePreset.Tram));
-            var ridden = new CorridorEvidence(
-                flow: 129f, length: 1957f, enabledDemand: tramFloor * 1.01f,
-                cityTravelWeight: village, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, ridden, reference, capacities, out ModePreset tram, out _),
-                "and with riders it is justified");
-            AssertTrue(tram == ModePreset.Tram, $"as a tram — got {tram}");
-
-            // The bus stays floorless here, which is what keeps a road corridor always
-            // yielding a candidate — and what lets an over-ambitious rail alignment
-            // come back as a bus rather than as nothing.
-            AssertEqual(0f, TransitModes.MinRidersFor(ModePreset.Bus, capacities.For(ModePreset.Bus)), 0f,
-                "a bus has no rider floor at mode choice");
-            AssertTrue(TransitModes.RidersToFillOne(capacities.For(ModePreset.Bus)) > 0f,
-                "though filling one is still a real number, which the acceptance gate uses");
-        }
-
-        // Density is what justifies a ROAD mode. Letting reach speak for a tram would
-        // put one down an empty street because the line happens to touch a busy
-        // interchange. Reach belongs to the rail modes, whose value is the places they
-        // connect rather than the load on any one edge.
-        private static void ReachIsRailOnly()
-        {
-            AssertTrue(
-                TransitModes.MinEnabledDemandShareFor(ModePreset.Train)
-                    > TransitModes.MinEnabledDemandShareFor(ModePreset.Metro),
-                "the larger commitment must ask for more evidence");
-
-            foreach (ModePreset mode in TransitModes.All)
+            int count = (int)Math.Round(length / step) + 1;
+            var problem = new StopPlanProblem
             {
-                float bar = TransitModes.MinEnabledDemandShareFor(mode);
-                bool rail = mode is ModePreset.Train or ModePreset.Metro;
-                if (rail)
+                CandidateCount = count,
+                CandidateAt = new float[count],
+                CandidateX = new float[count],
+                CandidateZ = new float[count],
+                MustCall = new bool[count],
+                ThroughFlow = new float[count],
+                MinGapMetres = minGap,
+                DelaySecondsPerStop = delay,
+                AccessHorizonSeconds = horizon,
+                WalkMetresPerSecond = 1.2f,
+            };
+            for (int c = 0; c < count; c++)
+            {
+                problem.CandidateAt[c] = c * step;
+                problem.CandidateX[c] = c * step;
+            }
+
+            return problem;
+        }
+
+        private static void AddEnd(StopPlanProblem problem, float x, float z, float weight)
+        {
+            int n = problem.EndCount;
+            Array.Resize(ref problem.EndAt, n + 1);
+            Array.Resize(ref problem.EndX, n + 1);
+            Array.Resize(ref problem.EndZ, n + 1);
+            Array.Resize(ref problem.EndWeight, n + 1);
+            problem.EndAt[n] = x;
+            problem.EndX[n] = x;
+            problem.EndZ[n] = z;
+            problem.EndWeight[n] = weight;
+            problem.EndCount = n + 1;
+        }
+
+        private static void StopPlanWeighsBoardersAgainstThrough()
+        {
+            // 3 km line, candidates every 100 m, 200 through-riders everywhere, 20 s a stop
+            // → a stop costs 4000 s·journeys. A door 60 m off the line at 1000 m with 50
+            // journeys gains 50 × (360 − 50) = 15 500 with a stop there, against walking
+            // ~1000 m to a terminus (nothing within the 6 min horizon): worth calling.
+            // Ten journeys at 2000 m gain 10 × 310 = 3100: not worth 4000. Termini stay.
+            StopPlanProblem problem = StraightLine(3000f, 100f, 175f, 20f, 360f);
+            for (int c = 0; c < problem.CandidateCount; c++)
+            {
+                problem.ThroughFlow[c] = 200f;
+            }
+
+            AddEnd(problem, 1000f, 60f, 50f);
+            AddEnd(problem, 2000f, 60f, 10f);
+            StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+            AssertEqual(3, plan.Count, 0, $"three calls, got {string.Join(",", plan.Chosen)}");
+            AssertTrue(plan.Chosen[0] == 0 && plan.Chosen[2] == problem.CandidateCount - 1, "termini are the ends");
+            AssertEqual(10, plan.Chosen[1], 0, "the heavy door gets its stop at 1000 m");
+            AssertTrue(Math.Abs(plan.Gain - (50.0 * 310.0)) < 1e-2, $"gain is the heavy door's saving ({plan.Gain}); the light door walks beyond the horizon");
+            AssertTrue(Math.Abs(plan.Delay - (3 * 4000.0)) < 1e-6, $"three stops' delay ({plan.Delay})");
+
+            // Make the through-riders scarce and the light door earns its stop too.
+            for (int c = 0; c < problem.CandidateCount; c++)
+            {
+                problem.ThroughFlow[c] = 100f;
+            }
+
+            plan = SuitabilityStopPlan.Solve(problem);
+            AssertEqual(4, plan.Count, 0, "with half the through-riders the light door is worth a call");
+        }
+
+        private static void StopPlanForcesTerminiAndHubs()
+        {
+            StopPlanProblem problem = StraightLine(2000f, 100f, 400f, 30f, 360f);
+            for (int c = 0; c < problem.CandidateCount; c++)
+            {
+                problem.ThroughFlow[c] = 1000f;
+            }
+
+            problem.MustCall[7] = true;   // an interchange at 700 m, nobody boarding
+            AddEnd(problem, 900f, 10f, 80f);    // 200 m past the hub: closer than the 400 m gap
+            StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+            AssertTrue(Array.IndexOf(plan.Chosen, 7) >= 0, "the interchange is called at although nobody boards there");
+            AssertTrue(Array.IndexOf(plan.Chosen, 9) < 0, "a stop 200 m past a forced call would break the gap floor");
+            for (int i = 1; i < plan.Count; i++)
+            {
+                bool forcedPair = (plan.Chosen[i - 1] == 0 || problem.MustCall[plan.Chosen[i - 1]]) && (plan.Chosen[i] == problem.CandidateCount - 1 || problem.MustCall[plan.Chosen[i]]);
+                AssertTrue(forcedPair || problem.CandidateAt[plan.Chosen[i]] - problem.CandidateAt[plan.Chosen[i - 1]] >= 400f, "consecutive calls keep the gap");
+            }
+
+            // A line shorter than the gap still has its two termini.
+            StopPlanProblem stub = StraightLine(300f, 100f, 400f, 30f, 360f);
+            StopPlanSolution stubPlan = SuitabilityStopPlan.Solve(stub);
+            AssertEqual(2, stubPlan.Count, 0, "a stub keeps both ends");
+        }
+
+        private static void StopPlanMatchesBruteForce()
+        {
+            uint state = 7u;
+            float Next(float max)
+            {
+                state = unchecked((state * 1664525u) + 1013904223u);
+                return (state >> 8) / 16777216f * max;
+            }
+
+            for (int trial = 0; trial < 12; trial++)
+            {
+                int count = 5 + (int)Next(7f);
+                StopPlanProblem problem = StraightLine((count - 1) * 100f, 100f, 150f + Next(200f), 5f + Next(30f), 300f + Next(200f));
+                for (int c = 0; c < count; c++)
                 {
-                    AssertTrue(bar > 0f, $"{mode} is justified by what it connects");
-                    continue;
+                    problem.ThroughFlow[c] = Next(300f);
+                    problem.MustCall[c] = c > 0 && c < count - 1 && Next(1f) < 0.15f;
                 }
 
-                AssertEqual(0f, bar, 0f, $"{mode} must not be justifiable by reach alone");
-            }
-
-            // A quiet, long road corridor unlocking a great deal is still only a bus,
-            // which is the mode with no demand floor at all.
-            var evidence = new CorridorEvidence(
-                flow: 1f, length: 12000f, enabledDemand: 0.5f * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, evidence, 332f, RealCapacities(), out ModePreset road, out _),
-                "a road corridor always yields something");
-            AssertTrue(road == ModePreset.Bus, $"expected Bus, not a tram bought with reach — got {road}");
-        }
-
-        // A line that stops fewer than about five times is a pair of stops, not a
-        // service. These floors had been lowered until almost anything qualified, and
-        // the result was a 659 m bus line looping around one residential block.
-        // The defect this closes: a suggested line's stops were nudged using whatever
-        // map the PANEL was showing. With Bus selected, an existing tram stop 100 m
-        // away counted as somewhere to change to — when for a tram line it is that
-        // line's own service, already there.
-        // A window where the line passes an existing served stop must be called at,
-        // even when the tile it stands on scores under the floor. ChooseInWindow
-        // already moved the stop onto the station; SelectCallingPoints then judged the
-        // window on its score alone and could drop it, leaving a suggestion running
-        // past a station without stopping there — which is exactly the call that turns
-        // two lines into a network.
-        private static void AnInterchangeCallSurvivesAThinScore()
-        {
-            // Six windows. Index 2 is over poor ground and would fall under the floor.
-            var scores = new[] { 10f, 10f, 0.1f, 10f, 10f, 10f };
-            var scratch = new float[scores.Length];
-
-            var unmarked = new bool[scores.Length];
-            SuitabilityScoring.SelectCallingPoints(
-                scores, scores.Length, 0.35f, scratch, mustCall: null, keep: unmarked);
-            AssertTrue(!unmarked[2], "a thin window with no station is still dropped");
-
-            var marked = new bool[scores.Length];
-            var mustCall = new bool[scores.Length];
-            mustCall[2] = true;
-            SuitabilityScoring.SelectCallingPoints(
-                scores, scores.Length, 0.35f, scratch, mustCall, marked);
-            AssertTrue(marked[2], "but the same window at a station is called at anyway");
-
-            // The mask adds calls; it never removes one the score already earned.
-            for (int i = 0; i < scores.Length; i++)
-            {
-                AssertTrue(!unmarked[i] || marked[i], $"window {i} must not be lost by marking another");
-            }
-
-            // Termini were exempt before the mask existed and stay exempt without it.
-            var thin = new[] { 0.1f, 10f, 10f, 0.1f };
-            var ends = new bool[thin.Length];
-            SuitabilityScoring.SelectCallingPoints(
-                thin, thin.Length, 0.35f, new float[thin.Length], mustCall: null, keep: ends);
-            AssertTrue(ends[0] && ends[thin.Length - 1], "a line still calls at both its ends");
-        }
-
-        // The reported symptom: a 2.15 km tram calling twice within 190 m. Marching a
-        // fixed 450 m grid left the last two windows 2150 mod 450 = 350 m apart, and
-        // the nudge closed the rest.
-        private static void CallsAreSpreadEvenly()
-        {
-            var into = new float[32];
-            int count = SuitabilityScoring.PlanCallingPoints(2150f, 450f, into);
-            AssertTrue(count == 6, $"a 2150 m line at 450 m spacing makes six calls, got {count}");
-            AssertTrue(Math.Abs(into[0]) < 0.01f && Math.Abs(into[5] - 2150f) < 0.01f,
-                "the first and last are its termini");
-            for (int i = 1; i < count; i++)
-            {
-                float gap = into[i] - into[i - 1];
-                AssertTrue(Math.Abs(gap - 430f) < 0.01f, $"every interval is 430 m, gap {i} was {gap}");
-            }
-
-            // The property behind it: once a line calls more than twice, no interval may
-            // fall near the half-spacing that produced the bunching.
-            for (float length = 300f; length < 12000f; length += 37f)
-            {
-                int calls = SuitabilityScoring.PlanCallingPoints(length, 450f, into);
-                if (calls < 3)
+                int ends = 3 + (int)Next(10f);
+                for (int e = 0; e < ends; e++)
                 {
-                    continue;
+                    AddEnd(problem, Next((count - 1) * 100f), Next(300f) - 150f, 1f + Next(60f));
                 }
 
-                float step = into[1] - into[0];
-                AssertTrue(step >= 450f * 0.7f,
-                    $"a {length} m line spaced its calls {step} m apart, under 70% of 450");
-                AssertTrue(Math.Abs(into[calls - 1] - length) < 0.01f,
-                    $"and a {length} m line still reaches its own end");
+                StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+                double best = double.NegativeInfinity;
+                for (int mask = 0; mask < (1 << count); mask++)
+                {
+                    if ((mask & 1) == 0 || (mask & (1 << (count - 1))) == 0)
+                    {
+                        continue;
+                    }
+
+                    var chosen = new List<int>();
+                    bool ok = true;
+                    for (int c = 0; c < count; c++)
+                    {
+                        bool inSet = (mask & (1 << c)) != 0;
+                        ok &= inSet || !problem.MustCall[c];
+                        if (inSet)
+                        {
+                            chosen.Add(c);
+                        }
+                    }
+
+                    for (int i = 1; i < chosen.Count && ok; i++)
+                    {
+                        bool forcedPair = (chosen[i - 1] == 0 || problem.MustCall[chosen[i - 1]]) && (chosen[i] == count - 1 || problem.MustCall[chosen[i]]);
+                        ok &= forcedPair || problem.CandidateAt[chosen[i]] - problem.CandidateAt[chosen[i - 1]] >= problem.MinGapMetres;
+                    }
+
+                    if (!ok)
+                    {
+                        continue;
+                    }
+
+                    best = Math.Max(best, PlanValue(problem, chosen));
+                }
+
+                AssertTrue(Math.Abs(plan.Value - best) <= 1e-6 * Math.Max(1.0, Math.Abs(best)), $"trial {trial}: DP {plan.Value} vs brute force {best}");
+                AssertTrue(Math.Abs(PlanValue(problem, new List<int>(plan.Chosen)) - plan.Value) <= 1e-6 * Math.Max(1.0, Math.Abs(best)), $"trial {trial}: the reported value is the plan's own");
+            }
+        }
+
+        // The objective by definition: each end walks to the nearer of the two chosen
+        // stops bracketing its projection.
+        private static double PlanValue(StopPlanProblem problem, List<int> chosen)
+        {
+            double gain = 0.0;
+            for (int e = 0; e < problem.EndCount; e++)
+            {
+                int after = -1;
+                for (int i = 0; i < chosen.Count; i++)
+                {
+                    if (problem.EndAt[e] <= problem.CandidateAt[chosen[i]])
+                    {
+                        after = i;
+                        break;
+                    }
+                }
+
+                float walk;
+                if (after < 0)
+                {
+                    walk = SuitabilityStopPlan.WalkSeconds(problem, e, chosen[chosen.Count - 1]);
+                }
+                else if (after == 0)
+                {
+                    walk = SuitabilityStopPlan.WalkSeconds(problem, e, chosen[0]);
+                }
+                else
+                {
+                    walk = Math.Min(SuitabilityStopPlan.WalkSeconds(problem, e, chosen[after - 1]), SuitabilityStopPlan.WalkSeconds(problem, e, chosen[after]));
+                }
+
+                gain += problem.EndWeight[e] * SuitabilityStopPlan.Kernel(problem, walk);
             }
 
-            AssertTrue(SuitabilityScoring.PlanCallingPoints(0f, 450f, into) == 0, "no line, no calls");
-            AssertTrue(SuitabilityScoring.PlanCallingPoints(200f, 450f, into) == 2,
-                "a line shorter than one interval still has two ends");
+            double delay = 0.0;
+            foreach (int c in chosen)
+            {
+                delay += problem.ThroughFlow[c] * (double)problem.DelaySecondsPerStop;
+            }
+
+            return gain - delay;
         }
 
         // A hub in this game is several stop entities a few metres apart — the train
@@ -3319,74 +3173,6 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, 250f, out float nearX, out _, out _),
                 "both interchanges offer the same two modes");
             AssertTrue(nearX == 400f, $"so the nearer one is chosen, got {nearX}");
-        }
-
-        // The reported symptom: a suggested station standing on a solar power plant.
-        // Spacing called for a stop and the window under it had nothing to serve, but
-        // a stop was placed anyway because every interval got one.
-        private static void EmptyGroundGetsNoStop()
-        {
-            // Six windows along a line. Two and three cross an industrial plot, and the
-            // far terminus is thin — under the floor, but still the end of the line.
-            var scores = new float[] { 0.8f, 0.9f, 0.02f, 0f, 0.7f, 0.1f };
-            var keep = new bool[scores.Length];
-            SuitabilityScoring.SelectCallingPoints(scores, scores.Length, 0.35f, new float[scores.Length], null, keep);
-
-            AssertTrue(!keep[2] && !keep[3], "neither window over the empty ground is worth a call");
-            AssertTrue(keep[1] && keep[4], "the windows on either side of it still are");
-            AssertTrue(keep[0] && keep[scores.Length - 1],
-                "and both termini survive, the thin one included — they are what the line is for");
-
-            // The case that separates a positive median from a plain one: a line MOSTLY
-            // over empty ground. A plain median sits at zero there and takes the floor
-            // with it, so precisely the line that needs skipping would skip nothing.
-            var mostlyEmpty = new float[] { 0.8f, 0f, 0f, 0.9f, 0f, 0f, 0.7f, 0f, 0f, 0.75f };
-            var emptyKeep = new bool[mostlyEmpty.Length];
-            SuitabilityScoring.SelectCallingPoints(
-                mostlyEmpty, mostlyEmpty.Length, 0.35f, new float[mostlyEmpty.Length], null, emptyKeep);
-            for (int i = 1; i < mostlyEmpty.Length - 1; i++)
-            {
-                AssertTrue(emptyKeep[i] == (mostlyEmpty[i] > 0f),
-                    $"window {i} scores {mostlyEmpty[i]} and must{(mostlyEmpty[i] > 0f ? "" : " not")} be called at");
-            }
-        }
-
-        // Degenerate input must not delete a line's stops: no scoring function, or a
-        // route where the whole alignment scores zero, keeps every window.
-        private static void NothingScoringKeepsEveryStop()
-        {
-            var flat = new float[6];
-            var keep = new bool[flat.Length];
-            SuitabilityScoring.SelectCallingPoints(flat, flat.Length, 0.35f, new float[flat.Length], null, keep);
-            for (int i = 0; i < flat.Length; i++)
-            {
-                AssertTrue(keep[i], $"window {i} must survive when nothing on the line scores at all");
-            }
-        }
-
-        private static void ShortStubsAreNotLines()
-        {
-            var stub = new CorridorEvidence(
-                flow: 804f, length: 659f, enabledDemand: 0.038f * BigCity,
-                cityTravelWeight: BigCity, trackShare: 0f, demandScored: true);
-            AssertTrue(
-                !TransitModes.ChooseMode(RouteNetwork.Road, ModePreset.Bus, stub, 332f, RealCapacities(), out _, out ModeRejection why),
-                "a 659 m corridor is not a bus line however much travel it touches");
-            AssertTrue(why == ModeRejection.TooShort, $"and the reason is length — got {why}");
-
-            // Every mode's floor must be enough for a real service at its own spacing.
-            foreach (ModePreset mode in TransitModes.All)
-            {
-                if (mode == ModePreset.Ferry)
-                {
-                    // A crossing is two stops by nature.
-                    continue;
-                }
-
-                float calls = (TransitModes.MinLengthFor(mode) / TransitModes.StopSpacingFor(mode)) + 1f;
-                AssertTrue(calls >= 4.5f,
-                    $"{mode} must be long enough for about five calls at its own spacing, got {calls}");
-            }
         }
 
         // "Already served" has to mean slow FOR HERE. Against a fixed hour a ten-minute

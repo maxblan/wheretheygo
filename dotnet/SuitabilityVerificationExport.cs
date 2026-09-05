@@ -144,6 +144,12 @@ namespace StationSuitabilityOverlay
                     WriteInstance(folder, $"real-{city}-{stamp}-coverage", coverage);
                 }
 
+                string? stops = BuildStopPlanInstance($"real-{city}-{stamp}-stops");
+                if (stops is not null)
+                {
+                    WriteInstance(folder, $"real-{city}-{stamp}-stops", stops);
+                }
+
                 Mod.Log.Info(
                     $"Verification export written to {folder} " +
                     $"(grid {(capture.m_Grid.x).ToString(CultureInfo.InvariantCulture)}x{(capture.m_Grid.y).ToString(CultureInfo.InvariantCulture)}, " +
@@ -529,6 +535,66 @@ namespace StationSuitabilityOverlay
                 .Add("heavy", SuitabilityExportJson.Bool(value: true))
                 .Add("data", data)
                 .BuildHashed(ExportSchemaVersion);
+        }
+
+        // The stop plans of the kept suggestions (S5 v2): each line's candidate
+        // positions, forced calls, through-flow, the doors in reach, and the calls the
+        // mod chose. The subject re-solves each plan, the evaluator checks the choice
+        // against the objective's exact optimum.
+        private string? BuildStopPlanInstance(string name)
+        {
+            var plans = new List<string>();
+            for (int r = 0; r < m_Routes.Count; r++)
+            {
+                SuggestedRoute route = m_Routes[r];
+                StopPlanProblem? plan = route.StopPlan;
+                if (plan is null)
+                {
+                    continue;
+                }
+
+                plans.Add(new SuitabilityJsonObject()
+                    .Add("mode", SuitabilityExportJson.Str(route.Mode.ToString()))
+                    .Add("candidate_at_b32", SuitabilityExportJson.BitsArray(Prefix(plan.CandidateAt, plan.CandidateCount)))
+                    .Add("candidate_x_b32", SuitabilityExportJson.BitsArray(Prefix(plan.CandidateX, plan.CandidateCount)))
+                    .Add("candidate_z_b32", SuitabilityExportJson.BitsArray(Prefix(plan.CandidateZ, plan.CandidateCount)))
+                    .Add("must_call", SuitabilityExportJson.BoolArray(Prefix(plan.MustCall, plan.CandidateCount)))
+                    .Add("through_flow_b32", SuitabilityExportJson.BitsArray(Prefix(plan.ThroughFlow, plan.CandidateCount)))
+                    .Add("end_at_b32", SuitabilityExportJson.BitsArray(Prefix(plan.EndAt, plan.EndCount)))
+                    .Add("end_x_b32", SuitabilityExportJson.BitsArray(Prefix(plan.EndX, plan.EndCount)))
+                    .Add("end_z_b32", SuitabilityExportJson.BitsArray(Prefix(plan.EndZ, plan.EndCount)))
+                    .Add("end_w_b32", SuitabilityExportJson.BitsArray(Prefix(plan.EndWeight, plan.EndCount)))
+                    .Add("min_gap_b32", SuitabilityExportJson.Bits(plan.MinGapMetres))
+                    .Add("delay_per_stop_b32", SuitabilityExportJson.Bits(plan.DelaySecondsPerStop))
+                    .Add("horizon_b32", SuitabilityExportJson.Bits(plan.AccessHorizonSeconds))
+                    .Add("walk_speed_b32", SuitabilityExportJson.Bits(plan.WalkMetresPerSecond))
+                    .Add("chosen", SuitabilityExportJson.IntArray(route.StopPlanChosen))
+                    .Add("gain", SuitabilityExportJson.Str(route.StopPlanGain.ToString("R", CultureInfo.InvariantCulture)))
+                    .Add("delay", SuitabilityExportJson.Str(route.StopPlanDelay.ToString("R", CultureInfo.InvariantCulture)))
+                    .Build());
+            }
+
+            if (plans.Count == 0)
+            {
+                return null;
+            }
+
+            string data = new SuitabilityJsonObject()
+                .Add("plans", SuitabilityExportJson.Array(plans))
+                .Build();
+            return new SuitabilityJsonObject()
+                .Add("kind", SuitabilityExportJson.Str("stop_plan"))
+                .Add("name", SuitabilityExportJson.Str(name))
+                .Add("comment", SuitabilityExportJson.Str("stop plans of the kept suggestions, exported from a live city"))
+                .Add("data", data)
+                .BuildHashed(ExportSchemaVersion);
+        }
+
+        private static bool[] Prefix(bool[] values, int count)
+        {
+            var prefix = new bool[count];
+            System.Array.Copy(values, prefix, count);
+            return prefix;
         }
 
         // The walking network, served stops and journeys the equity share is measured
