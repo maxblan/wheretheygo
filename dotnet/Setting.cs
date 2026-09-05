@@ -620,6 +620,7 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[Stops]", "stops" },
                 { "StationSuitabilityOverlay.Panel[Vehicles]", "veh" },
                 { "StationSuitabilityOverlay.Panel[Reach]", "unlocks {0}% of unserved travel" },
+                { "StationSuitabilityOverlay.Panel[RouteUpdate]", "{0} new suggestions ready \u2014 apply" },
                 { "StationSuitabilityOverlay.Panel[RouteSchedule]", "run {0} \u00b7 {1}% full by day, {2}% by night" },
                 { "StationSuitabilityOverlay.Panel[HealthSchedule]", "runs {0} \u00b7 {1}% full by day, {2}% by night" },
                 { "StationSuitabilityOverlay.Panel[HealthScheduleAdvice]", " \u2192 switch to {0}" },

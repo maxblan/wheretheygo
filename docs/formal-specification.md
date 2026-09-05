@@ -328,8 +328,11 @@ objective instead. The Lean theorems remain valid statements about the v1 rules.
 
 ## 5. S6 — Mode choice (`ChooseMode`, v2, Phase 7, 2026-09-05; A6.x, A4.6/A6.1, A5.5)
 
-For the network's ladder — Road: Bus, Tram; Rail: Metro, Train (one rail lattice,
-A4.5); Water: Ferry — the mode is the first whose vehicles are not overloaded by the
+For the network's ladder — Road: Bus, Tram; Train lattice: Train; Metro lattice:
+Metro; Water: Ferry (**two rail lattices since 2026-09-05 evening**, A4.5 v2: a
+track segment is train or metro track by `TrackLaneData.m_TrackTypes`, and each
+lattice prefers its own kind; a metro alignment therefore never runs on train
+track) — the mode is the first whose vehicles are not overloaded by the
 candidate's standalone riders:
 utilisation(M) = riders·2 / ((D / headway_M) · 2 · capacity_M) ≤ 1, with D = 4369.07
 movement seconds per game day, headway_M = `TargetHeadwayFor` (Bus 300, Tram 240,
@@ -345,9 +348,18 @@ depend on each other; one further ladder step is taken if they disagree), and th
 alignment is ALSO offered as the next mode up whenever the ladder has one, so the
 set's utilisation ceiling (§6.3 F1) can swap an overloaded bus for a tram. Whether the
 line reaches the utilisation FLOOR is not asked here — a feeder alone rarely fills
-anything — but by the set selection on the set's own riders (§6.3). A lattice
-candidate whose standalone utilisation is below the floor is additionally offered
-re-traced along streets (A4.7-style second candidate).
+anything — but by the set selection on the set's own riders (§6.3).
+
+**The ladder crosses networks** (`ResolveCandidate`, 2026-09-05 evening, register
+A6.7): a train or metro alignment is first re-traced along streets between its two
+ends; if a bus or tram carries the alignment's own riders under the utilisation
+ceiling and passes the shape gates, THAT is the candidate and the rail alignment is
+dropped. The rail alignment stands only when no street path exists, when every
+street mode is overloaded (> 100 %) by its own riders, or when the street variant
+fails the gates. A ferry keeps its water alignment and is offered a street variant
+only under the utilisation floor. Before this rule a rail alignment won on speed
+alone: a city with its lines removed was offered three metros of 1.4–5.4 km
+(Valmare, 19:44).
 
 **Shape gates** (`KeepsItsShape`): ≥ 3 stops and ride time ≤ Bus 30 / Tram 35 /
 Metro 30 / Train 60 / Ferry 45 min, ride time = directed street legs (or length at
@@ -813,4 +825,6 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-05 | **S7 selects the line set exactly under the passenger-time objective** (§6.2–6.3: zone-node routing, before/after door-to-door, saved = Σ w·(before−after), lexicographic with the capped equity share, utilisation and duplicate feasibility on the set, branch-and-bound with the monotone union bound, node budget → optimum or best + ceiling; greedy rounds, `CreditLine`, the transfer discount/`TransferPenalty` setting, switch margin and the 150 m duplicate rule removed; utilisation floor default 15 % with the 4369 s game day) | A7.5, A4.1, A1.8, A3.1, A3.3, A4.2, A4.3, A4.4, A7.2, A7.4 | new kind `lineset_time` (subject = mod `Solve`; exact evaluator; complete or bounded enumeration over feasible subsets; key ties reported); v1 kind `lineset` and its evaluator removed |
 | 2026-09-05 | **S5 stop plan** (§4 v2: candidates every 50 m, forced interchanges, doors within the access horizon, through-flow at the candidate, δ from the prefabs; exact DP of Σ w·max(0, H − t) − Σ through·δ under the σ/2 gap floor) replaces the v1 windows | A5.1, A5.2, A5.4, A5.5 | new kind `stop_plan` (subject DP vs exact optimum by enumeration/independent DP); `calling_points` kind removed; Lean `CallingPoints` theorems historical |
 | 2026-09-05 | **S6 capacity ladder** (§5 v2: smallest mode not overloaded at the prefab headway; ≥ 3 stops; ride limits 30/35/30/60/45 min; one rail lattice with the train's track preference for metro too; ferries offered every journey; journeys as door-to-door pairs in the set objective) | A6.x, A4.6, A6.1, A4.5, A3.4, A0.5 | `mode_choice` kind rewritten (bit-exact ladder); `lineset_time` pairs are now journeys |
+| 2026-09-05 (evening) | **Two rail lattices and a ladder across networks** (§5 v2: train and metro track split by `TrackLaneData.m_TrackTypes`; a rail alignment is offered only where its street re-trace is overloaded, impossible or fails the gates) | A4.5 v2, A6.7 | mod code; log-verified (`ResolveCandidate` lines) — the export kinds are unchanged |
+| 2026-09-05 (evening) | **Passes run with the heat map hidden; a finished pass is staged** until the panel's button applies it (the list and the drawn lines never change under a selection) | A9.1 | none needed — no number changes; behaviour in the log ("staged" / "adopted") |
 | 2026-09-04 | Interchange/coverage weight of another mode's stop = **vehicle capacity ÷ bus capacity from the loaded prefabs** (`TransitModes.CapacityWeight`), replacing the table 1/1.2/1.5/2.5/3; a type without a loaded vehicle weighs 0 | A1.10 | heatmap `w_b32` remain instance data; new pure function unit-tested |

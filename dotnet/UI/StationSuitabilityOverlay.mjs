@@ -160,12 +160,18 @@ function Legend() {
 //
 // The index is a position in the list, which is only safe because that clearing
 // happens the moment a new list arrives.
-function RouteList({ raw, selected }) {
+function RouteList({ raw, selected, update }) {
     const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean);
 
     return h("div", { className: "sso-half" },
         h("div", { className: "sso-section" }, t("SuggestedLines", "Suggested lines")),
+        // A finished refresh waits here until the player takes it: the list and the
+        // lines on the map never change under a selection.
+        update
+            ? h("button", { className: "sso-improve", onClick: () => trigger("applyRouteUpdate") },
+                t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
+            : null,
         h("div", { className: "sso-scroll" },
             rows.map((row, index) => {
                 const parts = row.split("|");
@@ -444,6 +450,7 @@ function Panel() {
     const objective = useBound("objective", 1);
     const showRoutes = useBound("showRoutes", true);
     const routeList = useBound("routeList", "");
+    const routeUpdate = useBound("routeUpdate", "");
     const foreignInfoview = useBound("foreignInfoview", false);
     const heatmap = useBound("heatmap", true);
     const lineHealth = useBound("lineHealth", "");
@@ -567,7 +574,7 @@ function Panel() {
         // have is doing below. Each half scrolls on its own so neither can push the
         // other off the bottom.
         h("div", { className: "sso-column" },
-            h(RouteList, { raw: routeList, selected: selectedRoute }),
+            h(RouteList, { raw: routeList, selected: selectedRoute, update: routeUpdate }),
             h(LineHealth, {
                 raw: lineHealth,
                 plan: improvePlan,

@@ -36,12 +36,15 @@ namespace StationSuitabilityOverlay
     {
         // Streets: buses and trams have to use the road network.
         Road = 0,
-        // Land lattice blended with existing rail. Trains prefer to reuse track that
-        // already exists and only strike out on new alignment when they must; metros
-        // are the other way round, since a tunnel goes wherever it likes.
+        // Land lattice for TRAINS, cheap along existing train track (TrackTypes.Train).
         Rail = 1,
         // Open water, for ferries.
         Water = 2,
+        // Land lattice for METROS, cheap along existing metro track (TrackTypes.Subway).
+        // A metro cannot run on train track nor a train on metro track, so each has its
+        // own lattice and its own bonus (register A4.5: the same bonus, each for its
+        // own kind of track).
+        Metro = 3,
     }
 
     // What a suggested route is grown to maximise.
@@ -286,13 +289,17 @@ namespace StationSuitabilityOverlay
         // either mode that can drive it. A LATTICE alignment is not: see
         // ModesForTraced.
         // The modes a network can carry, smallest vehicle first: the ladder ChooseMode
-        // climbs until the riders fit.
+        // climbs until the riders fit. The lattices carry one mode each; the ladder
+        // ACROSS networks — a rail alignment is only offered once the street modes
+        // would be overloaded — lives in the system's ResolveCandidate.
         public static ModePreset[] ModesFor(RouteNetwork network)
         {
             switch (network)
             {
                 case RouteNetwork.Rail:
-                    return new[] { ModePreset.Metro, ModePreset.Train };
+                    return new[] { ModePreset.Train };
+                case RouteNetwork.Metro:
+                    return new[] { ModePreset.Metro };
                 case RouteNetwork.Water:
                     return new[] { ModePreset.Ferry };
                 default:

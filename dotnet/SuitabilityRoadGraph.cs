@@ -103,17 +103,23 @@ namespace StationSuitabilityOverlay
             EdgeShapeCount = null;
         }
 
-        // Collects the endpoints of every track edge, so the rail lattice can tell
-        // where alignment already exists.
+        // Existing track by kind, so each rail lattice can tell where alignment of ITS
+        // kind already exists: an edge with a train-track lane goes to the train lists,
+        // one with a metro-track lane to the metro lists (both, if it carries both).
+        // Tram track is street-bound and no lattice concern.
         public static void CollectTrackSegments(
             EntityManager entityManager,
             EntityQuery trackEdgeQuery,
             ComponentLookup<Node> nodeLookup,
-            List<float2> starts,
-            List<float2> ends)
+            List<float2> trainStarts,
+            List<float2> trainEnds,
+            List<float2> metroStarts,
+            List<float2> metroEnds)
         {
-            starts.Clear();
-            ends.Clear();
+            trainStarts.Clear();
+            trainEnds.Clear();
+            metroStarts.Clear();
+            metroEnds.Clear();
 
             using var entities = trackEdgeQuery.ToEntityArray(Allocator.Temp);
             using var edges = trackEdgeQuery.ToComponentDataArray<Edge>(Allocator.Temp);
@@ -121,7 +127,8 @@ namespace StationSuitabilityOverlay
             {
                 // The query covers every net edge, so filter to the ones carrying a
                 // track lane — that is what "rail already exists here" means.
-                if (!HasTrackLane(entityManager, entities[i]))
+                Game.Net.TrackTypes types = TrackTypesOf(entityManager, entities[i]);
+                if (types == Game.Net.TrackTypes.None)
                 {
                     continue;
                 }
@@ -134,27 +141,43 @@ namespace StationSuitabilityOverlay
 
                 float3 a = nodeLookup[edge.m_Start].m_Position;
                 float3 b = nodeLookup[edge.m_End].m_Position;
-                starts.Add(new float2(a.x, a.z));
-                ends.Add(new float2(b.x, b.z));
+                if ((types & Game.Net.TrackTypes.Train) != 0)
+                {
+                    trainStarts.Add(new float2(a.x, a.z));
+                    trainEnds.Add(new float2(b.x, b.z));
+                }
+
+                if ((types & Game.Net.TrackTypes.Subway) != 0)
+                {
+                    metroStarts.Add(new float2(a.x, a.z));
+                    metroEnds.Add(new float2(b.x, b.z));
+                }
             }
         }
 
-        private static bool HasTrackLane(EntityManager entityManager, Entity edge)
+        // The kinds of track on an edge, read off its lanes' prefabs
+        // (Game.Prefabs.TrackLaneData.m_TrackTypes: Train, Tram, Subway).
+        private static Game.Net.TrackTypes TrackTypesOf(EntityManager entityManager, Entity edge)
         {
+            var types = Game.Net.TrackTypes.None;
             if (!entityManager.TryGetBuffer(edge, isReadOnly: true, out DynamicBuffer<Game.Net.SubLane> lanes))
             {
-                return false;
+                return types;
             }
 
             for (int i = 0; i < lanes.Length; i++)
             {
-                if ((lanes[i].m_PathMethods & PathMethod.Track) != 0)
+                if ((lanes[i].m_PathMethods & PathMethod.Track) == 0
+                    || !entityManager.TryGetComponent(lanes[i].m_SubLane, out PrefabRef prefabRef)
+                    || !entityManager.TryGetComponent(prefabRef.m_Prefab, out TrackLaneData laneData))
                 {
-                    return true;
+                    continue;
                 }
+
+                types |= laneData.m_TrackTypes;
             }
 
-            return false;
+            return types;
         }
 
         public int NodeCount => Graph?.NodeCount ?? 0;

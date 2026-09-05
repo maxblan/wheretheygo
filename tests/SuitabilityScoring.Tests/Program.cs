@@ -2914,10 +2914,10 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(utilisation is > 0.4f and < 0.5f, $"tram utilisation {utilisation}");
             AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100000f, facts, out mode, out _) && mode == ModePreset.Tram,
                 "when every road mode is overloaded the largest is still named");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 5000f, facts, out mode, out _) && mode == ModePreset.Metro,
-                "the rail ladder starts at the metro");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Metro, 5000f, facts, out mode, out _) && mode == ModePreset.Metro,
+                "the metro lattice carries metros");
             AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 30000f, facts, out mode, out _) && mode == ModePreset.Train,
-                "thirty thousand riders a day overload a metro and take the train");
+                "the train lattice carries trains");
             AssertTrue(TransitModes.ChooseMode(RouteNetwork.Water, 10f, facts, out mode, out _) && mode == ModePreset.Ferry, "water carries ferries only");
 
             var none = new FleetFacts(new ModeFacts[TransitModes.All.Length]);

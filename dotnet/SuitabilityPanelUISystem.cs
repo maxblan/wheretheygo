@@ -91,6 +91,8 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<int>(Group, "routes", static () => Read(static s => s.RouteCount)));
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "showRoutes", static () => Settings is not null && Settings.ShowRoutes));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", static () => StationSuitabilityOverlaySystem.RouteListText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "routeUpdate", static () => StationSuitabilityOverlaySystem.RouteUpdateText));
+            AddBinding(new TriggerBinding(Group, "applyRouteUpdate", static () => StationSuitabilityOverlaySystem.RequestApplyRouteUpdate()));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", static () => StationSuitabilityOverlaySystem.LineHealthText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => StationSuitabilityOverlaySystem.DataCoverageText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "equity", static () => StationSuitabilityOverlaySystem.EquityText));

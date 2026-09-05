@@ -99,6 +99,14 @@ namespace StationSuitabilityOverlay
         // step with the renderer's by a comment.
         public static string RouteListText => s_RouteList;
 
+        // "N" while a finished route pass waits for the player to take it over, "" otherwise.
+        private static string s_RouteUpdate = string.Empty;
+        private static bool s_ApplyRouteUpdate;
+
+        public static string RouteUpdateText => s_RouteUpdate;
+
+        public static void RequestApplyRouteUpdate() => s_ApplyRouteUpdate = true;
+
         // One line per existing route as "mode|verdict|detail", for the panel.
         public static string LineHealthText => s_LineHealthList;
 
@@ -268,6 +276,10 @@ namespace StationSuitabilityOverlay
         private TimeSystem? m_TimeSystem;
         private EntityQuery m_EconomyQuery;
         private bool m_RoutesPending;
+        // A finished pass the player has not taken over yet. The list on screen and
+        // the lines on the map stay as they are — a selection the player is looking
+        // at is not pulled away by a refresh — until the panel's button applies it.
+        private RoutePass? m_StagedPass;
         private System.Threading.Tasks.Task? m_PendingRoutes;
         private RoutePass? m_PendingRoutePass;
         private float m_RoutePassStarted;
@@ -393,14 +405,19 @@ namespace StationSuitabilityOverlay
         // crossing cannot be expressed on the street graph at all. Train and metro
         // share the lattice shape but not its costs — train reuses existing track
         // wherever it can, metro prefers fresh alignment.
-        // One rail lattice for metro and train alike (register A4.5: both get the same
-        // preference for existing track); the riders decide which of the two runs on it.
-        private readonly SuitabilityRoadGraph m_RailNetwork = new SuitabilityRoadGraph();
+        // Two rail lattices: trains are cheap along existing train track, metros along
+        // existing metro track (register A4.5: the same bonus, each for its own kind —
+        // a metro cannot run on train track).
+        private readonly SuitabilityRoadGraph m_TrainNetwork = new SuitabilityRoadGraph();
+        private readonly SuitabilityRoadGraph m_MetroNetwork = new SuitabilityRoadGraph();
         private readonly SuitabilityRoadGraph m_WaterNetwork = new SuitabilityRoadGraph();
         private EntityQuery m_AllEdgeQuery;
         private byte[]? m_TrackMask;
         private readonly List<float2> m_TrackStarts = new List<float2>();
         private readonly List<float2> m_TrackEnds = new List<float2>();
+        private readonly List<float2> m_MetroTrackStarts = new List<float2>();
+        private readonly List<float2> m_MetroTrackEnds = new List<float2>();
+        private byte[]? m_MetroTrackMask;
         private readonly List<SuggestedRoute> m_RouteCandidates = new List<SuggestedRoute>();
 
         // Existing transit system: the lines themselves, the routable model of them,
@@ -979,20 +996,19 @@ namespace StationSuitabilityOverlay
 
             if (active != m_LastActive)
             {
-                if (active)
-                {
-                    ScheduleRecompute(0f);
-                }
-                else
-                {
-                    m_RecomputeRequested = false;
-                }
-
+                // Drawing the map neither starts nor cancels a pass: the scores it paints
+                // are the ones the route pass already keeps fresh.
+                Mod.Log.Info(active ? "Heat map shown" : "Heat map hidden");
                 m_LastActive = active;
             }
 
+            // From here on nothing is gated on `active` (the heat map being DRAWN): the
+            // access pass, the demand refresh and the route pass run whenever a city is
+            // loaded, because the suggestions and the line verdicts are read from the
+            // panel with the map off as often as on. `active` only decides whether the
+            // scores are painted (ApplyOverlayState).
             var computeSettings = ComputeSnapshot.Capture(settings);
-            if (active && !computeSettings.Equals(m_LastComputeSettings))
+            if (!computeSettings.Equals(m_LastComputeSettings))
             {
                 // Slope and mode change what counts as buildable, so the mask has to
                 // go too, not just the scores.
@@ -1010,36 +1026,33 @@ namespace StationSuitabilityOverlay
             }
             m_LastComputeSettings = computeSettings;
 
-            MaybeRecombine(settings, active);
+            MaybeRecombine(settings);
 
             int stopCount = m_StopQuery.CalculateEntityCount();
             if (stopCount != m_LastStopCount)
             {
                 m_LastStopCount = stopCount;
-                if (active)
-                {
-                    ScheduleRecompute(DebounceSeconds);
-                }
+                ScheduleRecompute(DebounceSeconds);
             }
-            else if (active && !m_StopChangedQuery.IsEmptyIgnoreFilter)
+            else if (!m_StopChangedQuery.IsEmptyIgnoreFilter)
             {
                 ScheduleRecompute(DebounceSeconds);
             }
 
             float now = UnityEngine.Time.realtimeSinceStartup;
-            if (active && !m_JobPending && !m_RecomputeRequested && m_RawTerms is not null
+            if (!m_JobPending && !m_RecomputeRequested && m_RawTerms is not null
                 && now - m_LastComputeFinish >= PeriodicRefreshSeconds)
             {
                 ScheduleRecompute(0f);
             }
 
             int2 currentSize = GetGridSize();
-            if (active && !m_JobPending && (m_RawTerms is null || !m_PlayableGridAtCompute.Equals(currentSize)))
+            if (!m_JobPending && (m_RawTerms is null || !m_PlayableGridAtCompute.Equals(currentSize)))
             {
                 ScheduleRecompute(0f);
             }
 
-            if (active && m_RecomputeRequested && !m_JobPending && !m_RoutesPending && now >= m_RecomputeAt)
+            if (m_RecomputeRequested && !m_JobPending && !m_RoutesPending && now >= m_RecomputeAt)
             {
                 if (StartCompute())
                 {
@@ -1069,7 +1082,7 @@ namespace StationSuitabilityOverlay
 
             if (!m_RoutesPending)
             {
-                MaybeUpdateTravelDemand(settings, active, now);
+                MaybeUpdateTravelDemand(settings, now);
                 SampleRidership(settings, now);
             }
 
@@ -1080,7 +1093,7 @@ namespace StationSuitabilityOverlay
         // The recombine writes the score field in place, which the route worker reads,
         // so while a pass is pending the change waits — and stays noticed, because the
         // snapshot is only recorded once the recombine has run.
-        private void MaybeRecombine(Setting settings, bool active)
+        private void MaybeRecombine(Setting settings)
         {
             if (m_RoutesPending)
             {
@@ -1088,7 +1101,7 @@ namespace StationSuitabilityOverlay
             }
 
             var combineSettings = CombineSnapshot.Capture(settings);
-            if (active && !combineSettings.Equals(m_LastCombineSettings) && m_RawTerms is not null)
+            if (!combineSettings.Equals(m_LastCombineSettings) && m_RawTerms is not null)
             {
                 RecombineAndNormalize();
             }
@@ -1098,9 +1111,9 @@ namespace StationSuitabilityOverlay
 
         // The demand pipeline needs the per-tile terms to exist (for the served
         // discount and stop snapping), so it always runs after a compute has landed.
-        private void MaybeUpdateTravelDemand(Setting settings, bool active, float now)
+        private void MaybeUpdateTravelDemand(Setting settings, float now)
         {
-            if (!active || m_RawTerms is null || m_JobPending)
+            if (m_RawTerms is null || m_JobPending)
             {
                 return;
             }
@@ -2695,6 +2708,18 @@ namespace StationSuitabilityOverlay
         private void FinishRoutesIfReady(Setting settings)
         {
             AnnounceRestoredRoutes();
+            if (s_ApplyRouteUpdate)
+            {
+                s_ApplyRouteUpdate = false;
+                if (m_StagedPass is not null)
+                {
+                    RoutePass staged = m_StagedPass;
+                    m_StagedPass = null;
+                    s_RouteUpdate = string.Empty;
+                    AdoptPass(staged);
+                }
+            }
+
             System.Threading.Tasks.Task? pending = m_PendingRoutes;
             RoutePass? pass = m_PendingRoutePass;
             if (!m_RoutesPending || pending is null || pass is null || !pending.IsCompleted)
@@ -2713,6 +2738,24 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
+            DeferredLog.Info($"Route pass finished: {(elapsed).ToString("F1", CultureInfo.InvariantCulture)} s on the worker, {(pass.Routes.Count).ToString(CultureInfo.InvariantCulture)} suggestions");
+            if (m_Routes.Count == 0)
+            {
+                AdoptPass(pass);
+                return;
+            }
+
+            // Staged, not applied: the player decides when the list changes under them.
+            // A newer pass replaces an older one still waiting.
+            m_StagedPass = pass;
+            s_RouteUpdate = (pass.Routes.Count).ToString(CultureInfo.InvariantCulture);
+            DeferredLog.Info("New suggestions are staged; the panel offers to apply them");
+        }
+
+        // Copies a finished pass into the fields the panel, the renderer and the export
+        // read, then the summary, the list and the log. Main thread only.
+        private void AdoptPass(RoutePass pass)
+        {
             m_RouteCandidates.Clear();
             m_RouteCandidates.AddRange(pass.Candidates);
             m_Routes.Clear();
@@ -2733,7 +2776,6 @@ namespace StationSuitabilityOverlay
                 LogSanityChecks(pass.TotalZoneWeight);
             }
 
-            DeferredLog.Info($"Route pass adopted: {(elapsed).ToString("F1", CultureInfo.InvariantCulture)} s on the worker, {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)} suggestions");
         }
 
         private void DiscardPendingRoutes()
@@ -2748,6 +2790,8 @@ namespace StationSuitabilityOverlay
             m_PendingRoutes = null;
             m_PendingRoutePass = null;
             m_RoutesPending = false;
+            m_StagedPass = null;
+            s_RouteUpdate = string.Empty;
         }
 
         // Purposes that count as shopping or leisure (register A0.1). Working,
@@ -3976,8 +4020,8 @@ namespace StationSuitabilityOverlay
         {
             switch (mode)
             {
-                case ModePreset.Train: return m_RailNetwork;
-                case ModePreset.Metro: return m_RailNetwork;
+                case ModePreset.Train: return m_TrainNetwork;
+                case ModePreset.Metro: return m_MetroNetwork;
                 case ModePreset.Ferry: return m_WaterNetwork;
                 default: return m_RoadGraph;
             }
@@ -4228,22 +4272,34 @@ namespace StationSuitabilityOverlay
             m_ZoneNodes = m_RoadGraph.MapZonesToNodes(m_ZoneGrid, worldMin);
 
             int cells = gridSize.x * gridSize.y;
+            if (m_MetroTrackMask is null || m_MetroTrackMask.Length != cells)
+            {
+                m_MetroTrackMask = new byte[cells];
+            }
+
             if (m_TrackMask is null || m_TrackMask.Length != cells)
             {
                 m_TrackMask = new byte[cells];
             }
 
-            SuitabilityRoadGraph.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds);
+            SuitabilityRoadGraph.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds, m_MetroTrackStarts, m_MetroTrackEnds);
             SuitabilityLattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, gridSize, worldMin, TileSize, m_TrackMask);
+            SuitabilityLattice.RasterizeTracks(m_MetroTrackStarts, m_MetroTrackEnds, gridSize, worldMin, TileSize, m_MetroTrackMask);
 
             bool LandTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] != 0;
             bool WaterTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] == 0;
             bool OnTrack(int tile) => m_TrackMask is not null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
+            bool OnMetroTrack(int tile) => m_MetroTrackMask is not null && tile < m_MetroTrackMask.Length && m_MetroTrackMask[tile] != 0;
 
-            CompactGraph railGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
+            CompactGraph trainGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
                 tile => SuitabilityLattice.RailCostScale(OnTrack(tile)),
-                out float[] railX, out float[] railZ);
-            m_RailNetwork.Adopt(railGraph, railX, railZ, RouteNetwork.Rail);
+                out float[] trainX, out float[] trainZ);
+            m_TrainNetwork.Adopt(trainGraph, trainX, trainZ, RouteNetwork.Rail);
+
+            CompactGraph metroGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, LandTile,
+                tile => SuitabilityLattice.RailCostScale(OnMetroTrack(tile)),
+                out float[] metroX, out float[] metroZ);
+            m_MetroNetwork.Adopt(metroGraph, metroX, metroZ, RouteNetwork.Metro);
 
             CompactGraph waterGraph = SuitabilityLattice.Build(gridSize, worldMin, TileSize, WaterTile,
                 tileCostScale: null, out float[] waterX, out float[] waterZ);
@@ -4252,7 +4308,8 @@ namespace StationSuitabilityOverlay
             m_GraphDirty = false;
             DeferredLog.Info(
                 $"Networks built: road {(m_RoadGraph.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_RoadGraph.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
-                $"rail {(m_RailNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_RailNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
+                $"train lattice {(m_TrainNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_TrainNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)} on {(m_TrackStarts.Count).ToString(CultureInfo.InvariantCulture)} train track segments, " +
+                $"metro lattice {(m_MetroNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_MetroNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)} on {(m_MetroTrackStarts.Count).ToString(CultureInfo.InvariantCulture)} metro track segments, " +
                 $"water {(m_WaterNetwork.NodeCount).ToString(CultureInfo.InvariantCulture)}/{(m_WaterNetwork.EdgeCount).ToString(CultureInfo.InvariantCulture)}, " +
                 $"trackSegments={m_TrackStarts.Count}; directed road arcs {(m_RoadGraph.Directed?.ArcCount ?? 0).ToString(CultureInfo.InvariantCulture)}, " +
                 $"one-way streets {(m_RoadGraph.OneWayEdges).ToString(CultureInfo.InvariantCulture)}, " +
@@ -4291,7 +4348,8 @@ namespace StationSuitabilityOverlay
                 pass.AssignedWeight = assignedWeight;
             }
 
-            AssignLatticeFlow(m_RailNetwork, worldMin, m_ZoneFlows);
+            AssignLatticeFlow(m_TrainNetwork, worldMin, m_ZoneFlows);
+            AssignLatticeFlow(m_MetroNetwork, worldMin, m_ZoneFlows);
             // Every journey is offered to the water lattice too (register A3.4): a
             // ferry along a coast is judged like any other line, by the time it saves
             // and the seats it fills, not by whether the ends share a landmass.
@@ -4313,13 +4371,17 @@ namespace StationSuitabilityOverlay
 
             // The lattices connect two places rather than following a flow ridge — see
             // BuildDirectForNetwork for why growth is the wrong instrument on a uniform
-            // grid. One rail lattice serves metro and train (A4.5); the water lattice
-            // sees every journey (A3.4). Alignments start as the network's smallest
-            // mode; the riders decide the real one (ChooseMode).
-            SuitabilityRoutes.BuildDirectForNetwork(m_RailNetwork, m_ZoneFlows,
-                m_RailNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
-                TransitModes.MaxAlignmentMetresFor(RouteNetwork.Rail), TransitModes.ModesFor(RouteNetwork.Rail)[0], candidates,
+            // grid. Trains and metros each trace on their own lattice (A4.5); the water
+            // lattice sees every journey (A3.4).
+            SuitabilityRoutes.BuildDirectForNetwork(m_TrainNetwork, m_ZoneFlows,
+                m_TrainNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
+                TransitModes.MaxAlignmentMetresFor(RouteNetwork.Rail), ModePreset.Train, candidates,
                 stops, out int g2, out int s2, out int h2);
+
+            SuitabilityRoutes.BuildDirectForNetwork(m_MetroNetwork, m_ZoneFlows,
+                m_MetroNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
+                TransitModes.MaxAlignmentMetresFor(RouteNetwork.Metro), ModePreset.Metro, candidates,
+                stops, out int g3, out int s3, out int h3);
 
             var shoreline = new StopContext
             {
@@ -4333,16 +4395,14 @@ namespace StationSuitabilityOverlay
                 m_WaterNetwork.MapZonesToNodes(m_ZoneGrid, worldMin), settings.RouteCount,
                 TransitModes.MaxAlignmentMetresFor(RouteNetwork.Water), ModePreset.Ferry, candidates,
                 shoreline, out int g4, out int s4, out int h4);
-            int g3 = 0;
-            int s3 = 0;
-            int h3 = 0;
 
             grownTotal = g1 + g2 + g3 + g4;
             shortTotal = s1 + s2 + s3 + s4;
 
             DeferredLog.Info(
                 $"Candidates by network: road grown={(g1).ToString(CultureInfo.InvariantCulture)} tooShort={(s1).ToString(CultureInfo.InvariantCulture)}, " +
-                $"rail pairs tried={(g2 + g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s2 + s3).ToString(CultureInfo.InvariantCulture)}, " +
+                $"train pairs tried={(g2).ToString(CultureInfo.InvariantCulture)} tooShort={(s2).ToString(CultureInfo.InvariantCulture)}, " +
+                $"metro pairs tried={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, " +
                 $"ferry pairs tried={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
                 $"termini aimed at an interchange={(h1 + h2 + h3 + h4).ToString(CultureInfo.InvariantCulture)} (road {(h1).ToString(CultureInfo.InvariantCulture)}) of {(m_Interchanges.Count).ToString(CultureInfo.InvariantCulture)} served stops, " +
                 $"tooShort = fewer than {(TransitModes.MinStops).ToString(CultureInfo.InvariantCulture)} stops; " +
@@ -4964,16 +5024,22 @@ namespace StationSuitabilityOverlay
                 : ms / 1000.0;
         }
 
-        // Settles what mode a candidate runs as and hands it to the line gates. The
-        // mode is the smallest whose vehicles the candidate's OWN standalone riders do
-        // not overload (TransitModes.ChooseMode, register A6.x), measured again after
-        // the stops are re-placed for it — a metro's doors are not a bus's. The next
-        // mode up is offered as a second candidate whenever the ladder has one, because
-        // a set can hand a line more riders than it carries alone (a feeder's trunk),
-        // and the set's utilisation ceiling then rules the smaller one out. A lattice
-        // alignment whose riders leave even the smallest rail vehicle under the
-        // utilisation floor is also offered re-traced along streets. Variants of one
-        // alignment duplicate each other, so a set holds at most one of them.
+        // Settles what mode a candidate runs as and hands it to the line gates (register
+        // A6.x: the smallest mode whose vehicles the riders do not overload).
+        //
+        // For a RAIL alignment the ladder starts on the streets: the same journey is
+        // re-traced along roads and, if a bus or tram carries its own riders without
+        // overloading, that is the candidate — a metro is only offered where the street
+        // modes would be overloaded or no street path exists. Without this rule a rail
+        // alignment always won on speed alone, and a city with its lines removed was
+        // offered three metros of 1.4 to 5.4 km (Valmare, 19:44). Ferries keep their
+        // water alignment and fall back to streets only under the utilisation floor.
+        //
+        // The mode chosen is re-measured after the stops are re-placed for it, and the
+        // next mode up is offered as a second candidate whenever a set could hand the
+        // line enough riders to overload it (a feeder's trunk); the set's utilisation
+        // ceiling then rules the smaller one out. Variants of one alignment duplicate
+        // each other, so a set holds at most one of them.
         private void ResolveCandidate(
             Setting settings,
             SuggestedRoute candidate,
@@ -4985,6 +5051,13 @@ namespace StationSuitabilityOverlay
             List<SuggestedRoute> resolved,
             RoutePass pass)
         {
+            bool onLattice = candidate.Network is RouteNetwork.Rail or RouteNetwork.Metro;
+            if (onLattice && candidate.Stops.Count >= 2
+                && OfferOnStreets(settings, candidate, index, facts, stops, scratch, tally, resolved, pass, requireFit: true))
+            {
+                return;
+            }
+
             if (!SettleMode(settings, candidate, index, facts, stops, pass, out float utilisation, out ModePreset? nextUp))
             {
                 tally.Unjustified++;
@@ -4996,60 +5069,88 @@ namespace StationSuitabilityOverlay
                 resolved.Add(candidate);
             }
 
-            // The next mode up is worth offering when the set could plausibly overload
-            // this one: past half its seats alone. Below that the larger vehicle would
-            // sit under the utilisation floor in any set, and the pool stays smaller.
-            if (nextUp is ModePreset larger && utilisation >= TransitModes.MaxPlannedUtilisation * 0.5f)
-            {
-                SuggestedRoute variant = candidate.CopyFor(larger);
-                SuitabilityRoutes.Restop(variant, larger, stops);
-                variant.EnabledDemand = RidersAlone(settings, variant, pass);
-                DeferredLog.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: also offered as a {larger} " +
-                    $"({variant.Stops.Count} stops, riders/day alone={(variant.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)})");
-                if (PassesLineGates(variant, index, facts, tally))
-                {
-                    resolved.Add(variant);
-                }
-            }
+            OfferNextUp(settings, candidate, index, facts, stops, resolved, pass, nextUp, utilisation);
 
-            if (candidate.Network == RouteNetwork.Road || candidate.Stops.Count < 2 || utilisation >= settings.UtilisationFloorPercent / 100f)
+            if (candidate.Network != RouteNetwork.Water || candidate.Stops.Count < 2 || utilisation >= settings.UtilisationFloorPercent / 100f)
             {
                 return;
             }
 
+            _ = OfferOnStreets(settings, candidate, index, facts, stops, scratch, tally, resolved, pass, requireFit: false);
+        }
+
+        // The candidate's journey re-traced along streets as a road line. With
+        // `requireFit` the street variant is only accepted — and the lattice alignment
+        // thereby dropped — when its own riders leave the chosen road mode under the
+        // utilisation ceiling and it passes the line gates. Returns true when a street
+        // variant was offered.
+        private bool OfferOnStreets(
+            Setting settings, SuggestedRoute candidate, int index, FleetFacts facts, StopContext stops,
+            List<int> scratch, RejectionTally tally, List<SuggestedRoute> resolved, RoutePass pass, bool requireFit)
+        {
             SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
                 m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1], stops, scratch);
             if (onRoad is null)
             {
                 DeferredLog.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: under the utilisation floor as a {candidate.Mode} and no road path between its ends to offer instead");
-                return;
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network}, no street path between its ends — the {candidate.Mode} alignment stands");
+                return false;
             }
 
             onRoad.Group = candidate.Group;
             onRoad.DemandScored = true;
             onRoad.EnabledDemand = RidersAlone(settings, onRoad, pass);
-            tally.Retraced++;
-            if (!SettleMode(settings, onRoad, index, facts, stops, pass, out _, out ModePreset? roadNextUp))
+            if (!SettleMode(settings, onRoad, index, facts, stops, pass, out float roadUtilisation, out ModePreset? roadNextUp))
             {
-                return;
+                return false;
             }
 
-            if (PassesLineGates(onRoad, index, facts, tally))
+            if (requireFit && roadUtilisation > TransitModes.MaxPlannedUtilisation)
+            {
+                DeferredLog.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: streets overloaded as a {onRoad.Mode} ({(roadUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %) — the {candidate.Mode} alignment stands");
+                return false;
+            }
+
+            bool passes = PassesLineGates(onRoad, index, facts, tally);
+            if (requireFit && !passes)
+            {
+                DeferredLog.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: the street variant fails the line gates — the {candidate.Mode} alignment stands");
+                return false;
+            }
+
+            tally.Retraced++;
+            if (passes)
             {
                 resolved.Add(onRoad);
             }
 
-            if (roadNextUp is ModePreset largerRoad)
+            DeferredLog.Info(
+                $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {(requireFit ? $"a {onRoad.Mode} along streets carries it at {(roadUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %; the {candidate.Mode} alignment is not needed" : $"also offered along streets as a {onRoad.Mode}")} " +
+                $"({onRoad.Stops.Count} stops, len={(onRoad.Length).ToString("F0", CultureInfo.InvariantCulture)}m, riders/day alone={(onRoad.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)})");
+            OfferNextUp(settings, onRoad, index, facts, stops, resolved, pass, roadNextUp, roadUtilisation);
+            return true;
+        }
+
+        // The next mode up as its own candidate, when the set could plausibly overload
+        // this one: past half its seats alone.
+        private void OfferNextUp(Setting settings, SuggestedRoute route, int index, FleetFacts facts, StopContext stops, List<SuggestedRoute> resolved, RoutePass pass, ModePreset? nextUp, float utilisation)
+        {
+            if (nextUp is not ModePreset larger || utilisation < TransitModes.MaxPlannedUtilisation * 0.5f)
             {
-                SuggestedRoute variant = onRoad.CopyFor(largerRoad);
-                SuitabilityRoutes.Restop(variant, largerRoad, stops);
-                variant.EnabledDemand = RidersAlone(settings, variant, pass);
-                if (PassesLineGates(variant, index, facts, tally))
-                {
-                    resolved.Add(variant);
-                }
+                return;
+            }
+
+            SuggestedRoute variant = route.CopyFor(larger);
+            SuitabilityRoutes.Restop(variant, larger, stops);
+            variant.EnabledDemand = RidersAlone(settings, variant, pass);
+            DeferredLog.Info(
+                $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: also offered as a {larger} " +
+                $"({variant.Stops.Count} stops, riders/day alone={(variant.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)})");
+            if (PassesLineGates(variant, index, facts, new RejectionTally()))
+            {
+                resolved.Add(variant);
             }
         }
 

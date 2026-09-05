@@ -161,6 +161,7 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[Stops]", "Haltestellen" },
                 { "StationSuitabilityOverlay.Panel[Vehicles]", "Fz." },
                 { "StationSuitabilityOverlay.Panel[Reach]", "erschließt {0} % der unbedienten Nachfrage" },
+                { "StationSuitabilityOverlay.Panel[RouteUpdate]", "{0} neue Vorschläge bereit — übernehmen" },
                 { "StationSuitabilityOverlay.Panel[RouteSchedule]", "Betrieb {0} · tags {1} %, nachts {2} % ausgelastet" },
                 { "StationSuitabilityOverlay.Panel[HealthSchedule]", "fährt {0} · tags {1} %, nachts {2} % ausgelastet" },
                 { "StationSuitabilityOverlay.Panel[HealthScheduleAdvice]", " → auf {0} umstellen" },

@@ -254,6 +254,12 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
 
+None of this is gated on the heat map being drawn: the passes run whenever a city is loaded, and
+`active` only decides whether scores are painted. A finished route pass is **staged**
+(`m_StagedPass`, binding `routeUpdate`) until the panel's button triggers `applyRouteUpdate`; only
+an empty list is adopted without asking. Anything that must see the newest routes reads them after
+`AdoptPass`, not when the worker finishes.
+
 ### The save state
 
 `SuitabilitySaveState.cs` (a partial of the overlay system) implements `IDefaultSerializable`, which
@@ -290,7 +296,11 @@ formatting there breaks every exported instance at once.
 ### Networks are not interchangeable
 
 `SuitabilityRoadGraph` wraps either the real road entities or a free-form lattice
-(`SuitabilityLattice.cs`, 128 m pitch, for rail and water). **`Network` must be set on every graph.**
+(`SuitabilityLattice.cs`, 128 m pitch): one for train, one for metro and one for water. Train and
+metro track are told apart by `TrackLaneData.m_TrackTypes` on the segment's sub-lanes
+(`CollectTrackSegments`), and each lattice prefers only its own kind — a metro alignment on a railway
+was a real finding. A rail alignment is a candidate only where its street re-trace is overloaded,
+impossible or fails the gates (`ResolveCandidate`). **`Network` must be set on every graph.**
 Mode fallback keys off it: when nothing a lattice alignment can carry is justified, the corridor has
 to be re-traced on streets before a bus may run it. Leaving the field at its enum default made every
 graph claim to be a road, and ferry alignments were relabelled as buses and drawn across open water.

@@ -18,6 +18,10 @@ Nothing type-checks this file, so the guard rails are explicit.
 - **cohtml is not a full browser.** No `<select>`, no `<input type=range>`, no checkboxes, no CSS
   `gap`. Build controls out of buttons and divs, as `Choice`, `Stepper` and `Toggle` already do.
   `1rem` is roughly one design pixel.
+- **A refresh never changes the list under the player.** A finished route pass arrives as the
+  `routeUpdate` binding (a count, or empty) and the list changes only when the panel triggers
+  `applyRouteUpdate`. Do not make the module re-render the list from a pass it has not been told
+  to apply, and keep the row keys stable across an apply so a selection survives it.
 - **A value binding must use `AddUpdateBinding`.** `AddBinding` with a `GetterValueBinding` never
   re-polls, so the panel silently freezes on its first value.
 - **The binding payloads are delimited strings** (`|` between fields, `\n` between rows). Anything
