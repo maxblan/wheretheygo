@@ -459,17 +459,20 @@ re-sorted descending (insertion sort, stable), trailing non-positive scores drop
    non-deterministic).
    **v2 (Phase 4, 2026-09-05) — observed shopping/leisure journeys (A0.1).** The
    save holds no such destinations, so the live city is scanned once per real second:
-   every citizen inside a building is remembered as (citizen → building); every
-   citizen carrying `TravelPurpose` ∈ {Shopping, Leisure, Relaxing, Sightseeing,
-   VisitAttractions} whose `TripNeeded` buffer holds an entry of that purpose is a
-   journey, destination = that entry's `m_TargetAgent` (position: its Transform, or
-   its rented property's), recorded once per distinct (citizen, target, purpose)
-   while continuously seen, origin = the building the citizen was last seen inside
-   (journeys without a known origin, or first seen already at the destination, are
-   not recorded; the former are counted). *Not* the `Target` component: decompiled
-   `TripNeededSystem` removes it from the citizen at departure and the creature's
-   copy is rewritten while boarding — the first live test with `Target` saw no
-   journey at all. Journeys live in a window of one game day (262 144 frames,
+   every citizen inside a building is remembered as (citizen → building);
+   journeys are seen in two stages, keyed per (citizen, purpose) so each is recorded
+   once: (A) *queued* — a citizen inside a building whose `TripNeeded` buffer's first
+   entry has a watched purpose (Shopping, Leisure, Relaxing, Sightseeing,
+   VisitAttractions): origin = `CurrentBuilding`, destination = `m_TargetAgent`
+   (position: its Transform, or its rented property's); (B) *under way* — a citizen
+   with `TravelPurpose` of a watched purpose and a `CurrentTransport`: destination =
+   the creature's `Target` if it is a building or a property-renting company (never a
+   vehicle), origin = the building the citizen was last seen inside. Journeys without
+   a resolvable origin/destination, or first seen already at the destination, are not
+   recorded. Why two stages (decompiled `TripNeededSystem`, confirmed live): the
+   citizen's own `Target` and its `TripNeeded` entry are both gone once it leaves, and
+   the creature's `Target` is rewritten only while boarding a vehicle that is itself
+   the target or while diverted. Journeys live in a window of one game day (262 144 frames,
    `ObservedTripWindow`, cap 200 000, frame-rewind clears it). At each demand refresh
    they join the queue above with weight `ScaleFor(day) = clamp(day/span, 1, 4)` —
    a full window counts one per journey, a shorter one is scaled to a day's rate but

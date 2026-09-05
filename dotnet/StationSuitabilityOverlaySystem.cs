@@ -430,12 +430,23 @@ namespace StationSuitabilityOverlay
         // seen, each citizen's current journey (so one journey is recorded once),
         // and the building each citizen was last seen inside (a journey's origin).
         private readonly ObservedTripWindow m_ObservedTrips = new ObservedTripWindow(LineHistory.FramesPerGameDay);
-        private readonly Dictionary<Entity, (Entity target, byte purpose)> m_CurrentJourney = new Dictionary<Entity, (Entity, byte)>();
+        private readonly Dictionary<Entity, byte> m_CurrentJourney = new Dictionary<Entity, byte>();
         private readonly Dictionary<Entity, Entity> m_LastBuilding = new Dictionary<Entity, Entity>();
+        private EntityQuery m_QueuedQuery;
         private EntityQuery m_TravellingQuery;
         private EntityQuery m_InsideQuery;
         private float m_LastTripObservation;
         private int m_ObservedWithoutOrigin;
+        // Diagnostics for the scan itself, logged with every demand refresh: how many
+        // citizens the travelling query matched, how many carried a watched purpose,
+        // how many of those had a queued destination, and which purposes were seen.
+        private int m_ObservedQueued;
+        private int m_ObservedTravelling;
+        private int m_ObservedTravellingWithBuilding;
+        private int m_ObservedTargetMissing;
+        private int m_ObservedTargetVehicle;
+        private int m_ObservedTargetOther;
+        private readonly int[] m_ObservedPurposeHistogram = new int[256];
         private int m_ObservedLastDemand;
         private float m_ObservedScaleLastDemand;
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
@@ -722,7 +733,8 @@ namespace StationSuitabilityOverlay
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
             m_HouseholdQuery = LiveQuery(ComponentType.ReadOnly<Household>(), ComponentType.ReadOnly<Game.Buildings.PropertyRenter>());
-            m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<TripNeeded>());
+            m_QueuedQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TripNeeded>(), ComponentType.ReadOnly<CurrentBuilding>());
+            m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<CurrentTransport>());
             m_InsideQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<CurrentBuilding>());
 
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
@@ -2506,62 +2518,33 @@ namespace StationSuitabilityOverlay
                 or Purpose.Sightseeing or Purpose.VisitAttractions;
         }
 
-        // One scan of the live city: remember the building every citizen is inside,
-        // and record every shopping/leisure journey the moment it is first seen —
-        // origin = the building the citizen was last inside, destination = the queued
-        // trip's target agent. A journey stays recorded once for as long as the same
-        // (citizen, target, purpose) is seen; when it ends the citizen may start another.
+        // One scan of the live city, in two stages, both keyed per (citizen, purpose)
+        // so one journey is recorded once however often it is seen:
         //
-        // Why TripNeeded and not Target (decompiled TripNeededSystem/ResidentAISystem):
-        // the citizen's own Target is removed the moment it leaves the building — the
-        // travelling creature carries a Target instead, and that one is rewritten to
-        // the vehicle owner while boarding and to divert targets. The TripNeeded entry
-        // keeps the destination agent for the whole journey, and TravelPurpose is on
-        // the citizen from departure until it is done — so together they are visible
-        // for minutes, not frames. The first live test with Target saw nothing.
+        //  A. Queued: a citizen still inside a building with a TripNeeded entry of a
+        //     watched purpose. Origin (CurrentBuilding) and destination (the entry's
+        //     m_TargetAgent) are both exact. Visible only until TripNeededSystem
+        //     dispatches the trip — it runs every 16 frames over update-frame groups,
+        //     so a second's sampling sees most but not all departures.
+        //  B. Travelling: a citizen carrying TravelPurpose with a CurrentTransport. The
+        //     TripNeeded entry is gone by then (the first live scan proved it: 700
+        //     shopping travellers, none with an entry), so the destination is read from
+        //     the travelling creature's Target, which decompiled ResidentAISystem
+        //     rewrites only while boarding a vehicle that is itself the target and while
+        //     diverted — hence the building-only filter and the per-purpose key. Origin
+        //     = the building the citizen was last seen inside. Visible for the whole
+        //     journey, so nothing stage A missed is lost.
         private void ObserveTrips()
         {
             var simulation = World.GetExistingSystemManaged<SimulationSystem>();
             uint frame = simulation?.frameIndex ?? 0u;
             m_TransformLookup.Update(this);
             m_PropertyRenterLookup.Update(this);
+            RememberBuildings();
 
-            using (var inside = m_InsideQuery.ToEntityArray(Allocator.Temp))
-            using (var buildings = m_InsideQuery.ToComponentDataArray<CurrentBuilding>(Allocator.Temp))
-            {
-                for (int i = 0; i < inside.Length; i++)
-                {
-                    m_LastBuilding[inside[i]] = buildings[i].m_CurrentBuilding;
-                }
-            }
-
-            using var travellers = m_TravellingQuery.ToEntityArray(Allocator.Temp);
-            using var purposes = m_TravellingQuery.ToComponentDataArray<TravelPurpose>(Allocator.Temp);
             var seen = new HashSet<Entity>();
-            for (int i = 0; i < travellers.Length; i++)
-            {
-                Purpose purpose = purposes[i].m_Purpose;
-                if (!IsShoppingOrLeisure(purpose))
-                {
-                    continue;
-                }
-
-                Entity citizen = travellers[i];
-                if (!TryQueuedDestination(citizen, purpose, out Entity target))
-                {
-                    continue;
-                }
-
-                _ = seen.Add(citizen);
-                if (m_CurrentJourney.TryGetValue(citizen, out (Entity target, byte purpose) current)
-                    && current.target == target && current.purpose == (byte)purpose)
-                {
-                    continue;
-                }
-
-                m_CurrentJourney[citizen] = (target, (byte)purpose);
-                RecordObservedTrip(citizen, target, (byte)purpose, frame);
-            }
+            ObserveQueued(frame, seen);
+            ObserveTravelling(frame, seen);
 
             // Journeys no longer under way: forget them so the next one is new.
             var ended = new List<Entity>();
@@ -2581,32 +2564,150 @@ namespace StationSuitabilityOverlay
             m_ObservedTrips.Prune(frame);
         }
 
-        // The destination of the citizen's queued trip with this purpose, if any.
-        private bool TryQueuedDestination(Entity citizen, Purpose purpose, out Entity target)
+        private void RememberBuildings()
+        {
+            using var inside = m_InsideQuery.ToEntityArray(Allocator.Temp);
+            using var buildings = m_InsideQuery.ToComponentDataArray<CurrentBuilding>(Allocator.Temp);
+            for (int i = 0; i < inside.Length; i++)
+            {
+                m_LastBuilding[inside[i]] = buildings[i].m_CurrentBuilding;
+            }
+        }
+
+        private void ObserveQueued(uint frame, HashSet<Entity> seen)
+        {
+            m_ObservedQueued = 0;
+            Array.Clear(m_ObservedPurposeHistogram, 0, m_ObservedPurposeHistogram.Length);
+            EntityTypeHandle entityType = GetEntityTypeHandle();
+            BufferTypeHandle<TripNeeded> tripType = GetBufferTypeHandle<TripNeeded>(isReadOnly: true);
+            ComponentTypeHandle<CurrentBuilding> buildingType = GetComponentTypeHandle<CurrentBuilding>(isReadOnly: true);
+            using var chunks = m_QueuedQuery.ToArchetypeChunkArray(Allocator.Temp);
+            for (int c = 0; c < chunks.Length; c++)
+            {
+                ArchetypeChunk chunk = chunks[c];
+                NativeArray<Entity> entities = chunk.GetNativeArray(entityType);
+                NativeArray<CurrentBuilding> buildings = chunk.GetNativeArray(ref buildingType);
+                BufferAccessor<TripNeeded> trips = chunk.GetBufferAccessor(ref tripType);
+                for (int i = 0; i < entities.Length; i++)
+                {
+                    DynamicBuffer<TripNeeded> queue = trips[i];
+                    if (queue.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    TripNeeded trip = queue[0];
+                    if (!IsShoppingOrLeisure(trip.m_Purpose) || trip.m_TargetAgent == Entity.Null)
+                    {
+                        continue;
+                    }
+
+                    m_ObservedQueued++;
+                    Entity citizen = entities[i];
+                    _ = seen.Add(citizen);
+                    if (m_CurrentJourney.TryGetValue(citizen, out byte current) && current == (byte)trip.m_Purpose)
+                    {
+                        continue;
+                    }
+
+                    m_CurrentJourney[citizen] = (byte)trip.m_Purpose;
+                    RecordObservedTrip(buildings[i].m_CurrentBuilding, trip.m_TargetAgent, (byte)trip.m_Purpose, frame);
+                }
+            }
+        }
+
+        private void ObserveTravelling(uint frame, HashSet<Entity> seen)
+        {
+            m_ObservedTravelling = 0;
+            m_ObservedTravellingWithBuilding = 0;
+            m_ObservedTargetMissing = 0;
+            m_ObservedTargetVehicle = 0;
+            m_ObservedTargetOther = 0;
+            using var travellers = m_TravellingQuery.ToEntityArray(Allocator.Temp);
+            using var purposes = m_TravellingQuery.ToComponentDataArray<TravelPurpose>(Allocator.Temp);
+            using var transports = m_TravellingQuery.ToComponentDataArray<CurrentTransport>(Allocator.Temp);
+            for (int i = 0; i < travellers.Length; i++)
+            {
+                Purpose purpose = purposes[i].m_Purpose;
+                m_ObservedPurposeHistogram[(byte)purpose]++;
+                if (!IsShoppingOrLeisure(purpose))
+                {
+                    continue;
+                }
+
+                m_ObservedTravelling++;
+                Entity citizen = travellers[i];
+                _ = seen.Add(citizen);
+                if (m_CurrentJourney.TryGetValue(citizen, out byte current) && current == (byte)purpose)
+                {
+                    continue;
+                }
+
+                if (!TryCreatureDestination(transports[i].m_CurrentTransport, out Entity target))
+                {
+                    continue;
+                }
+
+                m_ObservedTravellingWithBuilding++;
+                m_CurrentJourney[citizen] = (byte)purpose;
+                if (!m_LastBuilding.TryGetValue(citizen, out Entity origin))
+                {
+                    m_ObservedWithoutOrigin++;
+                    continue;
+                }
+
+                RecordObservedTrip(origin, target, (byte)purpose, frame);
+            }
+        }
+
+        // The travelling creature's Target, accepted only when it is a building or a
+        // company renting one. A creature walking to its parked car carries the CAR as
+        // its target (ResidentAISystem hands it to TryEnterVehicle); the car's own
+        // Target is then the destination, so one hop through a vehicle is followed.
+        // Anything else — a vehicle with no building target, a lane, nothing — is
+        // counted by kind so the log says what the scan could not read.
+        private bool TryCreatureDestination(Entity creature, out Entity target)
         {
             target = Entity.Null;
-            if (!EntityManager.TryGetBuffer(citizen, isReadOnly: true, out DynamicBuffer<TripNeeded> trips))
+            if (creature == Entity.Null || !EntityManager.TryGetComponent(creature, out Game.Common.Target creatureTarget)
+                || creatureTarget.m_Target == Entity.Null)
             {
+                m_ObservedTargetMissing++;
                 return false;
             }
 
-            for (int i = 0; i < trips.Length; i++)
+            Entity candidate = creatureTarget.m_Target;
+            if (IsBuildingLike(candidate))
             {
-                if (trips[i].m_Purpose == purpose && trips[i].m_TargetAgent != Entity.Null)
-                {
-                    target = trips[i].m_TargetAgent;
-                    return true;
-                }
+                target = candidate;
+                return true;
             }
 
+            if (EntityManager.HasComponent<Game.Vehicles.Vehicle>(candidate))
+            {
+                if (EntityManager.TryGetComponent(candidate, out Game.Common.Target vehicleTarget) && IsBuildingLike(vehicleTarget.m_Target))
+                {
+                    target = vehicleTarget.m_Target;
+                    return true;
+                }
+
+                m_ObservedTargetVehicle++;
+                return false;
+            }
+
+            m_ObservedTargetOther++;
             return false;
         }
 
-        private void RecordObservedTrip(Entity citizen, Entity target, byte purpose, uint frame)
+        private bool IsBuildingLike(Entity entity)
         {
-            if (!m_LastBuilding.TryGetValue(citizen, out Entity origin)
-                || !TryResolveBuildingPosition(origin, out float3 from)
-                || !TryResolveBuildingPosition(target, out float3 to))
+            return entity != Entity.Null
+                && (EntityManager.HasComponent<Game.Buildings.Building>(entity) || m_PropertyRenterLookup.HasComponent(entity));
+        }
+
+        private void RecordObservedTrip(Entity origin, Entity target, byte purpose, uint frame)
+        {
+            if (!TryResolveBuildingPosition(origin, out float3 from) || !TryResolveBuildingPosition(target, out float3 to))
             {
                 m_ObservedWithoutOrigin++;
                 return;
@@ -2628,6 +2729,27 @@ namespace StationSuitabilityOverlay
                 m_DestinationZ = to.z,
                 m_Purpose = purpose,
             });
+        }
+
+        private string PurposeHistogram()
+        {
+            var builder = new StringBuilder();
+            for (int p = 0; p < m_ObservedPurposeHistogram.Length; p++)
+            {
+                if (m_ObservedPurposeHistogram[p] == 0)
+                {
+                    continue;
+                }
+
+                if (builder.Length > 0)
+                {
+                    _ = builder.Append(", ");
+                }
+
+                _ = builder.Append(((Purpose)p).ToString()).Append('=').Append(m_ObservedPurposeHistogram[p].ToString(CultureInfo.InvariantCulture));
+            }
+
+            return builder.Length == 0 ? "none" : builder.ToString();
         }
 
         // The same shape as ExtractTripsJob.TryResolvePosition: a building carries a
@@ -2683,6 +2805,11 @@ namespace StationSuitabilityOverlay
                 trips.Enqueue(trip);
             }
 
+            Mod.Log.Info(
+                $"Journey scan: {(m_ObservedQueued).ToString(CultureInfo.InvariantCulture)} shopping/leisure trips queued inside buildings, " +
+                $"{(m_ObservedTravelling).ToString(CultureInfo.InvariantCulture)} under way ({(m_ObservedTravellingWithBuilding).ToString(CultureInfo.InvariantCulture)} newly recorded from the creature's building target; " +
+                $"targets unreadable this scan: none={(m_ObservedTargetMissing).ToString(CultureInfo.InvariantCulture)}, vehicle without building target={(m_ObservedTargetVehicle).ToString(CultureInfo.InvariantCulture)}, other={(m_ObservedTargetOther).ToString(CultureInfo.InvariantCulture)}); " +
+                $"buildings remembered for {(m_LastBuilding.Count).ToString(CultureInfo.InvariantCulture)} citizens; purposes under way: {PurposeHistogram()}");
             if (m_ObservedTrips.EvictedSinceLastReport > 0 || m_ObservedTrips.DroppedAtCapSinceLastReport > 0 || m_ObservedWithoutOrigin > 0)
             {
                 Mod.Log.Info(

@@ -154,7 +154,7 @@ zu belegen sind, verweisen auf die laufende Literaturrecherche (LR).
 
 | # | Entscheidung | Folge / Stand |
 |---|---|---|
-| A0.1 ✅ umgesetzt (Phase 4: Shopping, Leisure, Relaxing, Sightseeing, VisitAttractions beobachtet; Fenster 1 Spieltag; Skalierung ≤ 4×) | Zusätzlich Freizeit und Einkauf; **keine Vorrangregel, alle Zwecke gleich gewichtet** | CS2 speichert Freizeit-/Einkaufsziele nicht am Bürger — nur die *laufende* Reise (`TravelPurpose` = Shopping/Leisure/…, Ziel in `Target`). Diese Nachfrage muss über die Zeit **beobachtet** werden (Reisen mit Zweck und Ziel aufsammeln, wie die Kalibrierung heute Haltestellen sammelt). Arbeit/Schule bleiben aus dem Save lesbar |
+| A0.1 ✅ umgesetzt (Phase 4: Shopping, Leisure, Relaxing, Sightseeing, VisitAttractions beobachtet; Fenster 1 Spieltag; Skalierung ≤ 4×; live bestätigt: 309 Wege nach 1,7 Spielstunden, alle Ziele lesbar) | Zusätzlich Freizeit und Einkauf; **keine Vorrangregel, alle Zwecke gleich gewichtet** | CS2 speichert Freizeit-/Einkaufsziele nicht am Bürger — nur die *laufende* Reise (`TravelPurpose` = Shopping/Leisure/…, Ziel in `Target`). Diese Nachfrage muss über die Zeit **beobachtet** werden (Reisen mit Zweck und Ziel aufsammeln, wie die Kalibrierung heute Haltestellen sammelt). Arbeit/Schule bleiben aus dem Save lesbar |
 | A0.2 ✅ umgesetzt (Phase 1) | Alle Bewegungen innerhalb der Karte zählen (auch Touristen); Außenverbindungen erst einmal ignoriert | Tourist-/Obdachlosen-Filter entfällt; Reisen mit Ziel oder Quelle außerhalb der Karte werden verworfen |
 | A0.3 ✅ umgesetzt (Phase 1) | Siehe A0.1: **alle Wegezwecke gleich = 1,0** | Schulfaktor 0,6 entfällt |
 | A0.4 | Rückfrage — erklärt in der Antwort; Entscheidung offen | Betrifft nur den Fahrgast-Floor je Fahrzeug (A6.4) |
