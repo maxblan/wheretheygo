@@ -339,6 +339,19 @@ candidates):
 - walkOnly(i) = √(Δx² + Δz²) / 1.2 in binary32 (`WalkOnlySeconds`);
 - after(i, A) = min(walkOnly(i), transit(i, N₀ ∪ A)); before(i) = after(i, ∅).
 
+*Implementation (2026-09-05, performance; exact):* the mod deduplicates zone nodes
+by position and runs one Dijkstra per origin zone, capped at
+min(maxTravelSeconds, max over the zone's pairs of before(i)) (walkOnly(i) for the
+baseline run). This is the definition above, not an approximation: pairs with the
+same origin see the same edges from the same node, and adding lines never
+lengthens a path (every N₀ path persists at the same binary32 cost), so a
+destination beyond the cap has transit ≥ before(i) and after(i, A) = before(i)
+either way; rider attribution is unchanged because a ridden journey has transit <
+walkOnly ≤ … ≤ cap. Sums are folded in pair order, so After, Riders and saved are
+bit-identical to the per-pair evaluation (harness test "one capped search per
+origin zone equals one search per pair"; the five `lineset_time` instances
+reproduced their previous subject outputs exactly).
+
 The baseline is the best of walking and the existing network; the car is ignored
 (A3.1 decision). Times weigh walk : wait : ride = 1 : 1 : 1, a transfer costs
 exactly its walk edge plus the next line's access edge, nothing is discounted
@@ -382,9 +395,12 @@ include-first DFS; every prefix is a candidate answer; **bound** = Key(chosen �
 all remaining) — valid because both components are monotone in A (a line can
 only shorten a journey or serve another door; the cap keeps the first
 component monotone). A node budget (`DefaultNodeBudget` = 20 000 bound
-evaluations) stops the search; the solution then reports `Optimal = false` and
-`UpperBoundTimeSaved` = max over open bounds — the "best found plus ceiling"
-regime. Note the bound is evaluated on the *unfiltered* union, so an infeasible
+evaluations) or the caller's cancellation token (the mod passes a 90 s wall-clock
+budget on its worker) stops the search; the solution then reports `Optimal =
+false` and `UpperBoundTimeSaved` = max over open bounds — the "best found plus
+ceiling" regime, and the log names it. Evaluations of sets of ≤ K lines are
+memoised within one search (a prefix is asked for again as "the rest" of its
+supersets' duplicate tests). Note the bound is evaluated on the *unfiltered* union, so an infeasible
 completion never prunes a feasible one.
 
 The chosen lines are presented in standalone-saved order; each carries its

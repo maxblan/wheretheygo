@@ -32,6 +32,12 @@ enough that a wrong number is visible in the log rather than only on screen.
   reach `StationSuitabilityOverlay.Mod.log` with the values it came from, and units named when they
   are not obvious. A quantity you are unsure about gets logged with what it actually is
   (`waitAccumulator=… (game units, not seconds)`), never silently presented as seconds.
+- **Anything the route worker may execute logs through `DeferredLog`.** `Mod.Log` is an
+  unguarded `StreamWriter`; two threads writing at once corrupt it. `DeferredLog` writes straight
+  through on the main thread and buffers on a thread that bound a buffer, so the same code logs
+  correctly on both. New main-thread work that touches a field the worker reads (scores, masks,
+  networks, zone flows, existing lines, served stops) must be gated on `!m_RoutesPending` like
+  its neighbours in `OnUpdate`.
 - **Respect the update phases.** `Mod.OnLoad` documents why each system sits where it does:
   PreCulling between `OverlayInfomodeSystem` clearing the terrain overlay and `TerrainRenderSystem`
   consuming it; Rendering for anything using `OverlayRenderSystem`, whose buffer is drained *before*

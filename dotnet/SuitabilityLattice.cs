@@ -205,7 +205,7 @@ namespace StationSuitabilityOverlay
 
             if (trackStarts.Count != trackEnds.Count)
             {
-                Mod.Log.Warn(
+                DeferredLog.Warn(
                     $"Track segments came back mismatched ({trackStarts.Count} starts, {trackEnds.Count} ends); " +
                     "rail reuse will be judged on the shorter list.");
             }

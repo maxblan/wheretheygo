@@ -231,6 +231,15 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    existing network, ranked lexicographically after the equity share capped at its floor, and every
    line in the set must clear the utilisation floor on the set's own riders and must not duplicate
    the rest. There are no rounds any more; the mod optimises the objective the pipeline checks.
+   **The whole route pipeline runs on a worker task** (`StartRoutePass` → `BuildRoutes` →
+   `FinishRoutesIfReady`), because weighing one candidate against 1,400 journeys took two
+   seconds and the set search asks for thousands of such evaluations; on the main thread that
+   was a frozen game. While `m_RoutesPending` is set, `OnUpdate` leaves every input the worker
+   reads alone — no heat-map adoption or recompute, no demand refresh, no line collection, no
+   recombine, no improvement or calibration request — and the pass's outputs are copied into
+   the fields the panel, renderer and export read only when the task has completed. Code that
+   can run on the worker logs through `DeferredLog`, never `Mod.Log`: the game's logger is an
+   unguarded stream writer, so the worker's lines wait in a buffer and are flushed on adoption.
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
 

@@ -46,6 +46,28 @@ namespace StationSuitabilityOverlay
         // stops (SuitabilityEquity in the caller), and the floor it must reach first.
         public Func<int[], int, float>? CoverageOf;
         public float EquityFloorShare;
+        // Derived from the pairs on first evaluation (SuitabilityLineSet.GeometryOf) and
+        // reused by every evaluation since; the pair arrays are not modified after a
+        // problem is built.
+        internal LineSetGeometry? Geometry;
+    }
+
+    // What every evaluation of one problem shares: the distinct zone positions the
+    // pairs' ends fall on (one zone node each in the transit graph), each pair's ends
+    // as zone indices, the pairs grouped by origin zone, and the straight-line walk
+    // time of each pair.
+    internal sealed class LineSetGeometry
+    {
+        public float[] ZoneX = Array.Empty<float>();
+        public float[] ZoneZ = Array.Empty<float>();
+        public int ZoneCount;
+        public int[] PairOriginZone = Array.Empty<int>();
+        public int[] PairDestinationZone = Array.Empty<int>();
+        // Pairs sharing an origin zone, CSR-style: pairs of zone z are
+        // PairsByOrigin[OriginStart[z] .. OriginStart[z + 1]).
+        public int[] OriginStart = Array.Empty<int>();
+        public int[] PairsByOrigin = Array.Empty<int>();
+        public float[] WalkOnly = Array.Empty<float>();
     }
 
     internal sealed class LineSetEvaluation
@@ -98,12 +120,26 @@ namespace StationSuitabilityOverlay
     {
         public const long DefaultNodeBudget = 20_000;
 
+        // One Dijkstra per origin ZONE rather than per pair, capped at the largest
+        // door-to-door time the group's pairs can still improve on. Both are exact
+        // rewrites of the per-pair search, not approximations:
+        //  - two pairs starting from the same zone see the same edges from the same
+        //    node, so one search answers both (the zone nodes are deduplicated by
+        //    position, which also removes the duplicate nodes' identical edges);
+        //  - a network with lines added never lengthens a journey (every old path
+        //    is still there at the same cost), so any destination further than the
+        //    pair's own `before` is unreachable within it, and min(walk, transit)
+        //    comes out as `before` whether or not the search finished the distance.
+        // The sums stay in pair order: per-pair results are collected during the
+        // group runs and folded in a final pass, so the double accumulations match
+        // the per-pair evaluation bit for bit.
         public static LineSetEvaluation Evaluate(LineSetProblem problem, int[] chosen, int count, float[]? before)
         {
+            LineSetGeometry geometry = GeometryOf(problem);
             AssembleStops(problem, chosen, count, out float[] stopX, out float[] stopZ, out int stopCount, out List<TransitLine> lines);
             TransitNetwork network = SuitabilityTransit.BuildWithZones(
                 stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds,
-                ZoneX(problem), ZoneZ(problem), problem.PairCount * 2, problem.ZoneReachMetres);
+                geometry.ZoneX, geometry.ZoneZ, geometry.ZoneCount, problem.ZoneReachMetres);
             var evaluation = new LineSetEvaluation
             {
                 Riders = new double[problem.Candidates.Count],
@@ -111,32 +147,146 @@ namespace StationSuitabilityOverlay
             };
             var workspace = new DijkstraWorkspace(network.Graph.NodeCount);
             int lineOffset = problem.BaseLines.Count;
-            for (int i = 0; i < problem.PairCount; i++)
+            var legs = new PairLegs(problem.PairCount);
+            for (int zone = 0; zone < geometry.ZoneCount; zone++)
             {
-                int originNode = network.ZoneNodeStart + (2 * i);
-                int destinationNode = originNode + 1;
-                workspace.Run(network.Graph, originNode, problem.MaxTravelSeconds);
-                float walkOnly = WalkOnlySeconds(problem, i);
-                float transit = workspace.Dist[destinationNode];
-                float after = Math.Min(walkOnly, transit);
-                evaluation.After[i] = after;
-                if (transit < walkOnly)
+                int first = geometry.OriginStart[zone];
+                int last = geometry.OriginStart[zone + 1];
+                if (first == last)
                 {
-                    AttributeItinerary(network, workspace, originNode, destinationNode, problem.PairWeight[i], lineOffset, chosen, count, evaluation);
-                }
-                else
-                {
-                    evaluation.WalkSeconds += problem.PairWeight[i] * (double)walkOnly;
+                    continue;
                 }
 
-                if (before is not null && before[i] > after)
+                float cap = 0f;
+                for (int k = first; k < last; k++)
                 {
-                    evaluation.TimeSaved += problem.PairWeight[i] * (double)(before[i] - after);
+                    int pair = geometry.PairsByOrigin[k];
+                    cap = Math.Max(cap, before is null ? geometry.WalkOnly[pair] : before[pair]);
+                }
+
+                int originNode = network.ZoneNodeStart + zone;
+                workspace.Run(network.Graph, originNode, Math.Min(problem.MaxTravelSeconds, cap));
+                for (int k = first; k < last; k++)
+                {
+                    int pair = geometry.PairsByOrigin[k];
+                    int destinationNode = network.ZoneNodeStart + geometry.PairDestinationZone[pair];
+                    float walkOnly = geometry.WalkOnly[pair];
+                    float transit = workspace.Dist[destinationNode];
+                    evaluation.After[pair] = Math.Min(walkOnly, transit);
+                    if (transit < walkOnly)
+                    {
+                        AttributeItinerary(network, workspace, originNode, destinationNode, lineOffset, count, pair, legs);
+                    }
+                    else
+                    {
+                        legs.Walk[pair] = walkOnly;
+                    }
+                }
+            }
+
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                double weight = problem.PairWeight[i];
+                evaluation.WalkSeconds += weight * legs.Walk[i];
+                evaluation.WaitSeconds += weight * legs.Wait[i];
+                evaluation.RideSeconds += weight * legs.Ride[i];
+                int[]? ridden = legs.Ridden[i];
+                if (ridden is not null)
+                {
+                    for (int r = 0; r < ridden.Length; r++)
+                    {
+                        evaluation.Riders[chosen[ridden[r]]] += weight;
+                    }
+                }
+
+                if (before is not null && before[i] > evaluation.After[i])
+                {
+                    evaluation.TimeSaved += weight * (double)(before[i] - evaluation.After[i]);
                 }
             }
 
             evaluation.Coverage = problem.CoverageOf?.Invoke(chosen, count) ?? 0f;
             return evaluation;
+        }
+
+        // Per-pair itinerary components, held until the pair-ordered fold.
+        private sealed class PairLegs
+        {
+            public readonly double[] Walk;
+            public readonly double[] Wait;
+            public readonly double[] Ride;
+            public readonly int[]?[] Ridden;
+
+            public PairLegs(int pairCount)
+            {
+                Walk = new double[pairCount];
+                Wait = new double[pairCount];
+                Ride = new double[pairCount];
+                Ridden = new int[]?[pairCount];
+            }
+        }
+
+        internal static LineSetGeometry GeometryOf(LineSetProblem problem)
+        {
+            LineSetGeometry? cached = problem.Geometry;
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            var geometry = new LineSetGeometry
+            {
+                PairOriginZone = new int[problem.PairCount],
+                PairDestinationZone = new int[problem.PairCount],
+                WalkOnly = new float[problem.PairCount],
+            };
+            var zoneOf = new Dictionary<(float, float), int>();
+            var zoneX = new List<float>();
+            var zoneZ = new List<float>();
+            int ZoneIndex(float x, float z)
+            {
+                if (!zoneOf.TryGetValue((x, z), out int index))
+                {
+                    index = zoneX.Count;
+                    zoneOf.Add((x, z), index);
+                    zoneX.Add(x);
+                    zoneZ.Add(z);
+                }
+
+                return index;
+            }
+
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                geometry.PairOriginZone[i] = ZoneIndex(problem.PairOx[i], problem.PairOz[i]);
+                geometry.PairDestinationZone[i] = ZoneIndex(problem.PairDx[i], problem.PairDz[i]);
+                geometry.WalkOnly[i] = WalkOnlySeconds(problem, i);
+            }
+
+            geometry.ZoneCount = zoneX.Count;
+            geometry.ZoneX = zoneX.ToArray();
+            geometry.ZoneZ = zoneZ.ToArray();
+            geometry.OriginStart = new int[geometry.ZoneCount + 1];
+            geometry.PairsByOrigin = new int[problem.PairCount];
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                geometry.OriginStart[geometry.PairOriginZone[i] + 1]++;
+            }
+
+            for (int z = 0; z < geometry.ZoneCount; z++)
+            {
+                geometry.OriginStart[z + 1] += geometry.OriginStart[z];
+            }
+
+            var fill = new int[geometry.ZoneCount];
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                int zone = geometry.PairOriginZone[i];
+                geometry.PairsByOrigin[geometry.OriginStart[zone] + fill[zone]++] = i;
+            }
+
+            problem.Geometry = geometry;
+            return geometry;
         }
 
         // Straight-line walk between the two zone centres at the planning speed.
@@ -148,15 +298,15 @@ namespace StationSuitabilityOverlay
         }
 
         // Walks the retained shortest itinerary back from the destination, splitting its
-        // cost into walk, wait and ride and crediting each ridden candidate line once with
-        // the journey's weight (RidesPerJourney is applied by the utilisation formula).
+        // cost into walk, wait and ride and noting each ridden candidate line once
+        // (RidesPerJourney is applied by the utilisation formula).
         private static void AttributeItinerary(
             TransitNetwork network, DijkstraWorkspace workspace, int originNode, int destinationNode,
-            float weight, int lineOffset, int[] chosen, int count, LineSetEvaluation into)
+            int lineOffset, int count, int pair, PairLegs into)
         {
             int node = destinationNode;
             int guard = network.Graph.EdgeCount + 2;
-            var ridden = new HashSet<int>();
+            List<int>? ridden = null;
             while (node != originNode && guard-- > 0)
             {
                 int edge = workspace.PrevEdge[node];
@@ -169,48 +319,33 @@ namespace StationSuitabilityOverlay
                 switch (network.EdgeKind[edge])
                 {
                     case TransitEdgeKind.Walk:
-                        into.WalkSeconds += weight * (double)cost;
+                        into.Walk[pair] += cost;
                         break;
                     case TransitEdgeKind.Access:
-                        into.WaitSeconds += weight * (double)cost;
+                        into.Wait[pair] += cost;
                         int line = network.EdgeLine[edge] - lineOffset;
-                        if (line >= 0 && line < count && ridden.Add(line))
+                        if (line >= 0 && line < count)
                         {
-                            into.Riders[chosen[line]] += weight;
+                            ridden ??= new List<int>();
+                            if (!ridden.Contains(line))
+                            {
+                                ridden.Add(line);
+                            }
                         }
 
                         break;
                     default:
-                        into.RideSeconds += weight * (double)cost;
+                        into.Ride[pair] += cost;
                         break;
                 }
 
                 node = network.Graph.OtherEnd(edge, node);
             }
-        }
 
-        private static float[] ZoneX(LineSetProblem problem)
-        {
-            var zones = new float[problem.PairCount * 2];
-            for (int i = 0; i < problem.PairCount; i++)
+            if (ridden is not null)
             {
-                zones[2 * i] = problem.PairOx[i];
-                zones[(2 * i) + 1] = problem.PairDx[i];
+                into.Ridden[pair] = ridden.ToArray();
             }
-
-            return zones;
-        }
-
-        private static float[] ZoneZ(LineSetProblem problem)
-        {
-            var zones = new float[problem.PairCount * 2];
-            for (int i = 0; i < problem.PairCount; i++)
-            {
-                zones[2 * i] = problem.PairOz[i];
-                zones[(2 * i) + 1] = problem.PairDz[i];
-            }
-
-            return zones;
         }
 
         private static void AssembleStops(
@@ -267,6 +402,15 @@ namespace StationSuitabilityOverlay
 
         public static LineSetSolution Solve(LineSetProblem problem, long nodeBudget)
         {
+            return Solve(problem, nodeBudget, System.Threading.CancellationToken.None);
+        }
+
+        // `cancellation` is the caller's time budget: once it is requested the search
+        // stops expanding, keeps the best set found and reports the open bound as the
+        // ceiling — the same "best found, not proven" regime as an exhausted node
+        // budget, decided by the caller's clock rather than by a count.
+        public static LineSetSolution Solve(LineSetProblem problem, long nodeBudget, System.Threading.CancellationToken cancellation)
+        {
             var solution = new LineSetSolution { Optimal = true };
             int n = problem.Candidates.Count;
             solution.StandaloneTimeSaved = new double[n];
@@ -289,7 +433,7 @@ namespace StationSuitabilityOverlay
                 return bySaved != 0 ? bySaved : a.CompareTo(b);
             });
 
-            var search = new Search(problem, before, order, nodeBudget);
+            var search = new Search(problem, before, order, nodeBudget, cancellation);
             search.Run();
             solution.Nodes = search.Nodes;
             solution.Infeasible = search.Infeasible;
@@ -310,7 +454,13 @@ namespace StationSuitabilityOverlay
             private readonly float[] m_Before;
             private readonly int[] m_Order;
             private readonly long m_Budget;
+            private readonly System.Threading.CancellationToken m_Cancellation;
             private readonly int[] m_Chosen;
+            // Sets of at most MaxLines lines are asked for twice — as a prefix under
+            // consideration and again as "the rest" when a line of a superset is tested
+            // for duplication — so their evaluations are kept. Union bounds are not: each
+            // is asked for once and holds a city's worth of per-pair times.
+            private readonly Dictionary<string, LineSetEvaluation> m_Evaluated = new Dictionary<string, LineSetEvaluation>(StringComparer.Ordinal);
 
             public long Nodes;
             public int Infeasible;
@@ -321,12 +471,13 @@ namespace StationSuitabilityOverlay
             public double BestSaved = -1.0;
             public float BestCoverage = -1f;
 
-            public Search(LineSetProblem problem, float[] before, int[] order, long budget)
+            public Search(LineSetProblem problem, float[] before, int[] order, long budget, System.Threading.CancellationToken cancellation)
             {
                 m_Problem = problem;
                 m_Before = before;
                 m_Order = order;
                 m_Budget = budget;
+                m_Cancellation = cancellation;
                 m_Chosen = new int[problem.MaxLines];
                 Best = new int[problem.MaxLines];
             }
@@ -351,9 +502,24 @@ namespace StationSuitabilityOverlay
 
             // Every set on the way down is a candidate answer (≤ MaxLines), judged on its
             // own evaluation; infeasible sets are counted, not chosen.
+            private LineSetEvaluation EvaluateSet(int[] chosen, int count)
+            {
+                var sorted = new int[count];
+                Array.Copy(chosen, sorted, count);
+                Array.Sort(sorted);
+                string key = string.Join(",", sorted);
+                if (!m_Evaluated.TryGetValue(key, out LineSetEvaluation? evaluation))
+                {
+                    evaluation = Evaluate(m_Problem, chosen, count, m_Before);
+                    m_Evaluated[key] = evaluation;
+                }
+
+                return evaluation;
+            }
+
             private void Consider(int[] chosen, int count)
             {
-                LineSetEvaluation evaluation = Evaluate(m_Problem, chosen, count, m_Before);
+                LineSetEvaluation evaluation = EvaluateSet(chosen, count);
                 if (!Feasible(chosen, count, evaluation))
                 {
                     Infeasible++;
@@ -397,7 +563,7 @@ namespace StationSuitabilityOverlay
                     }
 
                     Nodes++;
-                    if (Nodes > m_Budget)
+                    if (Nodes > m_Budget || m_Cancellation.IsCancellationRequested)
                     {
                         Exhausted = true;
                         OpenBoundSaved = Math.Max(OpenBoundSaved, bound.TimeSaved);
@@ -454,7 +620,7 @@ namespace StationSuitabilityOverlay
                     }
                 }
 
-                LineSetEvaluation rest = Evaluate(m_Problem, without, count - 1, m_Before);
+                LineSetEvaluation rest = EvaluateSet(without, count - 1);
                 // Riders of line k are the journeys whose itinerary boards it; the
                 // evaluation only keeps the weight, so the comparison is made on every
                 // journey the set carries faster than walking and that k's removal would

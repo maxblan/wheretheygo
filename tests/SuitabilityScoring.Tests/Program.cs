@@ -69,6 +69,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Line set: time saved is monotone and rewards a trunk-and-feeder pair", LineSetTrunkAndFeeder);
             Run("Line set: the exact selection matches brute force under utilisation and duplicate rules", LineSetMatchesBruteForce);
             Run("Line set: the equity floor ranks coverage before time saved", LineSetEquityFirst);
+            Run("Line set: one capped search per origin zone equals one search per pair", LineSetGroupedEqualsPerPair);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -1172,6 +1173,183 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(2, solution.Count, 0, "two lines chosen");
             AssertTrue((solution.Chosen[0] == 0 && solution.Chosen[1] == 1) || (solution.Chosen[0] == 1 && solution.Chosen[1] == 0), "trunk and feeder are the pair");
             AssertEqual((float)both, (float)solution.TimeSaved, 1e-3f, "the set's value is reported");
+        }
+
+        // Evaluate runs one Dijkstra per origin zone, capped at the group's largest
+        // `before`; the reference here is the definition — one uncapped search per pair
+        // from its own zone node. Seeded random cities with overlapping origins, stops
+        // close enough to walk between and lines that cross: after-times, riders and
+        // the saved sum must agree bit for bit.
+        private static void LineSetGroupedEqualsPerPair()
+        {
+            uint state = 20260905u;
+            float Next(float max)
+            {
+                state = unchecked((state * 1664525u) + 1013904223u);
+                return (state >> 8) / 16777216f * max;
+            }
+
+            for (int trial = 0; trial < 6; trial++)
+            {
+                const int zones = 6;
+                var zx = new float[zones];
+                var zz = new float[zones];
+                for (int z = 0; z < zones; z++)
+                {
+                    zx[z] = (float)Math.Round(Next(4000f) / 250f) * 250f;
+                    zz[z] = (float)Math.Round(Next(4000f) / 250f) * 250f;
+                }
+
+                const int pairs = 18;
+                var problem = new LineSetProblem
+                {
+                    PairCount = pairs,
+                    PairOx = new float[pairs],
+                    PairOz = new float[pairs],
+                    PairDx = new float[pairs],
+                    PairDz = new float[pairs],
+                    PairWeight = new float[pairs],
+                    WalkRadius = 300f,
+                    BoardPenaltySeconds = 5f,
+                    MaxTravelSeconds = 3600f,
+                    ZoneReachMetres = 500f,
+                    MaxLines = 2,
+                };
+                for (int i = 0; i < pairs; i++)
+                {
+                    int o = (int)Next(zones);
+                    int d = (int)Next(zones);
+                    problem.PairOx[i] = zx[o];
+                    problem.PairOz[i] = zz[o];
+                    problem.PairDx[i] = zx[d];
+                    problem.PairDz[i] = zz[d];
+                    problem.PairWeight[i] = 1f + (float)Math.Floor(Next(40f));
+                }
+
+                for (int c = 0; c < 3; c++)
+                {
+                    int stops = 2 + (int)Next(3f);
+                    var line = new LineCandidate { StopX = new float[stops], StopZ = new float[stops], ExpectedWait = 100f + Next(200f), SpeedMetresPerSecond = 8f + Next(10f), HeadwaySeconds = 300f, VehicleCapacity = 60f };
+                    for (int k = 0; k < stops; k++)
+                    {
+                        int z = (int)Next(zones);
+                        line.StopX[k] = zx[z] + Next(200f) - 100f;
+                        line.StopZ[k] = zz[z] + Next(200f) - 100f;
+                    }
+
+                    problem.Candidates.Add(line);
+                }
+
+                int[][] sets = { Array.Empty<int>(), new[] { 0 }, new[] { 1 }, new[] { 2 }, new[] { 0, 1 }, new[] { 1, 2 }, new[] { 0, 1, 2 } };
+                float[]? before = null;
+                float[]? referenceBefore = null;
+                foreach (int[] set in sets)
+                {
+                    LineSetEvaluation grouped = SuitabilityLineSet.Evaluate(problem, set, set.Length, before);
+                    PerPairReference(problem, set, referenceBefore, out float[] after, out double[] riders, out double saved);
+                    for (int i = 0; i < pairs; i++)
+                    {
+                        AssertTrue(grouped.After[i] == after[i], $"trial {trial} set [{string.Join(",", set)}] pair {i}: after {grouped.After[i]} vs per-pair {after[i]}");
+                    }
+
+                    for (int c = 0; c < problem.Candidates.Count; c++)
+                    {
+                        AssertTrue(grouped.Riders[c] == riders[c], $"trial {trial} set [{string.Join(",", set)}] line {c}: riders {grouped.Riders[c]} vs {riders[c]}");
+                    }
+
+                    if (before is not null)
+                    {
+                        AssertTrue(grouped.TimeSaved == saved, $"trial {trial} set [{string.Join(",", set)}]: saved {grouped.TimeSaved} vs {saved}");
+                    }
+
+                    if (set.Length == 0)
+                    {
+                        before = grouped.After;
+                        referenceBefore = after;
+                    }
+                }
+            }
+        }
+
+        // The definition of the objective: two zone nodes per pair, one uncapped search
+        // each (SuitabilityLineSet.Evaluate as first written).
+        private static void PerPairReference(LineSetProblem problem, int[] chosen, float[]? before, out float[] after, out double[] riders, out double saved)
+        {
+            int stopCount = problem.BaseStopCount;
+            foreach (int c in chosen)
+            {
+                stopCount += problem.Candidates[c].StopX.Length;
+            }
+
+            var stopX = new float[stopCount];
+            var stopZ = new float[stopCount];
+            Array.Copy(problem.BaseStopX, stopX, problem.BaseStopCount);
+            Array.Copy(problem.BaseStopZ, stopZ, problem.BaseStopCount);
+            var lines = new List<TransitLine>(problem.BaseLines);
+            int next = problem.BaseStopCount;
+            foreach (int c in chosen)
+            {
+                LineCandidate candidate = problem.Candidates[c];
+                var stops = new int[candidate.StopX.Length];
+                for (int i = 0; i < stops.Length; i++)
+                {
+                    stopX[next] = candidate.StopX[i];
+                    stopZ[next] = candidate.StopZ[i];
+                    stops[i] = next++;
+                }
+
+                lines.Add(new TransitLine { m_Stops = stops, m_ExpectedWait = candidate.ExpectedWait, m_RideSeconds = candidate.RideSeconds, m_SpeedMetresPerSecond = candidate.SpeedMetresPerSecond });
+            }
+
+            var zoneX = new float[problem.PairCount * 2];
+            var zoneZ = new float[problem.PairCount * 2];
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                zoneX[2 * i] = problem.PairOx[i];
+                zoneZ[2 * i] = problem.PairOz[i];
+                zoneX[(2 * i) + 1] = problem.PairDx[i];
+                zoneZ[(2 * i) + 1] = problem.PairDz[i];
+            }
+
+            TransitNetwork network = SuitabilityTransit.BuildWithZones(stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds, zoneX, zoneZ, problem.PairCount * 2, problem.ZoneReachMetres);
+            var workspace = new DijkstraWorkspace(network.Graph.NodeCount);
+            after = new float[problem.PairCount];
+            riders = new double[problem.Candidates.Count];
+            saved = 0.0;
+            int lineOffset = problem.BaseLines.Count;
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                int origin = network.ZoneNodeStart + (2 * i);
+                int destination = origin + 1;
+                workspace.Run(network.Graph, origin, problem.MaxTravelSeconds);
+                float walkOnly = SuitabilityLineSet.WalkOnlySeconds(problem, i);
+                float transit = workspace.Dist[destination];
+                after[i] = Math.Min(walkOnly, transit);
+                if (transit < walkOnly)
+                {
+                    var ridden = new HashSet<int>();
+                    int node = destination;
+                    while (node != origin)
+                    {
+                        int edge = workspace.PrevEdge[node];
+                        if (network.EdgeKind[edge] == TransitEdgeKind.Access)
+                        {
+                            int line = network.EdgeLine[edge] - lineOffset;
+                            if (line >= 0 && line < chosen.Length && ridden.Add(line))
+                            {
+                                riders[chosen[line]] += problem.PairWeight[i];
+                            }
+                        }
+
+                        node = network.Graph.OtherEnd(edge, node);
+                    }
+                }
+
+                if (before is not null && before[i] > after[i])
+                {
+                    saved += problem.PairWeight[i] * (double)(before[i] - after[i]);
+                }
+            }
         }
 
         private static void LineSetMatchesBruteForce()

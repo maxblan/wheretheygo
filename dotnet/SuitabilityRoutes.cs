@@ -229,7 +229,7 @@ namespace StationSuitabilityOverlay
             // both arrive as a small number of metres, and the two call for opposite
             // responses — the first means there is nothing there, the second means the
             // growth order is eating its own network.
-            Mod.Log.Info(
+            DeferredLog.Info(
                 $"Corridor growth on {network.Network}: {(lengthCount).ToString(CultureInfo.InvariantCulture)} grown, " +
                 $"mean length {((lengthCount > 0 ? lengthSum / lengthCount : 0f)).ToString("F0", CultureInfo.InvariantCulture)}m, " +
                 $"{(hitMaxLength).ToString(CultureInfo.InvariantCulture)} reached the {(maxRouteLength).ToString("F0", CultureInfo.InvariantCulture)}m limit; " +
@@ -407,7 +407,7 @@ namespace StationSuitabilityOverlay
 
             if (bent > 0)
             {
-                Mod.Log.Info(
+                DeferredLog.Info(
                     $"  {forcedMode} alignments bent through an interchange: {(bent).ToString(CultureInfo.InvariantCulture)} " +
                     $"of {(considered).ToString(CultureInfo.InvariantCulture)} traced, within " +
                     $"{(SuitabilityGraphMath.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment");
@@ -937,7 +937,7 @@ namespace StationSuitabilityOverlay
             if (!TransitModes.ChooseMode(RouteNetwork.Road, route.TracedMode, evidence, referenceFlow,
                     capacities, out ModePreset mode, out ModeRejection why))
             {
-                Mod.Log.Info(
+                DeferredLog.Info(
                     $"Re-trace on road found a {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m path " +
                     $"carrying {(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)} against a reference of " +
                     $"{(referenceFlow).ToString("F0", CultureInfo.InvariantCulture)}, but no road mode is justified: " +
