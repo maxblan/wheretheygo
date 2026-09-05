@@ -4980,8 +4980,10 @@ namespace StationSuitabilityOverlay
 
             LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute> { route }, 1);
             float[] before = SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
-            return (float)SuitabilityLineSet.Evaluate(probe, new[] { 0 }, 1, before).Riders[0];
+            return (float)SuitabilityLineSet.Evaluate(probe, s_OnlyCandidate, 1, before).Riders[0];
         }
+
+        private static readonly int[] s_OnlyCandidate = { 0 };
 
         // Demand near each network node, so corridor growth can tell a street with
         // people on it from a rural through-road carrying only passing trips.

@@ -178,7 +178,7 @@ namespace StationSuitabilityOverlay
         // one door were joined by an 800 m "walk" the transfer rule never allows.
         public void Run(CompactGraph graph, int source, float maxCost, int expandBelow)
         {
-            Run(graph, source, maxCost, expandBelow, null);
+            Run(graph, source, maxCost, expandBelow, wanted: null);
         }
 
         // As above, and a sink is only RELAXED INTO when `wanted[sink]` is set: the
