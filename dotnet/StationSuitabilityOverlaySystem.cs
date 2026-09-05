@@ -363,16 +363,7 @@ namespace StationSuitabilityOverlay
         // has to undo this mode's stop-derived terms and put its own in their place.
         private ModePreset m_ScoredMode;
         private float m_ScoredInvSelf;
-        private float m_ScoredDemandWeight;
-        private float m_ScoredJobsWeight;
-        private float m_ScoredCoverageWeight;
-        private float m_ScoredAccessWeight;
-        private float m_ScoredFutureWeight;
-        private float m_ScoredInterchangeWeight;
-        private float m_ScoredCrossWeight;
-        private float m_ScoredInvDemand;
-        private float m_ScoredInvJobs;
-        private float m_ScoredInvFuture;
+        private CombineWeights m_Scored;
         // The pedestrian network, rebuilt with the road cache.
         private WalkGraph? m_WalkGraph;
         private int m_EdgesWithoutPavement;
@@ -1969,8 +1960,18 @@ namespace StationSuitabilityOverlay
                 SuitabilityInputs.CollectWalkNetwork(
                     EntityManager, m_NodeQuery, m_AllEdgeQuery,
                     out float[] nodeX, out float[] nodeZ, out int[] edgeA, out int[] edgeB, out float[] edgeMetres,
-                    out m_EdgesWithoutPavement);
-                m_WalkGraph = WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length);
+                    out bool[] siteable, out m_EdgesWithoutPavement);
+                m_WalkGraph = WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length, siteable);
+                int offGround = 0;
+                for (int n = 0; n < siteable.Length; n++)
+                {
+                    offGround += siteable[n] ? 0 : 1;
+                }
+
+                Mod.Log.Info(
+                    $"Pedestrian network: {(nodeX.Length).ToString(CultureInfo.InvariantCulture)} nodes, " +
+                    $"{(edgeA.Length).ToString(CultureInfo.InvariantCulture)} edges with a pavement, " +
+                    $"{(offGround).ToString(CultureInfo.InvariantCulture)} nodes in tunnels or on bridges (walkable, not sites)");
                 m_RoadCacheDirty = false;
                 rebuilt = true;
             }
@@ -2089,16 +2090,9 @@ namespace StationSuitabilityOverlay
             // weights and radii can all move between a compute and a suggestion.
             m_ScoredMode = settings.Mode;
             m_ScoredInvSelf = invSelf;
-            m_ScoredDemandWeight = settings.W1;
-            m_ScoredJobsWeight = settings.W2;
-            m_ScoredCoverageWeight = settings.W3;
-            m_ScoredAccessWeight = settings.W4;
-            m_ScoredFutureWeight = settings.W5;
-            m_ScoredInterchangeWeight = settings.W6;
-            m_ScoredCrossWeight = settings.W7;
-            m_ScoredInvDemand = invDemand;
-            m_ScoredInvJobs = invJobs;
-            m_ScoredInvFuture = invFuture;
+            m_Scored = new CombineWeights(
+                settings.W1, settings.W2, settings.W3, settings.W4, settings.W5, settings.W6, settings.W7,
+                invDemand, invJobs, invFuture);
 
             int[]? tileNode = m_Access?.TileNode;
             for (int i = 0; i < totalCells; i++)
@@ -2116,7 +2110,7 @@ namespace StationSuitabilityOverlay
                 {
                     WriteTerm(demandLayer, i, SuitabilityScoring.Saturate(cell.m_Demand * invDemand));
                     WriteTerm(jobsLayer, i, SuitabilityScoring.Saturate(cell.m_Jobs * invJobs));
-                    WriteTerm(coverageLayer, i, CoverageShare(cell.m_Coverage));
+                    WriteTerm(coverageLayer, i, SuitabilityScoring.CoverageShare(cell.m_Coverage));
                     WriteTerm(accessLayer, i, cell.m_Access);
                     WriteTerm(futureLayer, i, SuitabilityScoring.Saturate(cell.m_Future * invFuture));
                     WriteTerm(interchangeLayer, i, SuitabilityScoring.Saturate(cell.m_Interchange * invSelf));
@@ -2140,26 +2134,12 @@ namespace StationSuitabilityOverlay
             m_ExpandedSignature = -1;
         }
 
-        // The one formula that turns seven raw terms into a score, under the weights
-        // and caps pinned by the last combine. The map's own cells and a query for a
-        // different mode both come through here, so they cannot disagree.
+        // The map's own cells and a query for a different mode both come through
+        // here, under the weights and caps pinned by the last combine, so they cannot
+        // disagree. The formula itself is SuitabilityScoring.Combine, where it is tested.
         private float CombineCell(in SuitabilityCell cell, float invSelf)
         {
-            float demand = SuitabilityScoring.Saturate(cell.m_Demand * m_ScoredInvDemand);
-            float jobs = SuitabilityScoring.Saturate(cell.m_Jobs * m_ScoredInvJobs);
-            float future = SuitabilityScoring.Saturate(cell.m_Future * m_ScoredInvFuture);
-            return (m_ScoredDemandWeight * demand)
-                + (m_ScoredJobsWeight * jobs)
-                + (m_ScoredAccessWeight * cell.m_Access)
-                + (m_ScoredFutureWeight * future)
-                + SuitabilityScoring.ModeTerms(
-                    CoverageShare(cell.m_Coverage), cell.m_Interchange, cell.m_CrossCoverage, invSelf,
-                    m_ScoredCoverageWeight, m_ScoredInterchangeWeight, m_ScoredCrossWeight);
-        }
-
-        private static float CoverageShare(float coverage)
-        {
-            return math.min(coverage, SuitabilityWalkAccess.MaxCoveragePenalty) / SuitabilityWalkAccess.MaxCoveragePenalty;
+            return SuitabilityScoring.Combine(in cell, in m_Scored, invSelf);
         }
 
         // The combine pass is where a plausible wrong map is made: a term cap of zero
@@ -2415,7 +2395,7 @@ namespace StationSuitabilityOverlay
             for (int node = 0; node < graph.NodeCount; node++)
             {
                 int tile = TileOfNode(graph, node, width, height);
-                if (tile < 0 || tile >= m_Buildable.Length || m_Buildable[tile] == 0)
+                if (!graph.Siteable[node] || tile < 0 || tile >= m_Buildable.Length || m_Buildable[tile] == 0)
                 {
                     continue;
                 }
@@ -5617,7 +5597,7 @@ namespace StationSuitabilityOverlay
             {
                 DeferredLog.Info(
                     $"Ridership fit: R²={(m_Calibration.RSquared).ToString("F3", CultureInfo.InvariantCulture)}, demand={(m_Calibration.FittedDemand).ToString("F2", CultureInfo.InvariantCulture)}, " +
-                    $"jobs={(m_Calibration.FittedJobs).ToString("F2", CultureInfo.InvariantCulture)}, access={(m_Calibration.FittedAccess).ToString("F2", CultureInfo.InvariantCulture)}, future={(m_Calibration.FittedFuture).ToString("F2", CultureInfo.InvariantCulture)}, " +
+                    $"jobs={(m_Calibration.FittedJobs).ToString("F2", CultureInfo.InvariantCulture)}, future={(m_Calibration.FittedFuture).ToString("F2", CultureInfo.InvariantCulture)} (W4 is a discount and is not fitted), " +
                     $"meanWait={(m_Calibration.MeanWaitSeconds).ToString("F0", CultureInfo.InvariantCulture)}s (the divisor in Little's law; a value in the thousands means an accumulator is being read as seconds)");
             }
 
@@ -5634,8 +5614,8 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // Normalized term values at a world position, in the same units the weights
-        // multiply, so a fitted weight means exactly what the slider means.
+        // The fit's regressors at a world position, under the weights the map was
+        // combined with, so a fitted weight means exactly what the slider means.
         private bool SampleFeaturesAt(float2 position, float[] features)
         {
             if (m_RawTerms is null || m_IntensityGrid.x <= 0)
@@ -5650,13 +5630,9 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            // Caps come from the last combine pass rather than being recomputed here:
-            // this runs once per stop per sample.
-            SuitabilityCell terms = m_RawTerms[index];
-            features[0] = m_DemandCap > 0f ? SuitabilityScoring.Saturate(terms.m_Demand / m_DemandCap) : 0f;
-            features[1] = m_JobsCap > 0f ? SuitabilityScoring.Saturate(terms.m_Jobs / m_JobsCap) : 0f;
-            features[2] = terms.m_Access;
-            features[3] = m_FutureCap > 0f ? SuitabilityScoring.Saturate(terms.m_Future / m_FutureCap) : 0f;
+            // Caps and weights come from the last combine pass rather than being
+            // recomputed here: this runs once per stop per sample.
+            SuitabilityScoring.CalibrationFeatures(in m_RawTerms[index], in m_Scored, features);
             return true;
         }
 
@@ -5685,7 +5661,6 @@ namespace StationSuitabilityOverlay
 
             settings.W1 = m_Calibration.FittedDemand;
             settings.W2 = m_Calibration.FittedJobs;
-            settings.W4 = m_Calibration.FittedAccess;
             settings.W5 = m_Calibration.FittedFuture;
             settings.ApplyAndSave();
             ScheduleRecompute(0f);

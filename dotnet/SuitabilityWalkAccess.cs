@@ -33,6 +33,11 @@ namespace StationSuitabilityOverlay
         public int NodeCount;
         public float[] NodeX = Array.Empty<float>();
         public float[] NodeZ = Array.Empty<float>();
+        // Whether a stop could stand at the node: false where every pavement meeting
+        // it is in a tunnel or on a bridge (register A1.15). Such a node still carries
+        // walking — a home or a journey may snap to it — but no tile and no site
+        // candidate does.
+        public bool[] Siteable = Array.Empty<bool>();
         public int[] EdgeA = Array.Empty<int>();
         public int[] EdgeB = Array.Empty<int>();
         public int[] EdgeMs = Array.Empty<int>();
@@ -55,11 +60,23 @@ namespace StationSuitabilityOverlay
 
         public static WalkGraph Build(float[] nodeX, float[] nodeZ, int[] edgeA, int[] edgeB, float[] edgeMetres, int edgeCount)
         {
+            var siteable = new bool[nodeX.Length];
+            for (int n = 0; n < siteable.Length; n++)
+            {
+                siteable[n] = true;
+            }
+
+            return Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeCount, siteable);
+        }
+
+        public static WalkGraph Build(float[] nodeX, float[] nodeZ, int[] edgeA, int[] edgeB, float[] edgeMetres, int edgeCount, bool[] siteable)
+        {
             var graph = new WalkGraph
             {
                 NodeCount = nodeX.Length,
                 NodeX = nodeX,
                 NodeZ = nodeZ,
+                Siteable = siteable,
                 EdgeA = new int[edgeCount],
                 EdgeB = new int[edgeCount],
                 EdgeMs = new int[edgeCount],
@@ -322,6 +339,18 @@ namespace StationSuitabilityOverlay
         // distance to it, computed as sqrt of the double squared distance.
         public int Nearest(float x, float z, double maxMetres, out double metres)
         {
+            return Nearest(x, z, maxMetres, sitesOnly: false, out metres);
+        }
+
+        // Nearest node a stop could stand at (WalkGraph.Siteable), or -1: the snap
+        // for tiles and site candidates, which skips tunnel and bridge nodes.
+        public int NearestSite(float x, float z, double maxMetres, out double metres)
+        {
+            return Nearest(x, z, maxMetres, sitesOnly: true, out metres);
+        }
+
+        private int Nearest(float x, float z, double maxMetres, bool sitesOnly, out double metres)
+        {
             metres = 0.0;
             if (m_Graph.NodeCount == 0)
             {
@@ -349,7 +378,7 @@ namespace StationSuitabilityOverlay
                         continue;
                     }
 
-                    ScanBucket(c + r * m_Columns, x, z, ref bestSq, ref best);
+                    ScanBucket(c + r * m_Columns, x, z, sitesOnly, ref bestSq, ref best);
                 }
             }
 
@@ -357,11 +386,16 @@ namespace StationSuitabilityOverlay
             return best;
         }
 
-        private void ScanBucket(int bucket, double x, double z, ref double bestSq, ref int best)
+        private void ScanBucket(int bucket, double x, double z, bool sitesOnly, ref double bestSq, ref int best)
         {
             for (int slot = m_Offsets[bucket]; slot < m_Offsets[bucket + 1]; slot++)
             {
                 int node = m_Nodes[slot];
+                if (sitesOnly && !m_Graph.Siteable[node])
+                {
+                    continue;
+                }
+
                 double dx = m_Graph.NodeX[node] - x;
                 double dz = m_Graph.NodeZ[node] - z;
                 double sq = dx * dx + dz * dz;
@@ -578,6 +612,20 @@ namespace StationSuitabilityOverlay
         {
             double accessMetres = accessMs / 1000.0 * SuitabilityTransit.WalkSpeed;
             int node = index.Nearest(x, z, accessMetres, out double metres);
+            return WithinAccess(node, metres, accessMs, out walkMs);
+        }
+
+        // The snap for a place a stop would stand — a tile, a site candidate: the
+        // nearest node on the ground (WalkGraph.Siteable), under the same access rule.
+        public static int SnapSite(WalkNodeIndex index, float x, float z, int accessMs, out int walkMs)
+        {
+            double accessMetres = accessMs / 1000.0 * SuitabilityTransit.WalkSpeed;
+            int node = index.NearestSite(x, z, accessMetres, out double metres);
+            return WithinAccess(node, metres, accessMs, out walkMs);
+        }
+
+        private static int WithinAccess(int node, double metres, int accessMs, out int walkMs)
+        {
             walkMs = node >= 0 ? WalkGraph.WalkMilliseconds(metres) : -1;
             if (node >= 0 && walkMs > accessMs)
             {
@@ -721,7 +769,9 @@ namespace StationSuitabilityOverlay
 
         // A tile's terms are its node's terms; only the access term is the tile's own,
         // fading from 1 at the node to 0 at the access walk. A tile with no node in
-        // reach — or an unbuildable one — scores nothing.
+        // reach — or an unbuildable one — scores nothing. The node is the nearest one
+        // on the ground: a tile over a tunnel reads the pavement a stop could stand on,
+        // not the one beneath it.
         public static void TileTerms(
             WalkAccessResult result, WalkNodeIndex index, int width, int height, float worldMinX, float worldMinZ, float tileSize,
             byte[] buildable, int accessMs, int cls, int selfType, float[] typeWeight,
@@ -742,7 +792,7 @@ namespace StationSuitabilityOverlay
 
                     float cx = worldMinX + (x + 0.5f) * tileSize;
                     float cz = worldMinZ + (y + 0.5f) * tileSize;
-                    int node = SnapPoint(index, cx, cz, accessMs, out int walkMs);
+                    int node = SnapSite(index, cx, cz, accessMs, out int walkMs);
                     if (node < 0)
                     {
                         continue;

@@ -1053,12 +1053,14 @@ def sites_walk_gap():
 def heatmap_walk_plumbing():
     """A hand-sized `heatmap_walk` instance whose expected terms are computed HERE
     by straightforward loops over three nodes — no graph search, no bucket index.
-    Three nodes on a line 72 m (one walking minute) apart; two homes at node 0
+    Four nodes on a line 72 m (one walking minute) apart; two homes at node 0
     (one of them 36 m off it), a workplace at node 2, a bus stop at node 1 and a
-    train station at node 2. Six 32 m tiles run along the line; tile 3 is
-    unbuildable. The map is built for the bus (class 0 = 6 min, type 0), with a
-    train weighing 3 buses."""
-    nodes = [0.0, 72.0, 144.0]
+    train station at node 2. Node 3 is on a bridge: walkable, but no site, so the
+    seventh tile (24 m from it, 48 m from node 2) must snap to node 2. Seven 32 m
+    tiles run along the line; tile 3 is unbuildable. The map is built for the bus
+    (class 0 = 6 min, type 0), with a train weighing 3 buses."""
+    nodes = [0.0, 72.0, 144.0, 216.0]
+    siteable = [True, True, True, False]
     speed = _f32(1.2)
 
     def ms(metres):
@@ -1076,7 +1078,7 @@ def heatmap_walk_plumbing():
     classes = [360000, 660000, 960000]
 
     def times_from(node, start):
-        return {n: start + abs(n - node) * edge_ms for n in range(3)}
+        return {n: start + abs(n - node) * edge_ms for n in range(len(nodes))}
 
     homes = [(0.0, 0.0, 10.0), (0.0, 36.0, 10.0)]
     jobs = [(144.0, 0.0, 50.0)]
@@ -1084,16 +1086,18 @@ def heatmap_walk_plumbing():
     weights = [0.0] * 14
     weights[0], weights[1] = 1.0, 3.0
 
-    def nearest(x, z):
+    def nearest(x, z, sites_only=False):
         best, best_sq = -1, (access_ms / 1000.0 * speed) ** 2
         for i, nx in enumerate(nodes):
+            if sites_only and not siteable[i]:
+                continue
             sq = (nx - x) ** 2 + (0.0 - z) ** 2
             if sq < best_sq:
                 best, best_sq = i, sq
         return best, (ms(best_sq ** 0.5) if best >= 0 else -1)
 
-    demand = [[0.0] * 3 for _ in classes]
-    jobs_acc = [[0.0] * 3 for _ in classes]
+    demand = [[0.0] * len(nodes) for _ in classes]
+    jobs_acc = [[0.0] * len(nodes) for _ in classes]
     for group, acc in ((homes, demand), (jobs, jobs_acc)):
         for x, z, w in group:
             node, walk = nearest(x, z)
@@ -1101,9 +1105,9 @@ def heatmap_walk_plumbing():
                 for c, horizon in enumerate(classes):
                     if t <= horizon:
                         acc[c][n] = add(acc[c][n], w, kernel(t, horizon))
-    within = [[[0.0] * 3 for _ in range(14)] for _ in classes]
-    cross = [[[0.0] * 3 for _ in range(14)] for _ in classes]
-    inter = [[0.0] * 3 for _ in range(14)]
+    within = [[[0.0] * len(nodes) for _ in range(14)] for _ in classes]
+    cross = [[[0.0] * len(nodes) for _ in range(14)] for _ in classes]
+    inter = [[0.0] * len(nodes) for _ in range(14)]
     for x, z, ty in stops:
         node, walk = nearest(x, z)
         for n, t in times_from(node, walk).items():
@@ -1116,14 +1120,14 @@ def heatmap_walk_plumbing():
                     within[c][ty][n] = add(within[c][ty][n], 1.0, k)
                     cross[c][ty][n] = add(cross[c][ty][n], 1.0, k * (1.0 - transferable))
 
-    grid_x, tile, world_min = 6, 32.0, -16.0
-    buildable = [1, 1, 1, 0, 1, 1]
+    grid_x, tile, world_min = 7, 32.0, -16.0
+    buildable = [1, 1, 1, 0, 1, 1, 1]
     sample = list(range(grid_x))
     cols = {k: [] for k in ("demand", "jobs", "coverage", "access", "future", "interchange", "cross")}
     tile_node, tile_walk = [], []
     for i in sample:
         cx = _f32(world_min + _f32(_f32(i + 0.5) * tile))
-        node, walk = nearest(cx, 0.0) if buildable[i] else (-1, -1)
+        node, walk = nearest(cx, 0.0, sites_only=True) if buildable[i] else (-1, -1)
         if node >= 0 and walk > access_ms:
             node, walk = -1, -1
         tile_node.append(node)
@@ -1149,9 +1153,10 @@ def heatmap_walk_plumbing():
         "grid_x": grid_x, "grid_y": 1,
         "world_min_x_b32": f32_bits(world_min), "world_min_z_b32": f32_bits(-16.0),
         "tile_size_b32": f32_bits(tile),
-        "node_x_b32": f32_list(nodes), "node_z_b32": f32_list([0.0] * 3),
-        "edge_a": [0, 1], "edge_b": [1, 2], "edge_metres_b32": f32_list([72.0, 72.0]),
-        "edge_ms": [edge_ms, edge_ms],
+        "node_x_b32": f32_list(nodes), "node_z_b32": f32_list([0.0] * 4),
+        "node_siteable": siteable,
+        "edge_a": [0, 1, 2], "edge_b": [1, 2, 3], "edge_metres_b32": f32_list([72.0, 72.0, 72.0]),
+        "edge_ms": [edge_ms, edge_ms, edge_ms],
         "homes": sources(homes), "jobs": sources(jobs), "future": sources([]),
         "stop_x_b32": f32_list([s[0] for s in stops]), "stop_z_b32": f32_list([s[1] for s in stops]),
         "stop_type": [s[2] for s in stops],
@@ -1167,7 +1172,7 @@ def heatmap_walk_plumbing():
     return {
         "kind": "heatmap_walk",
         "name": "heatmap-walk-plumbing",
-        "comment": "three nodes, two homes, one workplace, two stops; expected terms by hand",
+        "comment": "four nodes (one on a bridge), two homes, one workplace, two stops; expected terms by hand",
         "expect": {"three_way_exact": True},
         "data": data,
     }

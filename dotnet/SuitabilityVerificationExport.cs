@@ -302,6 +302,7 @@ namespace StationSuitabilityOverlay
                 .Add("tile_size_b32", SuitabilityExportJson.Bits(TileSize))
                 .Add("node_x_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeX))
                 .Add("node_z_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeZ))
+                .Add("node_siteable", SuitabilityExportJson.BoolArray(inputs.Graph.Siteable))
                 .Add("edge_a", SuitabilityExportJson.IntArray(inputs.Graph.EdgeA))
                 .Add("edge_b", SuitabilityExportJson.IntArray(inputs.Graph.EdgeB))
                 .Add("edge_metres_b32", SuitabilityExportJson.BitsArray(inputs.Graph.EdgeMetres))

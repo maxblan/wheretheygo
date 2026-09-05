@@ -123,6 +123,62 @@ namespace StationSuitabilityOverlay
         // a bus gains a great deal from sitting at a metro station while a metro gains
         // little from sitting at a bus stop. That asymmetry is the feeder relationship:
         // the smaller mode should come to the trunk.
+        public static float CoverageShare(float coverage)
+        {
+            return Math.Min(coverage, SuitabilityWalkAccess.MaxCoveragePenalty) / SuitabilityWalkAccess.MaxCoveragePenalty;
+        }
+
+        // The one formula that turns seven raw terms into a score. Two rules the user
+        // settled on 2026-09-05 (register A1.6 v2, A1.16) live here and nowhere else:
+        //
+        // Access is a DISCOUNT, not a term. A pavement two minutes from anything
+        // scores nothing, whatever the weight; W4 says how much the walk from the tile
+        // to its pavement lowers the pavement's score — at 1 the tile's score is the
+        // node's score times the access kernel, at 0 the walk is free. Before, W4 ×
+        // access was added and every tile within reach of any pavement lit up, tunnels
+        // and empty country roads included.
+        //
+        // Zoned-but-unbuilt land counts only where somebody already lives or works
+        // within the node's catchment. Zoning alone yields no journeys today, so a
+        // stop there could not be justified by anything the mod measures.
+        public static float Combine(in SuitabilityCell cell, in CombineWeights weights, float invSelf)
+        {
+            float discount = AccessDiscount(in cell, in weights);
+            float atNode = (weights.Demand * Saturate(cell.m_Demand * weights.InvDemand))
+                + (weights.Jobs * Saturate(cell.m_Jobs * weights.InvJobs))
+                + (weights.Future * GatedFuture(in cell, in weights))
+                + ModeTerms(
+                    CoverageShare(cell.m_Coverage), cell.m_Interchange, cell.m_CrossCoverage, invSelf,
+                    weights.Coverage, weights.Interchange, weights.Cross);
+            return discount * atNode;
+        }
+
+        // The three regressors of the ridership fit, in the units W1, W2 and W5
+        // multiply: Combine(cell) = W1·f[0] + W2·f[1] + W5·f[2] + discount·ModeTerms
+        // for every cell, so a fitted coefficient means exactly what its slider means
+        // under the CURRENT W4 (pinned by `CalibrationFeaturesMatchCombine`). The
+        // discount is not fitted: at a stop the access kernel is 1 or nearly so, which
+        // makes it an intercept, not a slope.
+        public const int CalibrationFeatureCount = 3;
+
+        public static void CalibrationFeatures(in SuitabilityCell cell, in CombineWeights weights, float[] features)
+        {
+            float discount = AccessDiscount(in cell, in weights);
+            features[0] = discount * Saturate(cell.m_Demand * weights.InvDemand);
+            features[1] = discount * Saturate(cell.m_Jobs * weights.InvJobs);
+            features[2] = discount * GatedFuture(in cell, in weights);
+        }
+
+        private static float AccessDiscount(in SuitabilityCell cell, in CombineWeights weights)
+        {
+            return Saturate(1f - (weights.Access * (1f - cell.m_Access)));
+        }
+
+        private static float GatedFuture(in SuitabilityCell cell, in CombineWeights weights)
+        {
+            return cell.m_Demand > 0f || cell.m_Jobs > 0f ? Saturate(cell.m_Future * weights.InvFuture) : 0f;
+        }
+
         public static float ModeTerms(
             float coverageShare,
             float interchange,
@@ -864,6 +920,39 @@ namespace StationSuitabilityOverlay
 
             double r2 = 1.0 - (residual / total);
             return (float)r2;
+        }
+    }
+
+    // The weights and caps a score field was combined under, pinned so a later query
+    // (ScoreForMode) reproduces exactly the map's arithmetic. The inverses are 1/cap
+    // of the 98th percentile of each term, or 0 when the term has no positive member.
+    internal readonly struct CombineWeights
+    {
+        public readonly float Demand;
+        public readonly float Jobs;
+        public readonly float Coverage;
+        public readonly float Access;
+        public readonly float Future;
+        public readonly float Interchange;
+        public readonly float Cross;
+        public readonly float InvDemand;
+        public readonly float InvJobs;
+        public readonly float InvFuture;
+
+        public CombineWeights(
+            float demand, float jobs, float coverage, float access, float future, float interchange, float cross,
+            float invDemand, float invJobs, float invFuture)
+        {
+            Demand = demand;
+            Jobs = jobs;
+            Coverage = coverage;
+            Access = access;
+            Future = future;
+            Interchange = interchange;
+            Cross = cross;
+            InvDemand = invDemand;
+            InvJobs = invJobs;
+            InvFuture = invFuture;
         }
     }
 }

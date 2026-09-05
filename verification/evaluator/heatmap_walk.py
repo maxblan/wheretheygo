@@ -36,6 +36,9 @@ class Graph:
         self.x = [bits_to_f32(b) for b in data["node_x_b32"]]
         self.z = [bits_to_f32(b) for b in data["node_z_b32"]]
         self.n = len(self.x)
+        # Nodes a stop could stand at (spec §7 v2 snap rule, A1.15). Instances before
+        # 2026-09-05 evening carry no flags: every node was a site then.
+        self.siteable = [bool(b) for b in data.get("node_siteable", [True] * self.n)]
         self.edge_a = list(data["edge_a"])
         self.edge_b = list(data["edge_b"])
         self.metres = [bits_to_f32(b) for b in data["edge_metres_b32"]]
@@ -45,11 +48,15 @@ class Graph:
             self.adj[a].append((b, ms))
             self.adj[b].append((a, ms))
 
-    def nearest(self, px: float, pz: float, max_metres: float) -> tuple[int, int]:
+    def nearest(self, px: float, pz: float, max_metres: float,
+                sites_only: bool = False) -> tuple[int, int]:
         """(node, walk_ms) or (-1, -1): smallest double squared distance, ties to the
-        lower index, then the walk must fit the access horizon in whole ms."""
+        lower index, then the walk must fit the access horizon in whole ms. Tiles
+        snap with sites_only: tunnel and bridge nodes are walked through, not stood on."""
         best, best_sq = -1, max_metres * max_metres
         for i in range(self.n):
+            if sites_only and not self.siteable[i]:
+                continue
             dx = self.x[i] - px
             dz = self.z[i] - pz
             sq = dx * dx + dz * dz
@@ -189,7 +196,7 @@ def check(instance: dict, solution: dict) -> dict:
         if buildable[index] != 0:
             cx = f32.add(wx, f32.mul(f32.r(x + 0.5), tile))
             cz = f32.add(wz, f32.mul(f32.r(y + 0.5), tile))
-            node, walk = graph.nearest(cx, cz, access_metres)
+            node, walk = graph.nearest(cx, cz, access_metres, sites_only=True)
             if node >= 0 and walk > access_ms:
                 node, walk = -1, -1
             if node >= 0:

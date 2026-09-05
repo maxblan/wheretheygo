@@ -32,7 +32,12 @@ namespace StationSuitabilityOverlay
         public const int MinSamplesPerStop = 30;
         public const int MinStops = 8;
         private const int MaxTrackedStops = 256;
-        private const int FeatureCount = 4;
+        private const int FeatureCount = SuitabilityScoring.CalibrationFeatureCount;
+        // Stamped into the persisted series. Records gathered under another scoring
+        // model — before 2026-09-05 the access kernel was a fourth regressor and a
+        // term of its own — are discarded on load rather than fitted against a model
+        // that no longer produces them.
+        private const int ScoringModel = 2;
 
         // Per-stop running totals. Keyed by rounded world position because Entity
         // ids are not stable across a save/load.
@@ -66,8 +71,7 @@ namespace StationSuitabilityOverlay
 
         public float FittedDemand => m_Fitted[0];
         public float FittedJobs => m_Fitted[1];
-        public float FittedAccess => m_Fitted[2];
-        public float FittedFuture => m_Fitted[3];
+        public float FittedFuture => m_Fitted[2];
 
         // Mean rider wait across the tracked stops, in seconds. Logged beside the fit
         // because the whole Little's-law derivation rests on this being seconds: the
@@ -332,10 +336,8 @@ namespace StationSuitabilityOverlay
                 _ = builder.Append(m_Fitted[0].ToString("F2", CultureInfo.InvariantCulture));
                 _ = builder.Append(", jobs ");
                 _ = builder.Append(m_Fitted[1].ToString("F2", CultureInfo.InvariantCulture));
-                _ = builder.Append(", access ");
-                _ = builder.Append(m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
                 _ = builder.Append(", future ");
-                _ = builder.Append(m_Fitted[3].ToString("F2", CultureInfo.InvariantCulture));
+                _ = builder.Append(m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
                 return builder.ToString();
             }
 
@@ -388,6 +390,9 @@ namespace StationSuitabilityOverlay
             _ = builder.Append("city=");
             _ = builder.Append(m_City.Replace(';', ' ').Replace(':', ' '));
             _ = builder.Append(';');
+            _ = builder.Append("model=");
+            _ = builder.Append(ScoringModel.ToString(CultureInfo.InvariantCulture));
+            _ = builder.Append(';');
 
             // Sorted so the same series always writes the same bytes: the settings
             // file is rewritten every few minutes, and dictionary order made it churn
@@ -429,9 +434,27 @@ namespace StationSuitabilityOverlay
             int malformed = 0;
             int overCap = 0;
             string[] records = data.Split(';');
+            int model = 1;
             for (int i = 0; i < records.Length; i++)
             {
-                if (records[i].Length == 0)
+                if (records[i].StartsWith("model=", StringComparison.Ordinal)
+                    && int.TryParse(records[i].Substring("model=".Length), NumberStyles.Integer, CultureInfo.InvariantCulture, out int stamped))
+                {
+                    model = stamped;
+                }
+            }
+
+            if (model != ScoringModel)
+            {
+                Mod.Log.Info(
+                    $"Ridership samples discarded: gathered under scoring model {model.ToString(CultureInfo.InvariantCulture)}, " +
+                    $"this build fits model {ScoringModel.ToString(CultureInfo.InvariantCulture)} (access is a discount, not a regressor).");
+                return;
+            }
+
+            for (int i = 0; i < records.Length; i++)
+            {
+                if (records[i].Length == 0 || records[i].StartsWith("model=", StringComparison.Ordinal))
                 {
                     continue;
                 }

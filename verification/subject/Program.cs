@@ -320,7 +320,11 @@ namespace StationSuitabilityOverlay.Verification
             int[] edgeA = IntArray(data.GetProperty("edge_a"));
             int[] edgeB = IntArray(data.GetProperty("edge_b"));
             float[] edgeMetres = F32Array(data.GetProperty("edge_metres_b32"));
-            WalkGraph graph = WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length);
+            // Instances before 2026-09-05 evening carry no siteable flags: every node
+            // was a site then, and their tile snaps are reproduced as such.
+            WalkGraph graph = data.TryGetProperty("node_siteable", out JsonElement siteable)
+                ? WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length, BoolArray(siteable))
+                : WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length);
 
             float[] stopX = F32Array(data.GetProperty("stop_x_b32"));
             var inputs = new WalkAccessInputs

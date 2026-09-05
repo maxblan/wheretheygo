@@ -10,13 +10,13 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
   - Demand — residents within the catchment (weight W1)
   - Jobs — actual workplace capacity from companies and city service buildings (W2)
   - Existing coverage — stops of the selected mode penalize nearby tiles (W3). Stops that no line serves are ignored, since they provide no service.
-  - Accessibility — road network density within the access radius (W4); tiles with no road access are suppressed entirely
+  - Accessibility — the walking time from a tile to the nearest pavement a stop could stand on. Since 2026-09-05 this is a discount on the other terms rather than a term of its own (W4 sets how steep), so a pavement with nobody to reach scores nothing, and pavements in tunnels or on bridges are walked through but never stood on
   - Future demand — land that is zoned but not yet built on (W5), so you can place stops ahead of a district filling in
   - Interchange potential — a served stop of a *different* mode within transfer distance (W6), which is what makes a bus stop at a metro station rate highly
   - Cross-mode overlap — another mode's service close enough to carry the same riders but too far to transfer to (W7), which discourages running parallel to an existing line
 - **Terrain awareness** — tiles too steep to build on or under water score nothing, and a catchment never draws population across water or a cliff it has no route around
 - **Bus / Tram / Metro / Train / Ferry presets** with per-mode weights and radii, all adjustable in Options → Station Suitability Overlay. Ferry mode restricts candidates to the shoreline.
-- **Ridership calibration** — the mod samples your served stops while the city runs, then fits the demand, jobs, accessibility and future weights to the observed data and reports how well the model explains it (R²). Fitted values are only suggestions until you press **Apply fitted weights**.
+- **Ridership calibration** — the mod samples your served stops while the city runs, then fits the demand, jobs and future weights to the observed data under the current accessibility discount and reports how well the model explains it (R²). Fitted values are only suggestions until you press **Apply fitted weights**.
 - **Auto-recalculation** (debounced, off the main thread) when stops are placed or removed or settings change, plus a periodic refresh so new roads, zones and residents appear on their own
 - **No surprise activation** — the game's automatic "related infoview" selection for build-menu assets has this mod's infoview stripped out and the vanilla choice restored, so the overlay only appears when you pick it
 - **Travel demand map and route suggestions** — real home-to-work and home-to-school journeys read from the save, shown as desire lines, and grown into ranked line suggestions with stops and a recommended mode

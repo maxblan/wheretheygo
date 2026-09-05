@@ -52,6 +52,9 @@ namespace StationSuitabilityOverlay.Tests
             Run("Walk graph converts metres to whole milliseconds at the planning speed", WalkGraphMilliseconds);
             Run("Integer Dijkstra is exact, bounded and reusable", IntDijkstraExactBoundedReusable);
             Run("Nearest node breaks ties by index and respects the access walk", NearestNodeTiesAndReach);
+            Run("Tiles and sites skip tunnel and bridge nodes that homes still walk from", NearestSiteSkipsOffGroundNodes);
+            Run("Combine discounts by access and counts zoning only beside people", CombineDiscountsByAccessAndGatesFuture);
+            Run("Calibration regressors reproduce the combine under any weights", CalibrationFeaturesMatchCombine);
             Run("Walk access accumulates the linear time kernel per class", WalkAccessAccumulatesKernel);
             Run("Walk access splits stops into coverage, interchange and cross terms", WalkAccessStopTerms);
             Run("Tile terms follow the node and fade with the access walk", WalkAccessTileTerms);
@@ -1630,6 +1633,78 @@ namespace StationSuitabilityOverlay.Tests
             int snapped = SuitabilityWalkAccess.SnapPoint(index, 0f, 60f, TransitModes.AccessWalkMs, out int walkMs);
             AssertEqual(0, snapped, 0, "60 m off node 0");
             AssertEqual(50000, walkMs, 0, "60 m is 50 s");
+        }
+
+        private static void NearestSiteSkipsOffGroundNodes()
+        {
+            var x = new float[] { 0f, 100f, 200f };
+            var z = new float[3];
+            WalkGraph graph = WalkGraph.Build(x, z, new[] { 0, 1 }, new[] { 1, 2 }, new[] { 100f, 100f }, 2, new[] { true, false, true });
+            var index = new WalkNodeIndex(graph, 144.0);
+
+            AssertEqual(1, index.Nearest(90f, 0f, 144.0, out _), 0, "a home snaps to the tunnel pavement it can walk from");
+            AssertEqual(0, index.NearestSite(90f, 0f, 144.0, out double metres), 0, "a tile skips the tunnel node for the nearest ground node");
+            AssertEqual(90f, (float)metres, 0f, "distance to the ground node");
+            AssertEqual(-1, index.NearestSite(110f, 0f, 60.0, out _), 0, "no ground node in reach: no site");
+
+            int node = SuitabilityWalkAccess.SnapSite(index, 100f, 0f, TransitModes.AccessWalkMs, out int walkMs);
+            AssertEqual(0, node, 0, "the tile over the tunnel node reads node 0, 100 m away");
+            AssertEqual(83333, walkMs, 0, "100 m at 1.2 m/s");
+            AssertEqual(1, SuitabilityWalkAccess.SnapPoint(index, 100f, 0f, TransitModes.AccessWalkMs, out walkMs), 0, "a source at the same spot keeps the tunnel node");
+            AssertEqual(0, walkMs, 0, "at no walk");
+
+            WalkGraph plain = WalkGraph.Build(x, z, new[] { 0, 1 }, new[] { 1, 2 }, new[] { 100f, 100f }, 2);
+            AssertTrue(plain.Siteable.Length == 3 && plain.Siteable[0] && plain.Siteable[1] && plain.Siteable[2], "a graph built without flags has every node on the ground");
+        }
+
+        private static void CombineDiscountsByAccessAndGatesFuture()
+        {
+            var full = new CombineWeights(
+                demand: 1f, jobs: 1f, coverage: 0f, access: 1f, future: 1f, interchange: 0f, cross: 0f,
+                invDemand: 1f, invJobs: 1f, invFuture: 1f);
+            var half = new CombineWeights(
+                demand: 1f, jobs: 1f, coverage: 0f, access: 0.5f, future: 1f, interchange: 0f, cross: 0f,
+                invDemand: 1f, invJobs: 1f, invFuture: 1f);
+
+            var pavementOnly = new SuitabilityCell { m_Access = 1f };
+            AssertEqual(0f, SuitabilityScoring.Combine(in pavementOnly, in full, 1f), 0f, "a pavement with nothing to reach scores nothing at any weight");
+
+            var atNode = new SuitabilityCell { m_Demand = 0.5f, m_Access = 1f };
+            AssertEqual(0.5f, SuitabilityScoring.Combine(in atNode, in full, 1f), 1e-6f, "at the node the score is the node's score");
+            SuitabilityCell atEdge = atNode;
+            atEdge.m_Access = 0f;
+            AssertEqual(0f, SuitabilityScoring.Combine(in atEdge, in full, 1f), 0f, "at the end of the access walk W4 = 1 discounts everything");
+            AssertEqual(0.25f, SuitabilityScoring.Combine(in atEdge, in half, 1f), 1e-6f, "W4 = 0.5 keeps half");
+            atEdge.m_Access = 0.5f;
+            AssertEqual(0.375f, SuitabilityScoring.Combine(in atEdge, in half, 1f), 1e-6f, "the discount is linear in the kernel");
+
+            var zonedOnly = new SuitabilityCell { m_Future = 1f, m_Access = 1f };
+            AssertEqual(0f, SuitabilityScoring.Combine(in zonedOnly, in full, 1f), 0f, "zoning without residents or jobs counts nothing");
+            var growing = new SuitabilityCell { m_Future = 1f, m_Jobs = 0.1f, m_Access = 1f };
+            AssertEqual(1.1f, SuitabilityScoring.Combine(in growing, in full, 1f), 1e-6f, "beside a workplace the zoning counts in full");
+        }
+
+        private static void CalibrationFeaturesMatchCombine()
+        {
+            var random = new Random(7);
+            var features = new float[SuitabilityScoring.CalibrationFeatureCount];
+            for (int i = 0; i < 200; i++)
+            {
+                var weights = new CombineWeights(
+                    demand: (float)random.NextDouble() * 2f, jobs: (float)random.NextDouble() * 2f, coverage: 0f,
+                    access: (float)random.NextDouble() * 2f, future: (float)random.NextDouble() * 2f, interchange: 0f, cross: 0f,
+                    invDemand: 1f / (1f + (float)random.NextDouble()), invJobs: 1f / (1f + (float)random.NextDouble()), invFuture: 1f / (1f + (float)random.NextDouble()));
+                var cell = new SuitabilityCell
+                {
+                    m_Demand = random.Next(3) == 0 ? 0f : (float)random.NextDouble() * 3f,
+                    m_Jobs = random.Next(3) == 0 ? 0f : (float)random.NextDouble() * 3f,
+                    m_Future = (float)random.NextDouble() * 3f,
+                    m_Access = (float)random.NextDouble(),
+                };
+                SuitabilityScoring.CalibrationFeatures(in cell, in weights, features);
+                float fromFeatures = (weights.Demand * features[0]) + (weights.Jobs * features[1]) + (weights.Future * features[2]);
+                AssertEqual(SuitabilityScoring.Combine(in cell, in weights, 1f), fromFeatures, 1e-5f, "W1·f0 + W2·f1 + W5·f2 is the score without stop terms");
+            }
         }
 
         private static WalkAccessInputs LineInputs(int nodes)

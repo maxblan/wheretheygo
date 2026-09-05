@@ -150,11 +150,15 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
 project. Fifteen files are on that side, and `SuitabilityScoring.Tests.csproj` links all fifteen:
 
-- `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
+- `SuitabilityScoring.cs` — percentiles, the combine (`Combine`: access as a discount, zoning gated
+  on people, and the calibration's regressors that must equal it), site candidates and the greedy
+  ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
   integer-millisecond edge costs, a bounded integer Dijkstra, node snapping, and the per-node
   accumulation of every mode's walking-time terms. Runs on a worker thread in the game and
-  unchanged in the offline subject; integer times are what make the offline check bit-exact
+  unchanged in the offline subject; integer times are what make the offline check bit-exact.
+  Nodes carry `Siteable` (false in tunnels and on bridges, from the game's composition flags):
+  sources snap to any node, tiles and site candidates only to siteable ones (`SnapSite`)
 - `SuitabilityExactSites.cs` — exact site selection: branch-and-bound over a conflict graph with a
   clique-cover bound (grid blocks, or walking-time balls on the network); proven optimum, or
   best-found plus ceiling when the node budget runs out. The greedy ranking is its incumbent and

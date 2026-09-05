@@ -554,6 +554,16 @@ Instance kind `heatmap_walk`. Definitions:
   Σ(Δ²) (ties: lower node index); its access walk is `a = round_half_even(√d² / w ·
   1000)` ms (no floor); p is off-network if no node lies within A = 120 000 ms ·
   w/1000 m or a > A. Tile centres are `worldMin + (i + 0.5)·32` in binary32.
+  **Sites (2026-09-05 evening, A1.15).** Each node carries `siteable[n]`: false when
+  every pedestrian edge meeting it does so with a node composition flagged
+  `CompositionFlags.General.Tunnel` or `.Elevated` (`NetCompositionData.m_Flags`;
+  ground, `Side.Raised`/`Side.Lowered` and edges without a composition count as
+  ground; one ground edge makes the node a site, so portals and bridgeheads are).
+  Sources (homes, jobs, zoned cells, stops, journey doors) snap over ALL nodes — a
+  tunnel pavement is walked; **tiles and site candidates snap over siteable nodes
+  only** — a stop cannot stand in a tunnel or on a bridge. Instances without
+  `node_siteable` (all exports before this date) are read as all-siteable, which is
+  what they were computed under.
 - **Times.** t(s, n) = a_s + d(node_s, n) with d the exact integer shortest-path time.
   Horizons: catchment classes C = {360 000, 660 000, 960 000} ms (Bus/Tram 6, Metro/
   Ferry 11, Train 16 min), transfer τ = 180 000 ms.
@@ -581,10 +591,24 @@ Instance kind `heatmap_walk`. Definitions:
 - **Tile terms.** Unbuildable tile ⇒ all zero, no node. Otherwise the tile's node's
   terms with T4 = fl32(K(a_tile, A)); a tile with no node ⇒ all zero. T6/T7 sums over
   types follow the arithmetic rule (fl32(acc + ω_y · Inter[y][n])).
-- **Combine (v2).** Caps and weights as in 7.3; coverage share = min(T3, 1.5)/1.5;
-  `final = score` if the tile has a node, else 0 (the v1 road gate `sat(T4·2)` is
-  retired). `ScoreForMode(p, M)` = the full combine of the node terms for M at p's
-  tile (no swap), access from the tile's own walk.
+- **Combine (v3, 2026-09-05 evening; A1.6 v2, A1.16; `SuitabilityScoring.Combine`).**
+  Caps as in 7.3; coverage share = min(T3, 1.5)/1.5; T5 gated:
+  `T5' = (T1 > 0 ∨ T2 > 0) ? sat(T5·invF) : 0`. The access kernel is a **discount**:
+  `score = sat(1 − W4·(1 − T4)) · (W1·sat(T1·invD) + W2·sat(T2·invJ) + W5·T5'
+  + W6·sat(T6·invSelf) − W3·share − W7·sat(T7·invSelf))`, `final = score` if the tile
+  has a (siteable) node, else 0. At W4 = 1 a tile scores its node's score times the
+  kernel; at W4 = 0 the walk is free; a node with no positive term scores 0 at any
+  W4. History: v2 added `W4·T4` as a term, so every tile within two minutes of any
+  pavement — tunnels, empty country roads — scored W4 (user finding 2026-09-05).
+  `ScoreForMode(p, M)` = the full combine of the node terms for M at p's tile,
+  access from the tile's own walk. Pinned by the harness (`CombineDiscountsByAccessAndGatesFuture`);
+  the combine has no export kind — the terms feeding it are what `heatmap_walk` checks.
+- **Calibration (v2, same date).** The ridership fit regresses the Little's-law
+  arrival rate on three features `f = discount·[sat(T1·invD), sat(T2·invJ), T5']`
+  under the CURRENT W4, so `W1·f₀ + W2·f₁ + W5·f₂` is exactly the score without
+  stop terms (`CalibrationFeaturesMatchCombine`, 200 random cells); W4 is not
+  fitted (at a stop T4 ≈ 1: an intercept, not a slope). Series persisted under the
+  previous model (`model=` stamp absent or ≠ 2) are discarded on load.
 - **Verification.** `heatmap_walk` requires three-way bit equality on sampled tiles:
   the game's exported terms, the subject (the mod's pure code on the exported inputs)
   and the evaluator's independent re-derivation; plus edge_ms = spec(edge_metres) and
@@ -826,5 +850,6 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-05 | **S5 stop plan** (§4 v2: candidates every 50 m, forced interchanges, doors within the access horizon, through-flow at the candidate, δ from the prefabs; exact DP of Σ w·max(0, H − t) − Σ through·δ under the σ/2 gap floor) replaces the v1 windows | A5.1, A5.2, A5.4, A5.5 | new kind `stop_plan` (subject DP vs exact optimum by enumeration/independent DP); `calling_points` kind removed; Lean `CallingPoints` theorems historical |
 | 2026-09-05 | **S6 capacity ladder** (§5 v2: smallest mode not overloaded at the prefab headway; ≥ 3 stops; ride limits 30/35/30/60/45 min; one rail lattice with the train's track preference for metro too; ferries offered every journey; journeys as door-to-door pairs in the set objective) | A6.x, A4.6, A6.1, A4.5, A3.4, A0.5 | `mode_choice` kind rewritten (bit-exact ladder); `lineset_time` pairs are now journeys |
 | 2026-09-05 (evening) | **Two rail lattices and a ladder across networks** (§5 v2: train and metro track split by `TrackLaneData.m_TrackTypes`; a rail alignment is offered only where its street re-trace is overloaded, impossible or fails the gates) | A4.5 v2, A6.7 | mod code; log-verified (`ResolveCandidate` lines) — the export kinds are unchanged |
+| 2026-09-05 (evening) | **Access is a discount, tunnels and bridges are not sites, zoning counts only beside people** (§7 v2 snap `siteable`, combine v3, calibration v2) | A1.6 v2, A1.15, A1.16, A1.14 v2 | `heatmap-walk-plumbing` regenerated with a bridge node (7 tiles, three-way exact); new export field `node_siteable`, absent = all sites; old real exports unchanged |
 | 2026-09-05 (evening) | **Passes run with the heat map hidden; a finished pass is staged** until the panel's button applies it (the list and the drawn lines never change under a selection) | A9.1 | none needed — no number changes; behaviour in the log ("staged" / "adopted") |
 | 2026-09-04 | Interchange/coverage weight of another mode's stop = **vehicle capacity ÷ bus capacity from the loaded prefabs** (`TransitModes.CapacityWeight`), replacing the table 1/1.2/1.5/2.5/3; a type without a loaded vehicle weighs 0 | A1.10 | heatmap `w_b32` remain instance data; new pure function unit-tested |

@@ -1,5 +1,5 @@
 {
- "comment": "three nodes, two homes, one workplace, two stops; expected terms by hand",
+ "comment": "four nodes (one on a bridge), two homes, one workplace, two stops; expected terms by hand",
  "data": {
   "access_ms": 120000,
   "buildable": [
@@ -7,6 +7,7 @@
    1,
    1,
    0,
+   1,
    1,
    1
   ],
@@ -18,17 +19,21 @@
   "class": 0,
   "edge_a": [
    0,
-   1
-  ],
-  "edge_b": [
    1,
    2
   ],
+  "edge_b": [
+   1,
+   2,
+   3
+  ],
   "edge_metres_b32": [
+   1116733440,
    1116733440,
    1116733440
   ],
   "edge_ms": [
+   60000,
    60000,
    60000
   ],
@@ -37,7 +42,7 @@
    "x_b32": [],
    "z_b32": []
   },
-  "grid_x": 6,
+  "grid_x": 7,
   "grid_y": 1,
   "homes": {
    "w_b32": [
@@ -70,15 +75,24 @@
    1,
    1,
    1,
+   1,
    1
   ],
   "mode": "Bus",
+  "node_siteable": [
+   true,
+   true,
+   true,
+   false
+  ],
   "node_x_b32": [
    0,
    1116733440,
-   1125122048
+   1125122048,
+   1129840640
   ],
   "node_z_b32": [
+   0,
    0,
    0,
    0
@@ -89,7 +103,8 @@
    1064421102,
    0,
    1063489127,
-   1063489127
+   1063489127,
+   1059760811
   ],
   "sample_coverage_b32": [
    1062557013,
@@ -97,12 +112,14 @@
    1065353216,
    0,
    1062557013,
+   1062557013,
    1062557013
   ],
   "sample_cross_b32": [
    1068149419,
    1068149419,
    1062557014,
+   0,
    0,
    0,
    0
@@ -113,9 +130,11 @@
    1098732885,
    0,
    1095237632,
+   1095237632,
    1095237632
   ],
   "sample_future_b32": [
+   0,
    0,
    0,
    0,
@@ -129,13 +148,15 @@
    2,
    3,
    4,
-   5
+   5,
+   6
   ],
   "sample_interchange_b32": [
    1065353216,
    1065353216,
    1073741824,
    0,
+   1077936128,
    1077936128,
    1077936128
   ],
@@ -145,6 +166,7 @@
    1109830315,
    0,
    1112014848,
+   1112014848,
    1112014848
   ],
   "sample_tile_node": [
@@ -152,6 +174,7 @@
    0,
    1,
    -1,
+   2,
    2,
    2
   ],
@@ -161,7 +184,8 @@
    6667,
    -1,
    13333,
-   13333
+   13333,
+   40000
   ],
   "self_type": 0,
   "stop_type": [
@@ -201,7 +225,7 @@
  "expect": {
   "three_way_exact": true
  },
- "hash": "20cd9b5b4de6d92ce97af2f23c6c72255b6c08227e5e3ce65caa283359a01c39",
+ "hash": "728e9806f1c9546c239e93e66a0e73deee2ca8b328d31c33d3252466835e341d",
  "kind": "heatmap_walk",
  "name": "heatmap-walk-plumbing",
  "schema_version": 1

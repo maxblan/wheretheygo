@@ -120,6 +120,7 @@ namespace StationSuitabilityOverlay
             out int[] edgeA,
             out int[] edgeB,
             out float[] edgeMetres,
+            out bool[] nodeSiteable,
             out int edgesWithoutPavement)
         {
             edgesWithoutPavement = 0;
@@ -140,6 +141,7 @@ namespace StationSuitabilityOverlay
             var a = new List<int>();
             var b = new List<int>();
             var metres = new List<float>();
+            var onGround = new List<bool>();
             for (int i = 0; i < edgeEntities.Length; i++)
             {
                 if (!HasPedestrianLane(entityManager, edgeEntities[i]))
@@ -149,8 +151,8 @@ namespace StationSuitabilityOverlay
                 }
 
                 Game.Net.Edge edge = edges[i];
-                if (!TryIndexNode(edge.m_Start, nodeMap, index, xs, zs, out int start)
-                    || !TryIndexNode(edge.m_End, nodeMap, index, xs, zs, out int end)
+                if (!TryIndexNode(edge.m_Start, nodeMap, index, xs, zs, onGround, out int start)
+                    || !TryIndexNode(edge.m_End, nodeMap, index, xs, zs, onGround, out int end)
                     || start == end)
                 {
                     continue;
@@ -159,6 +161,8 @@ namespace StationSuitabilityOverlay
                 a.Add(start);
                 b.Add(end);
                 metres.Add(curves[i].m_Length);
+                onGround[start] = onGround[start] || EndOnGround(entityManager, edgeEntities[i], atStart: true);
+                onGround[end] = onGround[end] || EndOnGround(entityManager, edgeEntities[i], atStart: false);
             }
 
             nodeX = xs.ToArray();
@@ -166,11 +170,37 @@ namespace StationSuitabilityOverlay
             edgeA = a.ToArray();
             edgeB = b.ToArray();
             edgeMetres = metres.ToArray();
+            nodeSiteable = onGround.ToArray();
+        }
+
+        // Whether the pavement meets this node on the ground. The game's own
+        // classification is used: the node composition at an edge's end carries
+        // `CompositionFlags.General.Tunnel` or `.Elevated` (`NetCompositionData.m_Flags`,
+        // set by `NetCompositionHelpers` from the pieces' `NetPieceRequirements`). A
+        // node is a site as soon as ONE edge meets it on the ground, so a tunnel portal
+        // or a bridgehead stays one; a merely raised or lowered street (`Side.Raised`/
+        // `Side.Lowered`) is ground. An edge without a composition is treated as ground.
+        private static bool EndOnGround(EntityManager entityManager, Entity edge, bool atStart)
+        {
+            if (!entityManager.HasComponent<Game.Net.Composition>(edge))
+            {
+                return true;
+            }
+
+            Game.Net.Composition composition = entityManager.GetComponentData<Game.Net.Composition>(edge);
+            Entity nodeComposition = atStart ? composition.m_StartNode : composition.m_EndNode;
+            if (!entityManager.HasComponent<NetCompositionData>(nodeComposition))
+            {
+                return true;
+            }
+
+            CompositionFlags.General flags = entityManager.GetComponentData<NetCompositionData>(nodeComposition).m_Flags.m_General;
+            return (flags & (CompositionFlags.General.Tunnel | CompositionFlags.General.Elevated)) == 0;
         }
 
         private static bool TryIndexNode(
             Entity node, Dictionary<Entity, float3> nodeMap, Dictionary<Entity, int> index,
-            List<float> xs, List<float> zs, out int slot)
+            List<float> xs, List<float> zs, List<bool> onGround, out int slot)
         {
             if (index.TryGetValue(node, out slot))
             {
@@ -186,6 +216,7 @@ namespace StationSuitabilityOverlay
             slot = xs.Count;
             xs.Add(position.x);
             zs.Add(position.z);
+            onGround.Add(false);
             index[node] = slot;
             return true;
         }
