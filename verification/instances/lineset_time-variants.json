@@ -1,5 +1,5 @@
 {
- "comment": "a line above the utilisation ceiling makes its set infeasible",
+ "comment": "two variants of one alignment are alternatives, never both",
  "data": {
   "base_lines": [],
   "base_stop_x_b32": [],
@@ -9,7 +9,7 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
-    "group": -1,
+    "group": 0,
     "headway_b32": 1128792064,
     "ride_seconds_b32": null,
     "speed_b32": 1092616192,
@@ -27,14 +27,14 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
-    "group": -1,
+    "group": 0,
     "headway_b32": 1128792064,
     "ride_seconds_b32": null,
-    "speed_b32": 1092616192,
+    "speed_b32": 1091567616,
     "stop_x_b32": [
-     1165623296,
-     1169915904,
-     1174011904
+     0,
+     1157234688,
+     1165623296
     ],
     "stop_z_b32": [
      0,
@@ -45,7 +45,7 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
-    "group": -1,
+    "group": 1,
     "headway_b32": 1128792064,
     "ride_seconds_b32": null,
     "speed_b32": 1092616192,
@@ -60,6 +60,7 @@
    }
   ],
   "chosen": [
+   0,
    2
   ],
   "duplicate_share_b32": 1056964608,
@@ -69,36 +70,26 @@
   "max_travel_seconds_b32": 1163984896,
   "movement_seconds_per_day_b32": 1166575753,
   "pair_dx_b32": [
-   1174011904,
    1165623296,
-   1174011904,
    1161527296
   ],
   "pair_dz_b32": [
-   0,
-   0,
    0,
    1161527296
   ],
   "pair_ox_b32": [
    0,
-   0,
-   1165623296,
    0
   ],
   "pair_oz_b32": [
    0,
-   0,
-   0,
    1161527296
   ],
   "pair_w_b32": [
-   1120403456,
-   1092616192,
-   1092616192,
-   1106247680
+   1121714176,
+   1114636288
   ],
-  "utilisation_ceiling_b32": 1036831949,
+  "utilisation_ceiling_b32": 0,
   "utilisation_floor_b32": 1025758986,
   "walk_radius_b32": 1132068864,
   "zone_reach_b32": 1140457472
@@ -108,8 +99,8 @@
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "ac529f88c7c740879ea9c670745c00d526cd5146d1e6273372c1f2e6470a2a7f",
+ "hash": "170664323970ef8e4f9aa3fec63ab268f8b621994e655af5ad1bf6e7f2789bc7",
  "kind": "lineset_time",
- "name": "lineset_time-ceiling",
+ "name": "lineset_time-variants",
  "schema_version": 1
 }

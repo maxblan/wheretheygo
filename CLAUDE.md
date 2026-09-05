@@ -241,7 +241,9 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    **The whole route pipeline runs on a worker task** (`StartRoutePass` → `BuildRoutes` →
    `FinishRoutesIfReady`), because weighing one candidate against 1,400 journeys took two
    seconds and the set search asks for thousands of such evaluations; on the main thread that
-   was a frozen game. While `m_RoutesPending` is set, `OnUpdate` leaves every input the worker
+   was a frozen game. A pass starts at most every 300 s (`RoutePassIntervalSeconds`) unless the
+   objective or line count changed; the set search gets 60 s and half the cores. While
+   `m_RoutesPending` is set, `OnUpdate` leaves every input the worker
    reads alone — no heat-map adoption or recompute, no demand refresh, no line collection, no
    recombine, no improvement or calibration request — and the pass's outputs are copied into
    the fields the panel, renderer and export read only when the task has completed. Code that

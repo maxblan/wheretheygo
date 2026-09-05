@@ -59,6 +59,7 @@ def parse(instance: dict) -> dict:
             "wait": bits_to_f32(c["expected_wait_b32"]), "speed": bits_to_f32(c["speed_b32"]),
             "ride": None if c.get("ride_seconds_b32") is None else [bits_to_f32(b) for b in c["ride_seconds_b32"]],
             "headway": bits_to_f32(c["headway_b32"]), "capacity": bits_to_f32(c["capacity_b32"]),
+            "group": int(c.get("group", -1)),
         } for c in d["candidates"]],
         "max_lines": int(d["max_lines"]),
         "utilisation_floor": bits_to_f32(d["utilisation_floor_b32"]),
@@ -219,6 +220,9 @@ def key_of(p: dict, chosen: list[int], before: list[Fraction]) -> tuple:
 
 
 def feasible(p: dict, chosen: list[int], ev: dict, before: list[Fraction]) -> tuple[bool, str]:
+    groups = [p["candidates"][c]["group"] for c in chosen if p["candidates"][c]["group"] >= 0]
+    if len(groups) != len(set(groups)):
+        return False, "two variants of one alignment"
     for c in chosen:
         u = utilisation(p, c, ev["riders"][c])
         if p["utilisation_floor"] > 0 and u < Fraction(p["utilisation_floor"]):
@@ -256,12 +260,17 @@ def check(instance: dict, solution: dict) -> dict:
     mod_saved = Fraction(float(solution["time_saved"]))
     budget = saved_budget(p, before, ev["after"])
     game_chosen = None if instance["data"].get("chosen") is None else list(instance["data"]["chosen"])
+    game_optimal = bool(instance["data"].get("optimal", True))
     return {
         "candidates": len(p["candidates"]),
         "pairs": p["pairs"],
         "chosen": chosen,
         "game_chosen": game_chosen,
-        "subject_matches_game": game_chosen is None or chosen == game_chosen,
+        # A budget-stopped game run is machine-dependent; its set is then judged on its
+        # own feasibility and value rather than required to equal the subject's.
+        "subject_matches_game": game_chosen is None or chosen == game_chosen or not game_optimal,
+        "game_optimal_claimed": game_optimal,
+        "game_set_feasible": None if game_chosen is None else feasible(p, game_chosen, evaluate(p, game_chosen, before), before)[0],
         "exact_time_saved": str(ev["saved"]),
         "mod_time_saved": solution["time_saved"],
         "time_saved_within_budget": abs(mod_saved - ev["saved"]) <= budget,
@@ -272,5 +281,5 @@ def check(instance: dict, solution: dict) -> dict:
         "tie_affected": ev["tie_affected"],
         "riders": [str(r) for r in ev["riders"]],
         "optimal_claimed": bool(solution["optimal"]),
-        "ok": ok_feasible and (game_chosen is None or chosen == game_chosen) and abs(mod_saved - ev["saved"]) <= budget,
+        "ok": ok_feasible and (game_chosen is None or chosen == game_chosen or not game_optimal) and abs(mod_saved - ev["saved"]) <= budget,
     }

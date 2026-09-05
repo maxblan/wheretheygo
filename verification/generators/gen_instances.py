@@ -689,8 +689,9 @@ def lt_common(name, comment, pairs, candidates, k, utilisation_floor, duplicate_
     return inst
 
 
-def lt_candidate(stops, wait, speed, headway=200.0, capacity=30.0):
+def lt_candidate(stops, wait, speed, headway=200.0, capacity=30.0, group=-1):
     return {
+        "group": group,
         "stop_x_b32": f32_list([s[0] for s in stops]),
         "stop_z_b32": f32_list([s[1] for s in stops]),
         "expected_wait_b32": f32_bits(wait),
@@ -753,6 +754,24 @@ def lineset_time_ceiling():
     ]
     return lt_common("lineset_time-ceiling", "a line above the utilisation ceiling makes its set infeasible",
                      pairs, candidates, 2, 0.04, chosen=[2], utilisation_ceiling=0.10,
+                     expect={"pass_set": True, "pass_optimal": True, "enumeration_complete": True})
+
+
+def lineset_time_variants():
+    """Alignment groups (A4.7): L1 and its slower variant L1' share a group, so a set
+    holds at most one of them even though neither duplicates the other in the
+    rider sense here (weights split by the routing tie); with K=2 the optimum is
+    {L1, L3}."""
+    A = (0.0, 0.0); A2 = (2000.0, 0.0); M = (4000.0, 0.0)
+    C = (0.0, 3000.0); D = (3000.0, 3000.0)
+    pairs = [(A, M, 110.0), (C, D, 60.0)]
+    candidates = [
+        lt_candidate([A, A2, M], 200.0, 10.0, group=0),
+        lt_candidate([A, A2, M], 200.0, 9.0, group=0),
+        lt_candidate([C, D], 200.0, 10.0, group=1),
+    ]
+    return lt_common("lineset_time-variants", "two variants of one alignment are alternatives, never both",
+                     pairs, candidates, 2, 0.04, chosen=[0, 2],
                      expect={"pass_set": True, "pass_optimal": True, "enumeration_complete": True})
 
 
@@ -1179,6 +1198,7 @@ def main():
         lineset_time_feeder(),
         lineset_time_floor(),
         lineset_time_duplicate(),
+        lineset_time_variants(),
         lineset_time_ceiling(),
         lineset_time_tie(),
         lineset_time_random(),

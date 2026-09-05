@@ -484,6 +484,7 @@ namespace StationSuitabilityOverlay
                     .Add("ride_seconds_b32", line.RideSeconds is null ? SuitabilityExportJson.Null() : SuitabilityExportJson.BitsArray(line.RideSeconds))
                     .Add("headway_b32", SuitabilityExportJson.Bits(line.HeadwaySeconds))
                     .Add("capacity_b32", SuitabilityExportJson.Bits(line.VehicleCapacity))
+                    .Add("group", SuitabilityExportJson.Int(line.Group))
                     .Add("mode", SuitabilityExportJson.Str(m_LineSetResolved[c].Mode.ToString()))
                     .Build());
             }

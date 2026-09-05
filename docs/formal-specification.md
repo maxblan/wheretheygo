@@ -400,9 +400,13 @@ candidates):
   walked through — only the source door expands — so two stops within reach of one
   door are not joined by a walk the transfer rule (216 m) never allows. Evaluator:
   `transit.dijkstra(..., expand_below=zone_start)`; predecessor enumeration skips
-  door predecessors. The mod additionally relaxes into a door only when it is a
-  destination of the current origin (`DijkstraWorkspace.Run(..., wanted)`), which
-  leaves every wanted distance unchanged;
+  door predecessors. The mod computes these distances without door nodes at all: a search starts at
+  every stop within reach of the origin door at the door's walking time to it
+  (`DijkstraWorkspace.RunFromMany`), and a destination's time is the least stop
+  distance plus that stop's walking time to the door — identical values, a
+  fraction of the edges; origins run in parallel and the sums are folded in pair
+  order (harness "one capped search per origin zone equals one search per pair",
+  bit for bit against the door-node graph);
 - walkOnly(i) = √(Δx² + Δz²) / 1.2 in binary32 (`WalkOnlySeconds`);
 - after(i, A) = min(walkOnly(i), transit(i, N₀ ∪ A)); before(i) = after(i, ∅).
 
@@ -446,7 +450,10 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
   (`SuitabilityEquity.WithStops` → `Coverage`); 0 when no equity inputs exist.
 - **Key(A)** = (min(coverage(A), X), saved(A)), compared lexicographically; X =
   the equity floor share (0.8).
-- **Feasible(A)** iff for every line c ∈ A:
+- **Feasible(A)** iff A holds at most one candidate per *alignment group* (the
+  variants of one alignment — direct or bent through a hub, one mode or the next
+  up, a rail trace or its re-trace along streets — are alternatives, A4.7;
+  `LineCandidate.Group`, negative = none), and for every line c ∈ A:
   (F1) utilisation(c, A) = riders(c, A) · 2 / ((D / headway_c) · 2 · capacity_c) ≥
   the utilisation floor (0.15 default), with D = movement seconds per game day =
   4369.07 (`TimeSystem.kTicksPerDay` / 60) — riders are the set's attribution,
@@ -462,12 +469,15 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
 
 The mod maximises Key over feasible A by depth-first branch-and-bound
 (`Search`): candidates ordered by standalone saved (desc, index tiebreak);
-include-first DFS; every prefix is a candidate answer; **bound** = Key(chosen ∪
-all remaining) — valid because both components are monotone in A (a line can
+include-first DFS that never adds a second variant of a group already in the
+set; every prefix is a candidate answer; **bound** = Key(chosen ∪ all remaining)
+— and a subtree is skipped outright once the incumbent has passed the bound its
+parent computed, of which every union below is a subset — valid because both components are monotone in A (a line can
 only shorten a journey or serve another door; the cap keeps the first
 component monotone). A node budget (`DefaultNodeBudget` = 20 000 bound
-evaluations) or the caller's cancellation token (the mod passes a 90 s wall-clock
-budget on its worker) stops the search; the solution then reports `Optimal =
+evaluations) or the caller's cancellation token (the mod passes a 60 s wall-clock
+budget on its worker, and starts a pass at most every 300 s unless the objective
+or line count changed) stops the search; the solution then reports `Optimal =
 false` and `UpperBoundTimeSaved` = max over open bounds — the "best found plus
 ceiling" regime, and the log names it. Evaluations of sets of ≤ K lines are
 memoised within one search (a prefix is asked for again as "the rest" of its

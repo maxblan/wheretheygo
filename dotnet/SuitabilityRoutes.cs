@@ -48,6 +48,9 @@ namespace StationSuitabilityOverlay
         public int[] StopPlanChosen = System.Array.Empty<int>();
         public double StopPlanGain;
         public double StopPlanDelay;
+        // The alignment this candidate is a variant of (SuitabilityRoutes numbers them
+        // per pass); variants are alternatives in the set selection. Negative = none.
+        public int Group = -1;
 
         // The same alignment as a candidate of another mode: path, flow, riders and
         // provenance copied, stops to be placed for the new mode by the caller.
@@ -63,6 +66,7 @@ namespace StationSuitabilityOverlay
                 Network = Network,
                 BentThroughHub = BentThroughHub,
                 Source = Source,
+                Group = Group,
             };
             copy.Path.AddRange(Path);
             copy.Nodes.AddRange(Nodes);
@@ -309,7 +313,7 @@ namespace StationSuitabilityOverlay
                     out bool shorterThanAnyMode, out int aimedAtInterchange);
                 if (candidate is not null)
                 {
-                    output.Add(candidate);
+                    OfferGrown(candidate, output);
                     added++;
                     // Counted only once the corridor becomes a candidate, so the figure
                     // cannot exceed the number of candidates and read as a bug in the
@@ -484,16 +488,7 @@ namespace StationSuitabilityOverlay
 
                 takenFrom.Add(fromPoint);
                 takenTo.Add(toPoint);
-                if (direct is not null)
-                {
-                    output.Add(direct);
-                }
-
-                if (viaHub is not null)
-                {
-                    output.Add(viaHub);
-                }
-
+                OfferVariants(direct, viaHub, output);
                 added++;
                 atInterchange += aimedAtInterchange;
             }
@@ -504,6 +499,32 @@ namespace StationSuitabilityOverlay
                     $"  {forcedMode} alignments also offered bent through an interchange: {(bent).ToString(CultureInfo.InvariantCulture)} " +
                     $"of {(considered).ToString(CultureInfo.InvariantCulture)} traced, within " +
                     $"{(SuitabilityGraphMath.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment; the set selection decides between the two");
+            }
+        }
+
+        // A grown road corridor is an alignment of its own: one group, one variant so far
+        // (the mode ladder may add the next mode up later).
+        private static void OfferGrown(SuggestedRoute candidate, List<SuggestedRoute> output)
+        {
+            candidate.Group = output.Count;
+            output.Add(candidate);
+        }
+
+        // Both alignments of one journey pair join the pool as one group: alternatives
+        // the set selection chooses between, never both.
+        private static void OfferVariants(SuggestedRoute? direct, SuggestedRoute? viaHub, List<SuggestedRoute> output)
+        {
+            int group = output.Count;
+            if (direct is not null)
+            {
+                direct.Group = group;
+                output.Add(direct);
+            }
+
+            if (viaHub is not null)
+            {
+                viaHub.Group = group;
+                output.Add(viaHub);
             }
         }
 

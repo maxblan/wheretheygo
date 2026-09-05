@@ -764,6 +764,7 @@ namespace StationSuitabilityOverlay.Verification
                     RideSeconds = OptionalF32Array(c, "ride_seconds_b32"),
                     HeadwaySeconds = F32(c.GetProperty("headway_b32")),
                     VehicleCapacity = F32(c.GetProperty("capacity_b32")),
+                    Group = c.TryGetProperty("group", out JsonElement group) ? group.GetInt32() : -1,
                 });
             }
 
@@ -772,7 +773,24 @@ namespace StationSuitabilityOverlay.Verification
                 problem.CoverageOf = EquityCoverage(equity, problem);
             }
 
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            // The same wall-clock regime as the mod's worker: past the budget the search
+            // reports its best set and ceiling. SUBJECT_LINESET_BUDGET_SECONDS overrides
+            // the mod's 90 s; 0 means unbounded.
+            string? budgetText = Environment.GetEnvironmentVariable("SUBJECT_LINESET_BUDGET_SECONDS");
+            double budgetSeconds = double.TryParse(budgetText, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed) ? parsed : 90.0;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            LineSetSolution solution;
+            if (budgetSeconds > 0.0)
+            {
+                using var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds));
+                solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget, budget.Token);
+            }
+            else
+            {
+                solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            }
+
+            long elapsedMs = clock.ElapsedMilliseconds;
             var standalone = new List<string>();
             foreach (double saved in solution.StandaloneTimeSaved)
             {
@@ -787,6 +805,8 @@ namespace StationSuitabilityOverlay.Verification
                 ["coverage_b32"] = B32(solution.Coverage),
                 ["optimal"] = solution.Optimal,
                 ["nodes"] = solution.Nodes,
+                ["evaluations"] = solution.Evaluations,
+                ["elapsed_ms"] = elapsedMs,
                 ["infeasible"] = solution.Infeasible,
                 ["standalone_time_saved"] = standalone,
             };

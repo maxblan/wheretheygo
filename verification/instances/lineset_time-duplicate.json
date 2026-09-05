@@ -9,6 +9,7 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "group": -1,
     "headway_b32": 1128792064,
     "ride_seconds_b32": null,
     "speed_b32": 1092616192,
@@ -26,6 +27,7 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "group": -1,
     "headway_b32": 1128792064,
     "ride_seconds_b32": null,
     "speed_b32": 1090519040,
@@ -74,7 +76,7 @@
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "75c2b160f1ff99a4fd326161c049c896c6b9604891bb9bbf92ada53fc92695a2",
+ "hash": "346d345fd172b46af6fa93d88eba31d7d2327c49db97ac1c40fba7e4a0a09c6e",
  "kind": "lineset_time",
  "name": "lineset_time-duplicate",
  "schema_version": 1

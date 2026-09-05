@@ -15,6 +15,11 @@ namespace StationSuitabilityOverlay
         public float[]? RideSeconds;
         public float HeadwaySeconds;
         public float VehicleCapacity;
+        // Variants of one alignment — direct or bent through a hub, one mode or the next
+        // up, a rail trace or its re-trace along streets — share a group and are
+        // alternatives: a set holds at most one of a group (register A4.7). Negative =
+        // no group.
+        public int Group = -1;
     }
 
     internal sealed class LineSetProblem
@@ -100,6 +105,8 @@ namespace StationSuitabilityOverlay
         public bool Optimal;
         public long Nodes;
         public int Infeasible;
+        // Set evaluations the search made (each one routes every journey).
+        public long Evaluations;
         public double[] StandaloneTimeSaved = Array.Empty<double>();
     }
 
@@ -123,81 +130,50 @@ namespace StationSuitabilityOverlay
     {
         public const long DefaultNodeBudget = 20_000;
 
-        // One Dijkstra per origin ZONE rather than per pair, capped at the largest
-        // door-to-door time the group's pairs can still improve on. Both are exact
-        // rewrites of the per-pair search, not approximations:
-        //  - two pairs starting from the same zone see the same edges from the same
-        //    node, so one search answers both (the zone nodes are deduplicated by
-        //    position, which also removes the duplicate nodes' identical edges);
-        //  - a network with lines added never lengthens a journey (every old path
-        //    is still there at the same cost), so any destination further than the
-        //    pair's own `before` is unreachable within it, and min(walk, transit)
-        //    comes out as `before` whether or not the search finished the distance.
-        // The sums stay in pair order: per-pair results are collected during the
-        // group runs and folded in a final pass, so the double accumulations match
-        // the per-pair evaluation bit for bit.
+        // One search per origin DOOR rather than per pair, capped at the largest
+        // door-to-door time the door's pairs can still improve on. Doors are not nodes
+        // of the transit graph: a search starts at every stop within reach of the
+        // origin door (at the walking time to it) and a destination's time is the least
+        // over the stops within reach of its door — the same distances the door-node
+        // graph of the specification gives (a door is reached, never walked through),
+        // at a fraction of the edges. Both the per-door grouping and the cap are exact
+        // rewrites of the per-pair search: pairs from one door see the same stops, and
+        // a network with lines added never lengthens a journey, so a destination
+        // further than a pair's own `before` yields `before` whether or not the search
+        // finished the distance. The sums stay in pair order: per-pair results are
+        // collected during the searches and folded afterwards, so one thread or sixteen
+        // give the same bits.
         public static LineSetEvaluation Evaluate(LineSetProblem problem, int[] chosen, int count, float[]? before)
         {
             LineSetGeometry geometry = GeometryOf(problem);
             AssembleStops(problem, chosen, count, out float[] stopX, out float[] stopZ, out int stopCount, out List<TransitLine> lines);
-            TransitNetwork network = SuitabilityTransit.BuildWithZones(
-                stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds,
-                geometry.ZoneX, geometry.ZoneZ, geometry.ZoneCount, problem.ZoneReachMetres);
+            TransitNetwork network = SuitabilityTransit.Build(stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds);
+            DoorAccess access = DoorAccess.Build(geometry, stopX, stopZ, stopCount, problem.ZoneReachMetres);
             var evaluation = new LineSetEvaluation
             {
                 Riders = new double[problem.Candidates.Count],
                 After = new float[problem.PairCount],
             };
-            var workspace = new DijkstraWorkspace(network.Graph.NodeCount);
-            var wanted = new bool[network.Graph.NodeCount];
             int lineOffset = problem.BaseLines.Count;
             var legs = new PairLegs(problem.PairCount);
-            for (int zone = 0; zone < geometry.ZoneCount; zone++)
-            {
-                int first = geometry.OriginStart[zone];
-                int last = geometry.OriginStart[zone + 1];
-                if (first == last)
+            int nodeCount = network.Graph.NodeCount;
+            // The origins are independent (each writes only its own pairs' legs), so
+            // they are spread over half the cores — the other half stays the game's.
+            var options = new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) };
+            _ = System.Threading.Tasks.Parallel.For(
+                0,
+                geometry.ZoneCount,
+                options,
+                () => new DijkstraWorkspace(nodeCount),
+                (zone, _, workspace) =>
                 {
-                    continue;
-                }
-
-                float cap = 0f;
-                for (int k = first; k < last; k++)
-                {
-                    int pair = geometry.PairsByOrigin[k];
-                    cap = Math.Max(cap, before is null ? geometry.WalkOnly[pair] : before[pair]);
-                    wanted[network.ZoneNodeStart + geometry.PairDestinationZone[pair]] = true;
-                }
-
-                int originNode = network.ZoneNodeStart + zone;
-                // Doors are sinks — reached, never walked through — and only this
-                // origin's destinations are reached at all (DijkstraWorkspace.Run).
-                workspace.Run(network.Graph, originNode, Math.Min(problem.MaxTravelSeconds, cap), network.ZoneNodeStart, wanted);
-                for (int k = first; k < last; k++)
-                {
-                    wanted[network.ZoneNodeStart + geometry.PairDestinationZone[geometry.PairsByOrigin[k]]] = false;
-                }
-
-                for (int k = first; k < last; k++)
-                {
-                    int pair = geometry.PairsByOrigin[k];
-                    int destinationNode = network.ZoneNodeStart + geometry.PairDestinationZone[pair];
-                    float walkOnly = geometry.WalkOnly[pair];
-                    float transit = workspace.Dist[destinationNode];
-                    evaluation.After[pair] = Math.Min(walkOnly, transit);
-                    if (transit < walkOnly)
-                    {
-                        AttributeItinerary(network, workspace, originNode, destinationNode, lineOffset, count, pair, legs);
-                    }
-                    else
-                    {
-                        legs.Walk[pair] = walkOnly;
-                    }
-                }
-            }
-
+                    SearchOrigin(problem, geometry, network, access, before, count, lineOffset, zone, workspace, legs);
+                    return workspace;
+                },
+                static _ => { });
             for (int i = 0; i < problem.PairCount; i++)
             {
+                evaluation.After[i] = legs.After[i];
                 double weight = problem.PairWeight[i];
                 evaluation.WalkSeconds += weight * legs.Walk[i];
                 evaluation.WaitSeconds += weight * legs.Wait[i];
@@ -221,9 +197,117 @@ namespace StationSuitabilityOverlay
             return evaluation;
         }
 
+        // The stops each door can walk to, with the walking time as the specification's
+        // door edge costs it: straight line over the planning speed, floored at 0.01 s.
+        private sealed class DoorAccess
+        {
+            public int[] Start = Array.Empty<int>();
+            public int[] Stop = Array.Empty<int>();
+            public float[] Cost = Array.Empty<float>();
+
+            public static DoorAccess Build(LineSetGeometry geometry, float[] stopX, float[] stopZ, int stopCount, float reach)
+            {
+                var access = new DoorAccess { Start = new int[geometry.ZoneCount + 1] };
+                var stops = new List<int>();
+                var costs = new List<float>();
+                float reachSq = reach * reach;
+                for (int zone = 0; zone < geometry.ZoneCount; zone++)
+                {
+                    access.Start[zone] = stops.Count;
+                    float zx = geometry.ZoneX[zone];
+                    float zz = geometry.ZoneZ[zone];
+                    for (int stop = 0; stop < stopCount; stop++)
+                    {
+                        float dx = stopX[stop] - zx;
+                        float dz = stopZ[stop] - zz;
+                        float distSq = (dx * dx) + (dz * dz);
+                        if (distSq <= reachSq)
+                        {
+                            stops.Add(stop);
+                            costs.Add(Math.Max(0.01f, (float)Math.Sqrt(distSq) / SuitabilityTransit.WalkSpeed));
+                        }
+                    }
+                }
+
+                access.Start[geometry.ZoneCount] = stops.Count;
+                access.Stop = stops.ToArray();
+                access.Cost = costs.ToArray();
+                return access;
+            }
+        }
+
+        // The door-to-door times of every pair leaving one origin door: one search from
+        // the stops the door reaches, then the least stop-plus-walk for each destination.
+        private static void SearchOrigin(
+            LineSetProblem problem, LineSetGeometry geometry, TransitNetwork network, DoorAccess access, float[]? before,
+            int count, int lineOffset, int zone, DijkstraWorkspace workspace, PairLegs legs)
+        {
+            int first = geometry.OriginStart[zone];
+            int last = geometry.OriginStart[zone + 1];
+            if (first == last)
+            {
+                return;
+            }
+
+            float cap = 0f;
+            for (int k = first; k < last; k++)
+            {
+                int pair = geometry.PairsByOrigin[k];
+                cap = Math.Max(cap, before is null ? geometry.WalkOnly[pair] : before[pair]);
+            }
+
+            cap = Math.Min(problem.MaxTravelSeconds, cap);
+            int startAt = access.Start[zone];
+            int startCount = access.Start[zone + 1] - startAt;
+            var sources = new int[startCount];
+            var costs = new float[startCount];
+            Array.Copy(access.Stop, startAt, sources, 0, startCount);
+            Array.Copy(access.Cost, startAt, costs, 0, startCount);
+            workspace.RunFromMany(network.Graph, sources, costs, startCount, cap);
+
+            for (int k = first; k < last; k++)
+            {
+                int pair = geometry.PairsByOrigin[k];
+                int destination = geometry.PairDestinationZone[pair];
+                float walkOnly = geometry.WalkOnly[pair];
+                float transit = float.MaxValue;
+                int alight = -1;
+                float alightWalk = 0f;
+                for (int d = access.Start[destination]; d < access.Start[destination + 1]; d++)
+                {
+                    int stop = access.Stop[d];
+                    float atStop = workspace.Dist[stop];
+                    if (atStop == float.MaxValue)
+                    {
+                        continue;
+                    }
+
+                    float total = atStop + access.Cost[d];
+                    if (total <= cap && total < transit)
+                    {
+                        transit = total;
+                        alight = stop;
+                        alightWalk = access.Cost[d];
+                    }
+                }
+
+                legs.After[pair] = Math.Min(walkOnly, transit);
+                if (transit < walkOnly)
+                {
+                    legs.Walk[pair] += alightWalk;
+                    AttributeItinerary(network, workspace, alight, lineOffset, count, pair, legs);
+                }
+                else
+                {
+                    legs.Walk[pair] = walkOnly;
+                }
+            }
+        }
+
         // Per-pair itinerary components, held until the pair-ordered fold.
         private sealed class PairLegs
         {
+            public readonly float[] After;
             public readonly double[] Walk;
             public readonly double[] Wait;
             public readonly double[] Ride;
@@ -231,6 +315,7 @@ namespace StationSuitabilityOverlay
 
             public PairLegs(int pairCount)
             {
+                After = new float[pairCount];
                 Walk = new double[pairCount];
                 Wait = new double[pairCount];
                 Ride = new double[pairCount];
@@ -309,22 +394,24 @@ namespace StationSuitabilityOverlay
             return (float)Math.Sqrt((dx * dx) + (dz * dz)) / SuitabilityTransit.WalkSpeed;
         }
 
-        // Walks the retained shortest itinerary back from the destination, splitting its
-        // cost into walk, wait and ride and noting each ridden candidate line once
-        // (RidesPerJourney is applied by the utilisation formula).
+        // Walks the retained shortest itinerary back from the alighting stop to the
+        // stop the journey started at, splitting its cost into walk, wait and ride and
+        // noting each ridden candidate line once (RidesPerJourney is applied by the
+        // utilisation formula). The starting stop's distance is the origin's access walk.
         private static void AttributeItinerary(
-            TransitNetwork network, DijkstraWorkspace workspace, int originNode, int destinationNode,
+            TransitNetwork network, DijkstraWorkspace workspace, int alight,
             int lineOffset, int count, int pair, PairLegs into)
         {
-            int node = destinationNode;
+            int node = alight;
             int guard = network.Graph.EdgeCount + 2;
             List<int>? ridden = null;
-            while (node != originNode && guard-- > 0)
+            while (guard-- > 0)
             {
                 int edge = workspace.PrevEdge[node];
                 if (edge < 0)
                 {
-                    return;
+                    into.Walk[pair] += workspace.Dist[node];
+                    break;
                 }
 
                 float cost = network.Graph.EdgeCost[edge];
@@ -397,6 +484,39 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // True when the candidates hold two variants of one alignment.
+        public static bool OneVariantPerGroup(LineSetProblem problem, int[] chosen, int count)
+        {
+            for (int k = 1; k < count; k++)
+            {
+                if (SharesGroup(problem, chosen, k, chosen[k]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SharesGroup(LineSetProblem problem, int[] chosen, int count, int candidate)
+        {
+            int group = problem.Candidates[candidate].Group;
+            if (group < 0)
+            {
+                return false;
+            }
+
+            for (int k = 0; k < count; k++)
+            {
+                if (problem.Candidates[chosen[k]].Group == group)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // Boardings per game day over seats offered per game day, for one candidate given
         // the journey weight riding it in a set.
         public static float Utilisation(LineSetProblem problem, int candidate, double riders)
@@ -449,6 +569,7 @@ namespace StationSuitabilityOverlay
             search.Run();
             solution.Nodes = search.Nodes;
             solution.Infeasible = search.Infeasible;
+            solution.Evaluations = search.Evaluations + 1 + n;
             solution.Optimal = !search.Exhausted;
             solution.Count = search.BestCount;
             solution.Chosen = new int[search.BestCount];
@@ -476,6 +597,7 @@ namespace StationSuitabilityOverlay
 
             public long Nodes;
             public int Infeasible;
+            public long Evaluations;
             public bool Exhausted;
             public double OpenBoundSaved;
             public readonly int[] Best;
@@ -497,7 +619,7 @@ namespace StationSuitabilityOverlay
             public void Run()
             {
                 Consider(Array.Empty<int>(), 0);
-                Explore(0, 0);
+                Explore(0, 0, float.MaxValue, double.MaxValue);
             }
 
             // The lexicographic key: equity share capped at the floor, then time saved.
@@ -523,6 +645,7 @@ namespace StationSuitabilityOverlay
                 if (!m_Evaluated.TryGetValue(key, out LineSetEvaluation? evaluation))
                 {
                     evaluation = Evaluate(m_Problem, chosen, count, m_Before);
+                    Evaluations++;
                     m_Evaluated[key] = evaluation;
                 }
 
@@ -548,7 +671,10 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            private void Explore(int depth, int position)
+            // `parentCoverage`/`parentSaved` is the bound the parent computed for the
+            // union this subtree lives in — every union below is a subset of it, so once
+            // the incumbent has passed it there is nothing here left to evaluate.
+            private void Explore(int depth, int position, float parentCoverage, double parentSaved)
             {
                 if (depth >= m_Problem.MaxLines)
                 {
@@ -557,12 +683,25 @@ namespace StationSuitabilityOverlay
 
                 for (int p = position; p < m_Order.Length; p++)
                 {
+                    if (Compare(parentCoverage, parentSaved, BestCoverage, BestSaved) <= 0)
+                    {
+                        return;
+                    }
+
+                    // Another variant of an alignment already in the set is not an
+                    // addition but an alternative; it is met on its own branch.
+                    if (SharesGroup(m_Problem, m_Chosen, depth, m_Order[p]))
+                    {
+                        continue;
+                    }
+
                     // Bound: everything from here on, added to what is chosen.
                     int remaining = m_Order.Length - p;
                     var union = new int[depth + remaining];
                     Array.Copy(m_Chosen, union, depth);
                     Array.Copy(m_Order, p, union, depth, remaining);
                     LineSetEvaluation bound = Evaluate(m_Problem, union, union.Length, m_Before);
+                    Evaluations++;
                     if (Compare(Capped(bound.Coverage), bound.TimeSaved, BestCoverage, BestSaved) <= 0)
                     {
                         return;
@@ -586,7 +725,7 @@ namespace StationSuitabilityOverlay
                     var prefix = new int[depth + 1];
                     Array.Copy(m_Chosen, prefix, depth + 1);
                     Consider(prefix, depth + 1);
-                    Explore(depth + 1, p + 1);
+                    Explore(depth + 1, p + 1, Capped(bound.Coverage), bound.TimeSaved);
                 }
             }
 
@@ -595,6 +734,11 @@ namespace StationSuitabilityOverlay
             // riding it travels no slower once the line is taken out of the set.
             private bool Feasible(int[] chosen, int count, LineSetEvaluation evaluation)
             {
+                if (!OneVariantPerGroup(m_Problem, chosen, count))
+                {
+                    return false;
+                }
+
                 for (int k = 0; k < count; k++)
                 {
                     float utilisation = Utilisation(m_Problem, chosen[k], evaluation.Riders[chosen[k]]);

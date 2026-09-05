@@ -171,6 +171,34 @@ namespace StationSuitabilityOverlay
             Run(graph, source, maxCost, int.MaxValue);
         }
 
+        // Several starting nodes at once, each with its own starting cost — the stops a
+        // journey's door can walk to, at the walking time to each. Everything else as
+        // Run: a node's distance is the least over all starts.
+        public void RunFromMany(CompactGraph graph, int[] sources, float[] startCosts, int sourceCount, float maxCost)
+        {
+            Resize(graph.NodeCount);
+            ClearTouched();
+            m_HeapCount = 0;
+            for (int i = 0; i < sourceCount; i++)
+            {
+                int source = sources[i];
+                if (source < 0 || source >= graph.NodeCount || startCosts[i] > maxCost)
+                {
+                    continue;
+                }
+
+                Touch(source);
+                if (startCosts[i] < Dist[source])
+                {
+                    Dist[source] = startCosts[i];
+                    PrevEdge[source] = -1;
+                    HeapPush(source);
+                }
+            }
+
+            Settle(graph, maxCost, int.MaxValue, wanted: null, source: -1);
+        }
+
         // As above, but nodes numbered `expandBelow` and up are SINKS: they receive a
         // distance and a predecessor yet never relax their own edges (the source
         // excepted). The line-set routing puts every journey door in that range, so a
@@ -201,7 +229,13 @@ namespace StationSuitabilityOverlay
             Dist[source] = 0f;
             PrevEdge[source] = -1;
             HeapPush(source);
+            Settle(graph, maxCost, expandBelow, wanted, source);
+        }
 
+        // The main loop shared by every entry point: pops the heap and relaxes edges
+        // until nothing within maxCost is left.
+        private void Settle(CompactGraph graph, float maxCost, int expandBelow, bool[]? wanted, int source)
+        {
             while (m_HeapCount > 0)
             {
                 int node = HeapPop();

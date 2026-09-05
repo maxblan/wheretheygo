@@ -84,10 +84,15 @@ namespace StationSuitabilityOverlay
         // which the 15 % utilisation floor was never calibrated (a 257-rider bus that
         // is 29 % full at 300 s is 3 % full at 45 s). The prefab value is kept for the
         // log (DefaultIntervalFor); register A5.5/A6.x carries the open question.
+        // An instance member although it reads no prefab today: the open question in
+        // register A5.5 is whether the prefab interval (DefaultIntervalFor) should
+        // become the planning headway, and that switch must not touch every caller.
+#pragma warning disable CA1822
         public float HeadwayFor(ModePreset mode)
         {
             return TransitModes.TargetHeadwayFor(mode);
         }
+#pragma warning restore CA1822
 
         // The line prefab's default vehicle interval as the game ships it; 0 if unread.
         public float DefaultIntervalFor(ModePreset mode)
