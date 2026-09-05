@@ -826,7 +826,13 @@ def road_times_oneway():
         length = (dx * dx + dz * dz) ** 0.5
         frm.append(a); to.append(b); metres.append(_f32(length)); spd.append(_f32(v))
         odx.append(_f32(dx / length)); odz.append(_f32(dz / length))
-    legs = [(0, 1), (1, 0), (0, 3), (4, 2), (2, 4)]
+    # Legs as POINTS: node positions nudged half a metre off the chord, plus two
+    # mid-block points (25 m along 0->1, 60 m along 2->3) so partial arcs are exercised.
+    pts = {0: (0.0, 0.5), 1: (100.0, -0.5), 2: (100.5, 100.0), 3: (0.0, 100.5), 4: (-100.0, 0.5)}
+    mid01 = (25.0, 0.0)
+    mid23 = (40.0, 100.0)
+    legs = [(pts[0], pts[1]), (pts[1], pts[0]), (pts[0], pts[3]), (pts[4], pts[2]), (pts[2], pts[4]),
+            (mid01, pts[1]), (mid01, mid23), (mid23, mid01)]
     return {
         "kind": "road_times",
         "name": "road-times-oneway",
@@ -842,19 +848,22 @@ def road_times_oneway():
             "turn_seconds_per_radian_b32": f32_bits(2.0),
             "turn_ms": [0, 1047, 3142, 4887, 6283],
             "max_ms": 3600000,
-            "leg_from": [l[0] for l in legs], "leg_to": [l[1] for l in legs],
-            "leg_ms": _oneway_leg_ms(x, z, arcs, legs),
+            "snap_metres_b32": f32_bits(64.0),
+            "leg_from_x_b32": f32_list([l[0][0] for l in legs]), "leg_from_z_b32": f32_list([l[0][1] for l in legs]),
+            "leg_to_x_b32": f32_list([l[1][0] for l in legs]), "leg_to_z_b32": f32_list([l[1][1] for l in legs]),
+            **_oneway_leg_answers(x, z, arcs, edge_of, legs),
             "legs_dropped": 0,
         },
     }
 
 
-def _oneway_leg_ms(x, z, arcs, legs):
-    """Hand computation of the expected leg times: enumerate simple arc paths."""
-    import itertools
-    n = len(x)
+def _oneway_leg_answers(x, z, arcs, edge_of, legs):
+    """Hand computation of the expected point legs: project each point onto the
+    nearest chord, try every arc pairing of the two streets, and enumerate simple
+    arc paths with turn costs and partial first/last arcs."""
     turn_ms = [0, 1047, 3142, 4887, 6283]
     cos = [0.9659258262890683, 0.7071067811865476, -0.5, -0.9659258262890683]
+    n = len(arcs)
     def head(a):
         dx, dz = x[arcs[a][1]] - x[arcs[a][0]], z[arcs[a][1]] - z[arcs[a][0]]
         l = (dx * dx + dz * dz) ** 0.5
@@ -867,23 +876,56 @@ def _oneway_leg_ms(x, z, arcs, legs):
         dot = h1[0] * h2[0] + h1[1] * h2[1]
         cls = 0 if dot >= cos[0] else 1 if dot >= cos[1] else 2 if dot >= cos[2] else 3 if dot >= cos[3] else 4
         return turn_ms[cls]
-    out = {i: [a for a, (f, _, _) in enumerate(arcs) if f == i] for i in range(n)}
-    result = []
-    for s_, t in legs:
+    def nearest(px, pz):
+        best, best_sq, bt = -1, 64.0 * 64.0, 0.0
+        for a in range(n):
+            ax, az, bx, bz = x[arcs[a][0]], z[arcs[a][0]], x[arcs[a][1]], z[arcs[a][1]]
+            dx, dz = bx - ax, bz - az
+            l2 = dx * dx + dz * dz
+            u = max(0.0, min(1.0, ((_f32(px) - ax) * dx + (_f32(pz) - az) * dz) / l2))
+            qx, qz = ax + u * dx - _f32(px), az + u * dz - _f32(pz)
+            sq = qx * qx + qz * qz
+            if sq < best_sq:
+                best, best_sq, bt = a, sq, u
+        return best, bt
+    def pairs(a, t):
+        out = [(a, t)]
+        for o in range(n):
+            if o != a and edge_of[o] == edge_of[a] and arcs[o][0] == arcs[a][1] and arcs[o][1] == arcs[a][0]:
+                out.append((o, 1.0 - t)); break
+        return out
+    out_arcs = {i: [a for a, (f, _, _) in enumerate(arcs) if f == i] for i in range(len(x))}
+    res = {"leg_ms": [], "leg_from_arc": [], "leg_to_arc": [], "leg_start_ms": [], "leg_end_ms": [], "leg_same_arc": []}
+    for (fx, fz), (tx, tz) in legs:
+        fa, ft = nearest(fx, fz); ta, tt = nearest(tx, tz)
         best = None
-        def rec(node, last, cost, seen):
-            nonlocal best
-            if node == t:
-                best = cost if best is None else min(best, cost)
-                return
-            for a in out[node]:
-                nxt = arcs[a][1]
-                if nxt in seen:
-                    continue
-                rec(nxt, a, cost + ms(a) + (0 if last is None else turn(last, a)), seen | {nxt})
-        rec(s_, None, 0, {s_})
-        result.append(-1 if best is None else best)
-    return result
+        for a, at in pairs(fa, ft):
+            for b, bt in pairs(ta, tt):
+                fpos = int(round(at * ms(a))); start = ms(a) - fpos; end = int(round(bt * ms(b)))
+                cands = []
+                if a == b and bt >= at:
+                    cands.append(end - fpos)
+                # enumerate: at head of a with cost start, then arcs..., last arc g into tail(b)
+                def rec(last, node, cost, seen):
+                    if node == arcs[b][0]:
+                        cands.append(cost + turn(last, b) + end)
+                    for g in out_arcs[node]:
+                        nxt = arcs[g][1]
+                        if nxt in seen:
+                            continue
+                        rec(g, nxt, cost + turn(last, g) + ms(g), seen | {nxt})
+                rec(a, arcs[a][1], start, {arcs[a][1]})
+                if cands:
+                    v = min(cands)
+                    if best is None or v < best[0]:
+                        best = (v, a, b, start, end, a == b and bt >= at and v == end - fpos)
+        res["leg_ms"].append(-1 if best is None else best[0])
+        res["leg_from_arc"].append(-1 if best is None else best[1])
+        res["leg_to_arc"].append(-1 if best is None else best[2])
+        res["leg_start_ms"].append(0 if best is None else best[3])
+        res["leg_end_ms"].append(0 if best is None else best[4])
+        res["leg_same_arc"].append(1 if best and best[5] else 0)
+    return res
 
 
 # ------------------------------------------------------------ sites_walk (S2 v2)

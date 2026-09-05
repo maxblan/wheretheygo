@@ -174,26 +174,41 @@ namespace StationSuitabilityOverlay.Verification
                 F32Array(data.GetProperty("in_dx_b32")), F32Array(data.GetProperty("in_dz_b32")), turnMs, from.Length);
             long maxMs = data.GetProperty("max_ms").GetInt64();
 
-            int[] legFrom = IntArray(data.GetProperty("leg_from"));
-            int[] legTo = IntArray(data.GetProperty("leg_to"));
+            float[] fromX = F32Array(data.GetProperty("leg_from_x_b32"));
+            float[] fromZ = F32Array(data.GetProperty("leg_from_z_b32"));
+            float[] toX = F32Array(data.GetProperty("leg_to_x_b32"));
+            float[] toZ = F32Array(data.GetProperty("leg_to_z_b32"));
+            float snap = F32(data.GetProperty("snap_metres_b32"));
             var dijkstra = new DirectedDijkstra(graph.ArcCount);
             var legs = new List<object>();
-            var arcs = new List<int>();
-            for (int i = 0; i < legFrom.Length; i++)
+            for (int i = 0; i < fromX.Length; i++)
             {
-                if (dijkstra.Source != legFrom[i])
+                long time = RoadLegs.PointToPointMs(graph, dijkstra, fromX[i], fromZ[i], toX[i], toZ[i], snap, maxMs, out RoadLeg leg);
+                var arcs = new List<int>();
+                if (time != DirectedDijkstra.Unreached && !leg.SameArc)
                 {
-                    dijkstra.Run(graph, legFrom[i], maxMs);
+                    // Replay the chosen pairing to expose the arc chain for the certificate.
+                    dijkstra.RunFromArc(graph, leg.FromArc, leg.StartMs, maxMs);
+                    _ = dijkstra.TimeToPoint(graph, leg.ToArc, leg.EndMs, out int via);
+                    while (via >= 0)
+                    {
+                        arcs.Add(via);
+                        via = dijkstra.PrevArc[via];
+                    }
+
+                    arcs.Reverse();
                 }
 
-                long time = dijkstra.TimeTo(graph, legTo[i]);
-                bool reachable = dijkstra.TraceArcs(graph, legTo[i], arcs);
                 legs.Add(new Dictionary<string, object?>
                 {
-                    ["from"] = legFrom[i],
-                    ["to"] = legTo[i],
-                    ["ms"] = reachable ? time : -1L,
-                    ["arcs"] = new List<int>(arcs),
+                    ["leg"] = i,
+                    ["ms"] = time == DirectedDijkstra.Unreached ? -1L : time,
+                    ["from_arc"] = leg.FromArc,
+                    ["to_arc"] = leg.ToArc,
+                    ["start_ms"] = leg.StartMs,
+                    ["end_ms"] = leg.EndMs,
+                    ["same_arc"] = leg.SameArc,
+                    ["arcs"] = arcs,
                 });
             }
 

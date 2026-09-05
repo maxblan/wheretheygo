@@ -389,14 +389,30 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            var legFrom = new int[m_RoadLegs.Count];
-            var legTo = new int[m_RoadLegs.Count];
-            var legMs = new long[m_RoadLegs.Count];
-            for (int i = 0; i < m_RoadLegs.Count; i++)
+            int legs = m_RoadLegs.Count;
+            var fromX = new float[legs];
+            var fromZ = new float[legs];
+            var toX = new float[legs];
+            var toZ = new float[legs];
+            var legMs = new long[legs];
+            var fromArc = new int[legs];
+            var toArc = new int[legs];
+            var startMs = new int[legs];
+            var endMs = new int[legs];
+            var sameArc = new int[legs];
+            for (int i = 0; i < legs; i++)
             {
-                legFrom[i] = m_RoadLegs[i].from;
-                legTo[i] = m_RoadLegs[i].to;
-                legMs[i] = m_RoadLegs[i].ms == DirectedDijkstra.Unreached ? -1L : m_RoadLegs[i].ms;
+                (float2 from, float2 to, long ms, RoadLeg leg) = m_RoadLegs[i];
+                fromX[i] = from.x;
+                fromZ[i] = from.y;
+                toX[i] = to.x;
+                toZ[i] = to.y;
+                legMs[i] = ms == DirectedDijkstra.Unreached ? -1L : ms;
+                fromArc[i] = leg.FromArc;
+                toArc[i] = leg.ToArc;
+                startMs[i] = leg.StartMs;
+                endMs[i] = leg.EndMs;
+                sameArc[i] = leg.SameArc ? 1 : 0;
             }
 
             var data = new SuitabilityJsonObject()
@@ -415,9 +431,17 @@ namespace StationSuitabilityOverlay
                 .Add("turn_seconds_per_radian_b32", SuitabilityExportJson.Bits(m_RoadGraph.TurnSecondsPerRadian))
                 .Add("turn_ms", SuitabilityExportJson.IntArray(directed.TurnMs))
                 .Add("max_ms", SuitabilityExportJson.Int((long)MaxJourneySeconds * 1000L))
-                .Add("leg_from", SuitabilityExportJson.IntArray(legFrom))
-                .Add("leg_to", SuitabilityExportJson.IntArray(legTo))
+                .Add("snap_metres_b32", SuitabilityExportJson.Bits(StopNodeSnapMetres))
+                .Add("leg_from_x_b32", SuitabilityExportJson.BitsArray(fromX))
+                .Add("leg_from_z_b32", SuitabilityExportJson.BitsArray(fromZ))
+                .Add("leg_to_x_b32", SuitabilityExportJson.BitsArray(toX))
+                .Add("leg_to_z_b32", SuitabilityExportJson.BitsArray(toZ))
                 .Add("leg_ms", LongArray(legMs))
+                .Add("leg_from_arc", SuitabilityExportJson.IntArray(fromArc))
+                .Add("leg_to_arc", SuitabilityExportJson.IntArray(toArc))
+                .Add("leg_start_ms", SuitabilityExportJson.IntArray(startMs))
+                .Add("leg_end_ms", SuitabilityExportJson.IntArray(endMs))
+                .Add("leg_same_arc", SuitabilityExportJson.IntArray(sameArc))
                 .Add("legs_dropped", SuitabilityExportJson.Int(m_RoadLegsDropped))
                 .Build();
 

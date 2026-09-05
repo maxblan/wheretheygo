@@ -127,6 +127,48 @@ namespace StationSuitabilityOverlay
             return dot >= CosUTurn ? Sharp : UTurn;
         }
 
+        // Where a point sits on the street network: the undirected edge (by the arc
+        // that carries it) whose chord passes nearest, and the fraction t ∈ [0, 1] along
+        // that arc's From→To chord. Projection in double from binary32 coordinates;
+        // ties on distance go to the lower arc index. -1 when nothing is within
+        // `maxMetres`. Stops are placed along a street, not at its ends, so this is how
+        // a stop becomes a point a vehicle can be timed from.
+        public int NearestArc(float x, float z, double maxMetres, out double t, out double metres)
+        {
+            int best = -1;
+            double bestSq = maxMetres * maxMetres;
+            t = 0.0;
+            for (int a = 0; a < ArcCount; a++)
+            {
+                double ax = NodeX[ArcFrom[a]];
+                double az = NodeZ[ArcFrom[a]];
+                double bx = NodeX[ArcTo[a]];
+                double bz = NodeZ[ArcTo[a]];
+                double dx = bx - ax;
+                double dz = bz - az;
+                double len2 = (dx * dx) + (dz * dz);
+                double u = len2 > 0.0 ? Math.Max(0.0, Math.Min(1.0, ((((double)x - ax) * dx) + (((double)z - az) * dz)) / len2)) : 0.0;
+                double px = ax + (u * dx) - x;
+                double pz = az + (u * dz) - z;
+                double sq = (px * px) + (pz * pz);
+                if (sq < bestSq)
+                {
+                    bestSq = sq;
+                    best = a;
+                    t = u;
+                }
+            }
+
+            metres = best >= 0 ? Math.Sqrt(bestSq) : 0.0;
+            return best;
+        }
+
+        // Milliseconds from an arc's tail to the point at fraction t along it.
+        public int PositionMs(int arc, double t)
+        {
+            return (int)Math.Round(t * ArcMs[arc], MidpointRounding.ToEven);
+        }
+
         // Travel time of an arc from the game's arc length and the lane's speed limit:
         // round-half-even(length / speed · 1000) in double, at least 1 ms.
         public static int ArcMilliseconds(float lengthMetres, float speedMetresPerSecond)
@@ -205,6 +247,33 @@ namespace StationSuitabilityOverlay
                 Relax(arc, graph.ArcMs[arc], -1, maxMs);
             }
 
+            Drain(graph, maxMs);
+        }
+
+        // Like Run, but the vehicle starts ON `arc`, `startMs` from its head: the state
+        // is that arc with that time, and every turn out of its head is priced.
+        public void RunFromArc(DirectedRoadGraph graph, int arc, long startMs, long maxMs)
+        {
+            for (int i = 0; i < m_Touched.Count; i++)
+            {
+                Dist[m_Touched[i]] = Unreached;
+                PrevArc[m_Touched[i]] = -1;
+            }
+
+            m_Touched.Clear();
+            m_HeapCount = 0;
+            m_Source = -1;
+            if (arc < 0 || arc >= graph.ArcCount)
+            {
+                return;
+            }
+
+            Relax(arc, startMs, -1, maxMs);
+            Drain(graph, maxMs);
+        }
+
+        private void Drain(DirectedRoadGraph graph, long maxMs)
+        {
             while (m_HeapCount > 0)
             {
                 Pop(out long d, out int arc);
@@ -221,6 +290,33 @@ namespace StationSuitabilityOverlay
                     Relax(next, nd, arc, maxMs);
                 }
             }
+        }
+
+        // Time to a point `endMs` along `toArc` from its tail: the best settled state
+        // into toArc's tail, plus the turn onto toArc, plus endMs. Also reports which
+        // state was used (-1 when unreachable) so the route can be traced.
+        public long TimeToPoint(DirectedRoadGraph graph, int toArc, long endMs, out int viaArc)
+        {
+            viaArc = -1;
+            long best = Unreached;
+            int tail = graph.ArcFrom[toArc];
+            for (int i = 0; i < m_Touched.Count; i++)
+            {
+                int g = m_Touched[i];
+                if (graph.ArcTo[g] != tail || Dist[g] == Unreached)
+                {
+                    continue;
+                }
+
+                long candidate = Dist[g] + graph.TurnMs[graph.TurnClass(g, toArc)] + endMs;
+                if (candidate < best || (candidate == best && g < viaArc))
+                {
+                    best = candidate;
+                    viaArc = g;
+                }
+            }
+
+            return best;
         }
 
         private void Relax(int arc, long candidate, int previous, long maxMs)
@@ -420,6 +516,99 @@ namespace StationSuitabilityOverlay
             }
 
             return assigned;
+        }
+    }
+
+    // One stop-to-stop driving leg as the directed model answers it: which arcs the
+    // two points were placed on, how far along them, and the time.
+    internal struct RoadLeg
+    {
+        public int FromArc;
+        public int ToArc;
+        public int StartMs;
+        public int EndMs;
+        public long Ms;
+        public bool SameArc;
+    }
+
+    internal static class RoadLegs
+    {
+        // Fastest driving time from one point on the network to another. Each point
+        // may lie on a two-way street, i.e. on two arcs; every pairing is tried and the
+        // best kept (ties: lower from-arc, then lower to-arc). Within one pairing: the
+        // vehicle starts `StartMs = ms − PositionMs(fromT)` from its arc's head, drives
+        // the state graph, and finishes `EndMs = PositionMs(toT)` into the destination
+        // arc — except when both points sit on the same arc in travel order, where the
+        // time is simply the difference of positions. Returns Unreached when no pairing
+        // has a route or a point is off the network.
+        public static long PointToPointMs(
+            DirectedRoadGraph graph, DirectedDijkstra dijkstra,
+            float fromX, float fromZ, float toX, float toZ, double snapMetres, long maxMs, out RoadLeg leg)
+        {
+            leg = new RoadLeg { FromArc = -1, ToArc = -1, Ms = DirectedDijkstra.Unreached };
+            int fromArc = graph.NearestArc(fromX, fromZ, snapMetres, out double fromT, out _);
+            int toArc = graph.NearestArc(toX, toZ, snapMetres, out double toT, out _);
+            if (fromArc < 0 || toArc < 0)
+            {
+                return DirectedDijkstra.Unreached;
+            }
+
+            foreach ((int fa, double ft) in ArcsOfEdge(graph, fromArc, fromT))
+            {
+                foreach ((int ta, double tt) in ArcsOfEdge(graph, toArc, toT))
+                {
+                    long ms = PairMs(graph, dijkstra, fa, ft, ta, tt, maxMs, out RoadLeg candidate);
+                    if (ms < leg.Ms || (ms == leg.Ms && ms != DirectedDijkstra.Unreached && (fa < leg.FromArc || (fa == leg.FromArc && ta < leg.ToArc))))
+                    {
+                        leg = candidate;
+                    }
+                }
+            }
+
+            return leg.Ms;
+        }
+
+        // The arc found plus, if the street is two-way, its reverse arc with the
+        // fraction measured from the other end. Reverse arc = the other arc sharing the
+        // undirected edge index.
+        private static List<(int arc, double t)> ArcsOfEdge(DirectedRoadGraph graph, int arc, double t)
+        {
+            var arcs = new List<(int, double)> { (arc, t) };
+            int edge = graph.ArcEdge[arc];
+            if (edge < 0)
+            {
+                return arcs;
+            }
+
+            for (int other = 0; other < graph.ArcCount; other++)
+            {
+                if (other != arc && graph.ArcEdge[other] == edge && graph.ArcFrom[other] == graph.ArcTo[arc] && graph.ArcTo[other] == graph.ArcFrom[arc])
+                {
+                    arcs.Add((other, 1.0 - t));
+                    break;
+                }
+            }
+
+            return arcs;
+        }
+
+        private static long PairMs(
+            DirectedRoadGraph graph, DirectedDijkstra dijkstra,
+            int fromArc, double fromT, int toArc, double toT, long maxMs, out RoadLeg leg)
+        {
+            int fromPos = graph.PositionMs(fromArc, fromT);
+            int endMs = graph.PositionMs(toArc, toT);
+            leg = new RoadLeg { FromArc = fromArc, ToArc = toArc, StartMs = graph.ArcMs[fromArc] - fromPos, EndMs = endMs };
+            if (fromArc == toArc && toT >= fromT)
+            {
+                leg.SameArc = true;
+                leg.Ms = endMs - fromPos;
+                return leg.Ms;
+            }
+
+            dijkstra.RunFromArc(graph, fromArc, leg.StartMs, maxMs);
+            leg.Ms = dijkstra.TimeToPoint(graph, toArc, endMs, out _);
+            return leg.Ms;
         }
     }
 

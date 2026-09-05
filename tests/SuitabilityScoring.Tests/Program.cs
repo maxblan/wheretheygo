@@ -62,6 +62,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Directed roads: turn costs steer between a short turning and a long straight route", DirectedTurnCostsSteer);
             Run("Directed roads: fastest times match an exhaustive path enumeration", DirectedMatchesEnumeration);
             Run("Directed roads: flow follows admitted directions and sums per street", DirectedFlowAssignment);
+            Run("Directed roads: stops mid-street are timed from their point on the arc", DirectedPointLegs);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -1019,6 +1020,45 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(1f, edgeFlow[4], 0f, "the spur carries the 4->0 flow");
             AssertEqual(0f, arcFlow[4], 0f, "arc 0->4 is unused");
             AssertEqual(1f, arcFlow[5], 0f, "arc 4->0 carries it");
+        }
+
+        private static void DirectedPointLegs()
+        {
+            // A straight two-way street 0 -> 1 -> 2 (100 m each at 10 m/s) with a one-way
+            // side street 1 -> 3 north. Stops sit mid-block.
+            var x = new[] { 0f, 100f, 200f, 100f };
+            var z = new[] { 0f, 0f, 0f, 100f };
+            var arcs = new[] { (0, 1, 100f, 10f), (1, 0, 100f, 10f), (1, 2, 100f, 10f), (2, 1, 100f, 10f), (1, 3, 100f, 10f) };
+            DirectedRoadGraph graph = DirectedGraph(x, z, arcs, edgeOf: new[] { 0, 0, 1, 1, 2 });
+            var dijkstra = new DirectedDijkstra(graph.ArcCount);
+
+            int arc = graph.NearestArc(25f, 3f, 20.0, out double t, out double metres);
+            AssertEqual(0, arc, 0, "the point projects onto the first street (lowest arc index of the pair)");
+            AssertEqual(0.25f, (float)t, 1e-6f, "a quarter of the way along");
+            AssertEqual(3f, (float)metres, 1e-5f, "three metres off the chord");
+            AssertEqual(-1, graph.NearestArc(25f, 50f, 20.0, out _, out _), 0, "fifty metres off is off the network");
+            AssertEqual(2500, graph.PositionMs(0, 0.25), 0, "a quarter of ten seconds");
+
+            // Same street, in travel order: 25 m -> 75 m is five seconds, no turns.
+            long same = RoadLegs.PointToPointMs(graph, dijkstra, 25f, 0f, 75f, 0f, 20.0, 1_000_000, out RoadLeg leg);
+            AssertTrue(same == 5000, $"same-arc leg is the position difference, got {same}");
+            AssertTrue(leg.SameArc && leg.FromArc == 0 && leg.ToArc == 0, "recorded as a same-arc leg");
+
+            // Backwards along the two-way street: 75 m -> 25 m uses the reverse arc (1 -> 0).
+            long back = RoadLegs.PointToPointMs(graph, dijkstra, 75f, 0f, 25f, 0f, 20.0, 1_000_000, out leg);
+            AssertTrue(back == 5000 && leg.FromArc == 1 && leg.ToArc == 1, $"the reverse arc carries the return, got {back} via {leg.FromArc}");
+
+            // Mid-block to the side street: 50 m along 0->1 (5 s to the node), 90° turn,
+            // 30 m up 1->3 (3 s).
+            long turn = RoadLegs.PointToPointMs(graph, dijkstra, 50f, 0f, 100f, 30f, 20.0, 1_000_000, out leg);
+            long expected = 5000 + graph.TurnMs[DirectedRoadGraph.Turn] + 3000;
+            AssertTrue(turn == expected, $"mid-block start, turn, mid-block end: {turn} vs {expected}");
+            AssertTrue(leg.FromArc == 0 && leg.ToArc == 4 && leg.StartMs == 5000 && leg.EndMs == 3000, "leg detail is recorded");
+
+            // From the one-way side street back down to the main street: 1 -> 3 has no
+            // reverse, so a point on it can only be a destination, never an origin.
+            long stuck = RoadLegs.PointToPointMs(graph, dijkstra, 100f, 30f, 50f, 0f, 20.0, 1_000_000, out _);
+            AssertTrue(stuck == DirectedDijkstra.Unreached, "no arc leads away from the one-way side street's point");
         }
 
         private static ObservedTrip TripAt(uint frame, byte purpose)

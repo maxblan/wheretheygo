@@ -4829,12 +4829,12 @@ namespace StationSuitabilityOverlay
             return seconds;
         }
 
+        // Stops are points along a street, not its ends: each is projected onto the
+        // nearest arc within the snap distance and timed from there (RoadLegs).
         private long RoadLegMs(float2 from, float2 to)
         {
-            int fromNode = m_RoadGraph.NearestNode(from, StopNodeSnapMetres);
-            int toNode = m_RoadGraph.NearestNode(to, StopNodeSnapMetres);
-            long ms = m_RoadGraph.DirectedTimeMs(fromNode, toNode, (long)MaxJourneySeconds * 1000L);
-            RememberRoadLeg(fromNode, toNode, ms);
+            long ms = m_RoadGraph.PointLegMs(from, to, StopNodeSnapMetres, (long)MaxJourneySeconds * 1000L, out RoadLeg leg);
+            RememberRoadLeg(from, to, ms, leg);
             return ms;
         }
 
@@ -4842,19 +4842,14 @@ namespace StationSuitabilityOverlay
         // the answers it got: what the export hands the pipeline to certify. Bounded,
         // and reset whenever the graph is rebuilt so no leg outlives its graph.
         private const int MaxRememberedRoadLegs = 400;
-        private readonly List<(int from, int to, long ms)> m_RoadLegs = new List<(int, int, long)>();
+        private readonly List<(float2 from, float2 to, long ms, RoadLeg leg)> m_RoadLegs = new List<(float2, float2, long, RoadLeg)>();
         private int m_RoadLegsDropped;
 
-        private void RememberRoadLeg(int fromNode, int toNode, long ms)
+        private void RememberRoadLeg(float2 from, float2 to, long ms, RoadLeg leg)
         {
-            if (fromNode < 0 || toNode < 0 || fromNode == toNode)
-            {
-                return;
-            }
-
             for (int i = 0; i < m_RoadLegs.Count; i++)
             {
-                if (m_RoadLegs[i].from == fromNode && m_RoadLegs[i].to == toNode)
+                if (m_RoadLegs[i].from.Equals(from) && m_RoadLegs[i].to.Equals(to))
                 {
                     return;
                 }
@@ -4866,7 +4861,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            m_RoadLegs.Add((fromNode, toNode, ms));
+            m_RoadLegs.Add((from, to, ms, leg));
         }
 
         // Out and back over the directed network — the return leg may take other

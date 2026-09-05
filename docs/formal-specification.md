@@ -237,13 +237,24 @@ grows on (unchanged), the mod builds the streets as a road vehicle drives them:
   shortest path S→T on the explicit state graph with nodes = arcs ∪ {S, T}, edges
   S→a (a leaves s, cost ms_a), a→b (b leaves a's head, cost turn_ms(a,b) + ms_b),
   a→T (a's head = t, cost 0). Ties settle the lower arc index. Cap 3 600 000 ms.
+- **Points on streets (stops).** A stop is projected onto the nearest arc chord
+  (double arithmetic on binary32 coordinates; distance ties → lower arc index; off
+  the network beyond 64 m) at fraction t; `PositionMs(arc, t) = round_half_even(t ·
+  ms_arc)`. A leg from point P to point Q tries every pairing of P's arcs (the arc
+  found and, on a two-way street, its reverse with 1 − t) with Q's arcs and keeps
+  the fastest (ties: lower from-arc, then to-arc). Within a pairing (a, t_a) → (b,
+  t_b): if a = b and t_b ≥ t_a the time is `PositionMs(b, t_b) − PositionMs(a, t_a)`;
+  otherwise the vehicle starts in state a with time `start = ms_a − PositionMs(a,
+  t_a)` and the leg time is min over states g ending at b's tail of
+  `dist(g) + turn(g, b) + PositionMs(b, t_b)`. State graph for the certificate:
+  S→a (start), a→b' transitions, g→T (turn + end), and S→T (direct) when the same-arc
+  case applies.
 - **Uses.** S3 flow assignment routes every zone pair along its fastest directed
   path (cap 20 000 m ÷ 9 m/s), summing each pair's weight onto the undirected
   street the arc runs along (so the corridor search still sees one figure per
-  street) and onto the arc. Suggested road lines get `m_RideSeconds[i]` = fastest
-  directed time from stop i−1 to stop i (stops snapped to the nearest node within
-  64 m; 0 → cruise-speed fallback, logged), and their fleet from the out-and-back
-  directed driving time plus dwell.
+  street) and onto the arc. Suggested road lines get `m_RideSeconds[i]` = the point
+  leg time from stop i−1 to stop i (Unreached → cruise-speed fallback, logged), and
+  their fleet from the out-and-back point-leg driving time plus dwell.
 - **Verification.** The instance carries the arcs with their inputs, the turn rate,
   and the legs the mod asked for with its answers. The evaluator re-derives every
   `arc_ms` and the turn table, builds each leg's state graph and requires

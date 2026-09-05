@@ -384,6 +384,19 @@ namespace StationSuitabilityOverlay
             TurnSecondsPerRadian = costs.m_CurveAngleCost.m_Value.x;
         }
 
+        // Fastest driving time between two POINTS on the streets (RoadLegs), or
+        // long.MaxValue when either is off the network or no directed route exists.
+        public long PointLegMs(float2 from, float2 to, float snapMetres, long maxMs, out RoadLeg leg)
+        {
+            leg = new RoadLeg { FromArc = -1, ToArc = -1, Ms = DirectedDijkstra.Unreached };
+            if (Directed is null || m_DirectedWorkspace is null)
+            {
+                return DirectedDijkstra.Unreached;
+            }
+
+            return RoadLegs.PointToPointMs(Directed, m_DirectedWorkspace, from.x, from.y, to.x, to.y, snapMetres, maxMs, out leg);
+        }
+
         // Fastest driving time between two nodes on the directed graph, or long.MaxValue.
         public long DirectedTimeMs(int fromNode, int toNode, long maxMs)
         {
