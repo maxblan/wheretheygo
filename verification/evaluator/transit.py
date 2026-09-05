@@ -105,7 +105,10 @@ def build_network(stop_x: list[float], stop_z: list[float], lines: list[Line],
     return net
 
 
-def dijkstra(net: Network, source: int, max_cost: Fraction) -> list[Fraction | None]:
+def dijkstra(net: Network, source: int, max_cost: Fraction,
+             expand_below: int | None = None) -> list[Fraction | None]:
+    """Exact Dijkstra. Nodes >= expand_below (journey doors) are sinks: reached, never
+    expanded, except the source itself."""
     adj: list[list[tuple[int, Fraction]]] = [[] for _ in range(net.node_count)]
     for a, b, c, _, _ in net.edges:
         adj[a].append((b, c))
@@ -122,6 +125,8 @@ def dijkstra(net: Network, source: int, max_cost: Fraction) -> list[Fraction | N
             continue
         done[node] = True
         if d > max_cost:
+            continue
+        if expand_below is not None and node >= expand_below and node != source:
             continue
         for other, cost in adj[node]:
             nd = d + cost

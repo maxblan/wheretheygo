@@ -1314,7 +1314,7 @@ namespace StationSuitabilityOverlay.Tests
             {
                 int origin = network.ZoneNodeStart + (2 * i);
                 int destination = origin + 1;
-                workspace.Run(network.Graph, origin, problem.MaxTravelSeconds);
+                workspace.Run(network.Graph, origin, problem.MaxTravelSeconds, network.ZoneNodeStart);
                 float walkOnly = SuitabilityLineSet.WalkOnlySeconds(problem, i);
                 float transit = workspace.Dist[destination];
                 after[i] = Math.Min(walkOnly, transit);

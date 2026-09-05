@@ -117,7 +117,7 @@ def evaluate(p: dict, chosen: list[int], before: list[Fraction] | None) -> dict:
     tie_affected = False
     for i in range(p["pairs"]):
         origin = zone_start + 2 * i; dest = origin + 1
-        dist = transit.dijkstra(net, origin, Fraction(p["max_travel"]))
+        dist = transit.dijkstra(net, origin, Fraction(p["max_travel"]), expand_below=zone_start)
         wo = walk_only(p, i)
         t = dist[dest]
         a = wo if t is None or t >= wo else t
@@ -126,7 +126,7 @@ def evaluate(p: dict, chosen: list[int], before: list[Fraction] | None) -> dict:
             saved += Fraction(p["w"][i]) * (before[i] - a)
         if t is not None and t < wo:
             # Which candidate lines the journey boards, over every shortest itinerary.
-            used_sets = itinerary_lines(net, dist, origin, dest)
+            used_sets = itinerary_lines(net, dist, origin, dest, zone_start)
             if len(used_sets) > 1:
                 tie_affected = True
             for l in used_sets[0]:
@@ -137,11 +137,14 @@ def evaluate(p: dict, chosen: list[int], before: list[Fraction] | None) -> dict:
     return {"after": after, "saved": saved, "riders": riders, "tie_affected": tie_affected}
 
 
-def itinerary_lines(net: transit.Network, dist, source: int, dest: int) -> list[frozenset]:
-    """Sets of lines boarded, one per cost-minimal itinerary (capped)."""
+def itinerary_lines(net: transit.Network, dist, source: int, dest: int, zone_start: int) -> list[frozenset]:
+    """Sets of lines boarded, one per cost-minimal itinerary (capped). A door other
+    than the source is never a predecessor (doors are sinks)."""
     incoming: list[list[tuple[int, int, int]]] = [[] for _ in range(net.node_count)]
     for a, b, c, kind, line in net.edges:
         for u, v in ((a, b), (b, a)):
+            if u >= zone_start and u != source:
+                continue
             if dist[u] is not None and dist[v] is not None and dist[u] + c == dist[v]:
                 incoming[v].append((u, kind, line))
     results: list[frozenset] = []

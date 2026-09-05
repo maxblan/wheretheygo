@@ -287,6 +287,11 @@ namespace StationSuitabilityOverlay
             public int TripCount;
             public int AssignedPairs;
             public float TotalZoneWeight;
+            // Where the worker's time went, for the log.
+            public long AlignmentMs;
+            public long WeighMs;
+            public long ResolveMs;
+            public long SolveMs;
         }
         // The PLAYABLE-AREA grid as of the last compute. Deliberately not the grid the
         // compute ran on — that one comes from the population map's own extent — and
@@ -3803,8 +3808,8 @@ namespace StationSuitabilityOverlay
                 ModeFacts facts = byMode[(int)mode];
                 _ = report.Append(mode.ToString())
                     .Append(" seats ").Append(facts.Capacity.ToString("F0", CultureInfo.InvariantCulture))
-                    .Append(", interval ").Append(facts.HeadwaySeconds.ToString("F0", CultureInfo.InvariantCulture)).Append(" s")
-                    .Append(facts.HeadwaySeconds > 0f ? string.Empty : $" (no line prefab; table {TransitModes.TargetHeadwayFor(mode).ToString("F0", CultureInfo.InvariantCulture)} s)")
+                    .Append(", prefab interval ").Append(facts.HeadwaySeconds.ToString("F0", CultureInfo.InvariantCulture)).Append(" s")
+                    .Append(" (planning headway ").Append(result.HeadwayFor(mode).ToString("F0", CultureInfo.InvariantCulture)).Append(" s)")
                     .Append(", stop ").Append(facts.StopDurationSeconds.ToString("F0", CultureInfo.InvariantCulture)).Append(" s")
                     .Append(", accel ").Append(facts.Acceleration.ToString("F2", CultureInfo.InvariantCulture))
                     .Append(", brake ").Append(facts.Braking.ToString("F2", CultureInfo.InvariantCulture))
@@ -4218,6 +4223,7 @@ namespace StationSuitabilityOverlay
             int grownTotal = 0;
             int shortTotal = 0;
 
+            var phases = System.Diagnostics.Stopwatch.StartNew();
             StopContext stops = BuildStopContext();
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
                 RoadFlowFraction, TransitModes.MaxAlignmentMetresFor(RouteNetwork.Road), roadDemand, demandFloor, forcedMode: null, candidates,
@@ -4268,6 +4274,7 @@ namespace StationSuitabilityOverlay
             // it decides which candidates are inside the scoring window. Enabled demand
             // takes over from there, and is re-measured once per accepted suggestion.
             candidates.Sort(static (a, b) => b.CapturedFlow.CompareTo(a.CapturedFlow));
+            pass.AlignmentMs = phases.ElapsedMilliseconds;
             SelectRoutes(settings, gridSize, grownTotal, shortTotal, pass);
         }
 
@@ -4319,12 +4326,17 @@ namespace StationSuitabilityOverlay
             FleetFacts facts = ReadFleetFacts();
             StopContext stops = BuildStopContext();
 
+            var phases = System.Diagnostics.Stopwatch.StartNew();
             WeighCandidatesAlone(settings, pass.Candidates);
+            pass.WeighMs = phases.ElapsedMilliseconds;
+            phases.Restart();
             List<SuggestedRoute> resolved = pass.Resolved;
             for (int i = 0; i < pass.Candidates.Count; i++)
             {
                 ResolveCandidate(settings, pass.Candidates[i], i, facts, stops, scratch, tally, resolved);
             }
+
+            pass.ResolveMs = phases.ElapsedMilliseconds;
 
             if (resolved.Count > 0)
             {
@@ -4337,6 +4349,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 stopwatch.Stop();
+                pass.SolveMs = stopwatch.ElapsedMilliseconds;
                 pass.Solution = solution;
                 pass.Problem = problem;
                 AdoptLineSet(settings, resolved, problem, solution, stopwatch.ElapsedMilliseconds, pass);
@@ -4346,7 +4359,9 @@ namespace StationSuitabilityOverlay
                 $"Route suggestions: grown={(grownTotal).ToString(CultureInfo.InvariantCulture)}, tooShort={(shortTotal).ToString(CultureInfo.InvariantCulture)}, " +
                 $"candidates={pass.Candidates.Count}, resolved={(resolved.Count).ToString(CultureInfo.InvariantCulture)}, unjustified={(tally.Unjustified).ToString(CultureInfo.InvariantCulture)}, " +
                 $"retracedOnRoad={(tally.Retraced).ToString(CultureInfo.InvariantCulture)}, alreadyBuilt={(tally.AlreadyBuilt).ToString(CultureInfo.InvariantCulture)}, " +
-                $"kept={pass.Routes.Count}");
+                $"kept={pass.Routes.Count}; worker phases: alignments+stops {(pass.AlignmentMs).ToString(CultureInfo.InvariantCulture)} ms, " +
+                $"weighing {(pass.WeighMs).ToString(CultureInfo.InvariantCulture)} ms, resolving {(pass.ResolveMs).ToString(CultureInfo.InvariantCulture)} ms, " +
+                $"set search {(pass.SolveMs).ToString(CultureInfo.InvariantCulture)} ms");
         }
 
         // Every candidate evaluated on its own against the existing network: the journey
@@ -4401,12 +4416,6 @@ namespace StationSuitabilityOverlay
                 BaseStopX = new float[m_TransitStops.Count],
                 BaseStopZ = new float[m_TransitStops.Count],
                 BaseLines = SuitabilityLines.ToTransitLines(m_ExistingLines),
-                PairCount = m_Journeys.Count,
-                PairOx = new float[m_Journeys.Count],
-                PairOz = new float[m_Journeys.Count],
-                PairDx = new float[m_Journeys.Count],
-                PairDz = new float[m_Journeys.Count],
-                PairWeight = new float[m_Journeys.Count],
                 WalkRadius = TransferWalkRadius,
                 BoardPenaltySeconds = SuitabilityTransit.DefaultBoardPenaltySeconds,
                 MaxTravelSeconds = MaxJourneySeconds,
@@ -4424,17 +4433,39 @@ namespace StationSuitabilityOverlay
             }
 
             // Journeys door to door (register A0.5): every trip at its own two
-            // positions and weight, not a zone centre. Evaluate deduplicates the
-            // origins, so the count of searches is the count of home buildings.
+            // positions, not a zone centre; trips between the same two doors (one
+            // household's commuters to one workplace) are one pair with their summed
+            // weight. Evaluate then searches once per distinct origin door.
+            var pairIndex = new Dictionary<(float, float, float, float), int>();
+            var ox = new List<float>();
+            var oz = new List<float>();
+            var dx = new List<float>();
+            var dz = new List<float>();
+            var weight = new List<float>();
             for (int i = 0; i < m_Journeys.Count; i++)
             {
                 Trip trip = m_Journeys[i];
-                problem.PairOx[i] = trip.m_Origin.x;
-                problem.PairOz[i] = trip.m_Origin.y;
-                problem.PairDx[i] = trip.m_Destination.x;
-                problem.PairDz[i] = trip.m_Destination.y;
-                problem.PairWeight[i] = trip.m_Weight;
+                var key = (trip.m_Origin.x, trip.m_Origin.y, trip.m_Destination.x, trip.m_Destination.y);
+                if (pairIndex.TryGetValue(key, out int existing))
+                {
+                    weight[existing] += trip.m_Weight;
+                    continue;
+                }
+
+                pairIndex.Add(key, ox.Count);
+                ox.Add(trip.m_Origin.x);
+                oz.Add(trip.m_Origin.y);
+                dx.Add(trip.m_Destination.x);
+                dz.Add(trip.m_Destination.y);
+                weight.Add(trip.m_Weight);
             }
+
+            problem.PairCount = ox.Count;
+            problem.PairOx = ox.ToArray();
+            problem.PairOz = oz.ToArray();
+            problem.PairDx = dx.ToArray();
+            problem.PairDz = dz.ToArray();
+            problem.PairWeight = weight.ToArray();
 
             FleetFacts facts = ReadFleetFacts();
             for (int c = 0; c < candidates.Count; c++)

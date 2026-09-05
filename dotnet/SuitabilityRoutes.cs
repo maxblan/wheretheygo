@@ -60,6 +60,78 @@ namespace StationSuitabilityOverlay
         public FleetFacts Facts;
         public System.Func<float2, ModePreset, float>? ScoreAt;
         public InterchangeMap Hubs;
+        private DoorIndex? m_Index;
+
+        // The doors bucketed on a grid, built on first use: a pass plans stops for
+        // thousands of alignments against tens of thousands of doors, and projecting
+        // every door onto every alignment was minutes of work.
+        public DoorIndex Index => m_Index ??= new DoorIndex(Ends);
+    }
+
+    // Doors on a square grid, answering "which doors could lie within `reach` of this
+    // polyline" with a superset cheap enough to project exactly afterwards.
+    internal sealed class DoorIndex
+    {
+        private const float CellMetres = 256f;
+        private readonly Dictionary<long, List<int>> m_Cells = new Dictionary<long, List<int>>();
+        private readonly int[] m_Stamp;
+        private int m_Generation;
+
+        public DoorIndex(float2[] doors)
+        {
+            m_Stamp = new int[doors.Length];
+            for (int i = 0; i < doors.Length; i++)
+            {
+                long key = Key(Cell(doors[i].x), Cell(doors[i].y));
+                if (!m_Cells.TryGetValue(key, out List<int>? list))
+                {
+                    list = new List<int>();
+                    m_Cells.Add(key, list);
+                }
+
+                list.Add(i);
+            }
+        }
+
+        private static int Cell(float v) => (int)math.floor(v / CellMetres);
+
+        private static long Key(int cx, int cz) => ((long)cx << 32) ^ (uint)cz;
+
+        // Every door in a cell touched by a path segment's box grown by `reach`, once.
+        public void Collect(List<float2> path, float reach, List<int> into)
+        {
+            into.Clear();
+            m_Generation++;
+            for (int i = 1; i < path.Count; i++)
+            {
+                float2 a = path[i - 1];
+                float2 b = path[i];
+                int x0 = Cell(math.min(a.x, b.x) - reach);
+                int x1 = Cell(math.max(a.x, b.x) + reach);
+                int z0 = Cell(math.min(a.y, b.y) - reach);
+                int z1 = Cell(math.max(a.y, b.y) + reach);
+                for (int cx = x0; cx <= x1; cx++)
+                {
+                    for (int cz = z0; cz <= z1; cz++)
+                    {
+                        if (!m_Cells.TryGetValue(Key(cx, cz), out List<int>? list))
+                        {
+                            continue;
+                        }
+
+                        for (int k = 0; k < list.Count; k++)
+                        {
+                            int door = list[k];
+                            if (m_Stamp[door] != m_Generation)
+                            {
+                                m_Stamp[door] = m_Generation;
+                                into.Add(door);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     internal static class SuitabilityRoutes
@@ -1183,8 +1255,11 @@ namespace StationSuitabilityOverlay
             var endZ = new List<float>();
             var endWeight = new List<float>();
             float reachSq = reach * reach;
-            for (int e = 0; e < context.Ends.Length; e++)
+            var nearby = new List<int>();
+            context.Index.Collect(path, reach, nearby);
+            for (int n = 0; n < nearby.Count; n++)
             {
+                int e = nearby[n];
                 float2 door = context.Ends[e];
                 float bestSq = float.MaxValue;
                 float bestAt = 0f;

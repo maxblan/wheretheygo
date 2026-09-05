@@ -78,12 +78,21 @@ namespace StationSuitabilityOverlay
             return Of(mode)?.Capacity ?? 0f;
         }
 
-        // The planning headway of a suggested line: the line prefab's default vehicle
-        // interval (register A5.5, A6.x), the table when the prefab is not loaded.
+        // The planning headway of a suggested line: TransitModes.TargetHeadwayFor. NOT
+        // the line prefab's default interval, deliberately: the prefabs say 45 s for a
+        // bus and 60 s for a metro, intervals no player leaves in place and against
+        // which the 15 % utilisation floor was never calibrated (a 257-rider bus that
+        // is 29 % full at 300 s is 3 % full at 45 s). The prefab value is kept for the
+        // log (DefaultIntervalFor); register A5.5/A6.x carries the open question.
         public float HeadwayFor(ModePreset mode)
         {
-            float headway = Of(mode)?.HeadwaySeconds ?? 0f;
-            return headway > 0f ? headway : TransitModes.TargetHeadwayFor(mode);
+            return TransitModes.TargetHeadwayFor(mode);
+        }
+
+        // The line prefab's default vehicle interval as the game ships it; 0 if unread.
+        public float DefaultIntervalFor(ModePreset mode)
+        {
+            return Of(mode)?.HeadwaySeconds ?? 0f;
         }
 
         // Vanilla's wait model: half the interval.
@@ -101,14 +110,18 @@ namespace StationSuitabilityOverlay
         // What one intermediate stop costs everyone riding through it: the dwell plus
         // the time lost braking from and accelerating back to cruise speed. Braking
         // from v at b covers v²/2b in v/b seconds, which at cruise would have taken
-        // v/2b — so the loss is v/2b, and the same again for the acceleration.
+        // v/2b — so the loss is v/2b, and the same again for the acceleration. Floored
+        // at DefaultStopDurationSeconds: the prefabs say a bus dwells 1 s and pulls
+        // away at 6 m/s², which makes a stop nearly free and a plan call every 175 m;
+        // the floor is the mod's long-standing dwell assumption (register A5.5, RF).
         public float DelayPerStopSeconds(ModePreset mode)
         {
             ModeFacts? facts = Of(mode);
             float speed = TransitModes.CruiseSpeedFor(mode);
             float acceleration = facts is not null && facts.Acceleration > 0f ? facts.Acceleration : TransitModes.DefaultAcceleration;
             float braking = facts is not null && facts.Braking > 0f ? facts.Braking : TransitModes.DefaultAcceleration;
-            return StopDurationFor(mode) + (speed / (2f * acceleration)) + (speed / (2f * braking));
+            float physics = StopDurationFor(mode) + (speed / (2f * acceleration)) + (speed / (2f * braking));
+            return Math.Max(physics, TransitModes.DefaultStopDurationSeconds);
         }
     }
 

@@ -19,8 +19,8 @@ MAX_UTILISATION = 1.0
 
 
 def headway(facts: dict, mode: str) -> float:
-    h = facts[mode]["headway"]
-    return h if h > 0.0 else f32.r(TARGET_HEADWAY[mode])
+    # planning headway is the table (FleetFacts.HeadwayFor); the prefab interval is log-only
+    return f32.r(TARGET_HEADWAY[mode])
 
 
 def utilisation(riders: float, hw: float, capacity: float) -> float:
@@ -37,7 +37,8 @@ def delay_per_stop(facts: dict, mode: str) -> float:
     a = fx["acceleration"] if fx["acceleration"] > 0.0 else f32.r(DEFAULT_ACCEL)
     b = fx["braking"] if fx["braking"] > 0.0 else f32.r(DEFAULT_ACCEL)
     stop = fx["stop_duration"] if fx["stop_duration"] > 0.0 else f32.r(DEFAULT_STOP)
-    return f32.add(f32.add(stop, f32.div(speed, f32.mul(f32.r(2.0), a))), f32.div(speed, f32.mul(f32.r(2.0), b)))
+    physics = f32.add(f32.add(stop, f32.div(speed, f32.mul(f32.r(2.0), a))), f32.div(speed, f32.mul(f32.r(2.0), b)))
+    return max(physics, f32.r(DEFAULT_STOP))
 
 
 def choose(network: str, riders: float, facts: dict) -> tuple[bool, str, float]:

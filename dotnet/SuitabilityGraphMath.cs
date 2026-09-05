@@ -168,6 +168,16 @@ namespace StationSuitabilityOverlay
         // one per origin/destination pair.
         public void Run(CompactGraph graph, int source, float maxCost)
         {
+            Run(graph, source, maxCost, int.MaxValue);
+        }
+
+        // As above, but nodes numbered `expandBelow` and up are SINKS: they receive a
+        // distance and a predecessor yet never relax their own edges (the source
+        // excepted). The line-set routing puts every journey door in that range, so a
+        // door can be walked to but not through — otherwise two stops within reach of
+        // one door were joined by an 800 m "walk" the transfer rule never allows.
+        public void Run(CompactGraph graph, int source, float maxCost, int expandBelow)
+        {
             Resize(graph.NodeCount);
             ClearTouched();
 
@@ -186,7 +196,7 @@ namespace StationSuitabilityOverlay
             {
                 int node = HeapPop();
                 float nodeDist = Dist[node];
-                if (nodeDist > maxCost)
+                if (nodeDist > maxCost || (node >= expandBelow && node != source))
                 {
                     continue;
                 }

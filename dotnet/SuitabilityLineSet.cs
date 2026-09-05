@@ -165,7 +165,8 @@ namespace StationSuitabilityOverlay
                 }
 
                 int originNode = network.ZoneNodeStart + zone;
-                workspace.Run(network.Graph, originNode, Math.Min(problem.MaxTravelSeconds, cap));
+                // Doors are sinks: reached, never walked through (DijkstraWorkspace.Run).
+                workspace.Run(network.Graph, originNode, Math.Min(problem.MaxTravelSeconds, cap), network.ZoneNodeStart);
                 for (int k = first; k < last; k++)
                 {
                     int pair = geometry.PairsByOrigin[k];

@@ -332,9 +332,13 @@ For the network's ladder — Road: Bus, Tram; Rail: Metro, Train (one rail latti
 A4.5); Water: Ferry — the mode is the first whose vehicles are not overloaded by the
 candidate's standalone riders:
 utilisation(M) = riders·2 / ((D / headway_M) · 2 · capacity_M) ≤ 1, with D = 4369.07
-movement seconds per game day, headway_M the line prefab's default interval
-(`TransportLineData.m_DefaultVehicleInterval`; table fallback), capacity_M the
-largest vehicle prefab's seats (carriages included). If every mode is overloaded the
+movement seconds per game day, headway_M = `TargetHeadwayFor` (Bus 300, Tram 240,
+Metro 200, Train 480, Ferry 600 s — the planning table, NOT the prefab default
+interval: Valmare's prefabs say 45/45/60/90/90 s, intervals no player keeps and
+against which the 15 % floor was never calibrated; the prefab value is logged,
+register A5.5/A6.x RF), capacity_M the largest vehicle prefab's seats (carriages
+included). δ per stop = max(prefab stop duration + v/2a + v/2b, 15 s): the prefabs
+give a bus 1 s dwell at 6 m/s², which would make a stop nearly free (RF, same rows). If every mode is overloaded the
 largest is chosen; a network with no vehicle installed yields no mode. Whether the
 line reaches the utilisation FLOOR is not asked here — a feeder alone rarely fills
 anything — but by the set selection on the set's own riders (§6.3). A lattice
@@ -387,7 +391,12 @@ candidates):
 
 - transit(i, N) = shortest-path cost from the origin's zone node to the
   destination's zone node, Dijkstra capped at `maxTravelSeconds` (3600 s;
-  unreachable = +∞), binary32 accumulation along the path in the mod;
+  unreachable = +∞), binary32 accumulation along the path in the mod. **Zone nodes
+  are sinks** (since 2026-09-05 16:xx, performance run): a door is reached but never
+  walked through — only the source door expands — so two stops within reach of one
+  door are not joined by a walk the transfer rule (216 m) never allows. Evaluator:
+  `transit.dijkstra(..., expand_below=zone_start)`; predecessor enumeration skips
+  door predecessors;
 - walkOnly(i) = √(Δx² + Δz²) / 1.2 in binary32 (`WalkOnlySeconds`);
 - after(i, A) = min(walkOnly(i), transit(i, N₀ ∪ A)); before(i) = after(i, ∅).
 
@@ -404,8 +413,9 @@ bit-identical to the per-pair evaluation (harness test "one capped search per
 origin zone equals one search per pair"; the five `lineset_time` instances
 reproduced their previous subject outputs exactly).
 
-The baseline is the best of walking and the existing network; the car is ignored
-(A3.1 decision). Times weigh walk : wait : ride = 1 : 1 : 1, a transfer costs
+Pairs are the journeys door to door (A0.5); journeys between the same two doors
+are one pair with their summed weight. The baseline is the best of walking and the
+existing network; the car is ignored (A3.1 decision). Times weigh walk : wait : ride = 1 : 1 : 1, a transfer costs
 exactly its walk edge plus the next line's access edge, nothing is discounted
 (A7.2/A7.4: the game's citizens route that way). The realism weights (2.2 / 2.1
 / 1, TCQSM) are reported as a diagnostic from the same itinerary components
