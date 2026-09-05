@@ -344,12 +344,24 @@ function DataCoverage({ raw }) {
     // Not `window`: that shadows the global this module reads React and the binding
     // API off. The length of the window is C#'s to state, not this file's.
     const windowHours = parts[2] || "24";
+    const observedTrips = parseInt(parts[3], 10) || 0;
+    const observedHours = parts[4] || "0";
+    // Shopping and leisure journeys are watched, not read from the save, so the
+    // panel says how many it has seen and over how long — the reader can then
+    // judge how much of the demand picture is filled in.
+    const observedLine = h("div", { className: "sso-coverage-value" },
+        (observedTrips
+            ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
+            : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
+            .replace("{0}", String(observedTrips))
+            .replace("{1}", observedHours));
 
     if (!readings) {
         return h("div", { className: "sso-coverage" },
             h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
             h("div", { className: "sso-coverage-empty" },
-                t("DataBasisEmpty", "no lines to watch yet — readings start with your first one")));
+                t("DataBasisEmpty", "no lines to watch yet — readings start with your first one")),
+            observedLine);
     }
 
     // Bar rather than only a number: the point is how much of the window is filled,
@@ -363,7 +375,8 @@ function DataCoverage({ raw }) {
                 .replace("{1}", windowHours)
                 .replace("{2}", String(readings))),
         h("div", { className: "sso-coverage-track" },
-            h("div", { className: "sso-coverage-fill", style: { width: filled + "%" } })));
+            h("div", { className: "sso-coverage-fill", style: { width: filled + "%" } })),
+        observedLine);
 }
 
 function Panel() {

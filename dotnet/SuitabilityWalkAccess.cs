@@ -496,11 +496,25 @@ namespace StationSuitabilityOverlay
         }
 
         // K(t, T) = 1 − t/T for t ≤ T, the same linear fade the v1 kernel used over
-        // distance (TCQSM and Zhao et al. both prefer a fade to a hard edge). Both
-        // operands are exact in binary32 (times are below 2^24 ms).
-        public static float Kernel(long timeMs, int horizonMs)
+        // distance (TCQSM and Zhao et al. both prefer a fade to a hard edge).
+        //
+        // Evaluated in DOUBLE and rounded to binary32 exactly once, at the store — as is
+        // every weighted sum in this file. C# permits a runtime to carry float
+        // intermediates at higher precision, and the game's Mono does exactly that
+        // while .NET on the pipeline side does not: the first real export disagreed
+        // with both the offline run of this very code and the evaluator in the last bit
+        // of 285 of 2073 tiles. Spelling the arithmetic out in double with one explicit
+        // narrowing leaves nothing to the runtime's discretion.
+        public static double Kernel(long timeMs, int horizonMs)
         {
-            return 1f - ((float)timeMs / (float)horizonMs);
+            return 1.0 - ((double)timeMs / horizonMs);
+        }
+
+        // acc + w·k, rounded to binary32 once. Products of two binary32 values are exact
+        // in double, so the only rounding is the final one.
+        public static float Add(float accumulator, float weight, double kernel)
+        {
+            return (float)(accumulator + (weight * kernel));
         }
 
         public static WalkAccessResult Compute(WalkAccessInputs inputs)
@@ -626,7 +640,7 @@ namespace StationSuitabilityOverlay
                     {
                         if (t <= catchmentMs[c])
                         {
-                            into[c][node] += weight * Kernel(t, catchmentMs[c]);
+                            into[c][node] = Add(into[c][node], weight, Kernel(t, catchmentMs[c]));
                         }
                     }
                 }
@@ -649,19 +663,19 @@ namespace StationSuitabilityOverlay
                 {
                     int node = dijkstra.Settled[s];
                     long t = dijkstra.Dist[node];
-                    float transferable = t <= inputs.TransferMs ? Kernel(t, inputs.TransferMs) : 0f;
+                    double transferable = t <= inputs.TransferMs ? Kernel(t, inputs.TransferMs) : 0.0;
                     if (t <= inputs.TransferMs)
                     {
-                        result.Interchange[type][node] += transferable;
+                        result.Interchange[type][node] = Add(result.Interchange[type][node], 1f, transferable);
                     }
 
                     for (int c = 0; c < inputs.CatchmentMs.Length; c++)
                     {
                         if (t <= inputs.CatchmentMs[c])
                         {
-                            float within = Kernel(t, inputs.CatchmentMs[c]);
-                            result.StopWithin[c][type][node] += within;
-                            result.CrossRaw[c][type][node] += within * (1f - transferable);
+                            double within = Kernel(t, inputs.CatchmentMs[c]);
+                            result.StopWithin[c][type][node] = Add(result.StopWithin[c][type][node], 1f, within);
+                            result.CrossRaw[c][type][node] = Add(result.CrossRaw[c][type][node], 1f, within * (1.0 - transferable));
                         }
                     }
                 }
@@ -688,7 +702,7 @@ namespace StationSuitabilityOverlay
             {
                 if (type == selfType)
                 {
-                    cell.m_Coverage += within[type][node];
+                    cell.m_Coverage = Add(cell.m_Coverage, 1f, within[type][node]);
                     continue;
                 }
 
@@ -698,8 +712,8 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
-                cell.m_Interchange += weight * result.Interchange[type][node];
-                cell.m_CrossCoverage += weight * cross[type][node];
+                cell.m_Interchange = Add(cell.m_Interchange, weight, result.Interchange[type][node]);
+                cell.m_CrossCoverage = Add(cell.m_CrossCoverage, weight, cross[type][node]);
             }
 
             return cell;
@@ -737,7 +751,7 @@ namespace StationSuitabilityOverlay
                     tileNode[i] = node;
                     tileWalkMs[i] = walkMs;
                     SuitabilityCell cell = NodeTerms(result, node, cls, selfType, typeWeight);
-                    cell.m_Access = Kernel(walkMs, accessMs);
+                    cell.m_Access = (float)Kernel(walkMs, accessMs);
                     terms[i] = cell;
                 }
             }

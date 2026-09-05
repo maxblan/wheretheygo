@@ -53,6 +53,11 @@ namespace StationSuitabilityOverlay
         // shortening it both gets the first suggestions up sooner and doubles the
         // number of readings a day's verdict rests on.
         private const float DemandRefreshSeconds = 30f;
+        // How often the live city is scanned for shopping and leisure journeys under
+        // way (register A0.1). A citizen stays inside a building for game-hours and a
+        // journey lasts game-minutes, so one scan a second — a few game minutes at
+        // normal speed — sees every stay and most departures.
+        private const float TripObservationSeconds = 1f;
         private const int InfomodePriority = 200;
 
         // Demand, jobs and future demand are raw sums with unbounded scale; each is
@@ -420,6 +425,19 @@ namespace StationSuitabilityOverlay
         private float[]? m_ServedScratch;
 
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
+
+        // Observed shopping/leisure demand (register A0.1): the window of journeys
+        // seen, each citizen's current journey (so one journey is recorded once),
+        // and the building each citizen was last seen inside (a journey's origin).
+        private readonly ObservedTripWindow m_ObservedTrips = new ObservedTripWindow(LineHistory.FramesPerGameDay);
+        private readonly Dictionary<Entity, (Entity target, byte purpose)> m_CurrentJourney = new Dictionary<Entity, (Entity, byte)>();
+        private readonly Dictionary<Entity, Entity> m_LastBuilding = new Dictionary<Entity, Entity>();
+        private EntityQuery m_TravellingQuery;
+        private EntityQuery m_InsideQuery;
+        private float m_LastTripObservation;
+        private int m_ObservedWithoutOrigin;
+        private int m_ObservedLastDemand;
+        private float m_ObservedScaleLastDemand;
         private readonly List<SuggestedRoute> m_Routes = new List<SuggestedRoute>();
         private int[]? m_ZoneNodes;
         private float[]? m_DemandRaster;
@@ -704,6 +722,8 @@ namespace StationSuitabilityOverlay
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
             m_HouseholdQuery = LiveQuery(ComponentType.ReadOnly<Household>(), ComponentType.ReadOnly<Game.Buildings.PropertyRenter>());
+            m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<Game.Common.Target>());
+            m_InsideQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<CurrentBuilding>());
 
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
             m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(isReadOnly: true);
@@ -772,6 +792,9 @@ namespace StationSuitabilityOverlay
             m_Access = null;
             m_AccessInputs = null;
             m_WalkGraph = null;
+            m_ObservedTrips.Clear();
+            m_CurrentJourney.Clear();
+            m_LastBuilding.Clear();
             m_Land = null;
             m_ExpandedCache = null;
             m_VanillaPlaceableInfoviews = null;
@@ -919,6 +942,13 @@ namespace StationSuitabilityOverlay
             {
                 m_LastLineSample = now;
                 RefreshLineHealth();
+            }
+
+            // Also ungated on `active`: a journey not seen is demand not counted.
+            if (now - m_LastTripObservation >= TripObservationSeconds)
+            {
+                m_LastTripObservation = now;
+                ObserveTrips();
             }
 
             MaybeUpdateTravelDemand(settings, active, now);
@@ -2419,6 +2449,7 @@ namespace StationSuitabilityOverlay
                 };
 
                 job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
+                EnqueueObservedTrips(trips);
                 totalWeight = SuitabilityTravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount);
             }
             finally
@@ -2459,10 +2490,173 @@ namespace StationSuitabilityOverlay
             m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
             UpdateRouteSummary(tripCount, assignedPairs);
             Mod.Log.Info(
-                $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)}, weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}, " +
+                $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)} (observed shopping/leisure {(m_ObservedLastDemand).ToString(CultureInfo.InvariantCulture)} ×{(m_ObservedScaleLastDemand).ToString("F2", CultureInfo.InvariantCulture)} over {(LineHistory.GameHours(m_ObservedTrips.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours), " +
+                $"weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}, " +
                 $"assignedPairs={(assignedPairs).ToString(CultureInfo.InvariantCulture)}, assignedWeight={(assignedWeight).ToString("F0", CultureInfo.InvariantCulture)}, " +
                 $"crossWaterPairs={m_CrossWaterFlows.Count}, candidates={m_RouteCandidates.Count}, routes={m_Routes.Count}");
             LogSanityChecks(totalWeight);
+        }
+
+        // Purposes that count as shopping or leisure (register A0.1). Working,
+        // studying and going home are covered by the save's own home-work/school pairs;
+        // service trips (hospital, mail, garbage, crime) are not passenger demand.
+        private static bool IsShoppingOrLeisure(Purpose purpose)
+        {
+            return purpose is Purpose.Shopping or Purpose.Leisure or Purpose.Relaxing
+                or Purpose.Sightseeing or Purpose.VisitAttractions;
+        }
+
+        // One scan of the live city: remember the building every citizen is inside,
+        // and record every shopping/leisure journey the moment it is first seen with
+        // its Target — origin = the building the citizen was last inside. A journey
+        // stays recorded once for as long as the same (citizen, target, purpose) is
+        // seen; when it ends the citizen may start another.
+        private void ObserveTrips()
+        {
+            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
+            uint frame = simulation?.frameIndex ?? 0u;
+            m_TransformLookup.Update(this);
+            m_PropertyRenterLookup.Update(this);
+
+            using (var inside = m_InsideQuery.ToEntityArray(Allocator.Temp))
+            using (var buildings = m_InsideQuery.ToComponentDataArray<CurrentBuilding>(Allocator.Temp))
+            {
+                for (int i = 0; i < inside.Length; i++)
+                {
+                    m_LastBuilding[inside[i]] = buildings[i].m_CurrentBuilding;
+                }
+            }
+
+            using var travellers = m_TravellingQuery.ToEntityArray(Allocator.Temp);
+            using var purposes = m_TravellingQuery.ToComponentDataArray<TravelPurpose>(Allocator.Temp);
+            using var targets = m_TravellingQuery.ToComponentDataArray<Game.Common.Target>(Allocator.Temp);
+            var seen = new HashSet<Entity>();
+            for (int i = 0; i < travellers.Length; i++)
+            {
+                Purpose purpose = purposes[i].m_Purpose;
+                if (!IsShoppingOrLeisure(purpose))
+                {
+                    continue;
+                }
+
+                Entity citizen = travellers[i];
+                Entity target = targets[i].m_Target;
+                _ = seen.Add(citizen);
+                if (m_CurrentJourney.TryGetValue(citizen, out (Entity target, byte purpose) current)
+                    && current.target == target && current.purpose == (byte)purpose)
+                {
+                    continue;
+                }
+
+                m_CurrentJourney[citizen] = (target, (byte)purpose);
+                RecordObservedTrip(citizen, target, (byte)purpose, frame);
+            }
+
+            // Journeys no longer under way: forget them so the next one is new.
+            var ended = new List<Entity>();
+            foreach (Entity citizen in m_CurrentJourney.Keys)
+            {
+                if (!seen.Contains(citizen))
+                {
+                    ended.Add(citizen);
+                }
+            }
+
+            for (int i = 0; i < ended.Count; i++)
+            {
+                _ = m_CurrentJourney.Remove(ended[i]);
+            }
+
+            m_ObservedTrips.Prune(frame);
+        }
+
+        private void RecordObservedTrip(Entity citizen, Entity target, byte purpose, uint frame)
+        {
+            if (!m_LastBuilding.TryGetValue(citizen, out Entity origin)
+                || !TryResolveBuildingPosition(origin, out float3 from)
+                || !TryResolveBuildingPosition(target, out float3 to))
+            {
+                m_ObservedWithoutOrigin++;
+                return;
+            }
+
+            m_ObservedTrips.Record(new ObservedTrip
+            {
+                m_Frame = frame,
+                m_OriginX = from.x,
+                m_OriginZ = from.z,
+                m_DestinationX = to.x,
+                m_DestinationZ = to.z,
+                m_Purpose = purpose,
+            });
+        }
+
+        // The same shape as ExtractTripsJob.TryResolvePosition: a building carries a
+        // Transform itself, or a company rents one that does.
+        private bool TryResolveBuildingPosition(Entity owner, out float3 position)
+        {
+            position = default;
+            if (owner == Entity.Null)
+            {
+                return false;
+            }
+
+            if (m_TransformLookup.HasComponent(owner))
+            {
+                position = m_TransformLookup[owner].m_Position;
+                return true;
+            }
+
+            if (m_PropertyRenterLookup.HasComponent(owner))
+            {
+                Entity property = m_PropertyRenterLookup[owner].m_Property;
+                if (m_TransformLookup.HasComponent(property))
+                {
+                    position = m_TransformLookup[property].m_Position;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // The observed window joins the save's home-work/school journeys in the same
+        // queue, each observed journey weighted so the window reads as one day.
+        private void EnqueueObservedTrips(NativeQueue<Trip> trips)
+        {
+            float scale = m_ObservedTrips.ScaleFor(LineHistory.FramesPerGameDay);
+            m_ObservedLastDemand = m_ObservedTrips.Count;
+            m_ObservedScaleLastDemand = scale;
+            for (int i = 0; i < m_ObservedTrips.Count; i++)
+            {
+                ObservedTrip observed = m_ObservedTrips[i];
+                var trip = new Trip
+                {
+                    m_Origin = new float2(observed.m_OriginX, observed.m_OriginZ),
+                    m_Destination = new float2(observed.m_DestinationX, observed.m_DestinationZ),
+                    m_Weight = scale,
+                };
+                if (math.distancesq(trip.m_Origin, trip.m_Destination) < 1f)
+                {
+                    continue;
+                }
+
+                trips.Enqueue(trip);
+            }
+
+            if (m_ObservedTrips.EvictedSinceLastReport > 0 || m_ObservedTrips.DroppedAtCapSinceLastReport > 0 || m_ObservedWithoutOrigin > 0)
+            {
+                Mod.Log.Info(
+                    $"Observed journeys: {(m_ObservedTrips.Count).ToString(CultureInfo.InvariantCulture)} held " +
+                    $"(shopping {(m_ObservedTrips.CountOf((byte)Purpose.Shopping)).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"leisure {(m_ObservedTrips.CountOf((byte)Purpose.Leisure) + m_ObservedTrips.CountOf((byte)Purpose.Relaxing)).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"sightseeing {(m_ObservedTrips.CountOf((byte)Purpose.Sightseeing) + m_ObservedTrips.CountOf((byte)Purpose.VisitAttractions)).ToString(CultureInfo.InvariantCulture)}), " +
+                    $"evicted={(m_ObservedTrips.EvictedSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"droppedAtCap={(m_ObservedTrips.DroppedAtCapSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"withoutKnownOrigin={(m_ObservedWithoutOrigin).ToString(CultureInfo.InvariantCulture)} (journeys seen before the citizen was ever seen inside a building)");
+                m_ObservedTrips.ClearCounters();
+                m_ObservedWithoutOrigin = 0;
+            }
         }
 
         // Expected rider wait in seconds at a stop position, taken from the best line
@@ -2775,7 +2969,9 @@ namespace StationSuitabilityOverlay
             s_DataCoverage =
                 $"{coveredHours.ToString("F1", CultureInfo.InvariantCulture)}|" +
                 $"{readings.ToString(CultureInfo.InvariantCulture)}|" +
-                $"{LineHistory.GameHours(m_LineHistory.WindowFrames).ToString("F0", CultureInfo.InvariantCulture)}";
+                $"{LineHistory.GameHours(m_LineHistory.WindowFrames).ToString("F0", CultureInfo.InvariantCulture)}|" +
+                $"{m_ObservedTrips.Count.ToString(CultureInfo.InvariantCulture)}|" +
+                $"{LineHistory.GameHours(m_ObservedTrips.SpanFrames).ToString("F1", CultureInfo.InvariantCulture)}";
 
             Mod.Log.Info(
                 $"Line window: frame={(frame).ToString(CultureInfo.InvariantCulture)} (advanced={advanced}), " +
@@ -4621,7 +4817,7 @@ namespace StationSuitabilityOverlay
 
             var selfType = (int)SuitabilityInputs.TransportTypeOf(mode);
             SuitabilityCell terms = SuitabilityWalkAccess.NodeTerms(access.Result, access.TileNode[index], cls, selfType, access.TypeWeight);
-            terms.m_Access = SuitabilityWalkAccess.Kernel(access.TileWalkMs[index], inputs.AccessMs);
+            terms.m_Access = (float)SuitabilityWalkAccess.Kernel(access.TileWalkMs[index], inputs.AccessMs);
             float invSelf = 1f / math.max(0.1f, StopWeightOf(SuitabilityInputs.TransportTypeOf(mode)));
             return CombineCell(in terms, invSelf);
         }

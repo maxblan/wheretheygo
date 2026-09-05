@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Nine files are on that side, and `SuitabilityScoring.Tests.csproj` links all nine:
+project. Ten files are on that side, and `SuitabilityScoring.Tests.csproj` links all ten:
 
 - `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
@@ -162,6 +162,8 @@ project. Nine files are on that side, and `SuitabilityScoring.Tests.csproj` link
 - `SuitabilityGraphMath.cs` — CSR graph, Dijkstra, corridor growth, RDP
 - `SuitabilityTransit.cs` — transit routing and boarding counts
 - `SuitabilityLineHistory.cs` — the rolling window of line readings
+- `SuitabilityObservedTrips.cs` — the one-game-day window of observed shopping/leisure journeys and
+  its per-day scaling; the live-city scan that feeds it stays in the overlay system
 - `SuitabilityLineHealth.cs` — verdicts and improvement plans
 - `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
 - `SuitabilityExportJson.cs` — the verification export's canonical JSON and its digest.
@@ -200,7 +202,8 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    exactly among network nodes (`SuitabilityExactSites.SolveOnNetwork`) with the mode's stop
    spacing as walking-time separation.
 2. **Travel demand** — real home→work/school journeys read from `Citizen`/`HouseholdMember`
-   (`SuitabilityTravelDemand.cs`), aggregated into 256 m zones, discounted by whether the existing
+   (`SuitabilityTravelDemand.cs`) plus shopping/leisure journeys observed once a second from
+   `TravelPurpose`/`Target`/`CurrentBuilding` and held for a game day, aggregated into 256 m zones, discounted by whether the existing
    network can actually route them, then assigned to a network by shortest path.
 3. **Route suggestion** — two alignment searches in `SuitabilityRoutes.cs`, picked by network:
    `BuildForNetwork` grows a corridor with flow peeling and novelty decay on the road graph, where

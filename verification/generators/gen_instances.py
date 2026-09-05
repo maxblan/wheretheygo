@@ -848,7 +848,10 @@ def heatmap_walk_plumbing():
         return int(round(metres / speed * 1000.0))
 
     def kernel(t, horizon):
-        return _f32(1.0 - _f32(float(t) / float(horizon)))
+        return 1.0 - float(t) / float(horizon)     # double; rounded once at each store
+
+    def add(acc, w, k):
+        return _f32(acc + w * k)
 
     edge_ms = ms(72.0)
     assert edge_ms == 60000
@@ -880,7 +883,7 @@ def heatmap_walk_plumbing():
             for n, t in times_from(node, walk).items():
                 for c, horizon in enumerate(classes):
                     if t <= horizon:
-                        acc[c][n] = _f32(acc[c][n] + _f32(w * kernel(t, horizon)))
+                        acc[c][n] = add(acc[c][n], w, kernel(t, horizon))
     within = [[[0.0] * 3 for _ in range(14)] for _ in classes]
     cross = [[[0.0] * 3 for _ in range(14)] for _ in classes]
     inter = [[0.0] * 3 for _ in range(14)]
@@ -889,12 +892,12 @@ def heatmap_walk_plumbing():
         for n, t in times_from(node, walk).items():
             transferable = kernel(t, transfer_ms) if t <= transfer_ms else 0.0
             if t <= transfer_ms:
-                inter[ty][n] = _f32(inter[ty][n] + transferable)
+                inter[ty][n] = add(inter[ty][n], 1.0, transferable)
             for c, horizon in enumerate(classes):
                 if t <= horizon:
                     k = kernel(t, horizon)
-                    within[c][ty][n] = _f32(within[c][ty][n] + k)
-                    cross[c][ty][n] = _f32(cross[c][ty][n] + _f32(k * _f32(1.0 - transferable)))
+                    within[c][ty][n] = add(within[c][ty][n], 1.0, k)
+                    cross[c][ty][n] = add(cross[c][ty][n], 1.0, k * (1.0 - transferable))
 
     grid_x, tile, world_min = 6, 32.0, -16.0
     buildable = [1, 1, 1, 0, 1, 1]
@@ -916,9 +919,9 @@ def heatmap_walk_plumbing():
         cols["jobs"].append(jobs_acc[0][node])
         cols["future"].append(0.0)
         cols["coverage"].append(within[0][0][node])
-        cols["interchange"].append(_f32(3.0 * inter[1][node]))
-        cols["cross"].append(_f32(3.0 * cross[0][1][node]))
-        cols["access"].append(kernel(walk, access_ms))
+        cols["interchange"].append(add(0.0, 3.0, inter[1][node]))
+        cols["cross"].append(add(0.0, 3.0, cross[0][1][node]))
+        cols["access"].append(_f32(kernel(walk, access_ms)))
 
     def sources(points):
         return {"x_b32": f32_list([p[0] for p in points]),

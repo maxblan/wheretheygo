@@ -23,7 +23,12 @@ def walk_ms(metres: float) -> int:
 
 
 def kernel(t_ms: int, horizon_ms: int) -> float:
-    return f32.sub(1.0, f32.div(float(t_ms), float(horizon_ms)))
+    """Double-precision 1 - t/T; every store rounds to binary32 once (spec §7 v2)."""
+    return 1.0 - float(t_ms) / float(horizon_ms)
+
+
+def add(acc: float, weight: float, k: float) -> float:
+    return f32.r(acc + weight * k)
 
 
 class Graph:
@@ -98,7 +103,7 @@ def accumulate(graph: Graph, sources: dict, access_ms: int, classes: list[int]):
         for n, t in graph.times_within(node, walks[i], classes[-1]).items():
             for c, horizon in enumerate(classes):
                 if t <= horizon:
-                    acc[c][n] = f32.add(acc[c][n], f32.mul(ws[i], kernel(t, horizon)))
+                    acc[c][n] = add(acc[c][n], ws[i], kernel(t, horizon))
     return acc, off
 
 
@@ -121,12 +126,12 @@ def accumulate_stops(graph: Graph, data: dict, classes: list[int]):
         for n, t in graph.times_within(node, walks[i], classes[-1]).items():
             transferable = kernel(t, transfer) if t <= transfer else 0.0
             if t <= transfer:
-                inter[ty][n] = f32.add(inter[ty][n], transferable)
+                inter[ty][n] = add(inter[ty][n], 1.0, transferable)
             for c, horizon in enumerate(classes):
                 if t <= horizon:
                     k = kernel(t, horizon)
-                    within[c][ty][n] = f32.add(within[c][ty][n], k)
-                    cross[c][ty][n] = f32.add(cross[c][ty][n], f32.mul(k, f32.sub(1.0, transferable)))
+                    within[c][ty][n] = add(within[c][ty][n], 1.0, k)
+                    cross[c][ty][n] = add(cross[c][ty][n], 1.0, k * (1.0 - transferable))
     return within, inter, cross, off
 
 
@@ -138,13 +143,13 @@ def node_terms(node: int, cls: int, self_type: int, weights: list[float],
     }
     for ty in range(len(within[cls])):
         if ty == self_type:
-            cell["coverage"] = f32.add(cell["coverage"], within[cls][ty][node])
+            cell["coverage"] = add(cell["coverage"], 1.0, within[cls][ty][node])
             continue
         w = weights[ty] if ty < len(weights) else 0.0
         if w <= 0.0:
             continue
-        cell["interchange"] = f32.add(cell["interchange"], f32.mul(w, inter[ty][node]))
-        cell["cross"] = f32.add(cell["cross"], f32.mul(w, cross[cls][ty][node]))
+        cell["interchange"] = add(cell["interchange"], w, inter[ty][node])
+        cell["cross"] = add(cell["cross"], w, cross[cls][ty][node])
     return cell
 
 
@@ -189,7 +194,7 @@ def check(instance: dict, solution: dict) -> dict:
                 node, walk = -1, -1
             if node >= 0:
                 expected = node_terms(node, cls, self_type, weights, demand, jobs, future, within, inter, cross)
-                expected["access"] = kernel(walk, access_ms)
+                expected["access"] = f32.r(kernel(walk, access_ms))
         bad = {}
         for f in fields:
             exp_bits = f32_bits(expected[f])

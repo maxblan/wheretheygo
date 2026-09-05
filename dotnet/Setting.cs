@@ -587,6 +587,8 @@ namespace StationSuitabilityOverlay
                 { "StationSuitabilityOverlay.Panel[DataBasis]", "Data collected" },
                 { "StationSuitabilityOverlay.Panel[DataBasisValue]", "{0} h of {1} h \u00b7 {2} readings" },
                 { "StationSuitabilityOverlay.Panel[DataBasisEmpty]", "no lines to watch yet \u2014 readings start with your first one" },
+                { "StationSuitabilityOverlay.Panel[ObservedTrips]", "{0} shopping/leisure journeys seen over {1} h" },
+                { "StationSuitabilityOverlay.Panel[ObservedTripsEmpty]", "no shopping/leisure journeys seen yet" },
                 { "StationSuitabilityOverlay.Panel[Basis]", "average over {0} h, {1} readings, peak {2}%" },
                 { "StationSuitabilityOverlay.Panel[BasisSingle]", "single reading so far" },
                 { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },

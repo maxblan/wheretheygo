@@ -55,6 +55,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("Walk access splits stops into coverage, interchange and cross terms", WalkAccessStopTerms);
             Run("Tile terms follow the node and fade with the access walk", WalkAccessTileTerms);
             Run("Catchment classes are exactly the modes' horizons", CatchmentClassesMatchModes);
+            Run("Observed trips are held for a game day and scaled to a day's rate", ObservedTripWindowHoldsADay);
+            Run("Observed trips restart on a rewound clock and stop at the cap", ObservedTripWindowRestartsAndCaps);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -789,6 +791,59 @@ namespace StationSuitabilityOverlay.Tests
             return dist;
         }
 
+        private static ObservedTrip TripAt(uint frame, byte purpose)
+        {
+            return new ObservedTrip { m_Frame = frame, m_OriginX = 1f, m_OriginZ = 2f, m_DestinationX = 3f, m_DestinationZ = 4f, m_Purpose = purpose };
+        }
+
+        private static void ObservedTripWindowHoldsADay()
+        {
+            uint day = LineHistory.FramesPerGameDay;
+            var window = new ObservedTripWindow(day);
+            AssertEqual(1f, window.ScaleFor(day), 0f, "an empty window scales by 1");
+            window.Record(TripAt(1000u, 1));
+            window.Record(TripAt(1000u + day / 4, 2));
+            window.Record(TripAt(1000u + day / 2, 1));
+            AssertEqual(3, window.Count, 0, "three trips held");
+            AssertEqual(2, window.CountOf(1), 0, "two shopping");
+            AssertEqual(1, window.CountOf(2), 0, "one leisure");
+            AssertEqual(day / 2, (int)window.SpanFrames, 0, "span is half a day");
+            AssertEqual(2f, window.ScaleFor(day), 0f, "half a day of readings scales by 2");
+
+            window.Prune(1000u + day / 4 + day);
+            AssertEqual(2, window.Count, 0, "the first trip fell out of the window");
+            AssertEqual(1, window.CountOf(1), 0, "per-purpose count follows");
+            AssertEqual(1, window.EvictedSinceLastReport, 0, "one eviction reported");
+            AssertEqual(1000u + day / 4, (int)window[0].m_Frame, 0, "the oldest is now the second");
+
+            var brief = new ObservedTripWindow(day);
+            brief.Record(TripAt(10u, 1));
+            brief.Record(TripAt(20u, 1));
+            AssertEqual(ObservedTripWindow.MaxDayScale, brief.ScaleFor(day), 0f, "ten frames of readings cannot be scaled past the cap");
+        }
+
+        private static void ObservedTripWindowRestartsAndCaps()
+        {
+            var window = new ObservedTripWindow(1000u);
+            window.Record(TripAt(500u, 1));
+            window.Record(TripAt(600u, 1));
+            window.Record(TripAt(100u, 2));
+            AssertEqual(1, window.Count, 0, "a frame below the newest means another save: the window restarts");
+            AssertEqual(0, window.CountOf(1), 0, "old purposes cleared");
+            AssertEqual(1, window.CountOf(2), 0, "the new trip is kept");
+
+            var full = new ObservedTripWindow(uint.MaxValue);
+            for (int i = 0; i < ObservedTripWindow.Capacity + 5; i++)
+            {
+                full.Record(TripAt((uint)i, 1));
+            }
+
+            AssertEqual(ObservedTripWindow.Capacity, full.Count, 0, "the cap holds");
+            AssertEqual(5, full.DroppedAtCapSinceLastReport, 0, "drops are counted, not hidden");
+            full.ClearCounters();
+            AssertEqual(0, full.DroppedAtCapSinceLastReport, 0, "counters reset on report");
+        }
+
         private static WalkGraph LineGraph(int nodes, float metres)
         {
             var x = new float[nodes];
@@ -910,12 +965,12 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertEqual(0, result.SourcesOffNetwork, 0, "both homes are on the network");
             AssertEqual(30000, result.HomeAccessMs[1], 0, "36 m is 30 s");
-            float k0 = SuitabilityWalkAccess.Kernel(0, 360000);
-            float k30 = SuitabilityWalkAccess.Kernel(30000, 360000);
-            AssertEqual((10f * k0) + (10f * k30), result.Demand[0][0], 0f, "node 0 sums both homes in index order");
-            float k60 = SuitabilityWalkAccess.Kernel(60000, 360000);
-            float k90 = SuitabilityWalkAccess.Kernel(90000, 360000);
-            AssertEqual((10f * k60) + (10f * k90), result.Demand[0][1], 0f, "node 1 is a minute further for both");
+            double k0 = SuitabilityWalkAccess.Kernel(0, 360000);
+            double k30 = SuitabilityWalkAccess.Kernel(30000, 360000);
+            AssertEqual((float)((float)(10.0 * k0) + (10.0 * k30)), result.Demand[0][0], 0f, "node 0 sums both homes in index order, rounding once per store");
+            double k60 = SuitabilityWalkAccess.Kernel(60000, 360000);
+            double k90 = SuitabilityWalkAccess.Kernel(90000, 360000);
+            AssertEqual((float)((float)(10.0 * k60) + (10.0 * k90)), result.Demand[0][1], 0f, "node 1 is a minute further for both");
             AssertEqual(0f, result.Demand[0][6], 0f, "six minutes out the kernel reaches zero");
             AssertEqual(0f, result.Demand[0][7], 0f, "beyond the class horizon nothing arrives");
             AssertTrue(result.Demand[2][7] > 0f, "the 16-minute class still sees node 7");
@@ -925,7 +980,7 @@ namespace StationSuitabilityOverlay.Tests
             inputs.Homes = Sources((0f, 5f), (1200f, 5f));
             result = SuitabilityWalkAccess.Compute(inputs);
             AssertEqual(1, result.SourcesOffNetwork, 0, "the far home has no node within the access walk");
-            AssertEqual(5f * k0, result.Demand[0][0], 0f, "only the near home counts");
+            AssertEqual((float)(5.0 * k0), result.Demand[0][0], 0f, "only the near home counts");
         }
 
         private static void WalkAccessStopTerms()
@@ -939,12 +994,12 @@ namespace StationSuitabilityOverlay.Tests
             inputs.StopType = new[] { 0, 1 };
             WalkAccessResult result = SuitabilityWalkAccess.Compute(inputs);
 
-            float within120 = SuitabilityWalkAccess.Kernel(120000, 360000);
-            float transferable120 = SuitabilityWalkAccess.Kernel(120000, 180000);
+            double within120 = SuitabilityWalkAccess.Kernel(120000, 360000);
+            double transferable120 = SuitabilityWalkAccess.Kernel(120000, 180000);
             AssertEqual(1f, result.StopWithin[0][0][0], 0f, "the bus stop covers its own node fully");
-            AssertEqual(within120, result.StopWithin[0][1][0], 0f, "the station is two minutes from node 0");
-            AssertEqual(transferable120, result.Interchange[1][0], 0f, "transferable at two of three minutes");
-            AssertEqual(within120 * (1f - transferable120), result.CrossRaw[0][1][0], 0f, "cross fades by transferability");
+            AssertEqual((float)within120, result.StopWithin[0][1][0], 0f, "the station is two minutes from node 0");
+            AssertEqual((float)transferable120, result.Interchange[1][0], 0f, "transferable at two of three minutes");
+            AssertEqual((float)(within120 * (1.0 - transferable120)), result.CrossRaw[0][1][0], 0f, "cross fades by transferability");
             AssertEqual(0f, result.Interchange[1][6], 0f, "six minutes away is not a transfer");
             AssertTrue(result.StopWithin[0][1][5] > 0f && result.Interchange[1][5] == 0f, "node 5: inside the catchment, outside the transfer walk");
 
@@ -954,11 +1009,11 @@ namespace StationSuitabilityOverlay.Tests
             weights[1] = 3f;
             SuitabilityCell bus = SuitabilityWalkAccess.NodeTerms(result, 0, 0, 0, weights);
             AssertEqual(1f, bus.m_Coverage, 0f, "own bus stop is coverage");
-            AssertEqual(3f * transferable120, bus.m_Interchange, 0f, "the station is a weighted transfer partner");
-            AssertEqual(3f * within120 * (1f - transferable120), bus.m_CrossCoverage, 0f, "and a weighted competitor");
+            AssertEqual((float)(3.0 * result.Interchange[1][0]), bus.m_Interchange, 0f, "the station is a weighted transfer partner");
+            AssertEqual((float)(3.0 * result.CrossRaw[0][1][0]), bus.m_CrossCoverage, 0f, "and a weighted competitor");
             SuitabilityCell train = SuitabilityWalkAccess.NodeTerms(result, 0, 0, 1, weights);
-            AssertEqual(within120, train.m_Coverage, 0f, "for a train the station is coverage");
-            AssertEqual(1f * SuitabilityWalkAccess.Kernel(0, 180000), train.m_Interchange, 0f, "the bus stop is its transfer partner");
+            AssertEqual((float)within120, train.m_Coverage, 0f, "for a train the station is coverage");
+            AssertEqual((float)SuitabilityWalkAccess.Kernel(0, 180000), train.m_Interchange, 0f, "the bus stop is its transfer partner");
             weights[0] = 0f;
             SuitabilityCell trainNoBus = SuitabilityWalkAccess.NodeTerms(result, 0, 0, 1, weights);
             AssertEqual(0f, trainNoBus.m_Interchange, 0f, "a type with weight 0 is excluded");
@@ -987,7 +1042,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(1, tileNode[2], 0, "tile 2 at x=64 is nearer node 1 (72) than node 0");
             int walk = WalkGraph.WalkMilliseconds(8.0);
             AssertEqual(walk, tileWalk[2], 0, "8 m off the node");
-            AssertEqual(SuitabilityWalkAccess.Kernel(walk, inputs.AccessMs), terms[2].m_Access, 0f, "access fades with the walk");
+            AssertEqual((float)SuitabilityWalkAccess.Kernel(walk, inputs.AccessMs), terms[2].m_Access, 0f, "access fades with the walk");
             AssertEqual(result.Demand[0][1], terms[2].m_Demand, 0f, "terms are node 1's");
         }
 

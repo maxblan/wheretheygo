@@ -351,20 +351,30 @@ Instance kind `heatmap_walk`. Definitions:
 - **Times.** t(s, n) = a_s + d(node_s, n) with d the exact integer shortest-path time.
   Horizons: catchment classes C = {360 000, 660 000, 960 000} ms (Bus/Tram 6, Metro/
   Ferry 11, Train 16 min), transfer τ = 180 000 ms.
-- **Kernel.** K(t, T) = 1 − t/T in binary32 (both operands exact), for t ≤ T.
+- **Kernel.** K(t, T) = 1 − t/T computed in **double** (t, T exact), for t ≤ T.
+- **Arithmetic rule (v2, 2026-09-05).** Every store into a binary32 accumulator is
+  `fl32(acc + w · k)` with acc, w widened to double, k the double kernel (or a product
+  of doubles), and exactly one rounding at the store. Rationale: C# lets a runtime keep
+  binary32 intermediates at higher precision, and the game's Mono does while .NET does
+  not — the first `heatmap_walk` export disagreed in the last bit of 285/2073 tiles
+  (access term and a weighted sum) with both the offline run of the same code and the
+  evaluator. Spelling the arithmetic out in double with one explicit narrowing is
+  runtime-independent; the Mono results observed were consistent with it.
 - **Accumulators per node n**, for each class c with horizon T_c: Demand_c[n] =
-  Σ_homes w_h·K(t, T_c); Jobs_c[n]; Future_c[n] (zoned homes then zoned workplaces);
-  per stop type y: Within_c[y][n] = Σ_stops of type y K(t, T_c); Inter[y][n] = Σ K(t, τ)
-  over t ≤ τ; Cross_c[y][n] = Σ K(t, T_c)·(1 − K(t, τ)·[t ≤ τ]). All sums in binary32,
-  **in source index order**, each source contributing at most once per node (so the
-  settle order is irrelevant). Sources: residents per home building (household
+  Σ_homes fl32-store(w_h·K(t, T_c)); Jobs_c[n]; Future_c[n] (zoned homes then zoned
+  workplaces); per stop type y: Within_c[y][n] = Σ_stops of type y K(t, T_c);
+  Inter[y][n] = Σ K(t, τ) over t ≤ τ; Cross_c[y][n] = Σ K(t, T_c)·(1 − K(t, τ)·[t ≤ τ])
+  (the product formed in double). All sums **in source index order** under the
+  arithmetic rule, each source contributing at most once per node (so the settle
+  order is irrelevant). Sources: residents per home building (household
   citizens count, at the building's Transform), workplaces (max workers), zoned
   cells (cell area), served passenger stops with `TransportStopData.m_TransportType`.
 - **Node terms for mode M** (class c(M), own type y(M), type weights ω from capacity
   ratios, A1.10): T1 = Demand_c, T2 = Jobs_c, T5 = Future_c, T3 = Within_c[y(M)],
   T6 = Σ_{y ≠ y(M), ω_y > 0} ω_y · Inter[y] (types ascending), T7 = Σ ω_y · Cross_c[y].
 - **Tile terms.** Unbuildable tile ⇒ all zero, no node. Otherwise the tile's node's
-  terms with T4 = K(a_tile, A); a tile with no node ⇒ all zero.
+  terms with T4 = fl32(K(a_tile, A)); a tile with no node ⇒ all zero. T6/T7 sums over
+  types follow the arithmetic rule (fl32(acc + ω_y · Inter[y][n])).
 - **Combine (v2).** Caps and weights as in 7.3; coverage share = min(T3, 1.5)/1.5;
   `final = score` if the tile has a node, else 0 (the v1 road gate `sat(T4·2)` is
   retired). `ScoreForMode(p, M)` = the full combine of the node terms for M at p's
@@ -443,9 +453,23 @@ re-sorted descending (insertion sort, stable), trailing non-positive scores drop
 
 ## 7b. S3 — Demand evaluator
 
-1. **Trips**: per citizen (excl. tourist/homeless/no-property): home = household
-   property transform; dest = workplace (w = 1.0) else school (w = 0.6); reject
-   < 1 m. Parallel extraction into a queue (order non-deterministic).
+1. **Trips**: per citizen with a rented home (tourists included since v2, A0.2): home
+   = household property transform; dest = workplace else school, both **w = 1.0**
+   (A0.3; v1 had school 0.6); reject < 1 m. Parallel extraction into a queue (order
+   non-deterministic).
+   **v2 (Phase 4, 2026-09-05) — observed shopping/leisure journeys (A0.1).** The
+   save holds no such destinations, so the live city is scanned once per real second:
+   every citizen inside a building is remembered as (citizen → building); every
+   citizen carrying `TravelPurpose` ∈ {Shopping, Leisure, Relaxing, Sightseeing,
+   VisitAttractions} together with a `Target` is a journey (target position: the
+   target's Transform, or its rented property's), recorded once per distinct
+   (citizen, target, purpose) while continuously seen, origin = the building the
+   citizen was last seen inside (journeys without a known origin are counted and
+   dropped). Journeys live in a window of one game day (262 144 frames,
+   `ObservedTripWindow`, cap 200 000, frame-rewind clears it). At each demand refresh
+   they join the queue above with weight `ScaleFor(day) = clamp(day/span, 1, 4)` —
+   a full window counts one per journey, a shorter one is scaled to a day's rate but
+   never more than 4×. The panel shows how many were seen over how many game hours.
 2. **Zones**: zone = floor((p − worldMin)/256) (out-of-range dropped, NOT clamped —
    unlike WorldToCell); key = origin·zoneCount + dest accumulated in a dictionary;
    result list **sorted totally by (origin, dest)** — this restores determinism of
@@ -506,6 +530,8 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-04 | Transfer walk radius 250 m → **180 s × 1.2 m/s = 216 m** (one constant for the routing's walk edges, the interchange map and the heatmap's transfer distance); zone→stop reach = 2× = 432 m | A1.11 | instance data — exported v1 instances keep their own values |
 | 2026-09-04 | Trip weights: school 0.6 → **1.0**; tourists/homeless no longer filtered (only "no rented property" excludes, structurally) | A0.2, A0.3 | none offline (ECS extraction) |
 | 2026-09-04 | Ferry shoreline **+1 bonus removed** | A1.13 | none offline (ECS) |
+| 2026-09-05 | **S3 demand adds observed shopping/leisure journeys** (Phase 4: live-city scan, one-game-day window, per-day scaling ≤ 4×, merged with home-work/school at equal weight; panel shows the count and coverage) | A0.1 | ECS-side observation is unverifiable offline; the window logic is pure and harness-tested (`ObservedTripWindow`) |
+| 2026-09-05 | **Heatmap arithmetic pinned to double with one rounding per store** (see §7 v2 arithmetic rule) — after the first real `heatmap_walk` export showed Mono keeping float intermediates at higher precision | — | evaluator/generator follow; a re-export is needed before the real-city three-way check can pass |
 | 2026-09-05 | **S1 heatmap terms are walking times over the pedestrian network** (`SuitabilityWalkAccess`; Burst job `SuitabilityJob` deleted; residents per home building replace the 224 m population raster; access = network node within 2 min; catchments 6/11/16 min as linear time kernels; transfer 3 min; road gate replaced by "has a node"; site refinement pass removed) | A1.1, A1.2, A1.4, A1.5, A1.6, A0.5, A0.6, Phase-3 values | new kind `heatmap_walk` with three-way bit-exact check; v1 `heatmap_grid`/`heatmap_point` evaluators retired or historical |
 | 2026-09-05 | **S2 candidates are network nodes; separation is walking time ≥ stop spacing** (`SolveOnNetwork`, ball clique-cover bound) | A2.1, A2.2, A2.4 | new kind `sites_walk`: exact Dijkstra conflicts, SCIP/VIPR on pairwise MIP, exact selection judged |
 | 2026-09-05 | **S2 site selection is exact** (`SuitabilityExactSites`, branch-and-bound with block-partition bound, integer-scaled scores, node budget 2·10⁶ with reported ceiling); the greedy ranking stays as incumbent and measured baseline | A2.3 | subject reports `exact_*` fields; `run.py` requires gap 0 against the certified optimum when the search closed, else a sound bracket — 6/6 instances closed (two real cities: 14 and 0 nodes) |

@@ -123,7 +123,7 @@ The scoring math (percentile normalization, site selection, corridor growth, tra
 dotnet run --project tests/SuitabilityScoring.Tests
 ```
 
-No packages to restore; a non-zero exit code counts the failures. This project is intentionally not part of the solution so the mod toolchain build is unaffected. It links the nine Unity-free files — scoring, walking-time access, exact site selection, graph math, transit routing, the line-reading window, line health, the per-mode tables and the verification export's JSON format — so the thresholds behind a verdict are testable too.
+No packages to restore; a non-zero exit code counts the failures. This project is intentionally not part of the solution so the mod toolchain build is unaffected. It links the ten Unity-free files — scoring, walking-time access, exact site selection, observed-journey window, graph math, transit routing, the line-reading window, line health, the per-mode tables and the verification export's JSON format — so the thresholds behind a verdict are testable too.
 
 ## Usage
 
