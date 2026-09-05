@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Eleven files are on that side, and `SuitabilityScoring.Tests.csproj` links all eleven:
+project. Twelve files are on that side, and `SuitabilityScoring.Tests.csproj` links all twelve:
 
 - `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
@@ -168,6 +168,8 @@ project. Eleven files are on that side, and `SuitabilityScoring.Tests.csproj` li
 - `SuitabilityLineHistory.cs` — the rolling window of line readings
 - `SuitabilityObservedTrips.cs` — the one-game-day window of observed shopping/leisure journeys and
   its per-day scaling; the live-city scan that feeds it stays in the overlay system
+- `SuitabilityEquity.cs` — the equity floor: served-walk field from the served stops, journeys served
+  at both ends within the horizon, share and weighted Gini, the utilisation formula
 - `SuitabilityLineHealth.cs` — verdicts and improvement plans
 - `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
 - `SuitabilityExportJson.cs` — the verification export's canonical JSON and its digest.
@@ -221,6 +223,8 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    the suitability score says is not worth calling at (`SuitabilityScoring.SelectCallingPoints`);
    mode is chosen from flow against city-wide floors; and candidates are accepted in rounds, each
    one re-scored transfer-aware over a transit graph that already contains the ones above it.
+   Since Phase 6 the rounds rank by journeys newly served while the city is below the equity floor
+   (Options: horizon minutes, served share), and every suggestion must clear the utilisation floor.
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
 

@@ -93,6 +93,7 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", static () => StationSuitabilityOverlaySystem.RouteListText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", static () => StationSuitabilityOverlaySystem.LineHealthText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => StationSuitabilityOverlaySystem.DataCoverageText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "equity", static () => StationSuitabilityOverlaySystem.EquityText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", static () => StationSuitabilityOverlaySystem.ImprovePlanText));
             AddUpdateBinding(new GetterValueBinding<int>(Group, "improvedLine", static () => StationSuitabilityOverlaySystem.ImprovedLineIndex));
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "improvedRouteDrawn", static () => StationSuitabilityOverlaySystem.ImprovedRouteDrawn));

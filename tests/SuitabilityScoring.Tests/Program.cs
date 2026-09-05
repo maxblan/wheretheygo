@@ -63,6 +63,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("Directed roads: fastest times match an exhaustive path enumeration", DirectedMatchesEnumeration);
             Run("Directed roads: flow follows admitted directions and sums per street", DirectedFlowAssignment);
             Run("Directed roads: stops mid-street are timed from their point on the arc", DirectedPointLegs);
+            Run("Equity: coverage counts journeys served at both ends within the horizon", EquityCoverage);
+            Run("Equity: weighted Gini is 0 for equal access, rises with concentration, and utilisation follows the peak model", EquityGiniAndUtilisation);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -1059,6 +1061,55 @@ namespace StationSuitabilityOverlay.Tests
             // reverse, so a point on it can only be a destination, never an origin.
             long stuck = RoadLegs.PointToPointMs(graph, dijkstra, 100f, 30f, 50f, 0f, 20.0, 1_000_000, out _);
             AssertTrue(stuck == DirectedDijkstra.Unreached, "no arc leads away from the one-way side street's point");
+        }
+
+        private static void EquityCoverage()
+        {
+            // Line 0..7 one minute apart; one served stop at node 1 (access 0), horizon 10 min.
+            WalkGraph graph = LineGraph(8, 72f);
+            var dijkstra = new IntDijkstra(graph.NodeCount);
+            int[] served = SuitabilityEquity.ServedWalkMs(graph, dijkstra, new[] { 1 }, new[] { 0 }, 1, 600000);
+            AssertEqual(0, served[1], 0, "the stop's node is served at once");
+            AssertEqual(60000, served[0], 0, "one minute to node 0");
+            AssertEqual(360000, served[7], 0, "six minutes to node 7");
+
+            // Trips: 0->7 (both within 10 min), 0->7 with 5 min access at the destination
+            // (6+5 = 11 min: not served), one with an off-network end, weights 2/1/1.
+            var origin = new[] { 0, 0, 0 };
+            var originAccess = new[] { 0, 0, 0 };
+            var dest = new[] { 7, 7, -1 };
+            var destAccess = new[] { 0, 300000, 0 };
+            var weight = new[] { 2f, 1f, 1f };
+            CoverageReport report = SuitabilityEquity.Coverage(served, 600000, origin, originAccess, dest, destAccess, weight, 3);
+            AssertEqual(1, report.TripsCovered, 0, "only the first journey is served at both ends");
+            AssertEqual(1, report.TripsOffNetwork, 0, "one journey has an end off the network");
+            AssertEqual(0.5f, report.Share, 0f, "2 of 4 weight covered");
+            AssertTrue(SuitabilityEquity.EndServed(served, 7, 240000, 600000), "6 + 4 minutes fits the horizon exactly");
+            AssertTrue(!SuitabilityEquity.EndServed(served, 7, 240001, 600000), "one millisecond over does not");
+
+            // Adding a stop at node 7 covers the second journey as well (5 min access ≤ 10).
+            int[] merged = SuitabilityEquity.WithStops(graph, dijkstra, served, new[] { 7 }, new[] { 0 }, 1, 600000);
+            AssertEqual(0, merged[7], 0, "node 7 is now a stop");
+            AssertEqual(0, served[7] == 360000 ? 0 : 1, 0, "the original field is untouched");
+            CoverageReport after = SuitabilityEquity.Coverage(merged, 600000, origin, originAccess, dest, destAccess, weight, 3);
+            AssertEqual(0.75f, after.Share, 0f, "3 of 4 weight covered with the new stop");
+        }
+
+        private static void EquityGiniAndUtilisation()
+        {
+            AssertEqual(0f, (float)SuitabilityEquity.Gini(new[] { 3.0, 3.0, 3.0 }, new[] { 1f, 1f, 1f }, 3), 0f, "equal values: Gini 0");
+            AssertEqual(0f, (float)SuitabilityEquity.Gini(new[] { 0.0, 0.0 }, new[] { 1f, 1f }, 2), 0f, "all zero: Gini 0 by convention");
+            double concentrated = SuitabilityEquity.Gini(new[] { 0.0, 0.0, 0.0, 10.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
+            AssertEqual(0.75f, (float)concentrated, 1e-6f, "one of four holds everything: (n-1)/n");
+            double weighted = SuitabilityEquity.Gini(new[] { 1.0, 2.0 }, new[] { 3f, 1f }, 2);
+            double unweighted = SuitabilityEquity.Gini(new[] { 1.0, 1.0, 1.0, 2.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
+            AssertEqual((float)unweighted, (float)weighted, 1e-9f, "weights behave like repeated observations");
+
+            // 1000 journeys a day on a 300 s headway with 70-seat buses: 400 peak
+            // boardings against 24 buses × 70 seats = 1680 seats an hour → 23.8 %.
+            float utilisation = SuitabilityEquity.Utilisation(1000f, 300f, 70f);
+            AssertEqual(400f / 1680f, utilisation, 1e-6f, "peak boardings over peak seats");
+            AssertEqual(0f, SuitabilityEquity.Utilisation(1000f, 0f, 70f), 0f, "no headway, no utilisation");
         }
 
         private static ObservedTrip TripAt(uint frame, byte purpose)

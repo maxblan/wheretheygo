@@ -379,6 +379,30 @@ function DataCoverage({ raw }) {
         observedLine);
 }
 
+// The equity floor's own readout: what share of the city's journeys the served
+// network reaches at both ends, against the target the player set, and how unequal
+// the walk to service is. Payload: "share|minutes|target|gini" or "" before the
+// first measurement.
+function Equity({ raw }) {
+    const t = useTranslate();
+    const parts = (raw || "").split("|");
+    if (parts.length < 4) {
+        return h("div", { className: "sso-coverage" },
+            h("div", { className: "sso-coverage-label" }, t("Equity", "Served journeys")),
+            h("div", { className: "sso-coverage-empty" }, t("EquityEmpty", "not measured yet")));
+    }
+    const share = parseFloat(parts[0]);
+    const target = parseFloat(parts[2]);
+    const filled = Math.max(0, Math.min(100, share));
+    return h("div", { className: "sso-coverage" },
+        h("div", { className: "sso-coverage-label" }, t("Equity", "Served journeys")),
+        h("div", { className: "sso-coverage-value" },
+            t("EquityValue", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) · Gini of access walk {3}")
+                .replace("{0}", parts[0]).replace("{1}", parts[1]).replace("{2}", parts[2]).replace("{3}", parts[3])),
+        h("div", { className: "sso-coverage-track" },
+            h("div", { className: "sso-coverage-fill", style: { width: filled + "%", opacity: share >= target ? 1 : 0.6 } })));
+}
+
 function Panel() {
     const t = useTranslate();
     const visible = useBound("visible", false);
@@ -392,6 +416,7 @@ function Panel() {
     const heatmap = useBound("heatmap", true);
     const lineHealth = useBound("lineHealth", "");
     const dataCoverage = useBound("dataCoverage", "");
+    const equity = useBound("equity", "");
     const improvePlan = useBound("improvePlan", "");
     const improvedLine = useBound("improvedLine", -1);
     const improvedRouteDrawn = useBound("improvedRouteDrawn", false);
@@ -449,6 +474,7 @@ function Panel() {
         h("div", { className: "sso-column" },
 
         h(DataCoverage, { raw: dataCoverage }),
+        h(Equity, { raw: equity }),
 
         h(Choice, {
             label: t("Mode", "Mode"),

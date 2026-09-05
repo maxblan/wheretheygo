@@ -804,6 +804,77 @@ def lineset_tie():
 
 
 
+# ------------------------------------------------------------- coverage (S3 v2)
+
+def coverage_line():
+    """Eight nodes one walking minute apart (72 m); one served stop at node 1;
+    horizon 10 min. Journeys: 0->7 (served: 1 + 6 min), 0->7 with the destination
+    36 m off node 7 (6 min + 30 s: still served), 0->7 with the destination 130 m off
+    the line (off network beyond the 2-min access walk... 130 m = 108 s: ON network
+    but 6 min + 108 s = 7.8 min: served), and 7->0 from a point 7 min past... the
+    line ends at node 7, so a third case: origin at node 7 (6 min) with destination
+    at x = 700 m (node... none; off network) -> not served. Expected values are
+    computed by hand below."""
+    nodes_x = [72.0 * i for i in range(8)]
+    trips = [((0.0, 0.0), (504.0, 0.0), 2.0),        # both ends on nodes: served
+             ((0.0, 0.0), (504.0, 36.0), 1.0),       # destination 30 s off node 7: 6.5 min: served
+             ((504.0, 0.0), (900.0, 0.0), 1.0),      # destination 396 m off the line: off network
+             ((0.0, 120.0), (216.0, 0.0), 1.0)]      # origin 120 m off node 0 = 100 s + 60 s = 160 s: served; dest node 3: 2 min: served
+    speed = _f32(1.2)
+    def ms(m):
+        return int(round(m / speed * 1000.0))
+    edge_ms = max(1, ms(72.0))
+    served = {n: edge_ms * abs(n - 1) for n in range(8)}   # from the stop at node 1
+    horizon = 600000
+    def snap(x, z):
+        best, bsq = -1, (120000 / 1000.0 * speed) ** 2
+        for n in range(8):
+            sq = (nodes_x[n] - _f32(x)) ** 2 + (0.0 - _f32(z)) ** 2
+            if sq < bsq:
+                best, bsq = n, sq
+        if best < 0:
+            return -1, -1
+        a = ms(bsq ** 0.5)
+        return (best, a) if a <= 120000 else (-1, -1)
+    total = 0.0; covered = 0.0; tc = 0; off = 0; walk = []; wts = []
+    for (ox, oz), (dx, dz), w in trips:
+        w = _f32(w); total += w; wts.append(w)
+        on, oa = snap(ox, oz); dn, da = snap(dx, dz)
+        if on < 0 or dn < 0:
+            off += 1
+        o_ok = on >= 0 and served[on] + oa <= horizon
+        d_ok = dn >= 0 and served[dn] + da <= horizon
+        if o_ok and d_ok:
+            tc += 1; covered += w
+        walk.append(float(served[on] + oa) if o_ok else 2.0 * horizon)
+    share = _f32(covered / total)
+    # weighted Gini by hand (same formula as the spec)
+    order = sorted(range(len(walk)), key=lambda i: (walk[i], i))
+    tw = sum(wts); tv = sum(wts[i] * walk[i] for i in range(len(walk)))
+    run = 0.0; area = 0.0
+    for i in order:
+        before = run; run += wts[i] * walk[i]; area += wts[i] * (before + run)
+    g = 1.0 - area / (tw * tv)
+    return {
+        "kind": "coverage",
+        "name": "coverage-line",
+        "comment": "eight-node line, one served stop; expected share and Gini by hand",
+        "expect": {"three_way_exact": True},
+        "data": {
+            "node_x_b32": f32_list(nodes_x), "node_z_b32": f32_list([0.0] * 8),
+            "edge_a": list(range(7)), "edge_b": list(range(1, 8)),
+            "edge_metres_b32": f32_list([72.0] * 7),
+            "stop_x_b32": f32_list([72.0]), "stop_z_b32": f32_list([0.0]),
+            "trip_ox_b32": f32_list([t[0][0] for t in trips]), "trip_oz_b32": f32_list([t[0][1] for t in trips]),
+            "trip_dx_b32": f32_list([t[1][0] for t in trips]), "trip_dz_b32": f32_list([t[1][1] for t in trips]),
+            "trip_w_b32": f32_list([t[2] for t in trips]),
+            "access_ms": 120000, "horizon_ms": horizon,
+            "share_b32": f32_bits(share), "covered_weight": repr(covered), "total_weight": repr(total),
+            "gini_walk": repr(g), "trips_covered": tc, "trips_off_network": off,
+        },
+    }
+
+
 # ------------------------------------------------------------- road_times (S4 v2)
 
 def road_times_oneway():
@@ -1089,6 +1160,7 @@ def main():
         heatmap_walk_plumbing(),
         sites_walk_gap(),
         road_times_oneway(),
+        coverage_line(),
         lattice_path_rail(),
         lattice_path_tie(),
         calling_points_cases(),

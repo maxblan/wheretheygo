@@ -107,6 +107,7 @@ namespace StationSuitabilityOverlay
         // because a mean over twenty minutes and a mean over a full day are the same
         // number on screen and mean very different things.
         public static string DataCoverageText => s_DataCoverage;
+        public static string EquityText => s_Equity;
 
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 
@@ -368,6 +369,7 @@ namespace StationSuitabilityOverlay
         private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
         private uint m_LastHistoryFrame;
         private static string s_DataCoverage = string.Empty;
+        private static string s_Equity = string.Empty;
         private uint m_LastLineRefreshFrame;
         private float m_LastLineSample;
         // Where last refresh's suggestions ran between, so churn can be measured.
@@ -425,6 +427,20 @@ namespace StationSuitabilityOverlay
         private float[]? m_ServedScratch;
 
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
+
+        // The equity measure (register A1.8/A1.9): every journey of the last demand
+        // refresh with its ends snapped to the pedestrian network, the walk from each
+        // network node to the nearest served stop, and the coverage that gives.
+        private readonly List<Trip> m_Journeys = new List<Trip>();
+        private int[] m_JourneyOriginNode = Array.Empty<int>();
+        private int[] m_JourneyOriginAccess = Array.Empty<int>();
+        private int[] m_JourneyDestinationNode = Array.Empty<int>();
+        private int[] m_JourneyDestinationAccess = Array.Empty<int>();
+        private float[] m_JourneyWeight = Array.Empty<float>();
+        private int[]? m_ServedWalkMs;
+        private CoverageReport? m_Coverage;
+        private int m_EquityHorizonMs;
+        private IntDijkstra? m_EquityDijkstra;
 
         // Observed shopping/leisure demand (register A0.1): the window of journeys
         // seen, each citizen's current journey (so one journey is recorded once),
@@ -819,6 +835,7 @@ namespace StationSuitabilityOverlay
             s_RouteList = string.Empty;
             s_LineHealthList = string.Empty;
             s_DataCoverage = string.Empty;
+            s_Equity = string.Empty;
             s_ImprovePlan = string.Empty;
             s_ImprovedLine = -1;
             s_ImprovedRouteDrawn = false;
@@ -2462,7 +2479,7 @@ namespace StationSuitabilityOverlay
 
                 job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
                 EnqueueObservedTrips(trips);
-                totalWeight = SuitabilityTravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount);
+                totalWeight = SuitabilityTravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount, m_Journeys);
             }
             finally
             {
@@ -2470,6 +2487,7 @@ namespace StationSuitabilityOverlay
             }
 
             BuildTransitModel(gridSize);
+            MeasureEquity(settings);
             DiscountServedDemand(gridSize);
             m_UnservedTravelWeight = RemainingDemandWeight();
             BuildDemandLayer(settings, gridSize, worldMin);
@@ -4552,10 +4570,14 @@ namespace StationSuitabilityOverlay
                 $"kept={m_Routes.Count}, {references.Describe()}");
         }
 
-        // Best first: the share of unserved demand a candidate would newly improve, with
-        // corridor flow breaking ties — which covers the candidates past the scoring
-        // window, where enabled demand was never measured at all.
-        private List<int> OrderCandidates(bool[] settled)
+        // Ranking of the candidates still in play. While the city is below the equity
+        // floor (register A1.8: a set share of journeys served at both ends), the
+        // journeys a candidate newly serves come first — lexicographically, so no
+        // amount of enabled travel outranks bringing unserved people within reach.
+        // Once the floor is met, enabled demand leads, with corridor flow breaking ties
+        // — which covers the candidates past the scoring window, where enabled demand
+        // was never measured at all.
+        private List<int> OrderCandidates(Setting settings, bool[] settled)
         {
             var order = new List<int>(m_RouteCandidates.Count);
             for (int i = 0; i < m_RouteCandidates.Count; i++)
@@ -4566,17 +4588,43 @@ namespace StationSuitabilityOverlay
                 }
             }
 
+            bool coverageFirst = BelowEquityFloor(settings);
+            var gain = new float[m_RouteCandidates.Count];
+            if (coverageFirst)
+            {
+                for (int k = 0; k < order.Count; k++)
+                {
+                    gain[order[k]] = CoverageGain(m_RouteCandidates[order[k]]);
+                }
+            }
+
             order.Sort((left, right) =>
             {
+                if (coverageFirst)
+                {
+                    int byGain = gain[right].CompareTo(gain[left]);
+                    if (byGain != 0)
+                    {
+                        return byGain;
+                    }
+                }
+
                 SuggestedRoute a = m_RouteCandidates[left];
                 SuggestedRoute b = m_RouteCandidates[right];
                 int byDemand = b.EnabledDemand.CompareTo(a.EnabledDemand);
                 return byDemand != 0 ? byDemand : b.CapturedFlow.CompareTo(a.CapturedFlow);
             });
 
+            if (coverageFirst && order.Count > 0)
+            {
+                Mod.Log.Info(
+                    "  equity floor unmet: candidates ranked by journeys newly served first; best gains " +
+                    $"{gain[order[0]].ToString("F0", CultureInfo.InvariantCulture)}" +
+                    (order.Count > 1 ? $", {gain[order[1]].ToString("F0", CultureInfo.InvariantCulture)}" : string.Empty));
+            }
+
             return order;
         }
-
 
         // Why the candidates that did not become suggestions were turned down, for the
         // one summary line the log is read by.
@@ -4601,6 +4649,7 @@ namespace StationSuitabilityOverlay
         // Split out of AcceptBestCandidate, which owns the ranking and the acceptance;
         // this owns the rejecting. Behaviour is unchanged by the split.
         private bool SurvivesEveryBar(
+            Setting settings,
             SuggestedRoute candidate,
             int index,
             float corridorFlow,
@@ -4653,41 +4702,26 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            // The least a suggestion may be worth: enough journeys to fill one BUS at
-            // the peak, the smallest vehicle the game has. A line that cannot manage
-            // that is not a line, whatever mode it would run as — and the bus is the
-            // one mode with no rider floor of its own, precisely so an over-ambitious
-            // alignment can come back as one, so this is where that bus is judged.
-            //
-            // This replaced a measured bar of 0.1% of the city's unserved travel. The
-            // measurement was real — over one session 37 of 101 accepted suggestions
-            // enabled exactly nothing, and the rest split into 0,1,2,4,6,7,8 against
-            // 38,59,84,115,291,742 out of an unserved 13709, with the bar set in that
-            // gap. But a SHARE of a small city is not a bar at all: with 568 journeys
-            // unserved it asked for 0.6 of one, which is how a tram enabling SIX
-            // journeys came to be the single suggestion offered in Valmare. One bus
-            // load is 200 journeys, above the 38-115 that measurement called useful —
-            // deliberately, because those lines would have filled a fifth of a bus at
-            // the peak. It could separate worthless from less worthless; it never
-            // showed the upper group was worth building.
-            //
-            // Only when the demand was MEASURED. A candidate past the transfer scoring
-            // window keeps a zero it was never routed for, and reading that as
-            // "improves nothing" dropped it for a measurement nobody took.
-            float busLoad = TransitModes.RidersToFillOne(ReadFleetCapacities().For(ModePreset.Bus));
-            if (candidate.DemandScored && candidate.EnabledDemand < busLoad)
+            // The utilisation floor (register A4.1/A6.4, decided 2026-09-05): peak-hour
+            // boardings the line would carry over the seats it runs at its headway, both
+            // directions. Replaced "fills one bus at the peak", which asked the same
+            // question of every mode at one fixed size and never of the fleet.
+            float capacity = ReadFleetCapacities().For(candidate.Mode);
+            float headway = SuggestedWaitFor(candidate.Mode) * 2f;
+            float utilisation = SuitabilityEquity.Utilisation(candidate.EnabledDemand, headway, capacity);
+            float floor = settings.UtilisationFloorPercent / 100f;
+            if (candidate.DemandScored && utilisation < floor)
             {
                 tally.ImprovedTooLittle++;
                 Mod.Log.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, would newly serve " +
-                    $"{(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} journeys against the " +
-                    $"{(busLoad).ToString("F0", CultureInfo.InvariantCulture)} it takes to fill one bus at the peak " +
-                    $"(this city still has {(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys unserved)");
+                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, utilisation " +
+                    $"{(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of peak seats (floor {(floor * 100f).ToString("F0", CultureInfo.InvariantCulture)} %; " +
+                    $"headway {(headway).ToString("F0", CultureInfo.InvariantCulture)} s, capacity {(capacity).ToString("F0", CultureInfo.InvariantCulture)}; " +
+                    $"this city still has {(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys unserved)");
                 return false;
             }
 
-            // A suggestion the player has already built should stop being offered.
             if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
             {
                 tally.AlreadyBuilt++;
@@ -4713,7 +4747,7 @@ namespace StationSuitabilityOverlay
             bool[] settled,
             RejectionTally tally)
         {
-            List<int> order = OrderCandidates(settled);
+            List<int> order = OrderCandidates(settings, settled);
             for (int slot = 0; slot < order.Count; slot++)
             {
                 int i = order[slot];
@@ -4744,7 +4778,7 @@ namespace StationSuitabilityOverlay
                 float corridorFlow = candidate.CapturedFlow;
                 networkReference = references.For(candidate.Network);
 
-                if (!SurvivesEveryBar(candidate, i, corridorFlow, networkReference, tally))
+                if (!SurvivesEveryBar(settings, candidate, i, corridorFlow, networkReference, tally))
                 {
                     settled[i] = true;
                     continue;
@@ -4761,6 +4795,7 @@ namespace StationSuitabilityOverlay
                 m_Routes.Add(candidate);
                 settled[i] = true;
                 AcceptIntoNetwork(candidate);
+                ServeStops(settings, candidate.Stops);
                 return true;
             }
 
@@ -4827,6 +4862,122 @@ namespace StationSuitabilityOverlay
             }
 
             return seconds;
+        }
+
+        // Snaps every journey end to the pedestrian network once per demand refresh,
+        // measures how many journeys the served stops reach at both ends within the
+        // walking horizon, and publishes the figure the panel and the ranking use.
+        private void MeasureEquity(Setting settings)
+        {
+            WalkAccessOutput? access = m_Access;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (access?.Index is null || inputs is null)
+            {
+                m_Coverage = null;
+                return;
+            }
+
+            m_EquityHorizonMs = settings.EquityWalkMinutes * 60_000;
+            int count = m_Journeys.Count;
+            if (m_JourneyWeight.Length < count)
+            {
+                m_JourneyOriginNode = new int[count];
+                m_JourneyOriginAccess = new int[count];
+                m_JourneyDestinationNode = new int[count];
+                m_JourneyDestinationAccess = new int[count];
+                m_JourneyWeight = new float[count];
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                Trip trip = m_Journeys[i];
+                m_JourneyOriginNode[i] = SuitabilityWalkAccess.SnapPoint(access.Index, trip.m_Origin.x, trip.m_Origin.y, inputs.AccessMs, out m_JourneyOriginAccess[i]);
+                m_JourneyDestinationNode[i] = SuitabilityWalkAccess.SnapPoint(access.Index, trip.m_Destination.x, trip.m_Destination.y, inputs.AccessMs, out m_JourneyDestinationAccess[i]);
+                m_JourneyWeight[i] = trip.m_Weight;
+            }
+
+            if (m_EquityDijkstra is null || m_EquityDijkstra.Dist.Length != inputs.Graph.NodeCount)
+            {
+                m_EquityDijkstra = new IntDijkstra(inputs.Graph.NodeCount);
+            }
+
+            SnapStops(m_TransitStops, access.Index, inputs.AccessMs, out int[] stopNodes, out int[] stopAccess);
+            m_ServedWalkMs = SuitabilityEquity.ServedWalkMs(inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length, m_EquityHorizonMs);
+            RefreshCoverage(settings, "measured");
+        }
+
+        private static void SnapStops(List<float2> stops, WalkNodeIndex index, int accessMs, out int[] nodes, out int[] access)
+        {
+            nodes = new int[stops.Count];
+            access = new int[stops.Count];
+            for (int i = 0; i < stops.Count; i++)
+            {
+                nodes[i] = SuitabilityWalkAccess.SnapPoint(index, stops[i].x, stops[i].y, accessMs, out access[i]);
+            }
+        }
+
+        private void RefreshCoverage(Setting settings, string why)
+        {
+            if (m_ServedWalkMs is null)
+            {
+                return;
+            }
+
+            m_Coverage = SuitabilityEquity.Coverage(
+                m_ServedWalkMs, m_EquityHorizonMs,
+                m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
+                m_JourneyWeight, m_Journeys.Count);
+            s_Equity =
+                $"{(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)}|" +
+                $"{settings.EquityWalkMinutes.ToString(CultureInfo.InvariantCulture)}|" +
+                $"{settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)}|" +
+                $"{m_Coverage.GiniWalk.ToString("F2", CultureInfo.InvariantCulture)}";
+            Mod.Log.Info(
+                $"Equity ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
+                $"{settings.EquityWalkMinutes.ToString(CultureInfo.InvariantCulture)} min (floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} %), " +
+                $"{(m_Coverage.TripsCovered).ToString(CultureInfo.InvariantCulture)}/{(m_Coverage.Trips).ToString(CultureInfo.InvariantCulture)} journeys, " +
+                $"{(m_Coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
+                $"Gini of access walk {m_Coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +
+                $"served stops {(m_TransitStops.Count + m_AcceptedStops.Count).ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        private bool BelowEquityFloor(Setting settings)
+        {
+            return m_Coverage is not null && m_Coverage.Share * 100f < settings.EquityFloorPercent;
+        }
+
+        // Journey weight a candidate's stops would newly bring within the horizon at
+        // both ends — the quantity the ranking maximises while the floor is unmet.
+        private float CoverageGain(SuggestedRoute candidate)
+        {
+            WalkAccessOutput? access = m_Access;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (m_ServedWalkMs is null || m_Coverage is null || access?.Index is null || inputs is null || m_EquityDijkstra is null)
+            {
+                return 0f;
+            }
+
+            SnapStops(candidate.Stops, access.Index, inputs.AccessMs, out int[] nodes, out int[] stopAccess);
+            int[] merged = SuitabilityEquity.WithStops(inputs.Graph, m_EquityDijkstra, m_ServedWalkMs, nodes, stopAccess, nodes.Length, m_EquityHorizonMs);
+            CoverageReport with = SuitabilityEquity.Coverage(
+                merged, m_EquityHorizonMs,
+                m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
+                m_JourneyWeight, m_Journeys.Count);
+            return (float)(with.CoveredWeight - m_Coverage.CoveredWeight);
+        }
+
+        private void ServeStops(Setting settings, List<float2> stops)
+        {
+            WalkAccessOutput? access = m_Access;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (m_ServedWalkMs is null || access?.Index is null || inputs is null || m_EquityDijkstra is null)
+            {
+                return;
+            }
+
+            SnapStops(stops, access.Index, inputs.AccessMs, out int[] nodes, out int[] stopAccess);
+            m_ServedWalkMs = SuitabilityEquity.WithStops(inputs.Graph, m_EquityDijkstra, m_ServedWalkMs, nodes, stopAccess, nodes.Length, m_EquityHorizonMs);
+            RefreshCoverage(settings, "after accepting a suggestion");
         }
 
         // Stops are points along a street, not its ends: each is projected onto the

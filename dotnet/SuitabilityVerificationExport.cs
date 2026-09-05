@@ -138,6 +138,12 @@ namespace StationSuitabilityOverlay
                     WriteInstance(folder, $"real-{city}-{stamp}-roads", roads);
                 }
 
+                string? coverage = BuildCoverageInstance($"real-{city}-{stamp}-coverage");
+                if (coverage is not null)
+                {
+                    WriteInstance(folder, $"real-{city}-{stamp}-coverage", coverage);
+                }
+
                 Mod.Log.Info(
                     $"Verification export written to {folder} " +
                     $"(grid {(capture.m_Grid.x).ToString(CultureInfo.InvariantCulture)}x{(capture.m_Grid.y).ToString(CultureInfo.InvariantCulture)}, " +
@@ -375,6 +381,72 @@ namespace StationSuitabilityOverlay
                 // One binary per candidate node and a constraint per close pair: the
                 // pipeline's default sweep skips this unless it is asked for by name.
                 .Add("heavy", SuitabilityExportJson.Bool(value: true))
+                .Add("data", data)
+                .BuildHashed(ExportSchemaVersion);
+        }
+
+        // The equity measure's inputs and answer — the `coverage` kind: pedestrian graph,
+        // the served stops as measured, every journey of the last demand refresh, the
+        // walking horizon, and the share and Gini the mod reported. Null until measured.
+        private string? BuildCoverageInstance(string name)
+        {
+            WalkAccessInputs? inputs = m_AccessInputs;
+            CoverageReport? coverage = m_Coverage;
+            if (inputs is null || coverage is null)
+            {
+                return null;
+            }
+
+            int count = m_Journeys.Count;
+            var ox = new float[count];
+            var oz = new float[count];
+            var dx = new float[count];
+            var dz = new float[count];
+            var w = new float[count];
+            for (int i = 0; i < count; i++)
+            {
+                Trip trip = m_Journeys[i];
+                ox[i] = trip.m_Origin.x;
+                oz[i] = trip.m_Origin.y;
+                dx[i] = trip.m_Destination.x;
+                dz[i] = trip.m_Destination.y;
+                w[i] = trip.m_Weight;
+            }
+
+            var sx = new float[m_TransitStops.Count];
+            var sz = new float[m_TransitStops.Count];
+            for (int i = 0; i < m_TransitStops.Count; i++)
+            {
+                sx[i] = m_TransitStops[i].x;
+                sz[i] = m_TransitStops[i].y;
+            }
+
+            var data = new SuitabilityJsonObject()
+                .Add("node_x_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeX))
+                .Add("node_z_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeZ))
+                .Add("edge_a", SuitabilityExportJson.IntArray(inputs.Graph.EdgeA))
+                .Add("edge_b", SuitabilityExportJson.IntArray(inputs.Graph.EdgeB))
+                .Add("edge_metres_b32", SuitabilityExportJson.BitsArray(inputs.Graph.EdgeMetres))
+                .Add("stop_x_b32", SuitabilityExportJson.BitsArray(sx))
+                .Add("stop_z_b32", SuitabilityExportJson.BitsArray(sz))
+                .Add("trip_ox_b32", SuitabilityExportJson.BitsArray(ox))
+                .Add("trip_oz_b32", SuitabilityExportJson.BitsArray(oz))
+                .Add("trip_dx_b32", SuitabilityExportJson.BitsArray(dx))
+                .Add("trip_dz_b32", SuitabilityExportJson.BitsArray(dz))
+                .Add("trip_w_b32", SuitabilityExportJson.BitsArray(w))
+                .Add("access_ms", SuitabilityExportJson.Int(inputs.AccessMs))
+                .Add("horizon_ms", SuitabilityExportJson.Int(m_EquityHorizonMs))
+                .Add("share_b32", SuitabilityExportJson.Bits(coverage.Share))
+                .Add("covered_weight", SuitabilityExportJson.Str(coverage.CoveredWeight.ToString("R", CultureInfo.InvariantCulture)))
+                .Add("total_weight", SuitabilityExportJson.Str(coverage.TotalWeight.ToString("R", CultureInfo.InvariantCulture)))
+                .Add("gini_walk", SuitabilityExportJson.Str(coverage.GiniWalk.ToString("R", CultureInfo.InvariantCulture)))
+                .Add("trips_covered", SuitabilityExportJson.Int(coverage.TripsCovered))
+                .Add("trips_off_network", SuitabilityExportJson.Int(coverage.TripsOffNetwork))
+                .Build();
+
+            return new SuitabilityJsonObject()
+                .Add("kind", SuitabilityExportJson.Str("coverage"))
+                .Add("name", SuitabilityExportJson.Str(name))
                 .Add("data", data)
                 .BuildHashed(ExportSchemaVersion);
         }

@@ -34,6 +34,20 @@ namespace StationSuitabilityOverlay
         public const int kHighlightMin = 1;
         public const int kHighlightMax = 20;
         public const int kHighlightDefault = 5;
+        // Equity floor (register A1.8/A1.9, decided 2026-09-05): the share of journeys
+        // that must have BOTH ends within the walking horizon of a served stop before
+        // suggestions may chase efficiency, and the horizon itself.
+        public const int kEquityMinutesMin = 5;
+        public const int kEquityMinutesMax = 20;
+        public const int kEquityMinutesDefault = 10;
+        public const int kEquityFloorMin = 50;
+        public const int kEquityFloorMax = 100;
+        public const int kEquityFloorDefault = 80;
+        // Utilisation floor (A4.1/A6.4): peak-hour boardings over peak-hour seats a
+        // suggested line has to reach.
+        public const int kUtilisationMin = 5;
+        public const int kUtilisationMax = 60;
+        public const int kUtilisationDefault = 25;
         public const int kSlopeMin = 3;
         public const int kSlopeMax = 45;
         public const int kSlopeDefault = 15;
@@ -61,6 +75,9 @@ namespace StationSuitabilityOverlay
         private int m_AccessRadius;
         private int m_HighlightShare;
         private int m_MaxSlope;
+        private int m_EquityWalkMinutes;
+        private int m_EquityFloorPercent;
+        private int m_UtilisationFloorPercent;
         private int m_SiteCount;
         private string m_RidershipData = string.Empty;
         private RouteGoal m_Objective;
@@ -160,6 +177,30 @@ namespace StationSuitabilityOverlay
         {
             get => m_AccessRadius;
             set => m_AccessRadius = ClampInt(value, kAccessMin, kAccessMax);
+        }
+
+        [SettingsUISlider(min = kEquityMinutesMin, max = kEquityMinutesMax, step = 1, scalarMultiplier = 1, unit = Unit.kInteger)]
+        [SettingsUISection(kSection, kTuningGroup)]
+        public int EquityWalkMinutes
+        {
+            get => m_EquityWalkMinutes;
+            set => m_EquityWalkMinutes = ClampInt(value, kEquityMinutesMin, kEquityMinutesMax);
+        }
+
+        [SettingsUISlider(min = kEquityFloorMin, max = kEquityFloorMax, step = 5, scalarMultiplier = 1, unit = Unit.kPercentage)]
+        [SettingsUISection(kSection, kTuningGroup)]
+        public int EquityFloorPercent
+        {
+            get => m_EquityFloorPercent;
+            set => m_EquityFloorPercent = ClampInt(value, kEquityFloorMin, kEquityFloorMax);
+        }
+
+        [SettingsUISlider(min = kUtilisationMin, max = kUtilisationMax, step = 5, scalarMultiplier = 1, unit = Unit.kPercentage)]
+        [SettingsUISection(kSection, kTuningGroup)]
+        public int UtilisationFloorPercent
+        {
+            get => m_UtilisationFloorPercent;
+            set => m_UtilisationFloorPercent = ClampInt(value, kUtilisationMin, kUtilisationMax);
         }
 
         [SettingsUISlider(min = kHighlightMin, max = kHighlightMax, step = 1, scalarMultiplier = 1, unit = Unit.kPercentage)]
@@ -288,6 +329,9 @@ namespace StationSuitabilityOverlay
             m_Mode = ModePreset.Bus;
             m_HighlightShare = kHighlightDefault;
             m_MaxSlope = kSlopeDefault;
+            m_EquityWalkMinutes = kEquityMinutesDefault;
+            m_EquityFloorPercent = kEquityFloorDefault;
+            m_UtilisationFloorPercent = kUtilisationDefault;
             m_SiteCount = kSiteCountDefault;
             m_RidershipData = string.Empty;
             m_Objective = RouteGoal.Balanced;
@@ -354,6 +398,9 @@ namespace StationSuitabilityOverlay
             m_AccessRadius = 0;
             m_HighlightShare = 0;
             m_MaxSlope = 0;
+            m_EquityWalkMinutes = 0;
+            m_EquityFloorPercent = 0;
+            m_UtilisationFloorPercent = 0;
             m_SiteCount = 0;
             m_RouteCount = 0;
             // Negative marks "absent" for weights added after 1.1, since zero is a
@@ -378,6 +425,9 @@ namespace StationSuitabilityOverlay
             m_AccessRadius = m_AccessRadius == 0 ? access : ClampInt(m_AccessRadius, kAccessMin, kAccessMax);
             m_HighlightShare = m_HighlightShare == 0 ? kHighlightDefault : ClampInt(m_HighlightShare, kHighlightMin, kHighlightMax);
             m_MaxSlope = m_MaxSlope == 0 ? kSlopeDefault : ClampInt(m_MaxSlope, kSlopeMin, kSlopeMax);
+            m_EquityWalkMinutes = m_EquityWalkMinutes == 0 ? kEquityMinutesDefault : ClampInt(m_EquityWalkMinutes, kEquityMinutesMin, kEquityMinutesMax);
+            m_EquityFloorPercent = m_EquityFloorPercent == 0 ? kEquityFloorDefault : ClampInt(m_EquityFloorPercent, kEquityFloorMin, kEquityFloorMax);
+            m_UtilisationFloorPercent = m_UtilisationFloorPercent == 0 ? kUtilisationDefault : ClampInt(m_UtilisationFloorPercent, kUtilisationMin, kUtilisationMax);
             m_SiteCount = m_SiteCount == 0 ? kSiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
             m_RouteCount = m_RouteCount == 0 ? kRouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
             m_Objective = ValidObjective(m_Objective);
@@ -476,6 +526,15 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.W7)), "Cross-mode overlap penalty" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.W7)), "How strongly another mode's service lowers the score when it is close enough to already carry the same riders, but too far to transfer to. Discourages running a new line parallel to an existing one." },
 
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EquityWalkMinutes)), "Equity: walking horizon (min)" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EquityWalkMinutes)), "A journey counts as served when both its ends are within this many minutes' walk of a served stop." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EquityFloorPercent)), "Equity: served share to reach" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EquityFloorPercent)), "Until this share of the city's journeys is served, suggestions are ranked by how many journeys they newly serve; above it, by the travel they enable." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.UtilisationFloorPercent)), "Minimum utilisation" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.UtilisationFloorPercent)), "Peak-hour boardings over peak-hour seats a suggested line must reach. Lines that would run emptier are not suggested." },
+                { "StationSuitabilityOverlay.Panel[Equity]", "Served journeys" },
+                { "StationSuitabilityOverlay.Panel[EquityValue]", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) \u00b7 Gini of access walk {3}" },
+                { "StationSuitabilityOverlay.Panel[EquityEmpty]", "not measured yet" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CatchmentRadius)), "Catchment radius" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CatchmentRadius)), "Walking distance a stop serves. Residents, jobs and existing stops within this radius affect the score. Typical: 300-400 m for bus, 600-800 m for metro." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AccessRadius)), "Road access radius" },

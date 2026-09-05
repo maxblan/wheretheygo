@@ -157,7 +157,7 @@ zu belegen sind, verweisen auf die laufende Literaturrecherche (LR).
 | A0.1 ✅ umgesetzt (Phase 4: Shopping, Leisure, Relaxing, Sightseeing, VisitAttractions beobachtet; Fenster 1 Spieltag; Skalierung ≤ 4×; live bestätigt: 309 Wege nach 1,7 Spielstunden, alle Ziele lesbar) | Zusätzlich Freizeit und Einkauf; **keine Vorrangregel, alle Zwecke gleich gewichtet** | CS2 speichert Freizeit-/Einkaufsziele nicht am Bürger — nur die *laufende* Reise (`TravelPurpose` = Shopping/Leisure/…, Ziel in `Target`). Diese Nachfrage muss über die Zeit **beobachtet** werden (Reisen mit Zweck und Ziel aufsammeln, wie die Kalibrierung heute Haltestellen sammelt). Arbeit/Schule bleiben aus dem Save lesbar |
 | A0.2 ✅ umgesetzt (Phase 1) | Alle Bewegungen innerhalb der Karte zählen (auch Touristen); Außenverbindungen erst einmal ignoriert | Tourist-/Obdachlosen-Filter entfällt; Reisen mit Ziel oder Quelle außerhalb der Karte werden verworfen |
 | A0.3 ✅ umgesetzt (Phase 1) | Siehe A0.1: **alle Wegezwecke gleich = 1,0** | Schulfaktor 0,6 entfällt |
-| A0.4 | Rückfrage — erklärt in der Antwort; Entscheidung offen | Betrifft nur den Fahrgast-Floor je Fahrzeug (A6.4) |
+| A0.4 ✅ umgesetzt (Phase 6: Auslastungs-Floor 25 % ersetzt „ein voller Bus") | Rückfrage — erklärt in der Antwort; Entscheidung offen | Betrifft nur den Fahrgast-Floor je Fahrzeug (A6.4) |
 | A0.5 | Unsicher; anderer Ansatz möglich | Vorschlag in der Antwort (Ziele nicht auf Zonenzentren kollabieren, sondern am Netz verorten) |
 | A0.6 | Kleinere Auflösung erwogen; sinnvolle Werte gefragt | Vorschlag in der Antwort; Zahlen aus LR |
 | A0.7 ✅ umgesetzt (Phase 5: Fahrspurrichtungen, Abbiegeklassen mit der Kurvenwinkel-Zeitkostenrate des Spiels; Spurwechselregeln nicht modelliert) | **Einbahnstraßen, Kreuzungskosten, Spurregeln müssen rein** | Straßengraph wird gerichtet, pro Fahrspur; Kostenmodell des Spiel-Pathfinders (`PathfindCosts`: Zeit/Verhalten/Geld/Komfort) als Vorlage |
@@ -170,8 +170,8 @@ zu belegen sind, verweisen auf die laufende Literaturrecherche (LR).
 | A1.5 ✅ umgesetzt (Phase 3) | Werte prüfen | Term wird mit A1.1/A1.6 neu definiert (Netzanbindung statt Straßendichte) |
 | A1.6 ✅ umgesetzt (Phase 3) | Bestätigt: **Anbindung an Straße *oder Fußweg* nötig** | Heute zählen nur `Net.Road`-Kanten; `PedestrianLane`-Wege müssen dazu |
 | A1.7 | Rückfrage — erklärt in der Antwort | — |
-| A1.8 | **Ziel: gleichmäßige, gerechte Verteilung der Nutzungschance** | Zielfunktion wechselt von „bester Standort" zu einem Gerechtigkeitsmaß über alle Bürger; Kandidatenmaße aus LR (Gini/Theil/Maximin) |
-| A1.9 | Offen, fachlich sinnvollste Lösung | Mit A1.8: gewichtete Summe ungeeignet; ε-Constraint/lexikografisch, LR |
+| A1.8 ✅ umgesetzt (Phase 6: Floor X = 80 % bedienter Wege in T = 10 min, zuerst Erschließungsgewinn, dann Effizienz; Gini als Kennzahl) | **Ziel: gleichmäßige, gerechte Verteilung der Nutzungschance** | Zielfunktion wechselt von „bester Standort" zu einem Gerechtigkeitsmaß über alle Bürger; Kandidatenmaße aus LR (Gini/Theil/Maximin) |
+| A1.9 ✅ umgesetzt (Phase 6: ε-Constraint, lexikografisch) | Offen, fachlich sinnvollste Lösung | Mit A1.8: gewichtete Summe ungeeignet; ε-Constraint/lexikografisch, LR |
 | A1.10 ✅ umgesetzt (Phase 1) | **Kapazitäten aus CS2 ableiten** | Ist heute nur für den Fahrgast-Floor so; die Heatmap-Modusgewichte (1/1,5/2,5/3) sind Setzungen → durch Kapazitätsverhältnisse aus den Prefabs ersetzen |
 | A1.11 ✅ umgesetzt (Phase 1: 3 min ≈ 216 m; Zeitgewichtung 2,5 folgt in Phase 6) | Wert prüfen, eher kürzer | LR: akzeptable Umsteige-Gehzeit; wird Zeitkriterium |
 | A1.12 | Bleibt | — |

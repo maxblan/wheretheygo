@@ -32,6 +32,7 @@ from evaluator import heatmap_grid as ev_heatmap_grid  # noqa: E402
 from evaluator import heatmap_walk as ev_heatmap_walk  # noqa: E402
 from evaluator import sites_walk as ev_sites_walk  # noqa: E402
 from evaluator import roadtimes as ev_roadtimes  # noqa: E402
+from evaluator import coverage as ev_coverage  # noqa: E402
 from evaluator.checkcert_dirpath import check_directed_certificate  # noqa: E402
 from evaluator import lineset as ev_lineset  # noqa: E402
 from evaluator import modes as ev_modes  # noqa: E402
@@ -573,7 +574,7 @@ def base_pass(kind: str, verdict: dict) -> bool:
         return bool(verdict.get("pass_path") and verdict.get("certificate_verified")
                     and lean_ok is not False)
     if kind in ("calling_points", "mode_choice", "corridor",
-                "heatmap_grid", "heatmap_walk", "order_stats"):
+                "heatmap_grid", "heatmap_walk", "order_stats", "coverage"):
         return bool(verdict.get("evaluator", {}).get("ok"))
     if kind == "lineset":
         return bool(verdict.get("pass_rounds")
@@ -643,6 +644,9 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
         verdict = check_sites_walk(instance, solution, out_dir, notes)
     elif kind == "road_times":
         verdict = check_road_times(instance, solution, out_dir, notes)
+    elif kind == "coverage":
+        report = ev_coverage.check(instance, solution)
+        verdict = {"evaluator": report, "three_way_exact": report["three_way_exact"]}
     elif kind == "lattice_path":
         verdict = check_lattice_path(instance, solution, out_dir, notes)
     elif kind == "calling_points":

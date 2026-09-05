@@ -1,6 +1,6 @@
 # Umbauplan: von der Heuristik zur zeitbasierten, gerechten, beweisbar optimalen Planung
 
-Stand 2026-09-05 (Phasen 1–5 umgesetzt; 1–2 und die Standortauswahl aus 3 auf der Realstadt zertifiziert; die Heatmap-Terme aus 3 warten auf einen Export mit dem Build, der die Gleitkomma-Arithmetik festnagelt). Grundlage: die Entscheidungen im `docs/assumptions-register.md`
+Stand 2026-09-05 (Phasen 1–6 umgesetzt; 1–2 und die Standortauswahl aus 3 auf der Realstadt zertifiziert; die Heatmap-Terme aus 3 warten auf einen Export mit dem Build, der die Gleitkomma-Arithmetik festnagelt). Grundlage: die Entscheidungen im `docs/assumptions-register.md`
 (Blöcke 0–1 entschieden, 2–7 in Durchsicht) und die Zusage „optimal, wo beweisbar;
 sonst bestmöglich mit ausgewiesener Schranke". Jede Phase ist für sich baubar
 (`make strict`), getestet und durch `verification/` prüfbar; die Spezifikation
@@ -14,7 +14,7 @@ v1 dokumentiert und verifiziert.
 | **3 Fußwegenetz & Zeit** ✅ (2026-09-05; Realstadt-Zertifikat steht bis zum nächsten Export aus) | Fußwegegraph (Straßen + `PedestrianLane`); Gehzeit-Isochronen von den Quellen; Einzugsbereiche als Minuten (Bus/Tram 6, Metro 11, Zug 16, Fähre 11) mit Abklingfunktion; Zugänglichkeit = Netzknoten in Zugangs-Gehzeit; Nachfrage an Netzknoten statt 256-m-Zonen | A1.1, A1.2, A1.4, A1.5, A1.6, A0.5, A0.6 | neuer Burst-Job ⇒ neue `heatmap_grid`-Spezifikation und Evaluator; Export v2 |
 | **4 Beobachtete Nachfrage** ✅ (2026-09-05) | Einkaufs-/Freizeitwege aus laufenden Reisen (`TravelPurpose`, `Target`) sammeln, mit Arbeit/Schule zusammenführen; Vollständigkeitsanzeige | A0.1 | Enumerations-/Routing-Instanzen aus Export |
 | **5 Gerichteter Straßengraph** ✅ (2026-09-05; Realstadt-Zertifikat steht bis zum nächsten Export aus) | Fahrspuren, Einbahnrichtung, `m_SpeedLimit`, Abbiegekosten nach dem Kostenmodell des Spiel-Pathfinders | A0.7, A0.8 | Kürzestweg-Zertifikate auf gerichteten Graphen (Lean-Checker erweitern) |
-| **6 Gerechtigkeit als Ziel** | Mindeststandard als ε-Constraint (Anteil der Bürger mit Wohnung *und* Ziel in T Gehminuten einer bedienten Haltestelle), darunter Effizienz; Gini/Theil als Kennzahl | A1.8, A1.9; T, X als Einstellungen | Enumeration/MIP mit der neuen Zielfunktion |
+| **6 Gerechtigkeit als Ziel** ✅ (2026-09-05; Realstadt-Nachweis steht bis zum nächsten Export aus) | Mindeststandard als ε-Constraint (Anteil der Bürger mit Wohnung *und* Ziel in T Gehminuten einer bedienten Haltestelle), darunter Effizienz; Gini/Theil als Kennzahl | A1.8, A1.9; T, X als Einstellungen | Enumeration/MIP mit der neuen Zielfunktion |
 | **7 Exakte Halte & begrenzt exakte Linien** | DP pro Linie (S5); S7 exakt bis Budget, sonst Greedy + Tausch + Schranke | A5.x, A7.5 (nach Durchsicht) | wie 2 |
 
 Reihenfolge: 1 → 2 → 3 → 4 → 5 → 6 → 7. Phasen 2 und 3 sind unabhängig voneinander;

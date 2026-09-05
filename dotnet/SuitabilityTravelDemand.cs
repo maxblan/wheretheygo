@@ -165,9 +165,11 @@ namespace StationSuitabilityOverlay
             float2 worldMin,
             int2 zoneGrid,
             List<ZoneFlow> flows,
-            out int tripCount)
+            out int tripCount,
+            List<Trip>? journeys = null)
         {
             flows.Clear();
+            journeys?.Clear();
             tripCount = 0;
 
             var totals = new Dictionary<long, float>();
@@ -185,6 +187,9 @@ namespace StationSuitabilityOverlay
 
                 tripCount++;
                 totalWeight += trip.m_Weight;
+                // The journeys themselves, for the equity measure: zones are too coarse
+                // to say whether a door is within a walk of a stop.
+                journeys?.Add(trip);
 
                 long key = (long)origin * zoneCount + destination;
                 // Absent key leaves `existing` at zero, which is the wanted starting total.

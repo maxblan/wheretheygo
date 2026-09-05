@@ -8,6 +8,7 @@ paths:
   - "dotnet/SuitabilityLineHistory.cs"
   - "dotnet/SuitabilityObservedTrips.cs"
   - "dotnet/SuitabilityDirectedRoads.cs"
+  - "dotnet/SuitabilityEquity.cs"
   - "dotnet/SuitabilityLineHealth.cs"
   - "dotnet/TransitMode.cs"
   - "dotnet/SuitabilityExportJson.cs"

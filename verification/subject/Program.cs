@@ -30,6 +30,7 @@ namespace StationSuitabilityOverlay.Verification
                 "sites" => Sites(data),
                 "sites_walk" => SitesWalk(data),
                 "road_times" => RoadTimes(data),
+                "coverage" => Coverage(data),
                 "lattice_path" => LatticePath(data),
                 "calling_points" => CallingPoints(data),
                 "mode_choice" => ModeChoice(data),
@@ -144,6 +145,58 @@ namespace StationSuitabilityOverlay.Verification
                 ["exact_scale_shift"] = exact.ScaleShift,
                 ["exact_nodes"] = exact.Nodes,
                 ["exact_candidates"] = exact.Candidates,
+            };
+        }
+
+        // ---------------------------------------------------------- S3 v2 coverage
+
+        private static Dictionary<string, object?> Coverage(JsonElement data)
+        {
+            float[] nodeX = F32Array(data.GetProperty("node_x_b32"));
+            WalkGraph graph = WalkGraph.Build(
+                nodeX, F32Array(data.GetProperty("node_z_b32")),
+                IntArray(data.GetProperty("edge_a")), IntArray(data.GetProperty("edge_b")),
+                F32Array(data.GetProperty("edge_metres_b32")), data.GetProperty("edge_a").GetArrayLength());
+            int accessMs = data.GetProperty("access_ms").GetInt32();
+            int horizonMs = data.GetProperty("horizon_ms").GetInt32();
+            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMs / 1000.0 * SuitabilityTransit.WalkSpeed));
+
+            float[] sx = F32Array(data.GetProperty("stop_x_b32"));
+            float[] sz = F32Array(data.GetProperty("stop_z_b32"));
+            var stopNodes = new int[sx.Length];
+            var stopAccess = new int[sx.Length];
+            for (int i = 0; i < sx.Length; i++)
+            {
+                stopNodes[i] = SuitabilityWalkAccess.SnapPoint(index, sx[i], sz[i], accessMs, out stopAccess[i]);
+            }
+
+            float[] ox = F32Array(data.GetProperty("trip_ox_b32"));
+            float[] oz = F32Array(data.GetProperty("trip_oz_b32"));
+            float[] dx = F32Array(data.GetProperty("trip_dx_b32"));
+            float[] dz = F32Array(data.GetProperty("trip_dz_b32"));
+            float[] w = F32Array(data.GetProperty("trip_w_b32"));
+            int count = w.Length;
+            var on = new int[count];
+            var oa = new int[count];
+            var dn = new int[count];
+            var da = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                on[i] = SuitabilityWalkAccess.SnapPoint(index, ox[i], oz[i], accessMs, out oa[i]);
+                dn[i] = SuitabilityWalkAccess.SnapPoint(index, dx[i], dz[i], accessMs, out da[i]);
+            }
+
+            var dijkstra = new IntDijkstra(graph.NodeCount);
+            int[] served = SuitabilityEquity.ServedWalkMs(graph, dijkstra, stopNodes, stopAccess, stopNodes.Length, horizonMs);
+            CoverageReport report = SuitabilityEquity.Coverage(served, horizonMs, on, oa, dn, da, w, count);
+            return new Dictionary<string, object?>
+            {
+                ["share_b32"] = B32(report.Share),
+                ["covered_weight"] = report.CoveredWeight.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                ["total_weight"] = report.TotalWeight.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                ["gini_walk"] = report.GiniWalk.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                ["trips_covered"] = report.TripsCovered,
+                ["trips_off_network"] = report.TripsOffNetwork,
             };
         }
 

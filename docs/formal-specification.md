@@ -552,6 +552,38 @@ re-sorted descending (insertion sort, stable), trailing non-positive scores drop
    sat(T1·invD) + sat(T2·invJ) at the node's tile ∈ [0, 2]; corridor demand floor
    0.005.
 
+## 7c. Equity measure and selection floors (v2, Phase 6, 2026-09-05; A1.8, A1.9, A4.1, A6.4)
+
+Instance kind `coverage`. Decisions: sufficientarian floor as ε-constraint with the
+efficiency objective below it; T = 10 min walking horizon, X = 80 % served share,
+utilisation floor 25 % (all three are Options sliders).
+
+- **Served-walk field.** Every served stop (the existing lines' stops, plus accepted
+  suggestions within a selection round) is snapped to the pedestrian network (§7 v2
+  snap rule, access A = 120 000 ms). `served[n]` = min over stops of `a_stop +
+  d(node_stop, n)` restricted to ≤ T (integer ms; unserved = ∞), i.e. one bounded
+  integer Dijkstra per stop taking the minimum.
+- **Served journey.** A journey (S3 trip: home→work/school, or an observed journey
+  scaled per §7b) with ends snapped to nodes (o, a_o), (d, a_d) is served iff
+  `served[o] + a_o ≤ T` and `served[d] + a_d ≤ T`; an end off the network is never
+  served (and counted). **Share** = fl32(Σ w_served / Σ w) with both sums of binary32
+  weights taken in trip order in double.
+- **Gini of access walk** (diagnostic): value_i = `served[o_i] + a_{o,i}` when the
+  origin is served, else 2T; weighted Gini = 1 − Σ_i w_i (S_{i−1} + S_i) / (W · S_n)
+  over trips sorted by (value, index), S the running Σ w·value; 0 when W or S_n is 0.
+- **Selection.** While Share·100 < X, candidates are ordered by the journey weight they
+  would newly serve (`CoverageGain`: the field with the candidate's stops added,
+  coverage recomputed) descending, then by enabled demand, then corridor flow; at or
+  above X the order is enabled demand, corridor flow as before. Accepting a candidate
+  adds its stops to the field and re-measures.
+- **Utilisation gate** (replaces "fills one bus at the peak"): a demand-scored
+  candidate must reach `utilisation = enabledDemand · 0.2 · 2 / ((3600 / headway) ·
+  2 · capacity(mode)) ≥ floor`, headway = 2 × the mode's suggested wait, capacity from
+  the loaded prefabs.
+- **Verification.** The instance carries graph, served stops, journeys, A and T and
+  the mod's share/sums/Gini/counts; the evaluator re-derives everything with exact
+  integer times and the stated double summation order; game = subject = evaluator.
+
 ## 8. Determinism inventory (whole mod)
 
 - **No RNG anywhere** (pure or ECS half). No time-dependent arithmetic (timers gate
@@ -591,6 +623,7 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-04 | Transfer walk radius 250 m → **180 s × 1.2 m/s = 216 m** (one constant for the routing's walk edges, the interchange map and the heatmap's transfer distance); zone→stop reach = 2× = 432 m | A1.11 | instance data — exported v1 instances keep their own values |
 | 2026-09-04 | Trip weights: school 0.6 → **1.0**; tourists/homeless no longer filtered (only "no rented property" excludes, structurally) | A0.2, A0.3 | none offline (ECS extraction) |
 | 2026-09-04 | Ferry shoreline **+1 bonus removed** | A1.13 | none offline (ECS) |
+| 2026-09-05 | **Equity floor and utilisation floor** (§7c: served-walk field, journeys served at both ends, share vs X, weighted Gini; coverage-first ranking below the floor; utilisation gate replaces the one-bus gate) | A1.8, A1.9, A4.1, A6.4, A0.4 | new kind `coverage`, three-way exact |
 | 2026-09-05 | **Roads are directed for vehicles** (§3.4: one arc per admitted direction from the car lanes, speed-limit times, five turn classes priced by the game's curve-angle cost; S3 assignment, road ride seconds and fleet estimates use them) | A0.7, A0.8, A5.5 | new kind `road_times`: three-way exact leg times, per-leg directed certificates, Lean `DirPathCert` |
 | 2026-09-05 | **S3 demand adds observed shopping/leisure journeys** (Phase 4: live-city scan, one-game-day window, per-day scaling ≤ 4×, merged with home-work/school at equal weight; panel shows the count and coverage) | A0.1 | ECS-side observation is unverifiable offline; the window logic is pure and harness-tested (`ObservedTripWindow`) |
 | 2026-09-05 | **Heatmap arithmetic pinned to double with one rounding per store** (see §7 v2 arithmetic rule) — after the first real `heatmap_walk` export showed Mono keeping float intermediates at higher precision | — | evaluator/generator follow; a re-export is needed before the real-city three-way check can pass |
