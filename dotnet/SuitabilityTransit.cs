@@ -25,6 +25,10 @@ namespace StationSuitabilityOverlay
     internal sealed class TransitNetwork
     {
         public int StopCount;
+        // First node of the zone block (v2 line-set objective): one node per journey
+        // zone, joined by walk edges to every stop within reach. int.MaxValue when the
+        // network was built without zones.
+        public int ZoneNodeStart = int.MaxValue;
         public CompactGraph Graph = new CompactGraph();
         // Per edge, parallel to Graph's edge arrays.
         public TransitEdgeKind[] EdgeKind = Array.Empty<TransitEdgeKind>();
@@ -193,6 +197,27 @@ namespace StationSuitabilityOverlay
             float walkRadius,
             float boardPenaltySeconds)
         {
+            return BuildWithZones(stopX, stopZ, stopCount, lines, walkRadius, boardPenaltySeconds,
+                Array.Empty<float>(), Array.Empty<float>(), 0, 0f);
+        }
+
+        // The same network plus one node per journey zone, each joined by a walk edge to
+        // every stop within `zoneReach` (Euclidean, at WalkSpeed). A journey's door-to-
+        // door time is then the true minimum over access stops, which makes the time-saved
+        // objective monotone in the line set — the property the exact selection's bound
+        // rests on. Zone nodes come after the line-stop nodes; see TransitNetwork.ZoneNodeStart.
+        public static TransitNetwork BuildWithZones(
+            float[] stopX,
+            float[] stopZ,
+            int stopCount,
+            List<TransitLine> lines,
+            float walkRadius,
+            float boardPenaltySeconds,
+            float[] zoneX,
+            float[] zoneZ,
+            int zoneCount,
+            float zoneReach)
+        {
             var edgeA = new List<int>();
             var edgeB = new List<int>();
             var edgeCost = new List<float>();
@@ -269,9 +294,28 @@ namespace StationSuitabilityOverlay
                 }
             }
 
+            int zoneStart = nextNode;
+            float reachSq = zoneReach * zoneReach;
+            for (int z = 0; z < zoneCount; z++)
+            {
+                int zoneNode = zoneStart + z;
+                for (int stop = 0; stop < stopCount; stop++)
+                {
+                    float dx = stopX[stop] - zoneX[z];
+                    float dz = stopZ[stop] - zoneZ[z];
+                    float distSq = (dx * dx) + (dz * dz);
+                    if (distSq <= reachSq)
+                    {
+                        AddEdge(zoneNode, stop, (float)Math.Sqrt(distSq) / WalkSpeed, TransitEdgeKind.Walk, -1);
+                    }
+                }
+            }
+
+            nextNode += zoneCount;
             return new TransitNetwork
             {
                 StopCount = stopCount,
+                ZoneNodeStart = zoneCount > 0 ? zoneStart : int.MaxValue,
                 Graph = CompactGraph.Build(nextNode, edgeA.ToArray(), edgeB.ToArray(), edgeCost.ToArray(), edgeA.Count),
                 EdgeKind = kinds.ToArray(),
                 EdgeLine = edgeLines.ToArray(),
@@ -544,83 +588,6 @@ namespace StationSuitabilityOverlay
             return node == originStop;
         }
 
-        // Demand credited to one line, and the total demand the network can carry at
-        // all. A journey counts in full when it rides the line directly and less for
-        // each change it needs, so a direct service still outranks a three-leg
-        // itinerary carrying the same people.
-        public static float CreditLine(
-            TransitNetwork network,
-            DijkstraWorkspace workspace,
-            int[] originStops,
-            int[] destStops,
-            float[] weights,
-            float[] accessSeconds,
-            float[] baselineSeconds,
-            int pairCount,
-            int targetLine,
-            float transferDiscount,
-            float maxTravelTime,
-            float switchMarginSeconds,
-            out float servedWeight)
-        {
-            servedWeight = 0f;
-            float credited = 0f;
-            if (network?.Graph is null || pairCount <= 0)
-            {
-                return 0f;
-            }
-
-            int currentOrigin = -1;
-            for (int i = 0; i < pairCount; i++)
-            {
-                int origin = originStops[i];
-                int destination = destStops[i];
-                if (origin < 0 || destination < 0 || origin == destination)
-                {
-                    continue;
-                }
-
-                // Pairs arrive grouped by origin, so one search serves a run of them.
-                if (origin != currentOrigin)
-                {
-                    currentOrigin = origin;
-                    workspace.Run(network.Graph, origin, maxTravelTime);
-                }
-
-                if (!Inspect(network, workspace, origin, destination, targetLine,
-                        out int boardings, out bool usesTarget, out float travelTime))
-                {
-                    continue;
-                }
-
-                float doorToDoor = travelTime + accessSeconds[i];
-                if (doorToDoor > maxTravelTime)
-                {
-                    continue;
-                }
-
-                servedWeight += weights[i];
-
-                if (!usesTarget || boardings <= 0)
-                {
-                    continue;
-                }
-
-                // Nobody changes how they travel for nothing. The margin is what makes
-                // it worth the bother rather than a rounding difference.
-                if (doorToDoor >= baselineSeconds[i] - switchMarginSeconds)
-                {
-                    continue;
-                }
-
-                int transfers = Math.Max(0, boardings - 1);
-                float discount = (float)Math.Pow(transferDiscount, transfers);
-                credited += weights[i] * discount;
-            }
-
-            return credited;
-        }
-
         // The travel time past which a journey counts as not carried at all, taken from
         // the city's OWN typical transit journey rather than from a fixed hour.
         //
@@ -668,74 +635,5 @@ namespace StationSuitabilityOverlay
             float ceiling = median * multiple;
             return ceiling > fallback ? fallback : ceiling;
         }
-
-        // Re-assigns zones to the nearest stop once a PROPOSED line's stops are added
-        // to the network.
-        //
-        // The base mapping is built against the stops that exist today, so a zone with
-        // nothing within walking distance has no stop at all and its journeys cannot be
-        // routed. Scoring a candidate against that mapping asks "how much of the demand
-        // your existing network already reaches would this line carry" — which is zero
-        // for exactly the lines worth building, the ones going somewhere unserved.
-        //
-        // `baseIndex` is where the candidate's stops start in the combined stop array,
-        // so the indices written here address the same array the routing graph was
-        // built from. Returns how many zones the candidate captured.
-        public static int RemapZones(
-            float[] zoneX,
-            float[] zoneZ,
-            int zoneCount,
-            int[] zoneStop,
-            float[] zoneStopDistSq,
-            float[] newStopX,
-            float[] newStopZ,
-            int newStopCount,
-            int baseIndex,
-            float maxDistance,
-            int[] outZoneStop,
-            float[] outZoneStopDistSq)
-        {
-            if (zoneX is null || zoneZ is null || zoneStop is null || zoneStopDistSq is null
-                || newStopX is null || newStopZ is null || outZoneStop is null || outZoneStopDistSq is null)
-            {
-                return 0;
-            }
-
-            float maxSq = maxDistance * maxDistance;
-            int captured = 0;
-            for (int zone = 0; zone < zoneCount; zone++)
-            {
-                int best = zoneStop[zone];
-                // An unmapped zone has no distance to beat, so start from the radius.
-                float bestSq = best >= 0 ? zoneStopDistSq[zone] : maxSq;
-
-                float zx = zoneX[zone];
-                float zz = zoneZ[zone];
-                for (int i = 0; i < newStopCount; i++)
-                {
-                    float dx = newStopX[i] - zx;
-                    float dz = newStopZ[i] - zz;
-                    float distSq = (dx * dx) + (dz * dz);
-                    if (distSq < bestSq)
-                    {
-                        bestSq = distSq;
-                        best = baseIndex + i;
-                    }
-                }
-
-                if (best != zoneStop[zone])
-                {
-                    captured++;
-                }
-
-                outZoneStop[zone] = best;
-                // The walk to it, so the caller can charge for it. A stop the zone only
-                // just reaches is not the same offer as one on its doorstep.
-                outZoneStopDistSq[zone] = best >= 0 ? bestSq : 0f;
-            }
-
-            return captured;
-        }
-
     }
 }

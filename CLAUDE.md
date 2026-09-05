@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Twelve files are on that side, and `SuitabilityScoring.Tests.csproj` links all twelve:
+project. Thirteen files are on that side, and `SuitabilityScoring.Tests.csproj` links all thirteen:
 
 - `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
@@ -170,6 +170,10 @@ project. Twelve files are on that side, and `SuitabilityScoring.Tests.csproj` li
   its per-day scaling; the live-city scan that feeds it stays in the overlay system
 - `SuitabilityEquity.cs` — the equity floor: served-walk field from the served stops, journeys served
   at both ends within the horizon, share and weighted Gini, the utilisation formula
+- `SuitabilityLineSet.cs` — the line-set selection: before/after door-to-door times over the
+  transit graph with zone nodes, passenger time saved, riders per line, the utilisation and
+  duplicate feasibility of a set, and the branch-and-bound that picks the exact best set (or the
+  best found plus a ceiling when the node budget runs out)
 - `SuitabilityLineHealth.cs` — verdicts and improvement plans
 - `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
 - `SuitabilityExportJson.cs` — the verification export's canonical JSON and its digest.
@@ -221,10 +225,12 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
    the map unions modes over neighbouring stops because a CS2 hub is several stop entities metres
    apart. Stops are then placed at mode spacing, skipping any window
    the suitability score says is not worth calling at (`SuitabilityScoring.SelectCallingPoints`);
-   mode is chosen from flow against city-wide floors; and candidates are accepted in rounds, each
-   one re-scored transfer-aware over a transit graph that already contains the ones above it.
-   Since Phase 6 the rounds rank by journeys newly served while the city is below the equity floor
-   (Options: horizon minutes, served share), and every suggestion must clear the utilisation floor.
+   mode is chosen from flow against city-wide floors; and the set of suggestions is chosen exactly
+   (`SuitabilityLineSet.Solve`): every journey is routed door-to-door over the existing lines plus a
+   candidate set, the objective is the passenger time saved against the best of walking and the
+   existing network, ranked lexicographically after the equity share capped at its floor, and every
+   line in the set must clear the utilisation floor on the set's own riders and must not duplicate
+   the rest. There are no rounds any more; the mod optimises the objective the pipeline checks.
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
 

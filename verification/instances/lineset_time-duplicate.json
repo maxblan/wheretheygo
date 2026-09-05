@@ -1,0 +1,80 @@
+{
+ "comment": "a parallel slower line duplicates the faster one and is refused",
+ "data": {
+  "base_lines": [],
+  "base_stop_x_b32": [],
+  "base_stop_z_b32": [],
+  "board_penalty_b32": 1084227584,
+  "candidates": [
+   {
+    "capacity_b32": 1106247680,
+    "expected_wait_b32": 1128792064,
+    "headway_b32": 1128792064,
+    "ride_seconds_b32": null,
+    "speed_b32": 1092616192,
+    "stop_x_b32": [
+     0,
+     1157234688,
+     1165623296
+    ],
+    "stop_z_b32": [
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "capacity_b32": 1106247680,
+    "expected_wait_b32": 1128792064,
+    "headway_b32": 1128792064,
+    "ride_seconds_b32": null,
+    "speed_b32": 1090519040,
+    "stop_x_b32": [
+     0,
+     1157234688,
+     1165623296
+    ],
+    "stop_z_b32": [
+     0,
+     0,
+     0
+    ]
+   }
+  ],
+  "chosen": [
+   0
+  ],
+  "duplicate_share_b32": 1056964608,
+  "equity": null,
+  "equity_floor_share_b32": 1061997773,
+  "max_lines": 2,
+  "max_travel_seconds_b32": 1163984896,
+  "movement_seconds_per_day_b32": 1166575753,
+  "pair_dx_b32": [
+   1165623296
+  ],
+  "pair_dz_b32": [
+   0
+  ],
+  "pair_ox_b32": [
+   0
+  ],
+  "pair_oz_b32": [
+   0
+  ],
+  "pair_w_b32": [
+   1121714176
+  ],
+  "utilisation_floor_b32": 1025758986,
+  "walk_radius_b32": 1132068864,
+  "zone_reach_b32": 1140457472
+ },
+ "expect": {
+  "pass_optimal": true,
+  "pass_set": true
+ },
+ "hash": "53e158d93b10ab1465a56475081ade0b0a835819e4587432448947770ebaa033",
+ "kind": "lineset_time",
+ "name": "lineset_time-duplicate",
+ "schema_version": 1
+}

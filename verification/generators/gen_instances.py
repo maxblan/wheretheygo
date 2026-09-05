@@ -10,8 +10,8 @@ Instance kinds and what they verify (see docs/formal-specification.md):
   lattice_path   S4  Dijkstra path optimality (exact distance-label certificate).
   calling_points S5  PlanCallingPoints / SelectCallingPoints invariants.
   mode_choice    S6  ChooseMode gate cascade re-evaluation.
-  lineset        S7  transit graph + CreditLine semantics, greedy rounds vs the
-                     enumerated optimum of the credited-sum set objective.
+  lineset_time   S7 v2  passenger-time set objective: the mod's exact B&B against a
+                     complete enumeration of feasible subsets.
 """
 
 from __future__ import annotations
@@ -644,164 +644,146 @@ def corridor_coverage():
         cannot_host=cannot)
 
 
-# --------------------------------------------------------------- lineset (S7)
+# ---------------------------------------------------------- lineset_time (S7 v2)
 
-def lineset_common(name, comment, zones, flows, candidates, k,
-                   existing_lines=None, existing_stops=None, seed=None):
+DAY = 4369.0666666666666   # movement seconds per game day (TimeSystem.kTicksPerDay / 60)
+
+
+def lt_common(name, comment, pairs, candidates, k, utilisation_floor, duplicate_share=0.5,
+              chosen=None, base_stops=None, base_lines=None, seed=None, expect=None):
     inst = {
-        "kind": "lineset",
+        "kind": "lineset_time",
         "name": name,
         "comment": comment,
         "data": {
             "walk_radius_b32": f32_bits(250.0),
             "board_penalty_b32": f32_bits(5.0),
-            "transfer_discount_b32": f32_bits(0.6),
             "max_travel_seconds_b32": f32_bits(3600.0),
-            "switch_margin_b32": f32_bits(60.0),
-            "zone_stop_reach_b32": f32_bits(500.0),
-            "zone_x_b32": f32_list([z[0] for z in zones]),
-            "zone_z_b32": f32_list([z[1] for z in zones]),
-            "flows": [
-                {"origin": o, "dest": d, "weight_b32": f32_bits(w)}
-                for (o, d, w) in flows
-            ],
-            "existing_stop_x_b32": f32_list([s[0] for s in (existing_stops or [])]),
-            "existing_stop_z_b32": f32_list([s[1] for s in (existing_stops or [])]),
-            "existing_lines": existing_lines or [],
+            "zone_reach_b32": f32_bits(500.0),
+            "pair_ox_b32": f32_list([p[0][0] for p in pairs]),
+            "pair_oz_b32": f32_list([p[0][1] for p in pairs]),
+            "pair_dx_b32": f32_list([p[1][0] for p in pairs]),
+            "pair_dz_b32": f32_list([p[1][1] for p in pairs]),
+            "pair_w_b32": f32_list([p[2] for p in pairs]),
+            "base_stop_x_b32": f32_list([s[0] for s in (base_stops or [])]),
+            "base_stop_z_b32": f32_list([s[1] for s in (base_stops or [])]),
+            "base_lines": base_lines or [],
             "candidates": candidates,
-            "max_accept": k,
+            "max_lines": k,
+            "utilisation_floor_b32": f32_bits(utilisation_floor),
+            "movement_seconds_per_day_b32": f32_bits(DAY),
+            "duplicate_share_b32": f32_bits(duplicate_share),
+            "equity_floor_share_b32": f32_bits(0.8),
+            "equity": None,
+            "chosen": chosen,
         },
     }
     if seed is not None:
         inst["seed"] = seed
+    if expect is not None:
+        inst["expect"] = expect
     return inst
 
 
-def candidate(stops, wait, speed, flow):
+def lt_candidate(stops, wait, speed, headway=200.0, capacity=30.0):
     return {
         "stop_x_b32": f32_list([s[0] for s in stops]),
         "stop_z_b32": f32_list([s[1] for s in stops]),
         "expected_wait_b32": f32_bits(wait),
         "speed_b32": f32_bits(speed),
-        "captured_flow_b32": f32_bits(flow),
+        "ride_seconds_b32": None,
+        "headway_b32": f32_bits(headway),
+        "capacity_b32": f32_bits(capacity),
     }
 
 
-def lineset_feeder():
-    """Trunk-and-feeder complementarity: the heavy A->B pair (weight 100) is
-    carried only by L1+L2 together (one transfer at M). L1 and L2 alone each
-    unlock a small local pair (10). L3 alone unlocks 30. With K=2 greedy takes
-    L3 first and never reaches {L1, L2}, whose set value 10+10+100*0.6 = 80
-    beats greedy's 40. Distances are chosen so no unintended walk edges exist
-    (all stop gaps > 250 m) and every zone maps onto exactly the stops meant
-    for it (reach 500 m)."""
-    # Geometry (metres). Corridor A -- M -- B along x; C/D on a separate y row.
-    A = (0.0, 0.0); A2 = (2000.0, 0.0)          # L1: A -> M', M
-    M = (4000.0, 0.0)
-    B2 = (6000.0, 0.0); B = (8000.0, 0.0)       # L2: M -> B', B
-    C = (0.0, 4000.0); D = (3000.0, 4000.0)     # L3: C -> D
-    zones = [A, A2, M, B2, B, C, D]
-    flows = [
-        (0, 4, 100.0),   # A -> B, the joint pair
-        (0, 1, 10.0),    # A -> A2, L1-local
-        (2, 3, 10.0),    # M -> B2, L2-local
-        (5, 6, 30.0),    # C -> D, L3-local
-    ]
+def lineset_time_feeder():
+    """Set complementarity under the passenger-time objective. A->B (weight 100,
+    8 km, 6667 s on foot) is carried only by L1 (A->M) and L2 (M->B) together,
+    one change at M: 2 x (205 wait + 400 ride) = 1210 s, saving ~5457 s each.
+    L1 alone serves A->M (10), L2 alone M->B (10), L3 serves C->D (30, 3 km).
+    Standalone: L3 ~59,850 > L1 = L2 ~27,280, so a greedy order takes L3 first
+    and with K=2 ends at {L3, L1}; the optimum is {L1, L2}. No unintended walk
+    edges (all gaps > 250 m); every zone reaches only the stops meant for it.
+    Utilisation with a 200 s headway and 30 seats: L1/L2 110 journeys -> 16.8 %,
+    L3 30 -> 4.6 %; the floor (4 %) keeps all three feasible."""
+    A = (0.0, 0.0); A2 = (2000.0, 0.0); M = (4000.0, 0.0); B2 = (6000.0, 0.0); B = (8000.0, 0.0)
+    C = (0.0, 3000.0); D = (3000.0, 3000.0)
+    pairs = [(A, B, 100.0), (A, M, 10.0), (M, B, 10.0), (C, D, 30.0)]
     candidates = [
-        candidate([A, A2, M], 200.0, 9.0, 3.0),   # L1
-        candidate([M, B2, B], 200.0, 9.0, 2.0),   # L2
-        candidate([C, D], 200.0, 9.0, 1.0),       # L3
+        lt_candidate([A, A2, M], 200.0, 10.0),
+        lt_candidate([M, B2, B], 200.0, 10.0),
+        lt_candidate([C, D], 200.0, 10.0),
     ]
-    inst = lineset_common(
-        "lineset-feeder",
-        "C7.4 counterexample: greedy(K=2) picks {L3, L1} worth 40; "
-        "optimum {L1, L2} worth 80",
-        zones, flows, candidates, 2)
-    inst["expect"] = {"greedy_set_is_optimal": False}
-    return inst
+    return lt_common("lineset_time-feeder",
+                     "trunk-and-feeder: the set {L1, L2} beats the greedy order's {L3, L1}",
+                     pairs, candidates, 2, 0.04, chosen=[0, 1],
+                     expect={"pass_set": True, "pass_optimal": True, "enumeration_complete": True})
 
 
-def lineset_staged():
-    """C7.5 counterexample: one alignment of length 2000 m. The S5 stage
-    (PlanCallingPoints, spacing 800 -> intervals round(2000/800)=3 -> stops at
-    0, 666.67, 1333.33, 2000) yields candidate 'staged'. The alternative
-    'joint' places the same number of stops at 0, 500, 1500, 2000, putting a
-    middle stop within zone reach of the heavy zone at (500, 480). Distances:
-    (500,480)->stop(500,0) = 480 < 500, ->stop(666.67,0) = 508 > 500,
-    ->stop(0,0) = 693 > 500 — so only the joint variant reaches it. Enumeration
-    over the two shows the staged stop set is strictly dominated for the S7
-    objective."""
-    z_end_a = (0.0, 0.0)
-    z_heavy = (500.0, 480.0)     # within 500 m of a stop at x=500 only
-    z_end_b = (2000.0, 0.0)
-    zones = [z_end_a, z_heavy, z_end_b]
-    flows = [
-        (0, 2, 20.0),    # end-to-end, served by both variants
-        (1, 2, 60.0),    # heavy zone -> end, served only if a stop sits near x=500
-    ]
-    # The staged stops are EXACTLY what PlanCallingPoints emits for length 2000 /
-    # spacing 800 (intervals = 3): length * i / intervals in float32 arithmetic.
-    def rf32(x):
-        return struct.unpack("<f", struct.pack("<f", x))[0]
-
-    staged_offsets = [rf32(rf32(2000.0 * i) / 3.0) for i in range(3)] + [2000.0]
-    staged = candidate([(o, 0.0) for o in staged_offsets], 200.0, 9.0, 2.0)
-    joint = candidate([(0.0, 0.0), (500.0, 0.0), (1500.0, 0.0), (2000.0, 0.0)],
-                      200.0, 9.0, 1.0)
-    inst = lineset_common(
-        "lineset-staged",
-        "C7.5 counterexample: the stop set produced by the S5 spacing rule is "
-        "strictly dominated by an alternative stop set on the same alignment",
-        zones, flows, [staged, joint], 1)
-    inst["data"]["staged_candidate"] = 0
-    inst["data"]["spacing_b32"] = f32_bits(800.0)
-    inst["data"]["alignment_length_b32"] = f32_bits(2000.0)
-    inst["expect"] = {"staged_dominated": True, "staged_stops_match_plan": True}
-    return inst
+def lineset_time_floor():
+    """The utilisation floor as a set constraint: L3 (C->D, 30 riders, 4.6 %)
+    saves the most time per line but sits under a 10 % floor, so the optimum
+    over FEASIBLE sets is {L1} even with K=2. Same geometry as the feeder without
+    L2, so nothing else competes."""
+    A = (0.0, 0.0); A2 = (2000.0, 0.0); M = (4000.0, 0.0)
+    C = (0.0, 3000.0); D = (3000.0, 3000.0)
+    pairs = [(A, M, 110.0), (C, D, 30.0)]
+    candidates = [lt_candidate([A, A2, M], 200.0, 10.0), lt_candidate([C, D], 200.0, 10.0)]
+    return lt_common("lineset_time-floor", "the line saving most time is infeasible under the utilisation floor",
+                     pairs, candidates, 2, 0.10, chosen=[0],
+                     expect={"pass_set": True, "pass_optimal": True})
 
 
-def lineset_random():
-    rng = random.Random(20260903)
-    zones = []
-    for gy in range(3):
-        for gx in range(3):
-            zones.append((gx * 1200.0, gy * 1200.0))
-    flows = []
-    for _ in range(10):
-        o = rng.randrange(len(zones))
-        d = rng.randrange(len(zones))
-        if o == d:
-            continue
-        flows.append((o, d, float(rng.randrange(5, 60))))
-    # Four candidate lines along rows/columns, stops on zone centres.
-    def line(cells, flow):
-        return candidate([zones[c] for c in cells], 200.0, 9.0, flow)
+def lineset_time_duplicate():
+    """Duplicate rule: L1 and L4 both run A->M, L4 is slower (8 m/s). With both
+    in the set every A->M journey rides L1, so L4 carries nobody and the set
+    {L1, L4} is infeasible; {L1} is the answer with K=2 although L4 alone would
+    pass the floor."""
+    A = (0.0, 0.0); A2 = (2000.0, 0.0); M = (4000.0, 0.0)
+    pairs = [(A, M, 110.0)]
+    candidates = [lt_candidate([A, A2, M], 200.0, 10.0), lt_candidate([A, A2, M], 200.0, 8.0)]
+    return lt_common("lineset_time-duplicate", "a parallel slower line duplicates the faster one and is refused",
+                     pairs, candidates, 2, 0.04, chosen=[0],
+                     expect={"pass_set": True, "pass_optimal": True})
+
+
+def lineset_time_tie():
+    """Two disjoint candidates of identical value with K=1: the optimum key is
+    reached by both, the mod takes the lower index, and the enumeration must
+    report the tie."""
+    pairs = [((0.0, 0.0), (1000.0, 0.0), 50.0), ((0.0, 2000.0), (1000.0, 2000.0), 50.0)]
     candidates = [
-        line([0, 1, 2], 4.0),
-        line([6, 7, 8], 3.0),
-        line([0, 3, 6], 2.0),
-        line([2, 5, 8], 1.0),
+        lt_candidate([(0.0, 0.0), (1000.0, 0.0)], 200.0, 9.0),
+        lt_candidate([(0.0, 2000.0), (1000.0, 2000.0)], 200.0, 9.0),
     ]
-    return lineset_common(
-        "lineset-random", "seeded 3x3 zone grid, 4 candidates, K=2",
-        zones, flows, candidates, 2, seed=20260903)
+    return lt_common("lineset_time-tie", "equal time saved: tie must be reported",
+                     pairs, candidates, 1, 0.04, chosen=[0],
+                     expect={"pass_set": True, "pass_optimal": True, "tie_affected": True})
 
 
-def lineset_tie():
-    """Two candidates with identical credited demand: exercises the
-    tie/decision-sensitivity reporting of the acceptance order."""
-    zones = [(0.0, 0.0), (1000.0, 0.0), (0.0, 2000.0), (1000.0, 2000.0)]
-    flows = [(0, 1, 50.0), (2, 3, 50.0)]
-    candidates = [
-        candidate([(0.0, 0.0), (1000.0, 0.0)], 200.0, 9.0, 2.0),
-        candidate([(0.0, 2000.0), (1000.0, 2000.0)], 200.0, 9.0, 2.0),
-    ]
-    inst = lineset_common(
-        "lineset-tie", "equal credited demand and equal flow: tie must be reported",
-        zones, flows, candidates, 1)
-    inst["expect"] = {"tie_affected": True}
-    return inst
-
+def lineset_time_random():
+    """Seeded 3x3 zone grid (1 km pitch), 6 candidates of 2-3 stops on zone
+    centres, K=3, no hand answer: the subject's set must equal the enumerated
+    optimum. An existing line crosses the middle row so the baseline is not
+    walking alone."""
+    rng = random.Random(20260905)
+    zones = [(1000.0 * (i % 3), 1000.0 * (i // 3)) for i in range(9)]
+    pairs = []
+    for _ in range(14):
+        o, d = rng.sample(range(9), 2)
+        pairs.append((zones[o], zones[d], float(rng.randint(5, 60))))
+    candidates = []
+    for _ in range(6):
+        stops = rng.sample(range(9), rng.choice([2, 3]))
+        candidates.append(lt_candidate([zones[s] for s in stops], float(rng.choice([120.0, 200.0, 300.0])),
+                                       float(rng.choice([8.0, 10.0, 14.0])), capacity=float(rng.choice([30.0, 60.0]))))
+    base_stops = [zones[3], zones[4], zones[5]]
+    base_lines = [{"stops": [0, 1, 2], "expected_wait_b32": f32_bits(150.0), "speed_b32": f32_bits(10.0),
+                   "ride_seconds_b32": None}]
+    return lt_common("lineset_time-random", "seeded 3x3 zone grid, 6 candidates, K=3, one existing line",
+                     pairs, candidates, 3, 0.04, base_stops=base_stops, base_lines=base_lines, seed=20260905,
+                     expect={"pass_set": True, "pass_optimal": True, "enumeration_complete": True})
 
 
 # ------------------------------------------------------------- coverage (S3 v2)
@@ -1171,10 +1153,11 @@ def main():
         corridor_coverage(),
         heatmap_grid_plumbing(),
         order_stats(),
-        lineset_feeder(),
-        lineset_staged(),
-        lineset_random(),
-        lineset_tie(),
+        lineset_time_feeder(),
+        lineset_time_floor(),
+        lineset_time_duplicate(),
+        lineset_time_tie(),
+        lineset_time_random(),
     ]
     for inst in instances:
         path = os.path.join(OUT, inst["name"] + ".json")

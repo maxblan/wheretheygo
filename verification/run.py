@@ -3,7 +3,7 @@
 
 Per instance: validate -> subject (mod code) -> independent checks -> reference
 optimum (SCIP exact + VIPR, independently checked, for `sites`; complete
-enumeration for `lineset`; solver-free rational certificate for `lattice_path`)
+enumeration for `lineset_time`; solver-free rational certificate for `lattice_path`)
 -> verdict. Exit code 0 only if every instance's verdict passes the contract in
 verification/README.md.
 
@@ -34,7 +34,7 @@ from evaluator import sites_walk as ev_sites_walk  # noqa: E402
 from evaluator import roadtimes as ev_roadtimes  # noqa: E402
 from evaluator import coverage as ev_coverage  # noqa: E402
 from evaluator.checkcert_dirpath import check_directed_certificate  # noqa: E402
-from evaluator import lineset as ev_lineset  # noqa: E402
+from evaluator import lineset_time as ev_lineset_time  # noqa: E402
 from evaluator import modes as ev_modes  # noqa: E402
 from evaluator import orderstats as ev_orderstats  # noqa: E402
 from evaluator import paths as ev_paths  # noqa: E402
@@ -479,69 +479,48 @@ def check_lattice_path(instance: dict, solution: dict, out_dir: str,
     return verdict
 
 
-def check_lineset(instance: dict, solution: dict, out_dir: str,
-                  notes: list[str]) -> dict:
-    report = ev_lineset.check(instance, solution)
+def check_lineset_time(instance: dict, solution: dict, out_dir: str,
+                       notes: list[str]) -> dict:
+    """S7 v2: the mod's chosen set reproduced by the subject, its time saved within
+    the float budget of the exact value, feasible under the floors, and — where the
+    pool is enumerable — equal in key to the exact optimum over feasible subsets."""
+    report = ev_lineset_time.check(instance, solution)
     enum_result = enumerate_optimum(instance)
     with open(os.path.join(out_dir, "enumeration.json"), "w", encoding="ascii") as f:
         json.dump(enum_result, f, indent=1)
-
-    p = ev_lineset.parse(instance)
-    greedy_lo = Fraction(report["greedy_set_objective"][0])
-    optimum_lo = Fraction(enum_result["optimum_lo"])
-    complete = enum_result["complete"]
-    k_enum = enum_result["enumerated_max_size"]
     verdict = {
-        "evaluator": {k: v for k, v in report.items() if k != "rounds"},
-        "rounds": report["rounds"],
-        "pass_rounds": report["ok"],
-        "enumeration_complete": complete,
-        "enumeration_max_size": k_enum,
+        "evaluator": report,
+        "pass_set": report["ok"],
+        "enumeration_complete": enum_result["complete"],
+        "enumeration_max_size": enum_result["enumerated_max_size"],
         "declared_k": enum_result["declared_k"],
         "subsets_evaluated": enum_result["subsets_evaluated"],
         "optimum_set": enum_result["optimum_set"],
-        "optimum_value": enum_result["optimum_lo"],
-        "greedy_set_value": report["greedy_set_objective"][0],
-        "tie_affected": report["tie_affected"],
+        "optimum_saved": enum_result["optimum_saved"],
+        "optimum_coverage": enum_result["optimum_coverage"],
+        "tie_affected": report["tie_affected"] or enum_result["tie_affected"],
     }
-    if complete:
-        verdict["gap"] = str(optimum_lo - greedy_lo)
-        verdict["greedy_set_is_optimal"] = optimum_lo == greedy_lo
+    exact_key = (Fraction(report["coverage"]) if report["coverage"] is not None else Fraction(0),
+                 Fraction(report["exact_time_saved"]))
+    if enum_result["optimum_saved"] is not None:
+        opt_key = (Fraction(enum_result["optimum_coverage"]), Fraction(enum_result["optimum_saved"]))
+        verdict["gap_saved"] = str(opt_key[1] - exact_key[1])
+        verdict["gap_coverage"] = str(opt_key[0] - exact_key[0])
+        # The mod optimises a binary32 rendering of the same objective, so equality is
+        # judged within the float budget on the time component.
+        budget = Fraction(report["budget"])
+        within = exact_key[0] == opt_key[0] and abs(opt_key[1] - exact_key[1]) <= budget
+        if enum_result["complete"]:
+            verdict["pass_optimal"] = within if report["optimal_claimed"] else True
+            if report["optimal_claimed"] and not within:
+                notes.append("mod claimed an optimal line set but the enumeration found a better feasible one")
+        else:
+            verdict["pass_optimal"] = True
+            k_enum = enum_result["enumerated_max_size"]
+            verdict["optimality_level"] = f"bounded: exact over subsets of size <= {k_enum} of {verdict['declared_k']}"
+            notes.append(f"K={verdict['declared_k']} optimum not enumerable within budget; exact only for <= {k_enum} lines")
     else:
-        # Bounded regime: the K-line optimum is NOT established. What IS exact is
-        # the optimum over <= k_enum lines, compared against the greedy's first
-        # k_enum acceptances at equal cardinality.
-        prefix = report["accepted"][:k_enum]
-        prefix_lo, _hi, _tie = ev_lineset.set_objective(p, prefix)
-        verdict["greedy_set_is_optimal"] = None
-        verdict["optimality_level"] = f"bounded: exact over subsets of size <= {k_enum} of {verdict['declared_k']}"
-        verdict["greedy_prefix"] = prefix
-        verdict["greedy_prefix_value"] = str(prefix_lo)
-        verdict["gap"] = str(optimum_lo - prefix_lo)
-        verdict["greedy_prefix_optimal_at_k"] = optimum_lo == prefix_lo
-        notes.append(
-            f"K={verdict['declared_k']} optimum not enumerable within budget; exact "
-            f"only for <= {k_enum} lines ({verdict['subsets_evaluated']} subsets)")
-
-    data = instance["data"]
-    if "staged_candidate" in data:
-        staged = data["staged_candidate"]
-        length = bits_to_f32(data["alignment_length_b32"])
-        spacing = bits_to_f32(data["spacing_b32"])
-        expected = ev_stops.plan_calling_points(length, spacing, 32)
-        staged_x = [bits_to_f32(b)
-                    for b in data["candidates"][staged]["stop_x_b32"]]
-        verdict["staged_stops_match_plan"] = staged_x == expected
-        staged_lo, staged_hi, _ = ev_lineset.set_objective(p, [staged])
-        others = [
-            (i, ev_lineset.set_objective(p, [i]))
-            for i in range(len(p["candidates"])) if i != staged
-        ]
-        dominated = any(lo > staged_hi for _, (lo, _hi, _t) in others)
-        verdict["staged_set_value"] = [str(staged_lo), str(staged_hi)]
-        verdict["staged_dominated"] = dominated
-        if not verdict["staged_stops_match_plan"]:
-            notes.append("staged candidate stops do not match PlanCallingPoints")
+        verdict["pass_optimal"] = len(report["chosen"]) == 0
     return verdict
 
 
@@ -576,10 +555,8 @@ def base_pass(kind: str, verdict: dict) -> bool:
     if kind in ("calling_points", "mode_choice", "corridor",
                 "heatmap_grid", "heatmap_walk", "order_stats", "coverage"):
         return bool(verdict.get("evaluator", {}).get("ok"))
-    if kind == "lineset":
-        return bool(verdict.get("pass_rounds")
-                    and (verdict.get("enumeration_complete")
-                         or verdict.get("enumeration_max_size", 0) >= 1))
+    if kind == "lineset_time":
+        return bool(verdict.get("pass_set") and verdict.get("pass_optimal"))
     return False
 
 
@@ -668,8 +645,8 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
         verdict = {"evaluator": report, "three_way_exact": report["three_way_exact"]}
     elif kind == "order_stats":
         verdict = {"evaluator": ev_orderstats.check(instance, solution)}
-    elif kind == "lineset":
-        verdict = check_lineset(instance, solution, out_dir, notes)
+    elif kind == "lineset_time":
+        verdict = check_lineset_time(instance, solution, out_dir, notes)
     else:
         print(f"[{name}] unknown kind {kind}")
         return False
@@ -710,11 +687,11 @@ def is_heavy(name: str) -> bool:
         return False
     if inst.get("heavy", False):
         return True
-    if inst.get("kind") == "lineset":
+    if inst.get("kind") == "lineset_time":
         from math import comb
         from enumerate.enum_lines import DEFAULT_BUDGET
         n = len(inst["data"]["candidates"])
-        k = inst["data"]["max_accept"]
+        k = inst["data"]["max_lines"]
         return sum(comb(n, i) for i in range(k + 1)) > DEFAULT_BUDGET
     return False
 

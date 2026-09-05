@@ -188,14 +188,14 @@ gestellt, Entscheidung noch offen):
 | A2.3 ✅ | Optimal | Phase 2 umgesetzt (B&B); wird mit A1.8/A4.1 zur Nebenbedingungs-Optimierung |
 | A2.4 ✅ umgesetzt (Phase 3) | Frage unverstanden | Mit Phase 3 entfällt die Nachbewertung (Score ist bereits Netz-Gehzeit). RF: Streichen bestätigen |
 | A2.5 | „Sinnvoll?" | 20 ist UI-Grenze, keine Algorithmusgrenze; RF |
-| A3.1 | Vorschlag erbeten | Vorschlag: Abschlag entfällt; Zielfunktion „gesparte Personenzeit" (A4.1) enthält ihn implizit. RF: Basislinie = Gehen/Bestandsnetz, Auto ignoriert? |
+| A3.1 ✅ umgesetzt (Phase 7) | Vorschlag erbeten | Abschlag entfällt in der Auswahl: die Zielfunktion „gesparte Personenzeit" (A4.1) enthält ihn implizit; Basislinie = Bestes aus Gehen und Bestandsnetz, Auto ignoriert (`SuitabilityLineSet.Evaluate`). Der Abschlag bleibt nur noch für die Kandidaten-Erzeugung (AON-Zuweisung, A3.3) |
 | A3.2 ✅ | Reine Fußwege zählen nicht als Bedienung | bleibt |
-| A3.3 | AON-Zuweisung ist nicht optimal | Vorschlag: AON nur zum Erzeugen von Kandidaten; Bewertung ausschließlich per Routing der gesamten Nachfrage über das Netz (S7). RF |
+| A3.3 ✅ umgesetzt (Phase 7) | AON-Zuweisung ist nicht optimal | AON nur zum Erzeugen von Kandidaten; die Auswahl bewertet ausschließlich per Routing der gesamten Nachfrage über Bestandsnetz ∪ gewählte Linien (Spez. §6.2–6.3) |
 | A3.4 | **Nein — Fähren auch entlang einer Küste**, wenn Nachfrage da ist | Landmassenfilter entfällt; Fähre wird wie jeder Modus über die Zielfunktion bewertet |
-| A4.1 | **Hauptziel: so viele Menschen wie möglich in so kurzer Zeit wie möglich; Auslastung hoch genug** | Zielfunktion = nachfragegewichtete Zeiteinsparung (Personenzeit); Nebenbedingung Auslastung ≥ X %. RF: X |
-| A4.2 | „Sinnvoll?" | Vorschlag: Schwellen entfallen zugunsten der Auslastungs-Nebenbedingung. RF |
+| A4.1 ✅ umgesetzt (Phase 7) | **Hauptziel: so viele Menschen wie möglich in so kurzer Zeit wie möglich; Auslastung hoch genug** | Zielfunktion = Σ w · (vorher − nachher) Tür-zu-Tür, lexikographisch nach dem gekappten Gerechtigkeitsanteil; Nebenbedingung Auslastung ≥ 15 % je Linie, auf die Fahrgäste des Sets bezogen (Spez. §6.3) |
+| A4.2 ✅ umgesetzt (Phase 7) | „Sinnvoll?" | Flow-Schwellen (Evidenz-Gate, Korridorflow > 1, Ein-Bus-Nachfrage) entfallen; nur noch Auslastungs-Floor und Duplikatregel |
 | A4.3 | **Keine Mehrfachlinien für dieselben Wege**; Kreuzen, Teilüberlappung, gleiche Endpunkte ok | Vorschlag: Duplikatregel über den Anteil gemeinsam bedienter Nachfragepaare, nicht über Halte ≤ 150 m; zusätzlich ergibt die Zielfunktion für eine Dublette ≈ 0 Nutzen. RF: Anteil |
-| A4.4 | „Sinnvoll?" | Vorschlag: Umschalter entfällt; ersetzt durch Gerechtigkeits-Floor (T, X) + Auslastungs-Floor. RF |
+| A4.4 ✅ umgesetzt (Phase 7) | „Sinnvoll?" | Die Auswahl kennt keinen Umschalter mehr: Gerechtigkeits-Floor (T, X) → gesparte Personenzeit. `RouteGoal` wirkt nur noch auf das Korridorwachstum (Kandidatenerzeugung) |
 | A4.5 | Nicht verstanden | Erklärung in der Antwort; Vorschlag: Zug bevorzugt Bestandsgleise (kostenlos), Metro ohne Steigung, Zug mit Steigungsgrenze. RF |
 | A4.6 | „Sinnvoll?" | Vorschlag: Längenlimits → Fahrzeitlimits je Modus. RF |
 | A4.7 | Wichtig, aber Ansatz fraglich: zählt der Umweg fürs Gesamtnetz? | Vorschlag: direkte und Hub-Variante beide als Kandidaten, exakte Mengenauswahl entscheidet. Kein Schwellenwert |
@@ -205,23 +205,23 @@ gestellt, Entscheidung noch offen):
 | A5.4 | Wert erfragt | Vorschlag: kein Prozentwert; Halt genau dann, wenn Zugangsgewinn der Einsteiger > Verzögerung der Durchfahrer. RF |
 | A5.5 ✅ | **Werte aus dem Spiel** | Fahrzeug-Prefabs (Geschwindigkeit, Kapazität), Standzeit aus dem Spiel dekompilieren |
 | A6.x | „Rest sinnvoll" | RF: Modus über Kapazitätsbedarf (Auslastung) statt Flow-Vielfache/Reichweiten-Anteile? |
-| A7.2 | **Realismus** | Zeitgewichte Gehen 2,2 · Warten 2,1 · Umsteigen 2,5 · Fahren 1 (TCQSM). RF: Spielfiguren routen 1:1:1 — akzeptiert? |
-| A7.4 | Literatur | Umstieg als Zeitäquivalent (≈ 5 min + gewichtete Wartezeit) statt 0,6-Rabatt |
-| A7.5 | Optimal; unklar welche Zielfunktion | Vorschlag: Netzziel gemeinsam (Routing der gesamten Nachfrage über alle gewählten Linien), nicht Summe der Einzelkredite. RF |
+| A7.2 ✅ umgesetzt (Phase 7) | **Realismus** | Geplant wird mit 1 : 1 : 1; die TCQSM-gewichtete Zeit (2,2 / 2,1 / 1) wird aus denselben Wegen als Diagnose je Set ausgegeben (`LineSetEvaluation.Walk/Wait/RideSeconds`) |
+| A7.4 ✅ umgesetzt (Phase 7) | Literatur | Der 0,6-Rabatt und die Einstellung „Transferstrafe" sind gestrichen; ein Umstieg kostet genau seinen Fußweg und die Wartezeit der nächsten Linie, wie im Spiel |
+| A7.5 ✅ umgesetzt (Phase 7, Stufe 1) | Optimal; unklar welche Zielfunktion | Netzziel gemeinsam: Branch-and-Bound über Teilmengen ≤ RouteCount mit monotoner Vereinigungsschranke (`SuitabilityLineSet.Solve`); bewiesen optimal oder bestes Set + Obergrenze bei Knotenbudget 20 000. Pipeline `lineset_time`: vollständige Enumeration auf 5 synthetischen Instanzen, Gap 0 |
 
 **Antwort vom 2026-09-05: „Ja zu allem"**, mit drei Abweichungen — damit sind alle
 Rückfragen oben entschieden (RF → ✅):
 
 | # | Entscheidung |
 |---|---|
-| A1.8 / A4.1 | Gerechtigkeits-Floor **X = 80 %** (nicht 70 %), T = 10 min; Auslastungs-Floor 25 %; Rangfolge Gerechtigkeit → Auslastung → gesparte Personenzeit; Basislinie = Bestes aus Gehen und Bestandsnetz, Auto ignoriert |
+| A1.8 / A4.1 | Gerechtigkeits-Floor **X = 80 %** (nicht 70 %), T = 10 min; Auslastungs-Floor 25 % → nach Korrektur des Spieltags (4369 Bewegungssekunden) und Online-Recherche am 2026-09-05 auf **15 %** gesetzt („Ja, mache 15%"); Rangfolge Gerechtigkeit → Auslastung → gesparte Personenzeit; Basislinie = Bestes aus Gehen und Bestandsnetz, Auto ignoriert |
 | A4.5 | **Steigung komplett ignorieren** (auch für Zug); **Zug und Metro erhalten denselben Bonus** für bestehende Gleise |
 | A7.2 | Realismus-Gewichte (2,2 / 2,1 / 2,5 / 1) werden **sichtbar gemacht** (Diagnose), **geplant wird mit den Spielwerten 1 : 1 : 1** |
 | A2.1/A2.2 | Kandidaten = Netzknoten mit positivem Score; Mindestabstand = Gehzeit im Fußwegenetz ≥ Haltabstand des Modus |
 | A2.4 | Nachbewertung entfällt |
 | A2.5 | 20 bleibt UI-Grenze |
 | A3.3 | AON nur zur Kandidatenerzeugung |
-| A4.3 | Dublette bei > 50 % gemeinsam bedienter Nachfragepaare |
+| A4.3 ✅ umgesetzt (Phase 7) | Dublette bei ≥ 50 % der eigenen Fahrgäste, die ohne die Linie nicht langsamer wären (`DuplicateShare`); die 150-m-Halteregel ist gestrichen |
 | A4.6/A6.1 | Fahrzeitgrenzen Bus 30 · Tram 35 · Metro 30 · Zug 60 · Fähre 45 min; Mindestlänge 3 Halte |
 | A5.1/A5.4 | harte Untergrenze 50 % des Haltabstands; Halt genau dann, wenn Zugangsgewinn > Verzögerung der Durchfahrer |
 | A6.x | Modus nach Kapazitätsbedarf bei Soll-Takt, Werte aus dem Spiel |

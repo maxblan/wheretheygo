@@ -57,9 +57,6 @@ namespace StationSuitabilityOverlay
         public const int kRouteCountMin = 1;
         public const int kRouteCountMax = 12;
         public const int kRouteCountDefault = 5;
-        public const int kTransferPenaltyMin = 0;
-        public const int kTransferPenaltyMax = 80;
-        public const int kTransferPenaltyDefault = 40;
 
         // ModePreset and RouteGoal live in TransitMode.cs, beside everything that is
         // true of a mode — see the note there for why they are not nested here.
@@ -83,7 +80,6 @@ namespace StationSuitabilityOverlay
         private RouteGoal m_Objective;
         private int m_RouteCount;
         private bool m_ShowRoutes = true;
-        private int m_TransferPenalty = kTransferPenaltyDefault;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -249,16 +245,6 @@ namespace StationSuitabilityOverlay
             set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
         }
 
-        [SettingsUISlider(min = kTransferPenaltyMin, max = kTransferPenaltyMax, step = 5, scalarMultiplier = 1, unit = Unit.kPercentage)]
-        [SettingsUISection(kSection, kRoutesGroup)]
-        public int TransferPenalty
-        {
-            get => m_TransferPenalty;
-            set => m_TransferPenalty = ClampInt(value, kTransferPenaltyMin, kTransferPenaltyMax);
-        }
-
-        // Multiplier applied per change of vehicle when crediting a suggested line.
-        public float TransferDiscount => 1f - (m_TransferPenalty / 100f);
 
         [SettingsUISection(kSection, kRoutesGroup)]
         [SuppressMessage("Performance", "CA1822:Mark members as static",
@@ -337,7 +323,6 @@ namespace StationSuitabilityOverlay
             m_Objective = RouteGoal.Balanced;
             m_RouteCount = kRouteCountDefault;
             m_ShowRoutes = true;
-            m_TransferPenalty = kTransferPenaltyDefault;
             ApplyPreset(m_Mode);
         }
 
@@ -431,7 +416,6 @@ namespace StationSuitabilityOverlay
             m_SiteCount = m_SiteCount == 0 ? kSiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
             m_RouteCount = m_RouteCount == 0 ? kRouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
             m_Objective = ValidObjective(m_Objective);
-            m_TransferPenalty = ClampInt(m_TransferPenalty, kTransferPenaltyMin, kTransferPenaltyMax);
             float[] preset = PresetWeights(m_Mode);
             m_W5 = m_W5 < 0f ? preset[4] : ClampWeight(m_W5);
             m_W6 = m_W6 < 0f ? preset[5] : ClampWeight(m_W6);
@@ -556,8 +540,6 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetEnumValueLocaleID(RouteGoal.Coverage), "Maximum coverage" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.TransferPenalty)), "Transfer penalty" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.TransferPenalty)), "How much a journey is discounted for each change of vehicle when crediting a suggested line. Zero treats a three-leg trip as good as a direct one; higher values favour direct service." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteSummary)), "Suggestions" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteSummary)), "The current suggestions, best first. The full detail is written to the mod log." },
 

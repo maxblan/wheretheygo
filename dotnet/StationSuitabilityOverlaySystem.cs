@@ -381,22 +381,11 @@ namespace StationSuitabilityOverlay
         private float[]? m_ZoneStopDistSq;
         private float[]? m_ZoneCentreX;
         private float[]? m_ZoneCentreZ;
-        private int[]? m_ZoneStopsScratch;
-        private static readonly int[] s_NoPairs = Array.Empty<int>();
-        private static readonly float[] s_NoWeights = Array.Empty<float>();
-        private static readonly List<float2> s_NoStops = new List<float2>();
-        private int[]? m_CandidateOrigins;
-        private int[]? m_CandidateDests;
-        private float[]? m_CandidateWeights;
         // The walk to and from the candidate's own stops, and what each journey costs
         // on the network as it stands. A line earns credit for a journey only by being
         // better than what the rider already has.
-        private float[]? m_CandidateAccess;
-        private float[]? m_CandidateBaseline;
-        private float[]? m_ZoneStopScratchDistSq;
         // Door-to-door seconds per zone flow on the existing network, or MaxValue where
         // it cannot carry the journey at all.
-        private float[]? m_BaselineSeconds;
         // The suggestions accepted so far this refresh, treated as though the player
         // had built them. Every later candidate is scored against a network that
         // already contains them, so two lines cannot both be credited with the same
@@ -404,13 +393,8 @@ namespace StationSuitabilityOverlay
         // once, each one claiming the riders of the others.
         private readonly List<float2> m_AcceptedStops = new List<float2>();
         private readonly List<TransitLine> m_AcceptedLines = new List<TransitLine>();
-        private int[]? m_RoundZoneStop;
-        private float[]? m_RoundZoneWalkSq;
         // Which zone flow each pair came from, so a measured journey time can be
         // written back against the flow it belongs to.
-        private int[]? m_PairFlowScratch;
-        private float[]? m_CandidateStopX;
-        private float[]? m_CandidateStopZ;
         private int[]? m_PairOrigins;
         private int[]? m_PairDests;
         // Which zone flow each pair came from, so the served-demand discount can write
@@ -427,6 +411,14 @@ namespace StationSuitabilityOverlay
         private float[]? m_ServedScratch;
 
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
+        // The same journeys with their full weights, before the served-demand discount
+        // that steers corridor GROWTH: the line-set objective judges every journey at
+        // its real weight — a journey the existing network already carries well is
+        // simply one no line can save much time for (register A3.1).
+        private readonly List<ZoneFlow> m_FullZoneFlows = new List<ZoneFlow>();
+        private LineSetSolution? m_LineSetSolution;
+        private readonly List<SuggestedRoute> m_LineSetResolved = new List<SuggestedRoute>();
+        private LineSetProblem? m_LineSetProblem;
 
         // The equity measure (register A1.8/A1.9): every journey of the last demand
         // refresh with its ends snapped to the pedestrian network, the walk from each
@@ -2486,6 +2478,8 @@ namespace StationSuitabilityOverlay
                 trips.Dispose();
             }
 
+            m_FullZoneFlows.Clear();
+            m_FullZoneFlows.AddRange(m_ZoneFlows);
             BuildTransitModel(gridSize);
             MeasureEquity(settings);
             DiscountServedDemand(gridSize);
@@ -3259,13 +3253,12 @@ namespace StationSuitabilityOverlay
             // Every co-allocated array is in the condition, or flow analysis only
             // trusts the one that was tested.
             if (m_ZoneStops is null || m_ZoneStopDistSq is null || m_ZoneCentreX is null
-                || m_ZoneCentreZ is null || m_ZoneStopsScratch is null || m_ZoneStops.Length != zoneCount)
+                || m_ZoneCentreZ is null || m_ZoneStops.Length != zoneCount)
             {
                 m_ZoneStops = new int[zoneCount];
                 m_ZoneStopDistSq = new float[zoneCount];
                 m_ZoneCentreX = new float[zoneCount];
                 m_ZoneCentreZ = new float[zoneCount];
-                m_ZoneStopsScratch = new int[zoneCount];
             }
 
             float radiusSq = ZoneStopReachMetres * ZoneStopReachMetres;
@@ -3355,17 +3348,6 @@ namespace StationSuitabilityOverlay
 
             // Every journey starts unreachable; the pass below fills in the ones the
             // network can carry. A candidate is later credited only for beating this.
-            if (m_BaselineSeconds is null || m_BaselineSeconds.Length < m_ZoneFlows.Count)
-            {
-                m_BaselineSeconds = new float[m_ZoneFlows.Count];
-            }
-
-            float[] baseline = m_BaselineSeconds;
-            for (int i = 0; i < m_ZoneFlows.Count; i++)
-            {
-                baseline[i] = float.MaxValue;
-            }
-
             float[] zoneStopDistSq = m_ZoneStopDistSq;
 
             TransitNetwork network = m_TransitNetwork;
@@ -3422,7 +3404,6 @@ namespace StationSuitabilityOverlay
                     + WalkSeconds(zoneStopDistSq[served.m_Origin])
                     + WalkSeconds(zoneStopDistSq[served.m_Destination]);
 
-                baseline[pairFlow[i]] = doorToDoor;
                 servedPairIndex[servedPairs] = pairFlow[i];
                 servedSeconds[servedPairs] = doorToDoor;
                 servedPairs++;
@@ -3618,323 +3599,6 @@ namespace StationSuitabilityOverlay
         private static float WalkSeconds(float distanceSq)
         {
             return (float)Math.Sqrt(distanceSq) / SuitabilityTransit.WalkSpeed;
-        }
-
-        // Re-scores candidates by the demand they would ENABLE once riders are allowed
-        // to change vehicles, not just the demand along their own corridor.
-        //
-        // This is what makes a feeder worth building: a short line whose own corridor
-        // carries almost nobody can still be the leg that unlocks hundreds of journeys
-        // onto a trunk service. Each change of vehicle discounts the journey, so a
-        // direct service still outranks a three-leg itinerary carrying the same people.
-        // Zone-to-stop pairs for ONE candidate: the base mapping with the candidate's
-        // own stops folded in, flattened into the arrays the transit router takes.
-        // Returns the pair count, or 0 if the inputs are not ready.
-        // Hands the arrays back rather than leaving the caller to re-test the fields:
-        // the compiler discards a field's null-state across any intervening call.
-        // Zone-to-stop pairs once `extraStops` are added to `incumbentStop` — the
-        // mapping as it stands, whether that is the player's network or the network
-        // plus the suggestions already accepted this refresh.
-        private int BuildPairsWith(
-            List<float2> extraStops,
-            int baseStops,
-            int[] incumbentStop,
-            float[] incumbentWalkSq,
-            out int[] origins,
-            out int[] dests,
-            out float[] weights,
-            out float[] access,
-            out float[] baseline)
-        {
-            origins = s_NoPairs;
-            dests = s_NoPairs;
-            weights = s_NoWeights;
-            access = s_NoWeights;
-            baseline = s_NoWeights;
-
-            if (m_ZoneStops is null || m_ZoneStopDistSq is null || m_ZoneCentreX is null
-                || m_ZoneCentreZ is null || m_ZoneStopsScratch is null || m_BaselineSeconds is null)
-            {
-                return 0;
-            }
-
-            if (m_ZoneStopScratchDistSq is null || m_ZoneStopScratchDistSq.Length < m_ZoneStops.Length)
-            {
-                m_ZoneStopScratchDistSq = new float[m_ZoneStops.Length];
-            }
-
-            int stopCount = extraStops.Count;
-            EnsureCandidateBuffers(m_ZoneFlows.Count, stopCount);
-            if (m_CandidateStopX is null || m_CandidateStopZ is null || m_CandidateOrigins is null
-                || m_CandidateDests is null || m_CandidateWeights is null
-                || m_CandidateAccess is null || m_CandidateBaseline is null || m_PairFlowScratch is null)
-            {
-                return 0;
-            }
-
-            for (int i = 0; i < stopCount; i++)
-            {
-                m_CandidateStopX[i] = extraStops[i].x;
-                m_CandidateStopZ[i] = extraStops[i].y;
-            }
-
-            int[] zoneStops = m_ZoneStopsScratch;
-            float[] zoneWalkSq = m_ZoneStopScratchDistSq;
-            _ = SuitabilityTransit.RemapZones(
-                m_ZoneCentreX, m_ZoneCentreZ, m_ZoneStops.Length,
-                incumbentStop, incumbentWalkSq,
-                m_CandidateStopX, m_CandidateStopZ, stopCount,
-                baseStops, ZoneStopReachMetres, zoneStops, zoneWalkSq);
-
-            origins = m_CandidateOrigins;
-            dests = m_CandidateDests;
-            weights = m_CandidateWeights;
-            access = m_CandidateAccess;
-            baseline = m_CandidateBaseline;
-
-            int count = 0;
-            for (int i = 0; i < m_ZoneFlows.Count; i++)
-            {
-                ZoneFlow flow = m_ZoneFlows[i];
-                int origin = zoneStops[flow.m_Origin];
-                int destination = zoneStops[flow.m_Destination];
-                if (origin < 0 || destination < 0 || origin == destination)
-                {
-                    continue;
-                }
-
-                m_PairFlowScratch[count] = i;
-                origins[count] = origin;
-                dests[count] = destination;
-                weights[count] = flow.m_Weight;
-                // The walk this candidate asks for, which may be longer than the one the
-                // rider already has — that is the whole point of charging for it.
-                access[count] = WalkSeconds(zoneWalkSq[flow.m_Origin]) + WalkSeconds(zoneWalkSq[flow.m_Destination]);
-                baseline[count] = m_BaselineSeconds[i];
-                count++;
-            }
-
-            return count;
-        }
-
-        private void EnsureCandidateBuffers(int pairCapacity, int stopCapacity)
-        {
-            if (m_CandidateOrigins is null || m_CandidateDests is null || m_CandidateWeights is null
-                || m_CandidateAccess is null || m_CandidateBaseline is null || m_PairFlowScratch is null
-                || m_CandidateOrigins.Length < pairCapacity)
-            {
-                m_CandidateOrigins = new int[pairCapacity];
-                m_CandidateDests = new int[pairCapacity];
-                m_CandidateWeights = new float[pairCapacity];
-                m_CandidateAccess = new float[pairCapacity];
-                m_CandidateBaseline = new float[pairCapacity];
-                m_PairFlowScratch = new int[pairCapacity];
-            }
-
-            if (m_CandidateStopX is null || m_CandidateStopZ is null || m_CandidateStopX.Length < stopCapacity)
-            {
-                m_CandidateStopX = new float[stopCapacity];
-                m_CandidateStopZ = new float[stopCapacity];
-            }
-        }
-
-        // Scores every candidate still in play against the network AS IT WOULD BE once
-        // the suggestions already accepted this refresh are built.
-        //
-        // Scoring each candidate against the untouched network was how four
-        // near-parallel metros came to be suggested at once: enabled demand was
-        // measured independently, so every one of them was credited with the same
-        // journeys and none knew the others existed. Peeling handles this during
-        // corridor GROWTH, but the ranking is by enabled demand, which was never
-        // peeled — the README's promise that "the demand that line would carry is
-        // removed from the pool before the next suggestion" was never actually kept.
-        private void ScoreCandidates(Setting settings, bool[] settled)
-        {
-            if (m_TransitNetwork?.Graph is null || m_RouteCandidates.Count == 0
-                || m_ZoneStops is null || m_ZoneStopDistSq is null || m_BaselineSeconds is null)
-            {
-                return;
-            }
-
-            // The candidates worth the routing pass. Candidates arrive sorted by
-            // corridor flow, and a lattice corridor's flow is systematically lower than
-            // a street's, so too narrow a window scored the road candidates and nothing
-            // else: every rail and water candidate kept an enabled demand of zero and
-            // sank to the bottom of a ranking led by exactly that number.
-            int evaluate = math.min(m_RouteCandidates.Count, settings.RouteCount * MaxScoredPerRoute);
-            if (m_RouteCandidates.Count > evaluate)
-            {
-                Mod.Log.Info(
-                    $"  transfer scoring capped at {(evaluate).ToString(CultureInfo.InvariantCulture)} of " +
-                    $"{m_RouteCandidates.Count} candidates; the rest keep an enabled demand of zero and rank on corridor flow alone");
-            }
-
-            float discount = settings.TransferDiscount;
-
-            var baseLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
-            baseLines.AddRange(m_AcceptedLines);
-            int baseStops = m_TransitStops.Count + m_AcceptedStops.Count;
-
-            // Zones see the accepted suggestions' stops too, so the baseline below is
-            // what a rider would really have once they are built.
-            if (m_RoundZoneStop is null || m_RoundZoneStop.Length < m_ZoneStops.Length
-                || m_RoundZoneWalkSq is null)
-            {
-                m_RoundZoneStop = new int[m_ZoneStops.Length];
-                m_RoundZoneWalkSq = new float[m_ZoneStops.Length];
-            }
-
-            Array.Copy(m_ZoneStops, m_RoundZoneStop, m_ZoneStops.Length);
-            Array.Copy(m_ZoneStopDistSq, m_RoundZoneWalkSq, m_ZoneStopDistSq.Length);
-            if (m_AcceptedStops.Count > 0)
-            {
-                _ = BuildPairsWith(m_AcceptedStops, m_TransitStops.Count, m_ZoneStops, m_ZoneStopDistSq,
-                    out _, out _, out _, out _, out _);
-                Array.Copy(m_ZoneStopsScratch, m_RoundZoneStop, m_RoundZoneStop.Length);
-                Array.Copy(m_ZoneStopScratchDistSq, m_RoundZoneWalkSq, m_RoundZoneWalkSq.Length);
-            }
-
-            // Everything that does not vary between candidates is built once: the stop
-            // positions, the line list which only ever gains one entry at the end, and
-            // the workspace, which Resize exists to reuse.
-            int widest = 0;
-            for (int c = 0; c < evaluate; c++)
-            {
-                widest = math.max(widest, m_RouteCandidates[c].Stops.Count);
-            }
-
-            var xs = new float[baseStops + widest];
-            var zs = new float[baseStops + widest];
-            for (int i = 0; i < m_TransitStops.Count; i++)
-            {
-                xs[i] = m_TransitStops[i].x;
-                zs[i] = m_TransitStops[i].y;
-            }
-
-            for (int i = 0; i < m_AcceptedStops.Count; i++)
-            {
-                xs[m_TransitStops.Count + i] = m_AcceptedStops[i].x;
-                zs[m_TransitStops.Count + i] = m_AcceptedStops[i].y;
-            }
-
-            var lines = new List<TransitLine>(baseLines) { default };
-            int candidateLine = lines.Count - 1;
-            var workspace = new DijkstraWorkspace(0);
-
-            MeasureBaseline(xs, zs, baseStops, baseLines, workspace);
-
-            for (int c = 0; c < evaluate; c++)
-            {
-                SuggestedRoute candidate = m_RouteCandidates[c];
-                if (settled[c] || candidate.Stops.Count < 2)
-                {
-                    continue;
-                }
-
-                // The candidate's stops join the stop set; walk edges then connect them
-                // to whatever is already nearby, which is exactly how a new line becomes
-                // an interchange.
-                int total = baseStops + candidate.Stops.Count;
-                var stops = new int[candidate.Stops.Count];
-                for (int i = 0; i < candidate.Stops.Count; i++)
-                {
-                    int index = baseStops + i;
-                    xs[index] = candidate.Stops[i].x;
-                    zs[index] = candidate.Stops[i].y;
-                    stops[i] = index;
-                }
-
-                lines[candidateLine] = new TransitLine
-                {
-                    m_Stops = stops,
-                    m_ExpectedWait = SuggestedWaitFor(candidate.Mode),
-                    m_RideSeconds = RoadRideSeconds(candidate),
-                    m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(candidate.Mode),
-                };
-
-                TransitNetwork withCandidate = SuitabilityTransit.Build(
-                    xs, zs, total, lines, TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
-                workspace.Resize(withCandidate.Graph.NodeCount);
-
-                // Re-map zones against the candidate's OWN stops before routing. The
-                // mapping above only knows the stops that would exist without it, so a
-                // journey starting where nothing runs yet had no origin stop at all and
-                // could never be credited — which made every candidate score zero
-                // enabled demand, for exactly the lines most worth building.
-                int pairCount = BuildPairsWith(candidate.Stops, baseStops, m_RoundZoneStop, m_RoundZoneWalkSq,
-                    out int[] origins, out int[] dests, out float[] weights,
-                    out float[] access, out float[] baseline);
-                candidate.EnabledDemand = pairCount > 0
-                    ? SuitabilityTransit.CreditLine(
-                        withCandidate, workspace, origins, dests, weights, access, baseline,
-                        pairCount, candidateLine, discount, MaxJourneySeconds, SwitchMarginSeconds, out float _)
-                    : 0f;
-                candidate.DemandScored = true;
-
-                Mod.Log.Info(
-                    $"  transfer scoring {(c).ToString(CultureInfo.InvariantCulture)} (round {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)}): " +
-                    $"{candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops, " +
-                    $"corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"routablePairs={(pairCount).ToString(CultureInfo.InvariantCulture)}, " +
-                    $"against {(m_AcceptedLines.Count).ToString(CultureInfo.InvariantCulture)} already accepted");
-
-                // Enabled demand is kept SEPARATE from corridor flow rather than
-                // replacing it. It governs the ranking — which is what makes a
-                // suggestion stop being offered once it is built — but the mode floors
-                // are multiples of the network's mean edge flow, and only CapturedFlow
-                // is on that scale. Folding the two into one field made ChooseMode
-                // compare a city-wide journey-weight sum against a per-edge mean.
-            }
-        }
-
-        // What every journey costs on the network as it would be once the accepted
-        // suggestions are built. This is what a candidate has to beat before anyone
-        // would change how they travel, and re-measuring it after each acceptance is
-        // what stops the next suggestion claiming riders the last one already took.
-        private void MeasureBaseline(
-            float[] xs,
-            float[] zs,
-            int baseStops,
-            List<TransitLine> baseLines,
-            DijkstraWorkspace workspace)
-        {
-            if (m_BaselineSeconds is null || m_PairFlowScratch is null || m_RoundZoneStop is null
-                || m_RoundZoneWalkSq is null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < m_ZoneFlows.Count; i++)
-            {
-                m_BaselineSeconds[i] = float.MaxValue;
-            }
-
-            TransitNetwork network = SuitabilityTransit.Build(
-                xs, zs, baseStops, baseLines, TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
-            workspace.Resize(network.Graph.NodeCount);
-
-            int pairCount = BuildPairsWith(s_NoStops, baseStops, m_RoundZoneStop, m_RoundZoneWalkSq,
-                out int[] origins, out int[] dests, out float[] _, out float[] access, out float[] _);
-            int[] flowOf = m_PairFlowScratch;
-
-            int currentOrigin = -1;
-            for (int i = 0; i < pairCount; i++)
-            {
-                int origin = origins[i];
-                if (origin != currentOrigin)
-                {
-                    currentOrigin = origin;
-                    workspace.Run(network.Graph, origin, MaxJourneySeconds);
-                }
-
-                if (SuitabilityTransit.Inspect(network, workspace, origin, dests[i], -1,
-                        out int boardings, out bool _, out float travelTime)
-                    && boardings > 0)
-                {
-                    m_BaselineSeconds[flowOf[i]] = travelTime + access[i];
-                }
-            }
         }
 
         // A proposed line has no fleet yet, so its service level is assumed from its
@@ -4150,11 +3814,6 @@ namespace StationSuitabilityOverlay
         // no distance threshold — TCQSM Exhibit 4-5). Metres follow from the speed.
         private const float TransferWalkSeconds = TransitModes.TransferWalkMs / 1000f;
         private const float TransferWalkRadius = SuitabilityTransit.WalkSpeed * TransferWalkSeconds;
-        // How much better a journey has to get before anyone changes how they make it.
-        // Below a minute the difference is not worth the bother, and crediting a line
-        // for it is how a proposed metro came to be credited with demand that carried
-        // on riding the tram.
-        private const float SwitchMarginSeconds = 60f;
         // How far a zone's centre may be from a stop for that stop to serve it. A zone
         // is 256 m across, so its centre is further from a stop than its edges are, and
         // the plain transfer radius left most zones unserved.
@@ -4184,7 +3843,6 @@ namespace StationSuitabilityOverlay
         // anything else in the run. A scoring window narrower than the candidate set
         // would drop exactly that kind of line, unscored, to the bottom of a ranking
         // led by the number it never got.
-        private const int MaxScoredPerRoute = 16;
         // How close a sampled stop entity has to be to a collected line's stop to be
         // the same stop. Generous, because the two come from different game components
         // and their positions need not agree exactly.
@@ -4523,107 +4181,299 @@ namespace StationSuitabilityOverlay
                 Floor(SuitabilityGraphMath.MeanPositiveFlow(m_WaterNetwork.EdgeFlow, m_WaterNetwork.EdgeCount)));
         }
 
-        // Second phase: turn the grown candidates into the handful of suggestions the
-        // player sees. Growing decides where a line could run; this decides whether it
-        // is worth running at all, and on which mode.
-        // grownTotal/shortTotal come from the growing phase purely so the one summary
-        // line the log is read by stays whole.
+        // The suggestions as a SET (register A7.5, decided 2026-09-05): every candidate is
+        // first weighed alone — its riders feed the mode decision and the log — then the
+        // resolved candidates are handed to the exact line-set search, which maximises
+        // (equity share up to the floor, then passenger time saved) over sets of at most
+        // RouteCount lines under the utilisation and duplicate rules. Nothing is taken
+        // greedily: a feeder that pays only next to its trunk is found with it.
         private void SelectRoutes(Setting settings, int2 gridSize, int grownTotal, int shortTotal)
         {
-            // Pick each candidate's mode from what its demand actually justifies, and
-            // re-trace it on the streets when nothing its own alignment can carry is
-            // justified.
             NetworkReferences references = MeasureNetworks();
             float roadReference = references.Road;
-
-            Mod.Log.Info(
-                "Route scales: corridorFlow = mean demand per network edge along the corridor, and is what the mode " +
-                "floors below are multiples of; enabledDemand = the share of still-unserved journeys the line would " +
-                "newly improve, and is what the ranking uses. They differ by one to two orders of magnitude and must " +
-                "never be compared with each other.");
-
             m_Routes.Clear();
             m_AcceptedStops.Clear();
             m_AcceptedLines.Clear();
+            m_LineSetSolution = null;
+            m_LineSetProblem = null;
+            m_LineSetResolved.Clear();
             var tally = new RejectionTally();
             var scratch = new List<int>();
-            var settled = new bool[m_RouteCandidates.Count];
 
-            // One acceptance per round. Between rounds the accepted suggestion joins the
-            // network and every remaining candidate is measured again against it, so a
-            // near-duplicate's demand collapses on its own — it no longer improves the
-            // journeys the accepted line already improved — and a line that COMPLEMENTS
-            // it can overtake one that merely repeated it.
-            for (int round = 0; round < settings.RouteCount; round++)
+            WeighCandidatesAlone(settings, m_RouteCandidates);
+            var resolved = new List<SuggestedRoute>();
+            for (int i = 0; i < m_RouteCandidates.Count; i++)
             {
-                ScoreCandidates(settings, settled);
-                if (!AcceptBestCandidate(settings, gridSize, references, roadReference, scratch, settled, tally))
+                SuggestedRoute candidate = m_RouteCandidates[i];
+                float networkReference = references.For(candidate.Network);
+                SuggestedRoute? route = ResolveCandidateMode(candidate, i, gridSize, networkReference, roadReference, scratch, tally);
+                if (route is null)
                 {
-                    break;
+                    tally.Unjustified++;
+                    continue;
                 }
+
+                if (PassesLineGates(route, i, route.CapturedFlow, references.For(route.Network), tally))
+                {
+                    resolved.Add(route);
+                }
+            }
+
+            if (resolved.Count > 0)
+            {
+                LineSetProblem problem = BuildLineSetProblem(settings, resolved, settings.RouteCount);
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+                stopwatch.Stop();
+                m_LineSetSolution = solution;
+                m_LineSetProblem = problem;
+                m_LineSetResolved.AddRange(resolved);
+                AdoptLineSet(settings, resolved, problem, solution, stopwatch.ElapsedMilliseconds);
             }
 
             Mod.Log.Info(
                 $"Route suggestions: grown={(grownTotal).ToString(CultureInfo.InvariantCulture)}, tooShort={(shortTotal).ToString(CultureInfo.InvariantCulture)}, " +
-                $"candidates={m_RouteCandidates.Count}, unjustified={(tally.Unjustified).ToString(CultureInfo.InvariantCulture)}, retracedOnRoad={(tally.Retraced).ToString(CultureInfo.InvariantCulture)}, " +
-                $"alreadyBuilt={(tally.AlreadyBuilt).ToString(CultureInfo.InvariantCulture)}, improvedTooLittle={(tally.ImprovedTooLittle).ToString(CultureInfo.InvariantCulture)}, " +
+                $"candidates={m_RouteCandidates.Count}, resolved={(resolved.Count).ToString(CultureInfo.InvariantCulture)}, unjustified={(tally.Unjustified).ToString(CultureInfo.InvariantCulture)}, " +
+                $"retracedOnRoad={(tally.Retraced).ToString(CultureInfo.InvariantCulture)}, alreadyBuilt={(tally.AlreadyBuilt).ToString(CultureInfo.InvariantCulture)}, " +
                 $"kept={m_Routes.Count}, {references.Describe()}");
         }
 
-        // Ranking of the candidates still in play. While the city is below the equity
-        // floor (register A1.8: a set share of journeys served at both ends), the
-        // journeys a candidate newly serves come first — lexicographically, so no
-        // amount of enabled travel outranks bringing unserved people within reach.
-        // Once the floor is met, enabled demand leads, with corridor flow breaking ties
-        // — which covers the candidates past the scoring window, where enabled demand
-        // was never measured at all.
-        private List<int> OrderCandidates(Setting settings, bool[] settled)
+        // Every candidate evaluated on its own against the existing network: the journey
+        // weight that would ride it becomes EnabledDemand (what the mode decision and the
+        // panel's reach figure read), and its standalone time saving is logged.
+        private void WeighCandidatesAlone(Setting settings, List<SuggestedRoute> candidates)
         {
-            var order = new List<int>(m_RouteCandidates.Count);
-            for (int i = 0; i < m_RouteCandidates.Count; i++)
+            var usable = new List<SuggestedRoute>();
+            for (int i = 0; i < candidates.Count; i++)
             {
-                if (!settled[i])
+                candidates[i].EnabledDemand = 0f;
+                candidates[i].DemandScored = false;
+                if (candidates[i].Stops.Count >= 2)
                 {
-                    order.Add(i);
+                    usable.Add(candidates[i]);
                 }
             }
 
-            bool coverageFirst = BelowEquityFloor(settings);
-            var gain = new float[m_RouteCandidates.Count];
-            if (coverageFirst)
+            if (usable.Count == 0)
             {
-                for (int k = 0; k < order.Count; k++)
-                {
-                    gain[order[k]] = CoverageGain(m_RouteCandidates[order[k]]);
-                }
+                return;
             }
 
-            order.Sort((left, right) =>
+            LineSetProblem probe = BuildLineSetProblem(settings, usable, 1);
+            float[] before = SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
+            for (int c = 0; c < usable.Count; c++)
             {
-                if (coverageFirst)
-                {
-                    int byGain = gain[right].CompareTo(gain[left]);
-                    if (byGain != 0)
-                    {
-                        return byGain;
-                    }
-                }
-
-                SuggestedRoute a = m_RouteCandidates[left];
-                SuggestedRoute b = m_RouteCandidates[right];
-                int byDemand = b.EnabledDemand.CompareTo(a.EnabledDemand);
-                return byDemand != 0 ? byDemand : b.CapturedFlow.CompareTo(a.CapturedFlow);
-            });
-
-            if (coverageFirst && order.Count > 0)
-            {
+                LineSetEvaluation alone = SuitabilityLineSet.Evaluate(probe, new[] { c }, 1, before);
+                usable[c].EnabledDemand = (float)alone.Riders[c];
+                usable[c].DemandScored = true;
                 Mod.Log.Info(
-                    "  equity floor unmet: candidates ranked by journeys newly served first; best gains " +
-                    $"{gain[order[0]].ToString("F0", CultureInfo.InvariantCulture)}" +
-                    (order.Count > 1 ? $", {gain[order[1]].ToString("F0", CultureInfo.InvariantCulture)}" : string.Empty));
+                    $"  candidate alone: {usable[c].Network} {usable[c].Mode}, {usable[c].Stops.Count} stops, " +
+                    $"corridorFlow={(usable[c].CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"riders/day={(alone.Riders[c]).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"timeSaved={(alone.TimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day");
+            }
+        }
+
+        // The set problem over `candidates`: existing served stops and lines as the base
+        // network, every journey at its full weight, each candidate with the wait, speed,
+        // ride times, headway and capacity of its resolved mode.
+        private LineSetProblem BuildLineSetProblem(Setting settings, List<SuggestedRoute> candidates, int maxLines)
+        {
+            var problem = new LineSetProblem
+            {
+                BaseStopCount = m_TransitStops.Count,
+                BaseStopX = new float[m_TransitStops.Count],
+                BaseStopZ = new float[m_TransitStops.Count],
+                BaseLines = SuitabilityLines.ToTransitLines(m_ExistingLines),
+                PairCount = m_FullZoneFlows.Count,
+                PairOx = new float[m_FullZoneFlows.Count],
+                PairOz = new float[m_FullZoneFlows.Count],
+                PairDx = new float[m_FullZoneFlows.Count],
+                PairDz = new float[m_FullZoneFlows.Count],
+                PairWeight = new float[m_FullZoneFlows.Count],
+                WalkRadius = TransferWalkRadius,
+                BoardPenaltySeconds = SuitabilityTransit.DefaultBoardPenaltySeconds,
+                MaxTravelSeconds = MaxJourneySeconds,
+                ZoneReachMetres = ZoneStopReachMetres,
+                MaxLines = maxLines,
+                UtilisationFloor = settings.UtilisationFloorPercent / 100f,
+                MovementSecondsPerDay = SuitabilityEquity.MovementSecondsPerGameDay,
+                DuplicateShare = DuplicateRiderShare,
+                EquityFloorShare = settings.EquityFloorPercent / 100f,
+            };
+            for (int i = 0; i < m_TransitStops.Count; i++)
+            {
+                problem.BaseStopX[i] = m_TransitStops[i].x;
+                problem.BaseStopZ[i] = m_TransitStops[i].y;
             }
 
-            return order;
+            for (int i = 0; i < m_FullZoneFlows.Count; i++)
+            {
+                ZoneFlow flow = m_FullZoneFlows[i];
+                float2 origin = SuitabilityTravelDemand.ZoneCentre(flow.m_Origin, m_ScoreWorldMin, m_ZoneGrid);
+                float2 destination = SuitabilityTravelDemand.ZoneCentre(flow.m_Destination, m_ScoreWorldMin, m_ZoneGrid);
+                problem.PairOx[i] = origin.x;
+                problem.PairOz[i] = origin.y;
+                problem.PairDx[i] = destination.x;
+                problem.PairDz[i] = destination.y;
+                problem.PairWeight[i] = flow.m_Weight;
+            }
+
+            FleetCapacity capacities = ReadFleetCapacities();
+            for (int c = 0; c < candidates.Count; c++)
+            {
+                SuggestedRoute route = candidates[c];
+                var line = new LineCandidate
+                {
+                    StopX = new float[route.Stops.Count],
+                    StopZ = new float[route.Stops.Count],
+                    ExpectedWait = SuggestedWaitFor(route.Mode),
+                    SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(route.Mode),
+                    RideSeconds = RoadRideSeconds(route),
+                    HeadwaySeconds = SuggestedWaitFor(route.Mode) * 2f,
+                    VehicleCapacity = capacities.For(route.Mode),
+                };
+                for (int i = 0; i < route.Stops.Count; i++)
+                {
+                    line.StopX[i] = route.Stops[i].x;
+                    line.StopZ[i] = route.Stops[i].y;
+                }
+
+                problem.Candidates.Add(line);
+            }
+
+            if (m_ServedWalkMs is not null && m_Access?.Index is not null && m_AccessInputs is not null && m_EquityDijkstra is not null)
+            {
+                problem.CoverageOf = (chosen, count) => CoverageWith(candidates, chosen, count);
+            }
+
+            return problem;
+        }
+
+        // Share of journeys served at both ends once the chosen candidates' stops join the
+        // served network — the equity component of the set objective.
+        private float CoverageWith(List<SuggestedRoute> candidates, int[] chosen, int count)
+        {
+            WalkAccessOutput? access = m_Access;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (m_ServedWalkMs is null || access?.Index is null || inputs is null || m_EquityDijkstra is null)
+            {
+                return 0f;
+            }
+
+            var stops = new List<float2>();
+            for (int k = 0; k < count; k++)
+            {
+                stops.AddRange(candidates[chosen[k]].Stops);
+            }
+
+            SnapStops(stops, access.Index, inputs.AccessMs, out int[] nodes, out int[] stopAccess);
+            int[] merged = SuitabilityEquity.WithStops(inputs.Graph, m_EquityDijkstra, m_ServedWalkMs, nodes, stopAccess, nodes.Length, m_EquityHorizonMs);
+            return SuitabilityEquity.Coverage(
+                merged, m_EquityHorizonMs,
+                m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
+                m_JourneyWeight, m_Journeys.Count).Share;
+        }
+
+        // Riders of a line may already have an equally fast route without it: above this
+        // share of them the line duplicates the set it sits in (register A4.3).
+        private const float DuplicateRiderShare = 0.5f;
+
+        private void AdoptLineSet(Setting settings, List<SuggestedRoute> resolved, LineSetProblem problem, LineSetSolution solution, long elapsedMs)
+        {
+            var order = new List<int>();
+            for (int k = 0; k < solution.Count; k++)
+            {
+                order.Add(solution.Chosen[k]);
+            }
+
+            order.Sort((a, b) => solution.StandaloneTimeSaved[b].CompareTo(solution.StandaloneTimeSaved[a]));
+            LineSetEvaluation? evaluation = solution.Evaluation;
+            for (int k = 0; k < order.Count; k++)
+            {
+                SuggestedRoute route = resolved[order[k]];
+                if (evaluation is not null)
+                {
+                    route.EnabledDemand = (float)evaluation.Riders[order[k]];
+                }
+
+                route.Vehicles = RoadVehicles(route, SuggestedWaitFor(route.Mode) * 2f);
+                m_Routes.Add(route);
+                AcceptIntoNetwork(route);
+                Mod.Log.Info(
+                    $"  KEPT #{(k + 1).ToString(CultureInfo.InvariantCulture)}: {route.Network} {route.Mode}, {route.Stops.Count} stops, " +
+                    $"len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, riders/day in the set={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"utilisation={(SuitabilityLineSet.Utilisation(problem, order[k], route.EnabledDemand) * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
+                    $"alone={(solution.StandaloneTimeSaved[order[k]] / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} veh");
+            }
+
+            if (m_Routes.Count > 0)
+            {
+                var stops = new List<float2>();
+                for (int i = 0; i < m_Routes.Count; i++)
+                {
+                    stops.AddRange(m_Routes[i].Stops);
+                }
+
+                ServeStops(settings, stops);
+            }
+
+            string realism = evaluation is null
+                ? string.Empty
+                : $"; the set's journeys spend walk {(evaluation.WalkSeconds / 3600.0).ToString("F0", CultureInfo.InvariantCulture)} h, wait {(evaluation.WaitSeconds / 3600.0).ToString("F0", CultureInfo.InvariantCulture)} h, ride {(evaluation.RideSeconds / 3600.0).ToString("F0", CultureInfo.InvariantCulture)} h a day " +
+                  $"(realism-weighted 2.2/2.1/1: {((evaluation.WalkSeconds * 2.2 + evaluation.WaitSeconds * 2.1 + evaluation.RideSeconds) / 3600.0).ToString("F0", CultureInfo.InvariantCulture)} weighted hours — shown, not planned with; register A7.2)";
+            Mod.Log.Info(
+                $"Line set: {(solution.Count).ToString(CultureInfo.InvariantCulture)} of {(resolved.Count).ToString(CultureInfo.InvariantCulture)} resolved candidates chosen, " +
+                $"time saved {(solution.TimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day " +
+                $"{(solution.Optimal ? "(proven optimal" : $"(best found, NOT proven optimal; ceiling {(solution.UpperBoundTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)}")} " +
+                $"under equity floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} % (set reaches {(solution.Coverage * 100f).ToString("F1", CultureInfo.InvariantCulture)} %), " +
+                $"utilisation floor {settings.UtilisationFloorPercent.ToString(CultureInfo.InvariantCulture)} %, duplicate share {(DuplicateRiderShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} %), " +
+                $"{(solution.Nodes).ToString(CultureInfo.InvariantCulture)} search nodes, {(solution.Infeasible).ToString(CultureInfo.InvariantCulture)} infeasible sets met, {(elapsedMs).ToString(CultureInfo.InvariantCulture)} ms{realism}");
+        }
+
+        // The per-line bars a resolved candidate has to clear before the set search may
+        // consider it: its shape (floor length), evidence that anyone travels this way,
+        // and not being a line the player has already built. Utilisation and duplication
+        // among the suggestions themselves are the set search's to judge.
+        private bool PassesLineGates(SuggestedRoute candidate, int index, float corridorFlow, float networkReference, RejectionTally tally)
+        {
+            if (!SuitabilityRoutes.KeepsItsFloor(candidate))
+            {
+                tally.Unjustified++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
+                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
+                    $"under the {(TransitModes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
+                return false;
+            }
+
+            if (candidate.EnabledDemand <= 0f && corridorFlow < networkReference * MinFlowShareOfReference)
+            {
+                tally.Unjustified++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
+                    $"(needs {(networkReference * MinFlowShareOfReference).ToString("F0", CultureInfo.InvariantCulture)} without riders), riders=0 — DROPPED, too little travel on this corridor");
+                return false;
+            }
+
+            if (corridorFlow <= MinCandidateFlow)
+            {
+                tally.Unjustified++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
+                    $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}) — DROPPED, no demand on this corridor");
+                return false;
+            }
+
+            if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
+            {
+                tally.AlreadyBuilt++;
+                Mod.Log.Info(
+                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, {candidate.Stops.Count} stops — DROPPED, already built");
+                return false;
+            }
+
+            return true;
         }
 
         // Why the candidates that did not become suggestions were turned down, for the
@@ -4637,170 +4487,6 @@ namespace StationSuitabilityOverlay
             public int Unjustified;
             public int Retraced;
             public int AlreadyBuilt;
-            public int ImprovedTooLittle;
-        }
-
-        // Every bar a resolved candidate has to clear before it is worth offering, in
-        // the order that makes the log readable: shape first, then the two kinds of
-        // demand evidence, then whether the player has already built it. Each gate
-        // reports its own reason, because "too short once trimmed" and "nobody would
-        // ride it" call for opposite responses from whoever reads the log.
-        //
-        // Split out of AcceptBestCandidate, which owns the ranking and the acceptance;
-        // this owns the rejecting. Behaviour is unchanged by the split.
-        private bool SurvivesEveryBar(
-            Setting settings,
-            SuggestedRoute candidate,
-            int index,
-            float corridorFlow,
-            float networkReference,
-            RejectionTally tally)
-        {
-            // Placing the stops trimmed the line back to its termini, which can
-            // leave it shorter than the floor ChooseMode approved it against.
-            if (!SuitabilityRoutes.KeepsItsFloor(candidate))
-            {
-                tally.Unjustified++;
-                Mod.Log.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m after stops, {candidate.Stops.Count} stops — DROPPED, " +
-                    $"under the {(TransitModes.MinLengthFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}m minimum for a {candidate.Mode} once trimmed");
-                return false;
-            }
-
-            // A bus has no demand floor of its own — MinFlowMultipleFor(Bus) is 0
-            // so every road corridor yields a "usable" suggestion — and a bare
-            // MinCandidateFlow of 1 was not a bar at all: a 540 m line carrying a
-            // corridor flow of 27 against a city mean of 625, with zero enabled
-            // demand, was suggested to the player. A suggestion nobody can justify
-            // is worse than no suggestion.
-            //
-            // Either kind of evidence will do, because they answer different
-            // questions: enabled demand says journeys exist that this line would
-            // newly serve, corridor flow says people travel this way at all. A
-            // city with no transit yet has no enabled demand anywhere, so corridor
-            // flow has to be able to carry a suggestion on its own.
-            if (candidate.EnabledDemand <= 0f && corridorFlow < networkReference * MinFlowShareOfReference)
-            {
-                tally.Unjustified++;
-                Mod.Log.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
-                    $"(needs {(networkReference * MinFlowShareOfReference).ToString("F0", CultureInfo.InvariantCulture)} without enabled demand), enabledDemand=0, " +
-                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, too little travel on this corridor to justify a line");
-                return false;
-            }
-
-            // A corridor nobody travels at all is not a suggestion.
-            if (corridorFlow <= MinCandidateFlow)
-            {
-                tally.Unjustified++;
-                Mod.Log.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F2", CultureInfo.InvariantCulture)} " +
-                    $"(minimum {(MinCandidateFlow).ToString("F2", CultureInfo.InvariantCulture)}), enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m — DROPPED, no demand on this corridor");
-                return false;
-            }
-
-            // The utilisation floor (register A4.1/A6.4, decided 2026-09-05): boardings
-            // the line would carry in a game day over the seats its headway offers in
-            // that day, both directions — on the game's clock, where a day is 4 369 s of
-            // movement. Replaced "fills one bus at the peak", which asked the same
-            // question of every mode at one fixed size and never of the fleet.
-            float capacity = ReadFleetCapacities().For(candidate.Mode);
-            float headway = SuggestedWaitFor(candidate.Mode) * 2f;
-            float utilisation = SuitabilityEquity.Utilisation(candidate.EnabledDemand, headway, capacity);
-            float floor = settings.UtilisationFloorPercent / 100f;
-            if (candidate.DemandScored && utilisation < floor)
-            {
-                tally.ImprovedTooLittle++;
-                Mod.Log.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, utilisation " +
-                    $"{(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of the seats offered in a game day (floor {(floor * 100f).ToString("F0", CultureInfo.InvariantCulture)} %; " +
-                    $"headway {(headway).ToString("F0", CultureInfo.InvariantCulture)} s, capacity {(capacity).ToString("F0", CultureInfo.InvariantCulture)}; " +
-                    $"this city still has {(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys unserved)");
-                return false;
-            }
-
-            if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
-            {
-                tally.AlreadyBuilt++;
-                Mod.Log.Info(
-                    $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"{candidate.Stops.Count} stops — DROPPED, already built");
-                return false;
-            }
-
-            return true;
-        }
-
-        // Takes the best remaining candidate that survives every gate, and adds it to
-        // the network the next round measures against. Returns false when nothing is
-        // left worth suggesting.
-        private bool AcceptBestCandidate(
-            Setting settings,
-            int2 gridSize,
-            NetworkReferences references,
-            float roadReference,
-            List<int> scratch,
-            bool[] settled,
-            RejectionTally tally)
-        {
-            List<int> order = OrderCandidates(settings, settled);
-            for (int slot = 0; slot < order.Count; slot++)
-            {
-                int i = order[slot];
-                SuggestedRoute candidate = m_RouteCandidates[i];
-
-                float networkReference = references.For(candidate.Network);
-                SuggestedRoute? resolved = ResolveCandidateMode(
-                    candidate, i, gridSize, networkReference, roadReference, scratch, tally);
-                if (resolved is null)
-                {
-                    tally.Unjustified++;
-                    settled[i] = true;
-                    continue;
-                }
-
-                candidate = resolved;
-
-                // From here the candidate is judged as it will actually RUN. A
-                // re-traced candidate is a road line now: its flow is the road path's
-                // and its floors are the road network's, while `corridorFlow` and the
-                // reference above still describe the lattice corridor it was grown as.
-                //
-                // Mixing the two put "corridorFlow=63 (floor 143)" on a KEPT tram in
-                // the log — a line reading as approved below its own floor, against a
-                // floor computed from a network it no longer runs on. The preamble two
-                // screens up says these quantities must never be compared with each
-                // other; this was the log doing it.
-                float corridorFlow = candidate.CapturedFlow;
-                networkReference = references.For(candidate.Network);
-
-                if (!SurvivesEveryBar(settings, candidate, i, corridorFlow, networkReference, tally))
-                {
-                    settled[i] = true;
-                    continue;
-                }
-
-                candidate.Vehicles = RoadVehicles(candidate, SuggestedWaitFor(candidate.Mode) * 2f);
-
-                Mod.Log.Info(
-                    $"  candidate {(i).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} -> {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)} " +
-                    $"(floor {(networkReference * TransitModes.MinFlowMultipleFor(candidate.Mode)).ToString("F0", CultureInfo.InvariantCulture)}), " +
-                    $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops, {(candidate.Vehicles).ToString(CultureInfo.InvariantCulture)} veh — KEPT");
-
-                m_Routes.Add(candidate);
-                settled[i] = true;
-                AcceptIntoNetwork(candidate);
-                ServeStops(settings, candidate.Stops);
-                return true;
-            }
-
-            return false;
         }
 
         // Treats an accepted suggestion as though the player had built it, so the next
@@ -4940,31 +4626,6 @@ namespace StationSuitabilityOverlay
                 $"{(m_Coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
                 $"Gini of access walk {m_Coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +
                 $"served stops {(m_TransitStops.Count + m_AcceptedStops.Count).ToString(CultureInfo.InvariantCulture)}");
-        }
-
-        private bool BelowEquityFloor(Setting settings)
-        {
-            return m_Coverage is not null && m_Coverage.Share * 100f < settings.EquityFloorPercent;
-        }
-
-        // Journey weight a candidate's stops would newly bring within the horizon at
-        // both ends — the quantity the ranking maximises while the floor is unmet.
-        private float CoverageGain(SuggestedRoute candidate)
-        {
-            WalkAccessOutput? access = m_Access;
-            WalkAccessInputs? inputs = m_AccessInputs;
-            if (m_ServedWalkMs is null || m_Coverage is null || access?.Index is null || inputs is null || m_EquityDijkstra is null)
-            {
-                return 0f;
-            }
-
-            SnapStops(candidate.Stops, access.Index, inputs.AccessMs, out int[] nodes, out int[] stopAccess);
-            int[] merged = SuitabilityEquity.WithStops(inputs.Graph, m_EquityDijkstra, m_ServedWalkMs, nodes, stopAccess, nodes.Length, m_EquityHorizonMs);
-            CoverageReport with = SuitabilityEquity.Coverage(
-                merged, m_EquityHorizonMs,
-                m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
-                m_JourneyWeight, m_Journeys.Count);
-            return (float)(with.CoveredWeight - m_Coverage.CoveredWeight);
         }
 
         private void ServeStops(Setting settings, List<float2> stops)

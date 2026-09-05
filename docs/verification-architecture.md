@@ -52,8 +52,9 @@ Two sources, same schema:
   `Options → Export verification instance` writes canonical instances of the live city
   to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Three
   files per press — `heatmap_walk` (the access pass's own inputs plus a sample of its
-  terms), `sites` (the real score field) and `lineset` (zones, discounted flows, the
-  real transit graph and the candidate pool). Read-only: nothing in the export changes
+  terms), `sites_walk` (the real score field on network nodes), `road_times`,
+  `coverage` and `lineset_time` (journeys, the real transit graph, the candidate
+  pool and the mod's chosen set). Read-only: nothing in the export changes
   what the mod computes.
 
   The design point that makes the export worth trusting is *when* it captures: the
@@ -81,7 +82,7 @@ downstream artifact.
 A small C# console project that **links** (does not copy) the six pure files exactly
 as `tests/SuitabilityScoring.Tests` does, reads an instance JSON, drives the pure
 entry points (`FindTopSites`, `AccumulateWalkDistance`, `GrowCorridor`, `TracePath`
-semantics via `DijkstraWorkspace`, `SuitabilityTransit.Build`/`CreditLine`,
+semantics via `DijkstraWorkspace`, `SuitabilityTransit.BuildWithZones`/`SuitabilityLineSet.Solve`,
 `PlanCallingPoints`/`SelectCallingPoints`, `TransitModes.ChooseMode`) with the same
 argument wiring the ECS half uses (documented per call in
 `docs/formal-specification.md`), and writes a solution JSON. This is the *system
@@ -103,8 +104,8 @@ Emits:
 - **P-PATH** (S4 lattice): shortest path as LP/MIP or, preferably, combinatorial
   certificate (see below) — the solver is not required for a shortest-path proof.
 - **P-LINESET** (S7): NOT emitted as a MIP (the objective is routing-defined and
-  non-additive); handled by complete enumeration with the exact evaluator on bounded
-  instances.
+  non-additive); handled by complete enumeration of feasible subsets with the exact
+  evaluator (bounded to ≤ k′ lines when the pool is large, and reported as such).
 
 ### 4. Solver + certificate
 

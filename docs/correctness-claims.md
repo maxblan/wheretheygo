@@ -95,17 +95,30 @@ for what has and has not been shown; nothing else in the repo may claim more.
 | C6.2 | A route still clears its mode's length floor after trimming | getestet | mod tests (`KeepsItsFloor`) |
 | C6.3 | A lattice alignment is only suggested as the mode that traced it | getestet | mod tests |
 
-## S7 Routing, credit, greedy acceptance
+## S7 Line-set selection (v2 since Phase 7) — and the v1 credit/greedy history
 
 | # | Claim | Status | Evidence |
 |---|---|---|---|
-| C7.1 | Crediting uses a shortest itinerary; value within the exact interval over all tied shortest itineraries | getestet (interval semantics per user decision) — on the 4 synthetic instances **and on Valmare's real transit model**: 11 existing lines, 76 stops, 1,394 discounted zone flows, 10 candidates, pathfound ride durations carried through; every credit lands in its exact ℚ interval, no ties affected the outcome | verdict `credits_in_interval` |
-| C7.2 | Boardings = access edges/2; transfers = boardings − 1; discount^transfers applied | getestet (the feeder instance's 100 · 0.6¹ credit is reproduced exactly, incl. the binary32 value of 0.6) | `lineset-feeder` intervals |
-| C7.3 | Credit gates (3600 s ceiling, 60 s switch margin, baseline semantics) match the spec | getestet (exact re-implementation agrees on all instances) | lineset verdicts |
-| C7.4 | Greedy acceptance yields the maximum credited-sum set of ≤ K lines | **widerlegt** — `lineset-feeder` (complete enumeration of all subsets ≤ K): greedy set = 40, optimum {L1, L2} = 167772165/2097152 ≈ 80.000002; minimal trunk-and-feeder complementarity counterexample, exactly the failure mode the submodularity analysis predicts (scientific-model-review §2). **Real city, second export (39 candidates, K = 5):** the K = 5 optimum is not enumerable (667,928 subsets), so the pipeline enumerated every subset of ≤ 3 lines (9,920, in parallel). Greedy's first three acceptances [14, 15, 12] are worth 584.81; the exact 3-line optimum [10, 14, 15] is worth 622.34 — **gap 37.5, about 6.4 %**. Rounds 1 and 2 were optimal (the best single line and the best pair coincide with the greedy prefix); the third pick is where sequential selection loses to the joint choice. The first export (K = 1) was trivially optimal and says nothing | `enumeration.json`; `real-Valmare-…-lineset` |
-| C7.5 | Separate optimization of stops then lines can reach the joint optimum | **widerlegt** — `lineset-staged`: the stop set produced by the S5 spacing rule (verified bit-exact against `PlanCallingPoints`) has set value 20; an alternative stop set on the same alignment has 80 — strictly dominated | `lineset-staged` verdict |
-| C7.6 | Unmeasured zero demand never rejects a candidate (`DemandScored`) | getestet | mode-choice unscored-bypass row + mod code |
-| C7.7 | Greedy acceptance order (EnabledDemand desc, CapturedFlow tie) is faithful; ties reported | getestet (`lineset-tie` reports the acceptance ambiguity as required) | verdict `overlapping_with_chosen`, `tie_affected` |
+| C7.8 | The mod's chosen set is reproduced offline by its own pure code on the exported problem (`SuitabilityLineSet.Solve`) | getestet on the 5 synthetic instances (`subject_matches_game`); **offen on a real city** until the next export carries the v2 `-lineset` file | `lineset_time` verdicts |
+| C7.9 | The mod's time saved lies within the Higham binary32 budget of the exact rational Σ w·(before−after) over zone-node routing | getestet (5/5; budget derived per pair from γ_L on before and after) | `time_saved_within_budget` |
+| C7.10 | Every chosen line clears the utilisation floor and none is a duplicate, judged on the set's own rider attribution (F1/F2 of spec §6.3) | getestet — `lineset_time-floor` (the line saving most time is refused under a 10 % floor), `lineset_time-duplicate` (a slower parallel line carries nobody once the faster one is in the set and is refused), `lineset_time-random` (24 of 42 subsets infeasible) | `feasible`, `feasible_reason` |
+| C7.11 | When the search closes (`Optimal`), the chosen set's key (min(coverage, X), saved) equals the optimum over ALL feasible subsets of ≤ K lines | getestet by complete enumeration on 5/5 synthetic instances: `lineset_time-feeder` (3 candidates, K = 2 — the set {L1, L2} at ≈ 600 000 s·journeys beats the greedy order's {L3, L1} at ≈ 87 000, the trunk-and-feeder case v1 lost), `-floor`, `-duplicate`, `-tie`, `-random` (6 candidates, K = 3, 42 subsets, gap 0). **On a real city the enumeration will be bounded** (Valmare's pool exceeds `ENUM_BUDGET`): then only the k′-prefix optimum is exact and the verdict says so | `enumeration.json`, `pass_optimal`, `optimality_level` |
+| C7.12 | Key ties are detected and reported, and the mod resolves them by candidate index | getestet (`lineset_time-tie`: two equal sets, `optimum_ties = 2`, mod takes [0]) | `tie_affected`, `optimum_ties` |
+| C7.13 | The union bound is valid (monotonicity of saved and capped coverage in the set) | argued in spec §6.3 (a line can only shorten a journey or serve another door); **nicht formal bewiesen** — a Lean statement over the abstract Dijkstra would be the next hardening step | spec §6.3 |
+| C7.14 | With the node budget exhausted the reported ceiling brackets the optimum | argued (max over open bounds); **not exercised** — every instance so far closes | `upper_bound_time_saved` |
+
+v1 rows, kept because their refutations motivated v2 (the evaluator, instances and
+export kind they cite were removed on 2026-09-05; `git log` has them):
+
+| # | Claim | Status | Evidence |
+|---|---|---|---|
+| C7.1 | Crediting uses a shortest itinerary; value within the exact interval over all tied shortest itineraries | getestet 2026-09-03 (4 synthetic + Valmare: 11 lines, 76 stops, 1,394 flows, 10 candidates) | historical |
+| C7.2 | Boardings = access edges/2; transfers = boardings − 1; discount^transfers applied | getestet 2026-09-03 | historical |
+| C7.3 | Credit gates (3600 s ceiling, 60 s switch margin, baseline semantics) match the spec | getestet 2026-09-03 | historical |
+| C7.4 | Greedy acceptance yields the maximum credited-sum set of ≤ K lines | **widerlegt** — `lineset-feeder`: greedy 40 vs optimum {L1, L2} ≈ 80.000002; Valmare third export (39 candidates, K = 5): greedy's first three [14, 15, 12] = 584.81 vs exact 3-line optimum [10, 14, 15] = 622.34, gap 6.4 %. **Resolved by v2**: the set is now chosen exactly (C7.11) | historical |
+| C7.5 | Separate optimization of stops then lines can reach the joint optimum | **widerlegt** — `lineset-staged`: stop set from the S5 spacing rule worth 20, an alternative on the same alignment 80. Still open in v2: stop placement is unchanged until the S5 DP (plan Phase 7, next stage) | historical |
+| C7.6 | Unmeasured zero demand never rejects a candidate (`DemandScored`) | getestet; the gate no longer exists in v2 | historical |
+| C7.7 | Greedy acceptance order faithful; ties reported | getestet; superseded by C7.12 | historical |
 
 ## Formal bewiesen (Lean 4) — `verification/lean/`
 
@@ -139,7 +152,7 @@ parallel edges.
 |---|---|---|---|
 | CX.1 | The pure half is deterministic given its inputs | getestet — with the S2/S7 unstable-sort tie caveats documented in formal-specification §8 | pure-math rule + pipeline |
 | CX.2 | Instances are canonical and tamper-evident (sorted keys, binary32 bits, SHA-256) | getestet (mutation test: a flipped bit is rejected; a wrong expectation fails the run) | run.py hash check |
-| CX.3 | Reference evaluator and mod agree (exactly for S1/S5/S6; within stated budgets for S7 sums and S4 distances) | getestet on all pipeline instances. The budgets are now DERIVED, not chosen: Higham's forward bound γ_k = k·u/(1−k·u), u = 2⁻²⁴, applied as γ_{m+1}·Σ credits for CreditLine's m-term sum (pow + multiply + m−1 adds) and γ_{L−1}·cost for an L-edge path (`evaluator/tolerances.py`, with citation). An empirical self-test of 20,000 random float32 summations stays inside the bound with a worst observed error/budget of 0.955 — sharp, not loose. Rounding only: a float32 Dijkstra retaining a near-shortest itinerary is a decision flip and is reported, not absorbed | `python3 evaluator/tolerances.py`; verdicts |
+| CX.3 | Reference evaluator and mod agree (exactly for S1/S5/S6; within stated budgets for S7 sums and S4 distances) | getestet on all pipeline instances. The budgets are now DERIVED, not chosen: Higham's forward bound γ_k = k·u/(1−k·u), u = 2⁻²⁴, applied per journey as γ_L·(before + after) for the v2 time-saved sum (L = the node count, an upper bound on a path's edges; v1 used γ_{m+1}·Σ credits for CreditLine's m-term sum) and γ_{L−1}·cost for an L-edge path (`evaluator/tolerances.py`, with citation). An empirical self-test of 20,000 random float32 summations stays inside the bound with a worst observed error/budget of 0.955 — sharp, not loose. Rounding only: a float32 Dijkstra retaining a near-shortest itinerary is a decision flip and is reported, not absorbed | `python3 evaluator/tolerances.py`; verdicts |
 | CX.4 | ECS-half data gathering (game → arrays) is faithful | **not verifiable offline** — remains the trust boundary, but a narrower one than before: the exporter captures its inputs INSIDE `StartCompute`, from the very values handed to the Burst job, so what verification sees is the job's own input rather than a second collection that could have drifted. What is still trusted is the ECS gather itself (ECS components → those arrays) | verification-architecture.md; `SuitabilityVerificationExport.cs` |
 | CX.5 | The exported wire format is exactly what the pipeline can load (canonical form + digest) | getestet — golden-vector test in the offline harness pins the C# writer against `canonical.py`'s own encoding and SHA-256, including sort order, escaping and the body-digest rule | mod tests `Export JSON …` (4 cases) |
 
@@ -149,6 +162,8 @@ The mod claims no global optimality (README). The certified artifacts therefore
 prove, per instance: feasibility, faithfulness to the mod's own procedures, and the
 **exact distance to the certified optimum** of the user-approved reference
 objectives — including certified *zero* gaps where greedy happens to be optimal
-(`sites-plateau`, `sites-random-16`, `lineset-random`, `lineset-staged`,
-`lineset-tie`) and certified/enumerated positive gaps where it is not
-(`sites-greedy-gap`, `sites-random-24`, `lineset-feeder`).
+(`sites-plateau`, `sites-random-16`) and certified/enumerated positive gaps where
+it is not (`sites-greedy-gap`, `sites-random-24`; historically `lineset-feeder`).
+Since Phases 2 and 7 the mod's site and line-set selections are themselves exact,
+so for those the pipeline requires gap 0 against the certified or enumerated
+optimum whenever the mod reports `Optimal`.

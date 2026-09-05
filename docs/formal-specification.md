@@ -59,8 +59,11 @@ The mod computes, in order (per recompute):
 5. **S5 Stop placement along a line** (`PlanCallingPoints`, `ScanStopWindows`,
    `SelectCallingPoints`, `ChooseInWindow`): deterministic procedure.
 6. **S6 Mode choice** (`TransitModes.ChooseMode`): deterministic gate cascade.
-7. **S7 Candidate scoring and greedy acceptance** (`CreditLine`,
-   `AcceptBestCandidate` rounds): greedy set selection; no declared joint objective.
+7. **S7 Line-set selection** (`SuitabilityLineSet.Solve`, v2 since Phase 7): exact
+   branch-and-bound over candidate subsets under the lexicographic objective
+   (equity share capped at the floor, passenger time saved), with per-line
+   utilisation and duplicate feasibility. v1 (`CreditLine` credits and greedy
+   `AcceptBestCandidate` rounds) is kept below as history.
 
 Stages S1, S3, S5, S6 are *functions* — verification target: evaluator correctness.
 Stages S2, S4, S7 are *search/selection* — verification targets: feasibility of the
@@ -319,71 +322,102 @@ edges with cost floor 0.01 s:
 
 expectedWait = max(0, max(interval/2, observedAvgWait) − stopDwell) (mirrors vanilla).
 
-### 6.2 Journey evaluation (`CreditLine` / `Inspect`)
+### 6.2 Journey door-to-door time (v2, Phase 7, 2026-09-05; A4.1, A7.2, A7.4, A3.1)
 
-Per OD pair (grouped by origin; one Dijkstra per origin with cap maxTravelTime): the
-shortest itinerary's boardings b = (#Access edges on path)/2, transfers = max(0, b−1).
-Pair is *served* if reachable and travelTime + accessSeconds ≤ maxTravelTime. Pair is
-*credited* to the target line iff additionally: the itinerary uses a target-line
-access edge, b ≥ 1, and doorToDoor < baseline − switchMargin. Credit =
-w · transferDiscount^transfers. **Tie sensitivity**: with equal-cost itineraries,
-`usesTarget` and b depend on which shortest path Dijkstra retains. **Resolved (user
-decision, 2026-09-03): interval semantics** — the mod's value passes iff it lies in
-the [min, max] credit over all shortest itineraries; instances with
-decision-relevant ties are reported.
+The transit graph of 6.1 is extended by one node per journey end (**zone node**,
+`SuitabilityTransit.BuildWithZones`): a zone node is joined by a walk edge (cost
+= Euclidean distance / 1.2 m/s in binary32, floor 0.01 s) to every stop within
+`zoneReach` (= 2 × transfer walk = 432 m). Zone nodes are numbered after the
+line-stop nodes (`TransitNetwork.ZoneNodeStart`).
 
-### 6.3 Greedy acceptance (`SelectRoutes` / `AcceptBestCandidate`)
+For journey i with weight wᵢ under a network N (existing lines ∪ a set A of
+candidates):
 
-Candidate pool: per network, up to 4 × RouteCount candidates (roads grown with
-peeling CaptureFraction 0.85 and novelty decay 0.15 over 3 hops; lattices direct,
-one per heaviest unserved zone pair, deduplicated within 256 m of an already-taken
-pair). Pool sorted by CapturedFlow descending (unstable sort — tie order
-unspecified).
+- transit(i, N) = shortest-path cost from the origin's zone node to the
+  destination's zone node, Dijkstra capped at `maxTravelSeconds` (3600 s;
+  unreachable = +∞), binary32 accumulation along the path in the mod;
+- walkOnly(i) = √(Δx² + Δz²) / 1.2 in binary32 (`WalkOnlySeconds`);
+- after(i, A) = min(walkOnly(i), transit(i, N₀ ∪ A)); before(i) = after(i, ∅).
 
-For round t = 1..RouteCount:
+The baseline is the best of walking and the existing network; the car is ignored
+(A3.1 decision). Times weigh walk : wait : ride = 1 : 1 : 1, a transfer costs
+exactly its walk edge plus the next line's access edge, nothing is discounted
+(A7.2/A7.4: the game's citizens route that way). The realism weights (2.2 / 2.1
+/ 1, TCQSM) are reported as a diagnostic from the same itinerary components
+(`LineSetEvaluation.WalkSeconds/WaitSeconds/RideSeconds`) and never enter the
+selection.
 
-1. `ScoreCandidates`: only the first `RouteCount × 16` candidates of the pool are
-   ever scored ("scoring window"); the rest keep EnabledDemand = 0 with
-   DemandScored = false. Baseline travel times are re-measured against
-   N_{t−1} = existing lines + accepted suggestions (fresh Dijkstra per origin,
-   cap 3600 s). Each windowed candidate is scored by `CreditLine` on
-   N_{t−1} + candidate with per-mode assumed wait (Bus 200 s, Metro 150, Tram 180,
-   Train 300, Ferry 400) and cruise speed; discount = 1 − TransferPenalty/100
-   (default 0.6); switch margin 60 s; zone→stop remap radius 500 m.
-2. `AcceptBestCandidate`: iterate unsettled candidates ordered by EnabledDemand
-   desc, ties by CapturedFlow desc (unstable sort). For each: resolve mode
-   (§5 cascade; failed non-road candidates re-trace as road); then the gates, in
-   order: (G1) `KeepsItsFloor` — post-trim length ≥ mode minimum and ≥ 2 stops;
-   (G2) evidence gate — EnabledDemand > 0 ∨ corridorFlow ≥ 0.25 × network
-   reference (reference = mean positive edge flow of the candidate's network,
-   floored at 0.25 × road reference); (G3) corridorFlow > 1; (G4) demand floor —
-   ¬(DemandScored ∧ EnabledDemand < RidersToFillOne(bus capacity))
-   ("improvedTooLittle"); (G5) ¬DuplicatesExisting (≥ 75 % of ≥ 3 stops within
-   150 m of one existing line's stops). First survivor is accepted, its stops and
-   an assumed TransitLine are added to the network, and the round ends.
+**Riders of a candidate** in a set A: the journeys whose *retained* shortest
+itinerary (Dijkstra predecessor chain) boards it — each line credited once per
+journey (`AttributeItinerary`). Tie sensitivity: with equal-cost itineraries the
+rider attribution depends on which path Dijkstra retained; the evaluator
+enumerates every shortest itinerary and reports `tie_affected`.
 
-Output: ordered list of ≤ RouteCount suggestions ("next best line given the ones
-above it").
+### 6.3 Set objective and feasibility (`SuitabilityLineSet.Solve`)
 
-### Declared reference objectives (choice = open question Q3)
+For a set A (|A| ≤ K = RouteCount) of the candidate pool:
 
-For a *set* A of candidate lines (|A| ≤ K) the natural joint objectives differ:
+- **saved(A)** = Σᵢ wᵢ · max(0, before(i) − after(i, A)) — in the mod the
+  difference is formed in binary32, the product and the sum in double, in pair
+  order (`LineSetEvaluation.TimeSaved`).
+- **coverage(A)** = the §7c served share of the walking-network journeys once A's
+  stops (snapped like served stops) join the served stops
+  (`SuitabilityEquity.WithStops` → `Coverage`); 0 when no equity inputs exist.
+- **Key(A)** = (min(coverage(A), X), saved(A)), compared lexicographically; X =
+  the equity floor share (0.8).
+- **Feasible(A)** iff for every line c ∈ A:
+  (F1) utilisation(c, A) = riders(c, A) · 2 / ((D / headway_c) · 2 · capacity_c) ≥
+  the utilisation floor (0.15 default), with D = movement seconds per game day =
+  4369.07 (`TimeSystem.kTicksPerDay` / 60) — riders are the set's attribution,
+  so a feeder's riders count for the trunk it feeds;
+  (F2) c is **not a duplicate**: with slowed(c) = Σ wᵢ over journeys with
+  after(i, A∖{c}) > after(i, A), (riders(c) − slowed(c)) / riders(c) <
+  `DuplicateShare` (0.5, A4.3); a line with no riders is a duplicate.
+  Feasibility is a property of the set, not of a line alone (F1 and F2 both move
+  with the other members).
 
-- **(a) Union served weight**: total journey weight the network N₀ ∪ A can carry
-  (served pairs, no per-line attribution). Monotone; a coverage-type objective.
-- **(b) Sum of switch-credited weight**: Σ over pairs of w · discount^transfers for
-  pairs that improve on baseline by the margin under N₀ ∪ A — the quantity the mod's
-  per-round score approximates for single lines.
-- Greedy's round-t scores do not sum to either; the reference model must fix one.
+The mod maximises Key over feasible A by depth-first branch-and-bound
+(`Search`): candidates ordered by standalone saved (desc, index tiebreak);
+include-first DFS; every prefix is a candidate answer; **bound** = Key(chosen ∪
+all remaining) — valid because both components are monotone in A (a line can
+only shorten a journey or serve another door; the cap keeps the first
+component monotone). A node budget (`DefaultNodeBudget` = 20 000 bound
+evaluations) stops the search; the solution then reports `Optimal = false` and
+`UpperBoundTimeSaved` = max over open bounds — the "best found plus ceiling"
+regime. Note the bound is evaluated on the *unfiltered* union, so an infeasible
+completion never prunes a feasible one.
 
-Exact optimum computed by complete enumeration over the candidate pool for bounded
-instances (the pool is bounded per network: budget = 4 × maxRoutes).
+The chosen lines are presented in standalone-saved order; each carries its
+riders, utilisation, saved seconds and the realism-weighted diagnostic.
 
-**Resolved (user decision, 2026-09-03): the reference set objective is (b), the
-credited sum** — Σ over OD pairs of w · discount^transfers for pairs that the
-network N₀ ∪ A carries with ≥ switch-margin improvement over the N₀ baseline
-(evaluated with interval semantics over shortest-itinerary ties). Lean 4
-formalization is deferred until after the pipeline (user decision, same date).
+**Reference objective (user decisions 2026-09-05, A4.1/A1.8/A3.1/A4.3/A7.2/
+A7.5):** exactly the Key above over the exported candidate pool — the mod now
+optimises the declared objective, so the pipeline's question is no longer "how
+big is the gap" but "is the mod's answer the optimum, and is it feasible".
+Verification (`lineset_time`): the subject reruns `Solve` on the exported
+problem; the evaluator recomputes before/after in exact rationals (binary32
+edge costs, exact Dijkstra), riders over all shortest itineraries, F1/F2, the
+coverage share via the `coverage` rules, and Key; `enumerate/enum_lines.py`
+evaluates every subset of size ≤ k′ (k′ = K when Σ C(n, j) ≤ `ENUM_BUDGET`,
+else the largest enumerable size — "bounded" regime, reported as such) and the
+verdict requires the mod's set to be feasible, its saved within the Higham
+budget of the exact value, and its Key equal to the enumerated optimum's
+whenever the mod claims `Optimal` (ties in Key are counted and reported).
+
+### 6.4 History: v1 credit and greedy acceptance (verified 2026-09-03, retired 2026-09-05)
+
+v1 scored each candidate alone by `CreditLine`: per OD pair the shortest
+itinerary's boardings b = (#Access edges)/2, transfers = max(0, b−1); credited
+iff the itinerary used the target line, b ≥ 1 and doorToDoor < baseline − 60 s;
+credit = w · 0.6^transfers (interval semantics over tied itineraries). Rounds
+(`AcceptBestCandidate`) accepted the best-credited survivor of gates G1–G5
+(length floor, evidence, corridor flow > 1, one-bus demand floor, ≥ 75 % of
+stops within 150 m of one existing line) and re-scored the rest against the
+network with it. The declared v1 reference set objective was the credited sum
+(b) over N₀ ∪ A; complete enumeration refuted greedy optimality on
+`lineset-feeder` (40 vs ≈ 80) and on Valmare's third export (3-line gap 6.4 %),
+which is what motivated the v2 set selection. The v1 evaluator, instances and
+export kind were removed with Phase 7; the claims table keeps the refutations.
 
 ## 7. S1 — Heatmap evaluator
 
@@ -636,4 +670,5 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-05 | **S1 heatmap terms are walking times over the pedestrian network** (`SuitabilityWalkAccess`; Burst job `SuitabilityJob` deleted; residents per home building replace the 224 m population raster; access = network node within 2 min; catchments 6/11/16 min as linear time kernels; transfer 3 min; road gate replaced by "has a node"; site refinement pass removed) | A1.1, A1.2, A1.4, A1.5, A1.6, A0.5, A0.6, Phase-3 values | new kind `heatmap_walk` with three-way bit-exact check; v1 `heatmap_grid`/`heatmap_point` evaluators retired or historical |
 | 2026-09-05 | **S2 candidates are network nodes; separation is walking time ≥ stop spacing** (`SolveOnNetwork`, ball clique-cover bound) | A2.1, A2.2, A2.4 | new kind `sites_walk`: exact Dijkstra conflicts, SCIP/VIPR on pairwise MIP, exact selection judged |
 | 2026-09-05 | **S2 site selection is exact** (`SuitabilityExactSites`, branch-and-bound with block-partition bound, integer-scaled scores, node budget 2·10⁶ with reported ceiling); the greedy ranking stays as incumbent and measured baseline | A2.3 | subject reports `exact_*` fields; `run.py` requires gap 0 against the certified optimum when the search closed, else a sound bracket — 6/6 instances closed (two real cities: 14 and 0 nodes) |
+| 2026-09-05 | **S7 selects the line set exactly under the passenger-time objective** (§6.2–6.3: zone-node routing, before/after door-to-door, saved = Σ w·(before−after), lexicographic with the capped equity share, utilisation and duplicate feasibility on the set, branch-and-bound with the monotone union bound, node budget → optimum or best + ceiling; greedy rounds, `CreditLine`, the transfer discount/`TransferPenalty` setting, switch margin and the 150 m duplicate rule removed; utilisation floor default 15 % with the 4369 s game day) | A7.5, A4.1, A1.8, A3.1, A3.3, A4.2, A4.3, A4.4, A7.2, A7.4 | new kind `lineset_time` (subject = mod `Solve`; exact evaluator; complete or bounded enumeration over feasible subsets; key ties reported); v1 kind `lineset` and its evaluator removed |
 | 2026-09-04 | Interchange/coverage weight of another mode's stop = **vehicle capacity ÷ bus capacity from the loaded prefabs** (`TransitModes.CapacityWeight`), replacing the table 1/1.2/1.5/2.5/3; a type without a loaded vehicle weighs 0 | A1.10 | heatmap `w_b32` remain instance data; new pure function unit-tested |

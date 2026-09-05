@@ -62,8 +62,8 @@ cross-check is subject (mod code) vs evaluator, not two Python variants.
 | S4 corridor growth | GrowCorridor/PeelFlow/DecayNovelty faithful to the spec | bit-exact independent replay (corridors, blocks, full flow/novelty arrays per round) |
 | S5 stops | offsets/gaps/must-call/termini/floor invariants | exact re-evaluation |
 | S6 mode | gate cascade re-evaluation | exact re-evaluation |
-| S7 routing/credit | itinerary optimality, boardings, credit formula | exact recomputation (ties reported) |
-| S7 line set | exact gap of the greedy set vs the best set | complete enumeration when Σ C(n,k) fits the budget; otherwise exact over all subsets of ≤ k′ lines, compared against the greedy's first k′ acceptances — the verdict says `bounded` and never calls that the K-line optimum |
+| S7 v2 line set (`lineset_time`) | the mod's exact set selection under the passenger-time objective: before/after door-to-door over zone-node routing, riders per line over every shortest itinerary, utilisation and duplicate feasibility on the set, capped equity share, lexicographic key | subject (mod's `Solve`) must reproduce the game's set; exact rational evaluator (time saved within a derived binary32 budget); complete enumeration of all feasible subsets when Σ C(n,k) fits `ENUM_BUDGET`, otherwise exact over subsets of ≤ k′ lines and reported as bounded; key ties counted |
+| S7 v1 routing/credit and greedy set (historical) | credit formula, greedy gap vs the credited-sum optimum | removed 2026-09-05 with the greedy rounds; the refutations stay in `docs/correctness-claims.md` (C7.4, C7.5) |
 
 The mod claims no global optimality (README); the pipeline's optimality artifacts
 quantify the *gap*, they do not certify the mod optimal.
@@ -92,7 +92,9 @@ the one thing they cannot — the Burst job, which does not run outside the game
    the folder (`…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`).
 2. Copy the three `real-<city>-<stamp>-*.json` files into `instances/`.
 3. `make -C verification instance I=real-<city>-<stamp>-heatmap` — and the same
-   for `-lineset`. They behave like any other instance.
+   for `-sites`, `-roads`, `-coverage` and `-lineset`. They behave like any other
+   instance. An export in a wire format the subject no longer reads belongs in
+   `instances/superseded/` (gitignored), not in the sweep.
 
 Notes. The `-sites` file is the real score field: the resulting MIP has one
 binary per local maximum and a conflict constraint per close pair. It is flagged
@@ -104,16 +106,17 @@ nothing about what the mod computes.
 
 A real city's candidate pool (Valmare: 39 candidates, K = 5 → 667,928 subsets) is
 beyond complete enumeration at seconds per subset. `run.py` then enumerates every
-subset of ≤ k′ lines for the largest k′ within `ENUM_BUDGET` (default 12,000 subsets,
-in parallel on all cores) and compares the greedy's first k′ acceptances against that
-exact k′-optimum. Such linesets count as heavy and are skipped by `verify-all`.
+feasible subset of ≤ k′ lines for the largest k′ within `ENUM_BUDGET` (default
+12,000 subsets, in parallel on all cores), reports the run as *bounded*, and the
+mod's claim of optimality is only confirmed when the enumeration is complete. Such
+linesets count as heavy and are skipped by `verify-all`.
 
 Certificates from real models need `viprcomp`: SCIP 10 writes VIPR 1.1 "weak"
 derivations that `viprchk` alone rejects as a syntax error. `bootstrap.sh` builds
 it; without it the run is reported as unverified, never as passed.
 
 First real run (Valmare, 2026-09-03): heatmap 2,073/2,073 sampled cells bit-exact
-(928 unbuildable, 1,400 sources rejected by the landmass gate); lineset every
+(928 unbuildable, 1,400 sources rejected by the landmass gate); v1 lineset every
 credit inside its exact interval over 11 lines, 76 stops and 1,394 flows; sites
 certified optimum ≈ 10.4265 with a greedy gap of ≈ 0.132 (≈ 1.3 %).
 

@@ -8,3 +8,5 @@ lean/.lake/
 # Exported real-city instances: routinely tens of megabytes. Keep one
 # deliberately with `git add -f` if it is worth committing.
 instances/real-*.json
+# Real exports in a wire format the subject no longer reads (kept for the record).
+instances/superseded/

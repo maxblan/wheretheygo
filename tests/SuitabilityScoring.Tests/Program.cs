@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace StationSuitabilityOverlay.Tests
 {
@@ -65,6 +66,9 @@ namespace StationSuitabilityOverlay.Tests
             Run("Directed roads: stops mid-street are timed from their point on the arc", DirectedPointLegs);
             Run("Equity: coverage counts journeys served at both ends within the horizon", EquityCoverage);
             Run("Equity: weighted Gini is 0 for equal access, rises with concentration, and utilisation follows the peak model", EquityGiniAndUtilisation);
+            Run("Line set: time saved is monotone and rewards a trunk-and-feeder pair", LineSetTrunkAndFeeder);
+            Run("Line set: the exact selection matches brute force under utilisation and duplicate rules", LineSetMatchesBruteForce);
+            Run("Line set: the equity floor ranks coverage before time saved", LineSetEquityFirst);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
             Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
@@ -101,15 +105,9 @@ namespace StationSuitabilityOverlay.Tests
 
             Run("Direct service beats an equal-time transfer", DirectBeatsTransfer);
             Run("Each change of vehicle costs a boarding", TransfersCostBoardings);
-            Run("A feeder line is credited for journeys it only starts", FeederGetsCredit);
-            Run("Transfer discount reduces credit per change", TransferDiscountApplies);
             Run("Walking links nearby stops into one interchange", WalkLinksStops);
             Run("Bucketed walk edges match an exhaustive sweep", WalkEdgesMatchAnExhaustiveSweep);
             Run("Vanilla wait model floors at zero", ExpectedWaitModel);
-            Run("A proposed stop puts an unserved zone onto the network", RemapReachesUnservedZone);
-            Run("A city with no transit at all can still be scored", EmptyNetworkCreditsTheFirstLine);
-            Run("A line earns nothing for a journey it does not improve", NoCreditWithoutAnImprovement);
-            Run("The walk to a stop is part of the journey", AccessWalkCountsAsTravel);
             Run("A line is judged over the window, not one reading", WindowAveragesLineReadings);
             Run("Readings older than the window are evicted", WindowEvictsPastADay);
             Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
@@ -1115,6 +1113,167 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(0f, SuitabilityEquity.Utilisation(1000f, 0f, 70f), 0f, "no headway, no utilisation");
         }
 
+        private static LineCandidate Line(float wait, float speed, params (float x, float z)[] stops)
+        {
+            var line = new LineCandidate { StopX = new float[stops.Length], StopZ = new float[stops.Length], ExpectedWait = wait, SpeedMetresPerSecond = speed, HeadwaySeconds = wait * 2f, VehicleCapacity = 80f };
+            for (int i = 0; i < stops.Length; i++)
+            {
+                line.StopX[i] = stops[i].x;
+                line.StopZ[i] = stops[i].z;
+            }
+
+            return line;
+        }
+
+        private static LineSetProblem FeederProblem()
+        {
+            // Zones A (0,0), B (6000,0), C (0,3000). Trunk A-B is fast; feeder C-A brings
+            // C's journeys to the trunk. Journeys: A->B 40/day, C->B 40/day, C->A 10/day.
+            var problem = new LineSetProblem
+            {
+                PairOx = new[] { 0f, 0f, 0f },
+                PairOz = new[] { 0f, 3000f, 3000f },
+                PairDx = new[] { 6000f, 6000f, 0f },
+                PairDz = new[] { 0f, 0f, 0f },
+                PairWeight = new[] { 40f, 40f, 10f },
+                PairCount = 3,
+                WalkRadius = 216f,
+                BoardPenaltySeconds = 5f,
+                MaxTravelSeconds = 3600f,
+                ZoneReachMetres = 432f,
+                MaxLines = 2,
+                MovementSecondsPerDay = 262144f / 60f,
+                DuplicateShare = 0.5f,
+            };
+            problem.Candidates.Add(Line(150f, 20f, (0f, 0f), (6000f, 0f)));          // trunk
+            problem.Candidates.Add(Line(200f, 10f, (0f, 3000f), (0f, 0f)));          // feeder
+            problem.Candidates.Add(Line(200f, 10f, (0f, 3000f), (0f, 2000f)));       // a stub going nowhere useful
+            return problem;
+        }
+
+        private static void LineSetTrunkAndFeeder()
+        {
+            LineSetProblem problem = FeederProblem();
+            float[] before = SuitabilityLineSet.Evaluate(problem, Array.Empty<int>(), 0, null).After;
+            AssertEqual(6000f / 1.2f, before[0], 1e-3f, "with no lines, A->B is a walk");
+            double trunk = SuitabilityLineSet.Evaluate(problem, new[] { 0 }, 1, before).TimeSaved;
+            double feeder = SuitabilityLineSet.Evaluate(problem, new[] { 1 }, 1, before).TimeSaved;
+            double both = SuitabilityLineSet.Evaluate(problem, new[] { 0, 1 }, 2, before).TimeSaved;
+            AssertTrue(trunk > 0.0, "the trunk saves A->B riders time");
+            AssertTrue(both > trunk && both > feeder, "adding a line never loses time (monotone)");
+            AssertTrue(both > trunk + feeder, "trunk and feeder together save more than apart: C->B needs both");
+            LineSetEvaluation withBoth = SuitabilityLineSet.Evaluate(problem, new[] { 0, 1 }, 2, before);
+            AssertEqual(80f, (float)withBoth.Riders[0], 1e-3f, "A->B and C->B ride the trunk");
+            AssertEqual(50f, (float)withBoth.Riders[1], 1e-3f, "C->B and C->A ride the feeder");
+            AssertTrue(withBoth.WaitSeconds > 0.0 && withBoth.RideSeconds > 0.0, "the realism breakdown is filled");
+
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertTrue(solution.Optimal, "three candidates close at once");
+            AssertEqual(2, solution.Count, 0, "two lines chosen");
+            AssertTrue((solution.Chosen[0] == 0 && solution.Chosen[1] == 1) || (solution.Chosen[0] == 1 && solution.Chosen[1] == 0), "trunk and feeder are the pair");
+            AssertEqual((float)both, (float)solution.TimeSaved, 1e-3f, "the set's value is reported");
+        }
+
+        private static void LineSetMatchesBruteForce()
+        {
+            LineSetProblem problem = FeederProblem();
+            problem.Candidates.Add(Line(150f, 20f, (0f, 0f), (6000f, 0f)));   // an exact copy of the trunk: a duplicate
+            problem.MaxLines = 3;
+            problem.UtilisationFloor = 0.01f;
+            float[] before = SuitabilityLineSet.Evaluate(problem, Array.Empty<int>(), 0, null).After;
+
+            // Brute force over every subset of size <= 3 with the same feasibility rules.
+            int n = problem.Candidates.Count;
+            double best = -1.0;
+            for (int mask = 0; mask < (1 << n); mask++)
+            {
+                var chosen = new List<int>();
+                for (int c = 0; c < n; c++)
+                {
+                    if ((mask & (1 << c)) != 0)
+                    {
+                        chosen.Add(c);
+                    }
+                }
+
+                if (chosen.Count > problem.MaxLines)
+                {
+                    continue;
+                }
+
+                LineSetEvaluation evaluation = SuitabilityLineSet.Evaluate(problem, chosen.ToArray(), chosen.Count, before);
+                bool feasible = true;
+                foreach (int c in chosen)
+                {
+                    feasible &= SuitabilityLineSet.Utilisation(problem, c, evaluation.Riders[c]) >= problem.UtilisationFloor;
+                }
+
+                if (feasible && chosen.Count >= 2)
+                {
+                    // Duplicate rule by hand: a line is redundant if half its riders lose nothing without it.
+                    foreach (int c in chosen)
+                    {
+                        var rest = chosen.Where(x => x != c).ToArray();
+                        LineSetEvaluation without = SuitabilityLineSet.Evaluate(problem, rest, rest.Length, before);
+                        double slowed = 0.0;
+                        for (int i = 0; i < problem.PairCount; i++)
+                        {
+                            if (without.After[i] > evaluation.After[i])
+                            {
+                                slowed += problem.PairWeight[i];
+                            }
+                        }
+
+                        double riding = evaluation.Riders[c];
+                        if (riding <= 0.0 || (riding - slowed) / riding >= problem.DuplicateShare)
+                        {
+                            feasible = false;
+                        }
+                    }
+                }
+
+                if (feasible)
+                {
+                    best = Math.Max(best, evaluation.TimeSaved);
+                }
+            }
+
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertTrue(solution.Optimal, "four candidates close");
+            AssertEqual((float)best, (float)solution.TimeSaved, 1e-3f, "solver equals brute force");
+            AssertTrue(solution.Count == 2, "the duplicate trunk cannot join its twin and the stub carries nobody");
+            AssertTrue(solution.Infeasible > 0, "infeasible sets were met and counted");
+
+            problem.UtilisationFloor = 10f;
+            LineSetSolution starved = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertEqual(0, starved.Count, 0, "an unreachable utilisation floor leaves the empty set");
+        }
+
+        private static void LineSetEquityFirst()
+        {
+            LineSetProblem problem = FeederProblem();
+            problem.MaxLines = 1;
+            // Pretend coverage: the stub (candidate 2) serves the most doors, the trunk none.
+            problem.CoverageOf = (chosen, count) =>
+            {
+                float coverage = 0.1f;
+                for (int k = 0; k < count; k++)
+                {
+                    coverage += chosen[k] == 2 ? 0.5f : (chosen[k] == 1 ? 0.2f : 0f);
+                }
+
+                return coverage;
+            };
+            problem.EquityFloorShare = 0.8f;
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertEqual(1, solution.Count, 0, "one line");
+            AssertEqual(2, solution.Chosen[0], 0, "below the floor the line that serves the most doors wins, whatever it saves");
+
+            problem.EquityFloorShare = 0.05f;   // already met by everyone: time saved decides
+            solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertEqual(0, solution.Chosen[0], 0, "with the floor met the trunk's time saving wins");
+        }
+
         private static ObservedTrip TripAt(uint frame, byte purpose)
         {
             return new ObservedTrip { m_Frame = frame, m_OriginX = 1f, m_OriginZ = 2f, m_DestinationX = 3f, m_DestinationZ = 4f, m_Purpose = purpose };
@@ -2102,59 +2261,6 @@ namespace StationSuitabilityOverlay.Tests
 
             // Two boardings, each paying the extra wait: the gap is about 2x.
             AssertTrue(dearTime > cheapTime + 1000f, $"longer headways must cost more ({dearTime} vs {cheapTime})");
-        }
-
-        // The bug this exists for: a feeder's own corridor carries almost nobody, so
-        // scoring it by direct riders made it look worthless.
-        private static void FeederGetsCredit()
-        {
-            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
-            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
-
-            // Everyone travels from the side stop to the far end of the trunk, so the
-            // feeder is only ever one leg of the journey and never the whole thing.
-            var origins = new[] { 4 };
-            var dests = new[] { 3 };
-            var weights = new[] { 1000f };
-            // No walk to the stops and nothing to switch away from: these tests are
-            // about what a line is credited for, not about whether anyone would move to
-            // it, so the journey is unreachable without the network.
-            var noWalk = new[] { 0f };
-            var nothingBefore = new[] { float.MaxValue };
-
-            float feederCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1,
-                1, 1f, 100000f, 0f, out float served);
-
-            AssertEqual(1000f, served, 1f, "the journey is served");
-            AssertTrue(feederCredit > 0f, "the feeder must be credited for a journey it only starts");
-            AssertEqual(1000f, feederCredit, 1f, "with no discount it earns the full weight");
-
-            float trunkCredit = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1,
-                0, 1f, 100000f, 0f, out _);
-            AssertTrue(trunkCredit > 0f, "the trunk is credited too — both legs enable the trip");
-        }
-
-        private static void TransferDiscountApplies()
-        {
-            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
-            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
-
-            var origins = new[] { 4 };
-            var dests = new[] { 3 };
-            var weights = new[] { 1000f };
-            var noWalk = new[] { 0f };
-            var nothingBefore = new[] { float.MaxValue };
-
-            // One change, so one discount factor is applied.
-            float full = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1, 1, 1f, 100000f, 0f, out _);
-            float discounted = SuitabilityTransit.CreditLine(net, ws, origins, dests, weights, noWalk, nothingBefore, 1, 1, 0.6f, 100000f, 0f, out _);
-
-            AssertEqual(1000f, full, 1f, "no discount");
-            AssertEqual(600f, discounted, 1f, "one change costs one discount factor");
-
-            // A direct journey on the trunk keeps its full weight either way.
-            float direct = SuitabilityTransit.CreditLine(net, ws, new[] { 0 }, new[] { 3 }, weights, noWalk, nothingBefore, 1, 0, 0.6f, 100000f, 0f, out _);
-            AssertEqual(1000f, direct, 1f, "a direct journey is not discounted");
         }
 
         private static void WalkLinksStops()
@@ -3306,77 +3412,6 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(SuitabilityGraphMath.IsDirectEnough(0f, 0f), "nothing to judge");
         }
 
-        // Riders are not captive. A zone attaches to whichever stop is nearest, so a
-        // proposed stop landing a metre closer than an existing one took every journey
-        // in that zone — and the line was credited with demand that in the game carried
-        // on using the tram. A line is worth what it IMPROVES.
-        private static void NoCreditWithoutAnImprovement()
-        {
-            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
-            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
-
-            var origins = new[] { 4 };
-            var dests = new[] { 3 };
-            var weights = new[] { 1000f };
-            var noWalk = new[] { 0f };
-
-            // What this journey costs on the network as it stands.
-            ws.Run(net.Graph, 4, 100000f);
-            AssertTrue(SuitabilityTransit.Inspect(net, ws, 4, 3, 1, out _, out _, out float onTheDay),
-                "the journey is routable");
-
-            // A line that leaves the journey exactly as it was earns nothing.
-            float unchanged = SuitabilityTransit.CreditLine(
-                net, ws, origins, dests, weights, noWalk, new[] { onTheDay },
-                1, 1, 1f, 100000f, switchMarginSeconds: 0f, out float served);
-            AssertEqual(1000f, served, 1f, "the journey is still served either way");
-            AssertEqual(0f, unchanged, 1e-3f, "but nobody changes how they travel for nothing");
-
-            // Beating what they had by a clear margin does earn it.
-            float better = SuitabilityTransit.CreditLine(
-                net, ws, origins, dests, weights, noWalk, new[] { onTheDay + 600f },
-                1, 1, 1f, 100000f, switchMarginSeconds: 60f, out _);
-            AssertEqual(1000f, better, 1f, "ten minutes better is worth switching for");
-
-            // Beating it by less than the margin is not worth the bother.
-            float marginal = SuitabilityTransit.CreditLine(
-                net, ws, origins, dests, weights, noWalk, new[] { onTheDay + 30f },
-                1, 1, 1f, 100000f, switchMarginSeconds: 60f, out _);
-            AssertEqual(0f, marginal, 1e-3f, "half a minute is not");
-        }
-
-        // A stop 490 m away was exactly as good as one on the doorstep, because the
-        // walk to it cost nothing. It is part of the journey.
-        private static void AccessWalkCountsAsTravel()
-        {
-            TransitNetwork net = BuildTwoLineNetwork(60f, out _, out _);
-            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
-
-            var origins = new[] { 4 };
-            var dests = new[] { 3 };
-            var weights = new[] { 1000f };
-
-            ws.Run(net.Graph, 4, 100000f);
-            _ = SuitabilityTransit.Inspect(net, ws, 4, 3, 1, out _, out _, out float ride);
-
-            // The rider already has a journey 300 s longer than the ride, so a stop on
-            // the doorstep is worth walking to.
-            var baseline = new[] { ride + 300f };
-            float onTheDoorstep = SuitabilityTransit.CreditLine(
-                net, ws, origins, dests, weights, new[] { 0f }, baseline,
-                1, 1, 1f, 100000f, 60f, out _);
-            AssertEqual(1000f, onTheDoorstep, 1f, "a stop you are standing on is worth using");
-
-            // The same line reached only by a 490 m walk at the model's own walking
-            // speed costs about six minutes, which eats the whole saving.
-            float walkSeconds = 490f / SuitabilityTransit.WalkSpeed;
-            AssertTrue(walkSeconds > 300f, $"the fixture must make the walk decisive, got {walkSeconds}s");
-            float acrossTown = SuitabilityTransit.CreditLine(
-                net, ws, origins, dests, weights, new[] { walkSeconds }, baseline,
-                1, 1, 1f, 100000f, 60f, out _);
-            AssertEqual(0f, acrossTown, 1e-3f, "and one you must walk half a kilometre to is not");
-        }
-
         private static float[] NewNovelty(int nodes)
         {
             var novelty = new float[nodes];
@@ -3386,114 +3421,6 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             return novelty;
-        }
-
-        // The first line in a city that has no transit whatsoever. Every stage below is
-        // the empty case of a stage the overlay system runs, and each one used to be
-        // skipped: BuildTransitModel returned early on a stop count of zero, leaving the
-        // network and the per-journey baseline null, so the scoring pass never ran and
-        // every candidate was dropped for enabling nothing. There is no harder case for
-        // the mod to get right — it is the city the player most needs advice about.
-        private static void EmptyNetworkCreditsTheFirstLine()
-        {
-            // A city with no stops and no lines. This has to be a routable network
-            // rather than a null; the graph is simply empty.
-            float[] noStops = Array.Empty<float>();
-            TransitNetwork empty = SuitabilityTransit.Build(
-                noStops, noStops, 0, new List<TransitLine>(),
-                250f, SuitabilityTransit.DefaultBoardPenaltySeconds);
-            CompactGraph? emptyGraph = empty.Graph;
-            AssertTrue(emptyGraph is not null, "an empty city still has a graph");
-            AssertTrue(emptyGraph is not null && emptyGraph.NodeCount == 0, "with nothing in it");
-            AssertTrue(
-                SuitabilityTransit.BuildInterchangeMap(noStops, noStops, Array.Empty<int>(), 0, 250f).Count == 0,
-                "and nowhere to change vehicle");
-
-            // Two zones 1200 m apart that people travel between. Neither has a stop, so
-            // the mapping against the existing network leaves both unattached — which is
-            // why the journey's baseline is "unreachable" rather than a travel time.
-            var zoneX = new[] { 0f, 1200f };
-            var zoneZ = new[] { 0f, 0f };
-            var incumbentStop = new[] { -1, -1 };
-            var incumbentWalkSq = new[] { 0f, 0f };
-            var baseline = new[] { float.MaxValue };
-
-            // The candidate: one line calling in both zones.
-            var candidateX = new[] { 0f, 1200f };
-            var candidateZ = new[] { 0f, 0f };
-            var mapped = new int[2];
-            int captured = SuitabilityTransit.RemapZones(
-                zoneX, zoneZ, 2, incumbentStop, incumbentWalkSq,
-                candidateX, candidateZ, 2, 0, 512f, mapped, new float[2]);
-
-            AssertTrue(captured == 2, "the candidate's own stops are what put these zones on the network");
-            AssertTrue(mapped[0] == 0 && mapped[1] == 1, "each zone routes through the stop standing in it");
-
-            var lines = new List<TransitLine>
-            {
-                new TransitLine
-                {
-                    m_Stops = new[] { 0, 1 },
-                    m_ExpectedWait = 200f,
-                    m_SpeedMetresPerSecond = 12f,
-                },
-            };
-
-            TransitNetwork withCandidate = SuitabilityTransit.Build(
-                candidateX, candidateZ, 2, lines, 250f, SuitabilityTransit.DefaultBoardPenaltySeconds);
-            var workspace = new DijkstraWorkspace(withCandidate.Graph.NodeCount);
-
-            float credited = SuitabilityTransit.CreditLine(
-                withCandidate, workspace,
-                new[] { mapped[0] }, new[] { mapped[1] }, new[] { 900f },
-                new[] { 0f }, baseline,
-                1, 0, 1f, 3600f, 60f, out float served);
-
-            AssertEqual(900f, served, 1f, "the line carries the journey");
-            AssertEqual(900f, credited, 1f, "and is credited all of it, because nothing carried it before");
-        }
-
-        // A suggested line is scored by the demand it would ENABLE, which is measured
-        // by routing zone-to-zone journeys over the network with the candidate added.
-        // Those journeys enter as stop indices, and the mapping from zone to stop was
-        // built against the EXISTING stops only — so a zone with nothing nearby stayed
-        // unmapped and its journeys were invisible, no matter that the candidate put a
-        // stop right in it. Every candidate therefore scored zero enabled demand, which
-        // is precisely the case this mod exists to find.
-        private static void RemapReachesUnservedZone()
-        {
-            // Three zones on a line at x = 0, 1000, 2000.
-            var zoneX = new[] { 0f, 1000f, 2000f };
-            var zoneZ = new[] { 0f, 0f, 0f };
-
-            // Zone 0 already has stop 7 on top of it. Zones 1 and 2 have nothing.
-            var zoneStop = new[] { 7, -1, -1 };
-            var zoneDistSq = new[] { 0f, float.MaxValue, float.MaxValue };
-
-            // The candidate proposes two stops: one in zone 1, one 400 m from zone 2.
-            var newX = new[] { 1000f, 1600f };
-            var newZ = new[] { 0f, 0f };
-            var merged = new int[3];
-
-            int changed = SuitabilityTransit.RemapZones(
-                zoneX, zoneZ, 3, zoneStop, zoneDistSq,
-                newX, newZ, 2, 20, 500f, merged, new float[3]);
-
-            AssertTrue(changed == 2, "both zones the candidate reaches are remapped");
-            AssertTrue(merged[0] == 7, "a zone already served by a closer existing stop keeps it");
-            AssertTrue(merged[1] == 20, "the unserved zone now routes through the candidate's own stop");
-            AssertTrue(merged[2] == 21, "the zone within walking distance of the far stop is picked up too");
-
-            // A candidate stop that lands closer than the existing one wins it over:
-            // that is the feeder case, where the new line is the better way in.
-            var farStop = new[] { 7 };
-            var farDistSq = new[] { 400f * 400f };
-            var one = new int[1];
-            int stolen = SuitabilityTransit.RemapZones(
-                new[] { 0f }, new[] { 0f }, 1, farStop, farDistSq,
-                new[] { 100f }, new[] { 0f }, 1, 20, 500f, one, new float[1]);
-
-            AssertTrue(stolen == 1 && one[0] == 20, "a nearer candidate stop takes the zone from a distant existing one");
         }
 
         // A ferry with one boat reads zero passengers whenever that boat is mid

@@ -1,19 +1,8 @@
-"""S7 complete enumeration: the exact optimum of the credited-sum set objective
-over candidate subsets, evaluated in parallel with the exact evaluator.
-
-Two regimes, and the verdict says which one applied:
-
-  * complete — every subset of size <= K fits the budget, so the maximum is the
-    global optimum of the declared problem;
-  * bounded  — the pool is too large (a real city: 39 candidates at K = 5 is
-    667,928 subsets at seconds each). Then every subset of size <= k' is
-    enumerated for the largest k' the budget allows, and the result is the exact
-    optimum FOR k' LINES, compared against the greedy's first k' acceptances at
-    equal cardinality. That is a real statement about complementarity among k'
-    lines; it is NOT the K-line optimum, and the verdict never calls it that.
-
-The objective is the declared one implemented in evaluator.lineset; this module
-adds subset iteration and parallelism only.
+"""S7 v2 complete enumeration: the exact optimum of the lexicographic set key
+(min(equity share, floor), passenger time saved) over feasible candidate
+subsets, evaluated in parallel with evaluator.lineset_time. Two regimes:
+complete (every subset of size ≤ K fits the budget) and bounded (exact only for
+subsets of size ≤ k′, compared at equal cardinality). The verdict says which.
 """
 
 from __future__ import annotations
@@ -24,22 +13,26 @@ from fractions import Fraction
 from math import comb
 from multiprocessing import Pool
 
-from evaluator.lineset import parse, set_objective
+from evaluator.lineset_time import parse, evaluate, key_of, feasible
 
 ENUM_MAX_CANDIDATES = 64
 DEFAULT_BUDGET = int(os.environ.get("ENUM_BUDGET", "12000"))
 
-_PARSED = None
+_P = None
+_BEFORE = None
 
 
 def _init(instance: dict) -> None:
-    global _PARSED
-    _PARSED = parse(instance)
+    global _P, _BEFORE
+    _P = parse(instance)
+    _BEFORE = evaluate(_P, [], None)["after"]
 
 
 def _evaluate(subset: tuple) -> tuple:
-    lo, hi, tie = set_objective(_PARSED, list(subset))
-    return subset, str(lo), str(hi), tie
+    chosen = list(subset)
+    key, ev = key_of(_P, chosen, _BEFORE)
+    ok, _ = feasible(_P, chosen, ev, _BEFORE)
+    return subset, str(key[0]), str(key[1]), ok, ev["tie_affected"]
 
 
 def largest_enumerable_size(n: int, k: int, budget: int) -> int:
@@ -57,50 +50,45 @@ def enumerate_optimum(instance: dict, budget: int = DEFAULT_BUDGET,
     n = len(p["candidates"])
     if n > ENUM_MAX_CANDIDATES:
         raise ValueError(f"too many candidates to enumerate: {n}")
-    k = p["max_accept"]
+    k = p["max_lines"]
     k_enum = largest_enumerable_size(n, k, budget)
-    if k_enum < 1:
-        raise ValueError("budget too small to enumerate even single lines")
-
-    subsets = [
-        s for size in range(0, k_enum + 1)
-        for s in itertools.combinations(range(n), size)
-    ]
+    if k_enum < 0:
+        raise ValueError("budget too small")
+    subsets = [s for size in range(0, k_enum + 1) for s in itertools.combinations(range(n), size)]
     workers = workers or max(1, min(16, (os.cpu_count() or 2) - 1))
     with Pool(workers, initializer=_init, initargs=(instance,)) as pool:
         rows = pool.map(_evaluate, subsets, chunksize=8)
-
-    best_lo = None
-    best_hi = None
+    best = None
     best_set: list[int] = []
-    out_rows = []
-    # Per exact cardinality as well, so a bounded run can compare the greedy
-    # prefix of equal length against the best set of that length.
     best_by_size: dict[int, dict] = {}
-    for subset, lo_s, hi_s, tie in rows:
-        lo = Fraction(lo_s)
-        out_rows.append({"subset": list(subset), "lo": lo_s, "hi": hi_s, "tie": tie})
-        if best_lo is None or lo > best_lo:
-            best_lo, best_hi, best_set = lo, Fraction(hi_s), list(subset)
+    infeasible = 0
+    tie_any = False
+    optimum_count = 0
+    for subset, cov, saved, ok, tie in rows:
+        tie_any = tie_any or tie
+        if not ok:
+            infeasible += 1
+            continue
+        key = (Fraction(cov), Fraction(saved))
+        if best is None or key > best:
+            best, best_set = key, list(subset)
+            optimum_count = 1
+        elif key == best:
+            optimum_count += 1
         size = len(subset)
-        cur = best_by_size.get(size)
-        if cur is None or lo > Fraction(cur["lo"]):
-            best_by_size[size] = {"subset": list(subset), "lo": lo_s, "hi": hi_s}
-
-    ambiguous = [
-        r["subset"] for r in out_rows
-        if r["subset"] != best_set and Fraction(r["hi"]) > best_lo
-    ] if best_lo is not None else []
+        if size not in best_by_size or key > best_by_size[size]["key"]:
+            best_by_size[size] = {"key": key, "set": list(subset)}
     return {
-        "subsets_evaluated": len(out_rows),
+        "complete": k_enum >= k,
         "declared_k": k,
         "enumerated_max_size": k_enum,
-        "complete": k_enum == k,
-        "workers": workers,
+        "subsets_evaluated": len(subsets),
+        "infeasible_subsets": infeasible,
         "optimum_set": best_set,
-        "optimum_lo": str(best_lo),
-        "optimum_hi": str(best_hi),
-        "best_by_size": {str(s): v for s, v in sorted(best_by_size.items())},
-        "ambiguous_with_optimum": ambiguous,
-        "all": out_rows,
+        "optimum_coverage": None if best is None else str(best[0]),
+        "optimum_saved": None if best is None else str(best[1]),
+        "best_by_size": {str(s): {"coverage": str(v["key"][0]), "saved": str(v["key"][1]), "set": v["set"]}
+                         for s, v in best_by_size.items()},
+        "optimum_ties": optimum_count,
+        "tie_affected": tie_any or optimum_count > 1,
     }

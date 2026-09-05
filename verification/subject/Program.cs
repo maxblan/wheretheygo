@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -34,7 +34,7 @@ namespace StationSuitabilityOverlay.Verification
                 "lattice_path" => LatticePath(data),
                 "calling_points" => CallingPoints(data),
                 "mode_choice" => ModeChoice(data),
-                "lineset" => LineSet(data),
+                "lineset_time" => LineSetTime(data),
                 "corridor" => CorridorGrowth(data),
                 "heatmap_grid" => HeatmapGrid(data),
                 "heatmap_walk" => HeatmapWalk(data),
@@ -707,332 +707,136 @@ namespace StationSuitabilityOverlay.Verification
             };
         }
 
-        // ----------------------------------------------------------- S7 lineset
+        // ------------------------------------------------------ S7 v2 lineset_time
 
-        private sealed class Candidate
+        // Rebuilds the exported line-set problem and solves it with the mod's own
+        // branch-and-bound. The equity term, when the instance carries the walking
+        // network, is the coverage share of the embedded journeys with the chosen
+        // candidates' stops added — the same SuitabilityEquity calls the system makes.
+        private static Dictionary<string, object?> LineSetTime(JsonElement data)
         {
-            public float[] StopX = Array.Empty<float>();
-            public float[] StopZ = Array.Empty<float>();
-            public float Wait;
-            public float Speed;
-            public float CapturedFlow;
-        }
-
-        private static Dictionary<string, object?> LineSet(JsonElement data)
-        {
-            float walkRadius = F32(data.GetProperty("walk_radius_b32"));
-            float boardPenalty = F32(data.GetProperty("board_penalty_b32"));
-            float discount = F32(data.GetProperty("transfer_discount_b32"));
-            float maxTravel = F32(data.GetProperty("max_travel_seconds_b32"));
-            float margin = F32(data.GetProperty("switch_margin_b32"));
-            float reach = F32(data.GetProperty("zone_stop_reach_b32"));
-
-            float[] zoneX = F32Array(data.GetProperty("zone_x_b32"));
-            float[] zoneZ = F32Array(data.GetProperty("zone_z_b32"));
-            int zoneCount = zoneX.Length;
-
-            var flowOrigin = new List<int>();
-            var flowDest = new List<int>();
-            var flowWeight = new List<float>();
-            foreach (JsonElement f in data.GetProperty("flows").EnumerateArray())
+            var problem = new LineSetProblem
             {
-                flowOrigin.Add(f.GetProperty("origin").GetInt32());
-                flowDest.Add(f.GetProperty("dest").GetInt32());
-                flowWeight.Add(F32(f.GetProperty("weight_b32")));
-            }
-            int flowCount = flowOrigin.Count;
-
-            float[] existingX = F32Array(data.GetProperty("existing_stop_x_b32"));
-            float[] existingZ = F32Array(data.GetProperty("existing_stop_z_b32"));
-            int existingCount = existingX.Length;
-
-            var existingLines = new List<TransitLine>();
-            foreach (JsonElement l in data.GetProperty("existing_lines").EnumerateArray())
+                WalkRadius = F32(data.GetProperty("walk_radius_b32")),
+                BoardPenaltySeconds = F32(data.GetProperty("board_penalty_b32")),
+                MaxTravelSeconds = F32(data.GetProperty("max_travel_seconds_b32")),
+                ZoneReachMetres = F32(data.GetProperty("zone_reach_b32")),
+                PairOx = F32Array(data.GetProperty("pair_ox_b32")),
+                PairOz = F32Array(data.GetProperty("pair_oz_b32")),
+                PairDx = F32Array(data.GetProperty("pair_dx_b32")),
+                PairDz = F32Array(data.GetProperty("pair_dz_b32")),
+                PairWeight = F32Array(data.GetProperty("pair_w_b32")),
+                BaseStopX = F32Array(data.GetProperty("base_stop_x_b32")),
+                BaseStopZ = F32Array(data.GetProperty("base_stop_z_b32")),
+                MaxLines = data.GetProperty("max_lines").GetInt32(),
+                UtilisationFloor = F32(data.GetProperty("utilisation_floor_b32")),
+                MovementSecondsPerDay = F32(data.GetProperty("movement_seconds_per_day_b32")),
+                DuplicateShare = F32(data.GetProperty("duplicate_share_b32")),
+                EquityFloorShare = F32(data.GetProperty("equity_floor_share_b32")),
+            };
+            problem.PairCount = problem.PairWeight.Length;
+            problem.BaseStopCount = problem.BaseStopX.Length;
+            foreach (JsonElement line in data.GetProperty("base_lines").EnumerateArray())
             {
-                existingLines.Add(new TransitLine
+                problem.BaseLines.Add(new TransitLine
                 {
-                    m_Stops = IntArray(l.GetProperty("stops")),
-                    m_ExpectedWait = F32(l.GetProperty("expected_wait_b32")),
-                    m_SpeedMetresPerSecond = F32(l.GetProperty("speed_b32")),
-                    // Present on exported instances, absent on synthetic ones, where
-                    // the geometric fallback is what the instance intends.
-                    m_RideSeconds = l.TryGetProperty("ride_seconds_b32", out JsonElement rides)
-                        ? F32Array(rides)
-                        : null,
+                    m_Stops = IntArray(line.GetProperty("stops")),
+                    m_ExpectedWait = F32(line.GetProperty("expected_wait_b32")),
+                    m_SpeedMetresPerSecond = F32(line.GetProperty("speed_b32")),
+                    m_RideSeconds = OptionalF32Array(line, "ride_seconds_b32"),
                 });
             }
 
-            var candidates = new List<Candidate>();
             foreach (JsonElement c in data.GetProperty("candidates").EnumerateArray())
             {
-                candidates.Add(new Candidate
+                problem.Candidates.Add(new LineCandidate
                 {
                     StopX = F32Array(c.GetProperty("stop_x_b32")),
                     StopZ = F32Array(c.GetProperty("stop_z_b32")),
-                    Wait = F32(c.GetProperty("expected_wait_b32")),
-                    Speed = F32(c.GetProperty("speed_b32")),
-                    CapturedFlow = F32(c.GetProperty("captured_flow_b32")),
+                    ExpectedWait = F32(c.GetProperty("expected_wait_b32")),
+                    SpeedMetresPerSecond = F32(c.GetProperty("speed_b32")),
+                    RideSeconds = OptionalF32Array(c, "ride_seconds_b32"),
+                    HeadwaySeconds = F32(c.GetProperty("headway_b32")),
+                    VehicleCapacity = F32(c.GetProperty("capacity_b32")),
                 });
             }
-            int maxAccept = data.GetProperty("max_accept").GetInt32();
 
-            // Base zone -> stop mapping over EXISTING stops (mirrors MapZonesToStops:
-            // nearest within reach, strict <, ties to the lower index). RemapZones with
-            // -1 incumbents produces exactly that.
-            var baseZoneStop = new int[zoneCount];
-            var baseZoneDist = new float[zoneCount];
-            for (int z = 0; z < zoneCount; z++)
+            if (data.TryGetProperty("equity", out JsonElement equity) && equity.ValueKind == JsonValueKind.Object)
             {
-                baseZoneStop[z] = -1;
-                baseZoneDist[z] = 0f;
-            }
-            if (existingCount > 0)
-            {
-                var mappedStop = new int[zoneCount];
-                var mappedDist = new float[zoneCount];
-                SuitabilityTransit.RemapZones(zoneX, zoneZ, zoneCount, baseZoneStop, baseZoneDist,
-                    existingX, existingZ, existingCount, 0, reach, mappedStop, mappedDist);
-                baseZoneStop = mappedStop;
-                baseZoneDist = mappedDist;
+                problem.CoverageOf = EquityCoverage(equity, problem);
             }
 
-            var acceptedX = new List<float>();
-            var acceptedZ = new List<float>();
-            var acceptedLines = new List<TransitLine>();
-            var acceptedOrder = new List<int>();
-            var settled = new bool[candidates.Count];
-            var rounds = new List<object>();
-
-            for (int round = 0; round < maxAccept; round++)
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            var standalone = new List<string>();
+            foreach (double saved in solution.StandaloneTimeSaved)
             {
-                int baseStops = existingCount + acceptedX.Count;
-                var xs = new float[baseStops];
-                var zs = new float[baseStops];
-                Array.Copy(existingX, xs, existingCount);
-                Array.Copy(existingZ, zs, existingCount);
-                for (int i = 0; i < acceptedX.Count; i++)
-                {
-                    xs[existingCount + i] = acceptedX[i];
-                    zs[existingCount + i] = acceptedZ[i];
-                }
-
-                var baseLines = new List<TransitLine>(existingLines);
-                baseLines.AddRange(acceptedLines);
-
-                // Round mapping: base mapping remapped by all accepted stops
-                // (mirrors the BuildPairsWith side effect in ScoreCandidates).
-                var roundStop = (int[])baseZoneStop.Clone();
-                var roundDist = (float[])baseZoneDist.Clone();
-                if (acceptedX.Count > 0)
-                {
-                    var mappedStop = new int[zoneCount];
-                    var mappedDist = new float[zoneCount];
-                    SuitabilityTransit.RemapZones(zoneX, zoneZ, zoneCount, baseZoneStop, baseZoneDist,
-                        acceptedX.ToArray(), acceptedZ.ToArray(), acceptedX.Count,
-                        existingCount, reach, mappedStop, mappedDist);
-                    roundStop = mappedStop;
-                    roundDist = mappedDist;
-                }
-
-                // MeasureBaseline against the round network WITHOUT any candidate.
-                var baselines = new float[flowCount];
-                for (int i = 0; i < flowCount; i++)
-                {
-                    baselines[i] = float.MaxValue;
-                }
-                if (baseStops > 0 && baseLines.Count > 0)
-                {
-                    TransitNetwork baseNetwork = SuitabilityTransit.Build(
-                        xs, zs, baseStops, baseLines, walkRadius, boardPenalty);
-                    var ws = new DijkstraWorkspace(baseNetwork.Graph.NodeCount);
-                    int currentOrigin = -1;
-                    for (int i = 0; i < flowCount; i++)
-                    {
-                        int origin = roundStop[flowOrigin[i]];
-                        int dest = roundStop[flowDest[i]];
-                        if (origin < 0 || dest < 0 || origin == dest)
-                        {
-                            continue;
-                        }
-                        if (origin != currentOrigin)
-                        {
-                            currentOrigin = origin;
-                            ws.Run(baseNetwork.Graph, origin, maxTravel);
-                        }
-                        if (SuitabilityTransit.Inspect(baseNetwork, ws, origin, dest, -1,
-                                out int boardings, out _, out float travelTime)
-                            && boardings > 0)
-                        {
-                            baselines[i] = travelTime
-                                + WalkSeconds(roundDist[flowOrigin[i]])
-                                + WalkSeconds(roundDist[flowDest[i]]);
-                        }
-                    }
-                }
-
-                // Score every unsettled candidate with transfers.
-                var credits = new float?[candidates.Count];
-                for (int c = 0; c < candidates.Count; c++)
-                {
-                    if (settled[c])
-                    {
-                        continue;
-                    }
-                    Candidate cand = candidates[c];
-                    int candStops = cand.StopX.Length;
-                    int total = baseStops + candStops;
-                    var xs2 = new float[total];
-                    var zs2 = new float[total];
-                    Array.Copy(xs, xs2, baseStops);
-                    Array.Copy(zs, zs2, baseStops);
-                    Array.Copy(cand.StopX, 0, xs2, baseStops, candStops);
-                    Array.Copy(cand.StopZ, 0, zs2, baseStops, candStops);
-
-                    var lines2 = new List<TransitLine>(baseLines);
-                    var candStopIndices = new int[candStops];
-                    for (int i = 0; i < candStops; i++)
-                    {
-                        candStopIndices[i] = baseStops + i;
-                    }
-                    lines2.Add(new TransitLine
-                    {
-                        m_Stops = candStopIndices,
-                        m_ExpectedWait = cand.Wait,
-                        m_SpeedMetresPerSecond = cand.Speed,
-                    });
-                    int candidateLine = lines2.Count - 1;
-
-                    TransitNetwork network = SuitabilityTransit.Build(
-                        xs2, zs2, total, lines2, walkRadius, boardPenalty);
-
-                    var mappedStop = new int[zoneCount];
-                    var mappedDist = new float[zoneCount];
-                    SuitabilityTransit.RemapZones(zoneX, zoneZ, zoneCount, roundStop, roundDist,
-                        cand.StopX, cand.StopZ, candStops, baseStops, reach, mappedStop, mappedDist);
-
-                    var origins = new int[flowCount];
-                    var dests = new int[flowCount];
-                    var weights = new float[flowCount];
-                    var access = new float[flowCount];
-                    var pairBaseline = new float[flowCount];
-                    int pairs = 0;
-                    for (int i = 0; i < flowCount; i++)
-                    {
-                        int o = mappedStop[flowOrigin[i]];
-                        int d = mappedStop[flowDest[i]];
-                        if (o < 0 || d < 0 || o == d)
-                        {
-                            continue;
-                        }
-                        origins[pairs] = o;
-                        dests[pairs] = d;
-                        weights[pairs] = flowWeight[i];
-                        access[pairs] = WalkSeconds(mappedDist[flowOrigin[i]])
-                            + WalkSeconds(mappedDist[flowDest[i]]);
-                        pairBaseline[pairs] = baselines[i];
-                        pairs++;
-                    }
-
-                    var ws2 = new DijkstraWorkspace(network.Graph.NodeCount);
-                    float credit = pairs > 0
-                        ? SuitabilityTransit.CreditLine(network, ws2, origins, dests, weights,
-                            access, pairBaseline, pairs, candidateLine, discount, maxTravel,
-                            margin, out _)
-                        : 0f;
-                    credits[c] = credit;
-                }
-
-                // Accept the best: EnabledDemand desc, ties CapturedFlow desc (the mod's
-                // OrderCandidates; its List.Sort tie order is unspecified — the evaluator
-                // treats equal keys as a reported tie). Gates are exercised separately by
-                // the mode_choice instances; lineset instances declare none.
-                int best = -1;
-                foreach (int c in Order(credits, candidates))
-                {
-                    best = c;
-                    break;
-                }
-                if (best < 0)
-                {
-                    break;
-                }
-
-                var roundCredits = new Dictionary<string, object?>();
-                for (int c = 0; c < candidates.Count; c++)
-                {
-                    if (credits[c] is float value)
-                    {
-                        roundCredits[c.ToString(System.Globalization.CultureInfo.InvariantCulture)] = B32(value);
-                    }
-                }
-                rounds.Add(new Dictionary<string, object?>
-                {
-                    ["credits_b32"] = roundCredits,
-                    ["accepted"] = best,
-                });
-
-                settled[best] = true;
-                acceptedOrder.Add(best);
-                Candidate chosen = candidates[best];
-                var stops = new int[chosen.StopX.Length];
-                for (int i = 0; i < chosen.StopX.Length; i++)
-                {
-                    stops[i] = existingCount + acceptedX.Count + i;
-                    // Index allocated BEFORE appending, mirroring AcceptIntoNetwork.
-                }
-                // AcceptIntoNetwork allocates indices existing+acceptedSoFar upward.
-                int firstIndex = existingCount + acceptedX.Count;
-                for (int i = 0; i < stops.Length; i++)
-                {
-                    stops[i] = firstIndex + i;
-                }
-                for (int i = 0; i < chosen.StopX.Length; i++)
-                {
-                    acceptedX.Add(chosen.StopX[i]);
-                    acceptedZ.Add(chosen.StopZ[i]);
-                }
-                acceptedLines.Add(new TransitLine
-                {
-                    m_Stops = stops,
-                    m_ExpectedWait = chosen.Wait,
-                    m_SpeedMetresPerSecond = chosen.Speed,
-                });
+                standalone.Add(saved.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
             }
 
             return new Dictionary<string, object?>
             {
-                ["accepted"] = acceptedOrder,
-                ["rounds"] = rounds,
+                ["chosen"] = solution.Chosen,
+                ["time_saved"] = solution.TimeSaved.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                ["upper_bound_time_saved"] = solution.UpperBoundTimeSaved.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                ["coverage_b32"] = B32(solution.Coverage),
+                ["optimal"] = solution.Optimal,
+                ["nodes"] = solution.Nodes,
+                ["infeasible"] = solution.Infeasible,
+                ["standalone_time_saved"] = standalone,
             };
         }
 
-        private static IEnumerable<int> Order(float?[] credits, List<Candidate> candidates)
+        private static float[]? OptionalF32Array(JsonElement owner, string name)
         {
-            var order = new List<int>();
-            for (int c = 0; c < credits.Length; c++)
+            return owner.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.Array ? F32Array(e) : null;
+        }
+
+        // Mirrors StationSuitabilityOverlaySystem.CoverageWith: snap the chosen candidates'
+        // stops, merge their walking times into the served map, share of the journeys.
+        private static Func<int[], int, float> EquityCoverage(JsonElement equity, LineSetProblem problem)
+        {
+            WalkGraph graph = WalkGraph.Build(
+                F32Array(equity.GetProperty("node_x_b32")), F32Array(equity.GetProperty("node_z_b32")),
+                IntArray(equity.GetProperty("edge_a")), IntArray(equity.GetProperty("edge_b")),
+                F32Array(equity.GetProperty("edge_metres_b32")), equity.GetProperty("edge_a").GetArrayLength());
+            int accessMs = equity.GetProperty("access_ms").GetInt32();
+            int horizonMs = equity.GetProperty("horizon_ms").GetInt32();
+            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMs / 1000.0 * SuitabilityTransit.WalkSpeed));
+            var dijkstra = new IntDijkstra(graph.NodeCount);
+
+            float[] sx = F32Array(equity.GetProperty("stop_x_b32"));
+            float[] sz = F32Array(equity.GetProperty("stop_z_b32"));
+            SnapAll(index, sx, sz, accessMs, out int[] stopNodes, out int[] stopAccess);
+            int[] served = SuitabilityEquity.ServedWalkMs(graph, dijkstra, stopNodes, stopAccess, stopNodes.Length, horizonMs);
+
+            float[] w = F32Array(equity.GetProperty("trip_w_b32"));
+            SnapAll(index, F32Array(equity.GetProperty("trip_ox_b32")), F32Array(equity.GetProperty("trip_oz_b32")), accessMs, out int[] on, out int[] oa);
+            SnapAll(index, F32Array(equity.GetProperty("trip_dx_b32")), F32Array(equity.GetProperty("trip_dz_b32")), accessMs, out int[] dn, out int[] da);
+
+            return (chosen, count) =>
             {
-                if (credits[c] is not null)
+                var xs = new List<float>();
+                var zs = new List<float>();
+                for (int k = 0; k < count; k++)
                 {
-                    order.Add(c);
+                    xs.AddRange(problem.Candidates[chosen[k]].StopX);
+                    zs.AddRange(problem.Candidates[chosen[k]].StopZ);
                 }
+
+                SnapAll(index, xs.ToArray(), zs.ToArray(), accessMs, out int[] nodes, out int[] access);
+                int[] merged = SuitabilityEquity.WithStops(graph, dijkstra, served, nodes, access, nodes.Length, horizonMs);
+                return SuitabilityEquity.Coverage(merged, horizonMs, on, oa, dn, da, w, w.Length).Share;
+            };
+        }
+
+        private static void SnapAll(WalkNodeIndex index, float[] xs, float[] zs, int accessMs, out int[] nodes, out int[] access)
+        {
+            nodes = new int[xs.Length];
+            access = new int[xs.Length];
+            for (int i = 0; i < xs.Length; i++)
+            {
+                nodes[i] = SuitabilityWalkAccess.SnapPoint(index, xs[i], zs[i], accessMs, out access[i]);
             }
-            order.Sort((left, right) =>
-            {
-                float lc = credits[left] ?? 0f;
-                float rc = credits[right] ?? 0f;
-                if (lc != rc)
-                {
-                    return rc.CompareTo(lc);
-                }
-                float lf = candidates[left].CapturedFlow;
-                float rf = candidates[right].CapturedFlow;
-                if (lf != rf)
-                {
-                    return rf.CompareTo(lf);
-                }
-                return left.CompareTo(right);
-            });
-            return order;
         }
     }
 }

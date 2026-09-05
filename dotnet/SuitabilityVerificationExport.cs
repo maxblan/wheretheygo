@@ -451,6 +451,149 @@ namespace StationSuitabilityOverlay
                 .BuildHashed(ExportSchemaVersion);
         }
 
+        // The line-set problem the last route pass solved, with its answer — the
+        // `lineset_time` kind: journeys at full weight, the existing network, the
+        // resolved candidates with their mode's wait/speed/ride times/headway/capacity,
+        // the floors, and the walking network the equity component reads. Null until
+        // a route pass has run.
+        private string? BuildLinesetInstance(Setting settings, string name)
+        {
+            LineSetProblem? problem = m_LineSetProblem;
+            LineSetSolution? solution = m_LineSetSolution;
+            WalkAccessInputs? inputs = m_AccessInputs;
+            if (problem is null || solution is null || inputs is null || m_ServedWalkMs is null)
+            {
+                return null;
+            }
+
+            var candidates = new List<string>(problem.Candidates.Count);
+            for (int c = 0; c < problem.Candidates.Count; c++)
+            {
+                LineCandidate line = problem.Candidates[c];
+                candidates.Add(new SuitabilityJsonObject()
+                    .Add("stop_x_b32", SuitabilityExportJson.BitsArray(line.StopX))
+                    .Add("stop_z_b32", SuitabilityExportJson.BitsArray(line.StopZ))
+                    .Add("expected_wait_b32", SuitabilityExportJson.Bits(line.ExpectedWait))
+                    .Add("speed_b32", SuitabilityExportJson.Bits(line.SpeedMetresPerSecond))
+                    .Add("ride_seconds_b32", line.RideSeconds is null ? SuitabilityExportJson.Null() : SuitabilityExportJson.BitsArray(line.RideSeconds))
+                    .Add("headway_b32", SuitabilityExportJson.Bits(line.HeadwaySeconds))
+                    .Add("capacity_b32", SuitabilityExportJson.Bits(line.VehicleCapacity))
+                    .Add("mode", SuitabilityExportJson.Str(m_LineSetResolved[c].Mode.ToString()))
+                    .Build());
+            }
+
+            var lines = new List<string>(problem.BaseLines.Count);
+            for (int i = 0; i < problem.BaseLines.Count; i++)
+            {
+                TransitLine line = problem.BaseLines[i];
+                lines.Add(new SuitabilityJsonObject()
+                    .Add("stops", SuitabilityExportJson.IntArray(line.m_Stops ?? Array.Empty<int>()))
+                    .Add("ride_seconds_b32", line.m_RideSeconds is null ? SuitabilityExportJson.Null() : SuitabilityExportJson.BitsArray(line.m_RideSeconds))
+                    .Add("expected_wait_b32", SuitabilityExportJson.Bits(line.m_ExpectedWait))
+                    .Add("speed_b32", SuitabilityExportJson.Bits(line.m_SpeedMetresPerSecond))
+                    .Build());
+            }
+
+            var data = new SuitabilityJsonObject()
+                .Add("walk_radius_b32", SuitabilityExportJson.Bits(problem.WalkRadius))
+                .Add("board_penalty_b32", SuitabilityExportJson.Bits(problem.BoardPenaltySeconds))
+                .Add("max_travel_seconds_b32", SuitabilityExportJson.Bits(problem.MaxTravelSeconds))
+                .Add("zone_reach_b32", SuitabilityExportJson.Bits(problem.ZoneReachMetres))
+                .Add("pair_ox_b32", SuitabilityExportJson.BitsArray(problem.PairOx))
+                .Add("pair_oz_b32", SuitabilityExportJson.BitsArray(problem.PairOz))
+                .Add("pair_dx_b32", SuitabilityExportJson.BitsArray(problem.PairDx))
+                .Add("pair_dz_b32", SuitabilityExportJson.BitsArray(problem.PairDz))
+                .Add("pair_w_b32", SuitabilityExportJson.BitsArray(problem.PairWeight))
+                .Add("base_stop_x_b32", SuitabilityExportJson.BitsArray(problem.BaseStopX))
+                .Add("base_stop_z_b32", SuitabilityExportJson.BitsArray(problem.BaseStopZ))
+                .Add("base_lines", SuitabilityExportJson.Array(lines))
+                .Add("candidates", SuitabilityExportJson.Array(candidates))
+                .Add("max_lines", SuitabilityExportJson.Int(problem.MaxLines))
+                .Add("utilisation_floor_b32", SuitabilityExportJson.Bits(problem.UtilisationFloor))
+                .Add("movement_seconds_per_day_b32", SuitabilityExportJson.Bits(problem.MovementSecondsPerDay))
+                .Add("duplicate_share_b32", SuitabilityExportJson.Bits(problem.DuplicateShare))
+                .Add("equity_floor_share_b32", SuitabilityExportJson.Bits(problem.EquityFloorShare))
+                .Add("equity", EquityWalkJson(inputs))
+                .Add("chosen", SuitabilityExportJson.IntArray(solution.Chosen))
+                .Add("time_saved", SuitabilityExportJson.Str(solution.TimeSaved.ToString("R", CultureInfo.InvariantCulture)))
+                .Add("upper_bound_time_saved", SuitabilityExportJson.Str(solution.UpperBoundTimeSaved.ToString("R", CultureInfo.InvariantCulture)))
+                .Add("coverage_b32", SuitabilityExportJson.Bits(solution.Coverage))
+                .Add("optimal", SuitabilityExportJson.Bool(solution.Optimal))
+                .Add("standalone_time_saved", DoubleArray(solution.StandaloneTimeSaved))
+                .Build();
+
+            return new SuitabilityJsonObject()
+                .Add("kind", SuitabilityExportJson.Str("lineset_time"))
+                .Add("name", SuitabilityExportJson.Str(name))
+                .Add("comment", SuitabilityExportJson.Str("exported from a live city; enumeration may be bounded"))
+                .Add("heavy", SuitabilityExportJson.Bool(value: true))
+                .Add("data", data)
+                .BuildHashed(ExportSchemaVersion);
+        }
+
+        // The walking network, served stops and journeys the equity share is measured
+        // on (the `coverage` kind's inputs), embedded so the set objective's equity
+        // component can be recomputed for any subset offline.
+        private string EquityWalkJson(WalkAccessInputs inputs)
+        {
+            int count = m_Journeys.Count;
+            var ox = new float[count];
+            var oz = new float[count];
+            var dx = new float[count];
+            var dz = new float[count];
+            var w = new float[count];
+            for (int i = 0; i < count; i++)
+            {
+                Trip trip = m_Journeys[i];
+                ox[i] = trip.m_Origin.x;
+                oz[i] = trip.m_Origin.y;
+                dx[i] = trip.m_Destination.x;
+                dz[i] = trip.m_Destination.y;
+                w[i] = trip.m_Weight;
+            }
+
+            var sx = new float[m_TransitStops.Count];
+            var sz = new float[m_TransitStops.Count];
+            for (int i = 0; i < m_TransitStops.Count; i++)
+            {
+                sx[i] = m_TransitStops[i].x;
+                sz[i] = m_TransitStops[i].y;
+            }
+
+            return new SuitabilityJsonObject()
+                .Add("node_x_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeX))
+                .Add("node_z_b32", SuitabilityExportJson.BitsArray(inputs.Graph.NodeZ))
+                .Add("edge_a", SuitabilityExportJson.IntArray(inputs.Graph.EdgeA))
+                .Add("edge_b", SuitabilityExportJson.IntArray(inputs.Graph.EdgeB))
+                .Add("edge_metres_b32", SuitabilityExportJson.BitsArray(inputs.Graph.EdgeMetres))
+                .Add("stop_x_b32", SuitabilityExportJson.BitsArray(sx))
+                .Add("stop_z_b32", SuitabilityExportJson.BitsArray(sz))
+                .Add("trip_ox_b32", SuitabilityExportJson.BitsArray(ox))
+                .Add("trip_oz_b32", SuitabilityExportJson.BitsArray(oz))
+                .Add("trip_dx_b32", SuitabilityExportJson.BitsArray(dx))
+                .Add("trip_dz_b32", SuitabilityExportJson.BitsArray(dz))
+                .Add("trip_w_b32", SuitabilityExportJson.BitsArray(w))
+                .Add("access_ms", SuitabilityExportJson.Int(inputs.AccessMs))
+                .Add("horizon_ms", SuitabilityExportJson.Int(m_EquityHorizonMs))
+                .Build();
+        }
+
+        private static string DoubleArray(double[] values)
+        {
+            var builder = new StringBuilder("[");
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (i > 0)
+                {
+                    _ = builder.Append(',');
+                }
+
+                _ = builder.Append(SuitabilityExportJson.Str(values[i].ToString("R", CultureInfo.InvariantCulture)));
+            }
+
+            return builder.Append(']').ToString();
+        }
+
         // The directed road network with the stop-to-stop driving times the last route
         // pass asked of it — the `road_times` kind. Null before the graph exists.
         private string? BuildRoadTimesInstance(string name)
@@ -540,120 +683,5 @@ namespace StationSuitabilityOverlay
             return builder.Append(']').ToString();
         }
 
-        // The routing instance is the pipeline's existing `lineset` kind. Null when
-        // the demand pipeline has not run yet, which is the honest answer: there is
-        // no transit model to export rather than an empty one to misread.
-        private string? BuildLinesetInstance(Setting settings, string name)
-        {
-            float[]? zoneX = m_ZoneCentreX;
-            float[]? zoneZ = m_ZoneCentreZ;
-            if (zoneX is null || zoneZ is null || m_ZoneFlows.Count == 0)
-            {
-                return null;
-            }
-
-            var flows = new List<string>(m_ZoneFlows.Count);
-            for (int i = 0; i < m_ZoneFlows.Count; i++)
-            {
-                ZoneFlow flow = m_ZoneFlows[i];
-                flows.Add(new SuitabilityJsonObject()
-                    .Add("origin", SuitabilityExportJson.Int(flow.m_Origin))
-                    .Add("dest", SuitabilityExportJson.Int(flow.m_Destination))
-                    .Add("weight_b32", SuitabilityExportJson.Bits(flow.m_Weight))
-                    .Build());
-            }
-
-            var stopX = new float[m_TransitStops.Count];
-            var stopZ = new float[m_TransitStops.Count];
-            for (int i = 0; i < m_TransitStops.Count; i++)
-            {
-                stopX[i] = m_TransitStops[i].x;
-                stopZ[i] = m_TransitStops[i].y;
-            }
-
-            var data = new SuitabilityJsonObject()
-                .Add("walk_radius_b32", SuitabilityExportJson.Bits(TransferWalkRadius))
-                .Add("board_penalty_b32",
-                    SuitabilityExportJson.Bits(SuitabilityTransit.DefaultBoardPenaltySeconds))
-                .Add("transfer_discount_b32", SuitabilityExportJson.Bits(settings.TransferDiscount))
-                .Add("max_travel_seconds_b32", SuitabilityExportJson.Bits(MaxJourneySeconds))
-                .Add("switch_margin_b32", SuitabilityExportJson.Bits(SwitchMarginSeconds))
-                .Add("zone_stop_reach_b32", SuitabilityExportJson.Bits(ZoneStopReachMetres))
-                .Add("zone_x_b32", SuitabilityExportJson.BitsArray(zoneX))
-                .Add("zone_z_b32", SuitabilityExportJson.BitsArray(zoneZ))
-                .Add("flows", SuitabilityExportJson.Array(flows))
-                .Add("existing_stop_x_b32", SuitabilityExportJson.BitsArray(stopX))
-                .Add("existing_stop_z_b32", SuitabilityExportJson.BitsArray(stopZ))
-                .Add("existing_lines", ExistingLinesJson())
-                .Add("candidates", CandidatesJson())
-                .Add("max_accept", SuitabilityExportJson.Int(settings.RouteCount))
-                .Build();
-
-            return new SuitabilityJsonObject()
-                .Add("kind", SuitabilityExportJson.Str("lineset"))
-                .Add("name", SuitabilityExportJson.Str(name))
-                .Add("comment", SuitabilityExportJson.Str(
-                    "exported from a live city; acceptance gates are out of scope for "
-                    + "this kind, they are covered by the mode_choice instances"))
-                .Add("data", data)
-                .BuildHashed(ExportSchemaVersion);
-        }
-
-        private string ExistingLinesJson()
-        {
-            var lines = new List<string>(m_ExistingLines.Count);
-            for (int i = 0; i < m_ExistingLines.Count; i++)
-            {
-                ExistingLine line = m_ExistingLines[i];
-                if (line.m_StopIndices.Count < 2)
-                {
-                    continue;
-                }
-
-                lines.Add(new SuitabilityJsonObject()
-                    .Add("stops", SuitabilityExportJson.IntArray(line.m_StopIndices))
-                    // Carried because ToTransitLines does: without the pathfound
-                    // durations the verifier would price every ride geometrically and
-                    // disagree with the mod about journeys it never got wrong.
-                    .Add("ride_seconds_b32", SuitabilityExportJson.BitsArray(line.m_RideSeconds))
-                    .Add("expected_wait_b32", SuitabilityExportJson.Bits(line.ExpectedWait))
-                    .Add("speed_b32",
-                        SuitabilityExportJson.Bits(TransitModes.CruiseSpeedFor(line.m_Mode)))
-                    .Build());
-            }
-
-            return SuitabilityExportJson.Array(lines);
-        }
-
-        private string CandidatesJson()
-        {
-            var candidates = new List<string>(m_RouteCandidates.Count);
-            for (int i = 0; i < m_RouteCandidates.Count; i++)
-            {
-                SuggestedRoute route = m_RouteCandidates[i];
-                if (route.Stops.Count < 2)
-                {
-                    continue;
-                }
-
-                var x = new float[route.Stops.Count];
-                var z = new float[route.Stops.Count];
-                for (int s = 0; s < route.Stops.Count; s++)
-                {
-                    x[s] = route.Stops[s].x;
-                    z[s] = route.Stops[s].y;
-                }
-
-                candidates.Add(new SuitabilityJsonObject()
-                    .Add("stop_x_b32", SuitabilityExportJson.BitsArray(x))
-                    .Add("stop_z_b32", SuitabilityExportJson.BitsArray(z))
-                    .Add("expected_wait_b32", SuitabilityExportJson.Bits(SuggestedWaitFor(route.Mode)))
-                    .Add("speed_b32", SuitabilityExportJson.Bits(TransitModes.CruiseSpeedFor(route.Mode)))
-                    .Add("captured_flow_b32", SuitabilityExportJson.Bits(route.CapturedFlow))
-                    .Build());
-            }
-
-            return SuitabilityExportJson.Array(candidates);
-        }
     }
 }
