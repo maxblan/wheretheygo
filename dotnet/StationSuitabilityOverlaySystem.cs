@@ -722,7 +722,7 @@ namespace StationSuitabilityOverlay
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
             m_HouseholdQuery = LiveQuery(ComponentType.ReadOnly<Household>(), ComponentType.ReadOnly<Game.Buildings.PropertyRenter>());
-            m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<Game.Common.Target>());
+            m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<TripNeeded>());
             m_InsideQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<CurrentBuilding>());
 
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
@@ -2507,10 +2507,18 @@ namespace StationSuitabilityOverlay
         }
 
         // One scan of the live city: remember the building every citizen is inside,
-        // and record every shopping/leisure journey the moment it is first seen with
-        // its Target — origin = the building the citizen was last inside. A journey
-        // stays recorded once for as long as the same (citizen, target, purpose) is
-        // seen; when it ends the citizen may start another.
+        // and record every shopping/leisure journey the moment it is first seen —
+        // origin = the building the citizen was last inside, destination = the queued
+        // trip's target agent. A journey stays recorded once for as long as the same
+        // (citizen, target, purpose) is seen; when it ends the citizen may start another.
+        //
+        // Why TripNeeded and not Target (decompiled TripNeededSystem/ResidentAISystem):
+        // the citizen's own Target is removed the moment it leaves the building — the
+        // travelling creature carries a Target instead, and that one is rewritten to
+        // the vehicle owner while boarding and to divert targets. The TripNeeded entry
+        // keeps the destination agent for the whole journey, and TravelPurpose is on
+        // the citizen from departure until it is done — so together they are visible
+        // for minutes, not frames. The first live test with Target saw nothing.
         private void ObserveTrips()
         {
             var simulation = World.GetExistingSystemManaged<SimulationSystem>();
@@ -2529,7 +2537,6 @@ namespace StationSuitabilityOverlay
 
             using var travellers = m_TravellingQuery.ToEntityArray(Allocator.Temp);
             using var purposes = m_TravellingQuery.ToComponentDataArray<TravelPurpose>(Allocator.Temp);
-            using var targets = m_TravellingQuery.ToComponentDataArray<Game.Common.Target>(Allocator.Temp);
             var seen = new HashSet<Entity>();
             for (int i = 0; i < travellers.Length; i++)
             {
@@ -2540,7 +2547,11 @@ namespace StationSuitabilityOverlay
                 }
 
                 Entity citizen = travellers[i];
-                Entity target = targets[i].m_Target;
+                if (!TryQueuedDestination(citizen, purpose, out Entity target))
+                {
+                    continue;
+                }
+
                 _ = seen.Add(citizen);
                 if (m_CurrentJourney.TryGetValue(citizen, out (Entity target, byte purpose) current)
                     && current.target == target && current.purpose == (byte)purpose)
@@ -2570,6 +2581,27 @@ namespace StationSuitabilityOverlay
             m_ObservedTrips.Prune(frame);
         }
 
+        // The destination of the citizen's queued trip with this purpose, if any.
+        private bool TryQueuedDestination(Entity citizen, Purpose purpose, out Entity target)
+        {
+            target = Entity.Null;
+            if (!EntityManager.TryGetBuffer(citizen, isReadOnly: true, out DynamicBuffer<TripNeeded> trips))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < trips.Length; i++)
+            {
+                if (trips[i].m_Purpose == purpose && trips[i].m_TargetAgent != Entity.Null)
+                {
+                    target = trips[i].m_TargetAgent;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void RecordObservedTrip(Entity citizen, Entity target, byte purpose, uint frame)
         {
             if (!m_LastBuilding.TryGetValue(citizen, out Entity origin)
@@ -2577,6 +2609,13 @@ namespace StationSuitabilityOverlay
                 || !TryResolveBuildingPosition(target, out float3 to))
             {
                 m_ObservedWithoutOrigin++;
+                return;
+            }
+
+            // First seen already at the destination (the purpose stays on the citizen
+            // while shopping): no journey to record.
+            if (math.distancesq(new float2(from.x, from.z), new float2(to.x, to.z)) < 1f)
+            {
                 return;
             }
 

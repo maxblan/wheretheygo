@@ -461,11 +461,15 @@ re-sorted descending (insertion sort, stable), trailing non-positive scores drop
    save holds no such destinations, so the live city is scanned once per real second:
    every citizen inside a building is remembered as (citizen → building); every
    citizen carrying `TravelPurpose` ∈ {Shopping, Leisure, Relaxing, Sightseeing,
-   VisitAttractions} together with a `Target` is a journey (target position: the
-   target's Transform, or its rented property's), recorded once per distinct
-   (citizen, target, purpose) while continuously seen, origin = the building the
-   citizen was last seen inside (journeys without a known origin are counted and
-   dropped). Journeys live in a window of one game day (262 144 frames,
+   VisitAttractions} whose `TripNeeded` buffer holds an entry of that purpose is a
+   journey, destination = that entry's `m_TargetAgent` (position: its Transform, or
+   its rented property's), recorded once per distinct (citizen, target, purpose)
+   while continuously seen, origin = the building the citizen was last seen inside
+   (journeys without a known origin, or first seen already at the destination, are
+   not recorded; the former are counted). *Not* the `Target` component: decompiled
+   `TripNeededSystem` removes it from the citizen at departure and the creature's
+   copy is rewritten while boarding — the first live test with `Target` saw no
+   journey at all. Journeys live in a window of one game day (262 144 frames,
    `ObservedTripWindow`, cap 200 000, frame-rewind clears it). At each demand refresh
    they join the queue above with weight `ScaleFor(day) = clamp(day/span, 1, 4)` —
    a full window counts one per journey, a shorter one is scaled to a day's rate but
