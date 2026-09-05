@@ -1105,10 +1105,13 @@ namespace StationSuitabilityOverlay.Tests
             double unweighted = SuitabilityEquity.Gini(new[] { 1.0, 1.0, 1.0, 2.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
             AssertEqual((float)unweighted, (float)weighted, 1e-9f, "weights behave like repeated observations");
 
-            // 1000 journeys a day on a 300 s headway with 70-seat buses: 400 peak
-            // boardings against 24 buses × 70 seats = 1680 seats an hour → 23.8 %.
-            float utilisation = SuitabilityEquity.Utilisation(1000f, 300f, 70f);
-            AssertEqual(400f / 1680f, utilisation, 1e-6f, "peak boardings over peak seats");
+            // 179 journeys a game day on a 400 s headway with 80-seat buses: 358
+            // boardings against (4369.07 / 400) runs × 2 directions × 80 seats.
+            float day = 262144f / 60f;
+            AssertEqual(day, SuitabilityEquity.MovementSecondsPerGameDay, 1e-3f, "a game day is 262144 ticks at 60 per second");
+            float utilisation = SuitabilityEquity.Utilisation(179f, 400f, 80f);
+            AssertEqual(358f / (day / 400f * 2f * 80f), utilisation, 1e-6f, "boardings over seats offered in the day");
+            AssertTrue(utilisation is > 0.20f and < 0.21f, "Valmare's best candidate sits near 20 %");
             AssertEqual(0f, SuitabilityEquity.Utilisation(1000f, 0f, 70f), 0f, "no headway, no utilisation");
         }
 

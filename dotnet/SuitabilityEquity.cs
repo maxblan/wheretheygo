@@ -171,9 +171,19 @@ namespace StationSuitabilityOverlay
             return merged;
         }
 
-        // Peak-hour boardings a line would carry over the seats it runs: journeys per
-        // day → boardings in the busiest hour (TransitModes.PeakShareOfDay ·
-        // RidesPerJourney) against vehicles per hour in both directions times capacity.
+        // A game day in the seconds vehicles and headways are measured in: the
+        // simulation runs 60 ticks per real second at speed 1 (decompiled
+        // Game.Simulation.SimulationSystem) and TimeSystem.kTicksPerDay ticks make a
+        // day, so a "24-hour" day holds 4 369 s of movement — not 86 400. Every headway,
+        // ride time and journey count in this mod lives on that clock; a formula that
+        // assumed real-world hours under-read every line's utilisation twentyfold.
+        public const float MovementSecondsPerGameDay = LineHistory.FramesPerGameDay / 60f;
+
+        // Boardings a line would carry in a game day over the seats it offers in that
+        // day: journeys × TransitModes.RidesPerJourney (out and back) against the runs
+        // its headway fits into the day, both directions, times capacity. A throughput
+        // ratio — not the game's instantaneous "usage" (passengers on board over
+        // capacity), which the two are related by the mean ride's share of the line.
         public static float Utilisation(float journeysPerDay, float headwaySeconds, float vehicleCapacity)
         {
             if (headwaySeconds <= 0f || vehicleCapacity <= 0f)
@@ -181,9 +191,9 @@ namespace StationSuitabilityOverlay
                 return 0f;
             }
 
-            float peakBoardings = journeysPerDay * TransitModes.PeakShareOfDay * TransitModes.RidesPerJourney;
-            float seatsPerHour = 3600f / headwaySeconds * 2f * vehicleCapacity;
-            return peakBoardings / seatsPerHour;
+            float boardings = journeysPerDay * TransitModes.RidesPerJourney;
+            float seatsPerDay = MovementSecondsPerGameDay / headwaySeconds * 2f * vehicleCapacity;
+            return boardings / seatsPerDay;
         }
     }
 }

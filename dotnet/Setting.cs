@@ -47,7 +47,7 @@ namespace StationSuitabilityOverlay
         // suggested line has to reach.
         public const int kUtilisationMin = 5;
         public const int kUtilisationMax = 60;
-        public const int kUtilisationDefault = 25;
+        public const int kUtilisationDefault = 15;
         public const int kSlopeMin = 3;
         public const int kSlopeMax = 45;
         public const int kSlopeDefault = 15;

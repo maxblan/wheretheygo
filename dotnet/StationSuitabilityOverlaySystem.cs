@@ -4702,9 +4702,10 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            // The utilisation floor (register A4.1/A6.4, decided 2026-09-05): peak-hour
-            // boardings the line would carry over the seats it runs at its headway, both
-            // directions. Replaced "fills one bus at the peak", which asked the same
+            // The utilisation floor (register A4.1/A6.4, decided 2026-09-05): boardings
+            // the line would carry in a game day over the seats its headway offers in
+            // that day, both directions — on the game's clock, where a day is 4 369 s of
+            // movement. Replaced "fills one bus at the peak", which asked the same
             // question of every mode at one fixed size and never of the fleet.
             float capacity = ReadFleetCapacities().For(candidate.Mode);
             float headway = SuggestedWaitFor(candidate.Mode) * 2f;
@@ -4716,7 +4717,7 @@ namespace StationSuitabilityOverlay
                 Mod.Log.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(corridorFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"enabledDemand={(candidate.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, utilisation " +
-                    $"{(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of peak seats (floor {(floor * 100f).ToString("F0", CultureInfo.InvariantCulture)} %; " +
+                    $"{(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of the seats offered in a game day (floor {(floor * 100f).ToString("F0", CultureInfo.InvariantCulture)} %; " +
                     $"headway {(headway).ToString("F0", CultureInfo.InvariantCulture)} s, capacity {(capacity).ToString("F0", CultureInfo.InvariantCulture)}; " +
                     $"this city still has {(m_UnservedTravelWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys unserved)");
                 return false;

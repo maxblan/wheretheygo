@@ -556,7 +556,7 @@ re-sorted descending (insertion sort, stable), trailing non-positive scores drop
 
 Instance kind `coverage`. Decisions: sufficientarian floor as ε-constraint with the
 efficiency objective below it; T = 10 min walking horizon, X = 80 % served share,
-utilisation floor 25 % (all three are Options sliders).
+utilisation floor 15 % (all three are Options sliders; the floor was 25 % until the day-length correction below).
 
 - **Served-walk field.** Every served stop (the existing lines' stops, plus accepted
   suggestions within a selection round) is snapped to the pedestrian network (§7 v2
@@ -577,9 +577,15 @@ utilisation floor 25 % (all three are Options sliders).
   above X the order is enabled demand, corridor flow as before. Accepting a candidate
   adds its stops to the field and re-measures.
 - **Utilisation gate** (replaces "fills one bus at the peak"): a demand-scored
-  candidate must reach `utilisation = enabledDemand · 0.2 · 2 / ((3600 / headway) ·
-  2 · capacity(mode)) ≥ floor`, headway = 2 × the mode's suggested wait, capacity from
-  the loaded prefabs.
+  candidate must reach `utilisation = enabledDemand · 2 / ((D / headway) · 2 ·
+  capacity(mode)) ≥ floor` with D = 262 144 / 60 = 4 369.07 s, the movement seconds in
+  one game day (SimulationSystem: 60 ticks per real second at speed 1;
+  TimeSystem.kTicksPerDay), headway = 2 × the mode's suggested wait, capacity from the
+  loaded prefabs. *Correction 2026-09-05:* the first version divided a real-world hour
+  (3 600 s) by the headway and took a 20 % peak share, i.e. assumed an 86 400 s day; on
+  the game's clock that under-read every candidate about twentyfold (Valmare's best
+  read 5.0 % instead of 20.5 %). Note the game's own "usage" figure is instantaneous
+  occupancy (passengers on board over capacity), a different quantity.
 - **Verification.** The instance carries graph, served stops, journeys, A and T and
   the mod's share/sums/Gini/counts; the evaluator re-derives everything with exact
   integer times and the stated double summation order; game = subject = evaluator.
