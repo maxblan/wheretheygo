@@ -115,6 +115,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Readings older than the window are evicted", WindowEvictsPastADay);
             Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
             Run("Loading another save restarts the window", WindowResetsWhenFramesRewind);
+            Run("Windows can be written out and re-recorded in frame order without changing their averages", WindowsRoundTripThroughTheSave);
             Run("A deleted line stops being tracked", WindowForgetsDeletedLines);
 
             Run("The game asking for vehicles is taken at its word", VerdictFollowsTheGamesFlags);
@@ -3521,6 +3522,67 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(0.275f, average.m_Usage, 1e-4f, "mean of the per-sample usages");
             AssertEqual(0.45f, average.m_PeakUsage, 1e-4f, "the fuller sample is the peak");
             AssertEqual(1.5f, average.m_Vehicles, 1e-4f, "fleet size averages across the change");
+        }
+
+        // The save file holds the windows' contents; a load re-records them. Samples
+        // of several lines interleave in time, so the restore must go by frame across
+        // lines — Record treats an older frame as a rewound clock and clears everything.
+        private static void WindowsRoundTripThroughTheSave()
+        {
+            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            uint frame = 1000u;
+            for (int i = 0; i < 6; i++)
+            {
+                frame += 2000u;
+                history.Record(7, new LineObservation { m_Frame = frame, m_Passengers = 10 * i, m_Capacity = 100, m_IntervalSeconds = 120f, m_Vehicles = 2 });
+                history.Record(9, new LineObservation { m_Frame = frame + 500u, m_Passengers = 5 * i, m_Capacity = 50, m_IntervalSeconds = 90f, m_Vehicles = 1 });
+            }
+
+            bool had7 = history.TryAverage(7, out LineAverage before7);
+            bool had9 = history.TryAverage(9, out LineAverage before9);
+            AssertTrue(had7 && had9, "both lines have averages");
+
+            var flat = new List<(int line, LineObservation sample)>();
+            foreach (int line in history.LineIds)
+            {
+                IReadOnlyList<LineObservation> samples = history.SamplesOf(line);
+                for (int i = 0; i < samples.Count; i++)
+                {
+                    flat.Add((line, samples[i]));
+                }
+            }
+
+            AssertEqual(12, flat.Count, 0, "every sample is exported");
+            flat.Sort((a, b) => a.sample.m_Frame.CompareTo(b.sample.m_Frame));
+            var restored = new LineHistory(LineHistory.FramesPerGameDay);
+            for (int i = 0; i < flat.Count; i++)
+            {
+                restored.Record(flat[i].line, flat[i].sample);
+            }
+
+            bool has7 = restored.TryAverage(7, out LineAverage after7);
+            bool has9 = restored.TryAverage(9, out LineAverage after9);
+            AssertTrue(has7 && has9, "the restored window judges both lines");
+            AssertEqual(before7.m_Usage, after7.m_Usage, 0f, "line 7 keeps its usage");
+            AssertEqual(before9.m_Passengers, after9.m_Passengers, 0f, "line 9 keeps its passengers");
+            AssertEqual(2, restored.TrackedLines, 0, "two lines tracked");
+
+            var window = new ObservedTripWindow(LineHistory.FramesPerGameDay);
+            for (int i = 0; i < 5; i++)
+            {
+                window.Record(new ObservedTrip { m_Frame = 100u * (uint)(i + 1), m_OriginX = i, m_OriginZ = 1f, m_DestinationX = 2f, m_DestinationZ = 3f, m_Purpose = (byte)(i % 2) });
+            }
+
+            var copy = new ObservedTripWindow(LineHistory.FramesPerGameDay);
+            IReadOnlyList<ObservedTrip> trips = window.Trips;
+            for (int i = 0; i < trips.Count; i++)
+            {
+                copy.Record(trips[i]);
+            }
+
+            AssertEqual(window.Count, copy.Count, 0, "every observed journey survives the round trip");
+            AssertEqual(window.CountOf(1), copy.CountOf(1), 0, "the per-purpose counters are rebuilt");
+            AssertEqual(window.SpanFrames, copy.SpanFrames, 0, "the span is unchanged");
         }
 
         // The simulation frame counts up within one city and rewinds when another

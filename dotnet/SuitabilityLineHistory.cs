@@ -97,6 +97,16 @@ namespace StationSuitabilityOverlay
 
         public int TrackedLines => m_ByLine.Count;
 
+        // The window's contents for the save file: every tracked line and its samples in
+        // recording order. Restore by re-recording the samples in frame order
+        // (Record clears the window on a frame older than the newest it has seen).
+        public IEnumerable<int> LineIds => m_ByLine.Keys;
+
+        public IReadOnlyList<LineObservation> SamplesOf(int lineId)
+        {
+            return m_ByLine.TryGetValue(lineId, out List<LineObservation>? samples) ? samples : Array.Empty<LineObservation>();
+        }
+
         // Wipes the history. Loading a different save rewinds the frame counter, and
         // readings from the previous city must not be averaged into this one.
         public void Clear()

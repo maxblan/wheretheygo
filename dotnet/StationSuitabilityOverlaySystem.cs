@@ -271,7 +271,7 @@ namespace StationSuitabilityOverlay
         // Wall-clock budget for the line-set search on the worker. Past it the search
         // keeps the best set found and reports the open bound as the ceiling
         // (SuitabilityLineSet.Solve); the log says which regime the result is in.
-        private const int LineSetTimeBudgetSeconds = 30;
+        private const int LineSetTimeBudgetSeconds = 15;
 
         // A route pass is started at most this often unless the objective or the line
         // count changed or there are no suggestions yet. The demand refresh itself
@@ -295,6 +295,10 @@ namespace StationSuitabilityOverlay
             public int AssignedPairs;
             public float TotalZoneWeight;
             public float AssignedWeight;
+            // The journeys as door-to-door pairs and the base network's door-to-door
+            // times, built once per pass and shared by every set problem of the pass.
+            public LineSetProblem? PairTable;
+            public float[]? Baseline;
             // Where the worker's time went, for the log.
             public long AssignMs;
             public long AlignmentMs;
@@ -928,6 +932,7 @@ namespace StationSuitabilityOverlay
             SweepPlaceableInfoviews();
             TrackInputChanges();
             HandleExportRequest();
+            AnnounceRestoredRoutes();
             FinishRoutesIfReady(settings);
             if (!m_RoutesPending)
             {
@@ -4348,13 +4353,13 @@ namespace StationSuitabilityOverlay
             StopContext stops = BuildStopContext();
 
             var phases = System.Diagnostics.Stopwatch.StartNew();
-            WeighCandidatesAlone(settings, pass.Candidates);
+            WeighCandidatesAlone(settings, pass.Candidates, pass);
             pass.WeighMs = phases.ElapsedMilliseconds;
             phases.Restart();
             List<SuggestedRoute> resolved = pass.Resolved;
             for (int i = 0; i < pass.Candidates.Count; i++)
             {
-                ResolveCandidate(settings, pass.Candidates[i], i, facts, stops, scratch, tally, resolved);
+                ResolveCandidate(settings, pass.Candidates[i], i, facts, stops, scratch, tally, resolved, pass);
             }
 
             pass.ResolveMs = phases.ElapsedMilliseconds;
@@ -4366,7 +4371,7 @@ namespace StationSuitabilityOverlay
 
             if (resolved.Count > 0)
             {
-                LineSetProblem problem = BuildLineSetProblem(settings, resolved, settings.RouteCount);
+                LineSetProblem problem = BuildLineSetProblem(settings, resolved, settings.RouteCount, pass);
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 LineSetSolution solution;
                 using (var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(LineSetTimeBudgetSeconds)))
@@ -4394,7 +4399,7 @@ namespace StationSuitabilityOverlay
         // Every candidate evaluated on its own against the existing network: the journey
         // weight that would ride it becomes EnabledDemand (what the mode decision and the
         // panel's reach figure read), and its standalone time saving is logged.
-        private void WeighCandidatesAlone(Setting settings, List<SuggestedRoute> candidates)
+        private void WeighCandidatesAlone(Setting settings, List<SuggestedRoute> candidates, RoutePass pass)
         {
             var usable = new List<SuggestedRoute>();
             for (int i = 0; i < candidates.Count; i++)
@@ -4412,9 +4417,9 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            LineSetProblem probe = BuildLineSetProblem(settings, usable, 1);
+            LineSetProblem probe = BuildLineSetProblem(settings, usable, 1, pass);
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            float[] before = SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
+            float[] before = pass.Baseline ??= SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
             DeferredLog.Info(
                 $"Baseline door-to-door times for {(probe.PairCount).ToString(CultureInfo.InvariantCulture)} pairs from " +
                 $"{(SuitabilityLineSet.GeometryOf(probe).ZoneCount).ToString(CultureInfo.InvariantCulture)} zones in {(stopwatch.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms");
@@ -4435,10 +4440,18 @@ namespace StationSuitabilityOverlay
         // The set problem over `candidates`: existing served stops and lines as the base
         // network, every journey at its full weight, each candidate with the wait, speed,
         // ride times, headway and capacity of its resolved mode.
-        private LineSetProblem BuildLineSetProblem(Setting settings, List<SuggestedRoute> candidates, int maxLines)
+        private LineSetProblem BuildLineSetProblem(Setting settings, List<SuggestedRoute> candidates, int maxLines, RoutePass pass)
         {
+            LineSetProblem pairs = pass.PairTable ??= BuildPairTable();
             var problem = new LineSetProblem
             {
+                PairCount = pairs.PairCount,
+                PairOx = pairs.PairOx,
+                PairOz = pairs.PairOz,
+                PairDx = pairs.PairDx,
+                PairDz = pairs.PairDz,
+                PairWeight = pairs.PairWeight,
+                Geometry = pairs.Geometry,
                 BaseStopCount = m_TransitStops.Count,
                 BaseStopX = new float[m_TransitStops.Count],
                 BaseStopZ = new float[m_TransitStops.Count],
@@ -4459,41 +4472,6 @@ namespace StationSuitabilityOverlay
                 problem.BaseStopX[i] = m_TransitStops[i].x;
                 problem.BaseStopZ[i] = m_TransitStops[i].y;
             }
-
-            // Journeys door to door (register A0.5): every trip at its own two
-            // positions, not a zone centre; trips between the same two doors (one
-            // household's commuters to one workplace) are one pair with their summed
-            // weight. Evaluate then searches once per distinct origin door.
-            var pairIndex = new Dictionary<(float, float, float, float), int>();
-            var ox = new List<float>();
-            var oz = new List<float>();
-            var dx = new List<float>();
-            var dz = new List<float>();
-            var weight = new List<float>();
-            for (int i = 0; i < m_Journeys.Count; i++)
-            {
-                Trip trip = m_Journeys[i];
-                var key = (trip.m_Origin.x, trip.m_Origin.y, trip.m_Destination.x, trip.m_Destination.y);
-                if (pairIndex.TryGetValue(key, out int existing))
-                {
-                    weight[existing] += trip.m_Weight;
-                    continue;
-                }
-
-                pairIndex.Add(key, ox.Count);
-                ox.Add(trip.m_Origin.x);
-                oz.Add(trip.m_Origin.y);
-                dx.Add(trip.m_Destination.x);
-                dz.Add(trip.m_Destination.y);
-                weight.Add(trip.m_Weight);
-            }
-
-            problem.PairCount = ox.Count;
-            problem.PairOx = ox.ToArray();
-            problem.PairOz = oz.ToArray();
-            problem.PairDx = dx.ToArray();
-            problem.PairDz = dz.ToArray();
-            problem.PairWeight = weight.ToArray();
 
             FleetFacts facts = ReadFleetFacts();
             for (int c = 0; c < candidates.Count; c++)
@@ -4529,6 +4507,50 @@ namespace StationSuitabilityOverlay
             }
 
             return problem;
+        }
+
+        // The journeys as door-to-door pairs (register A0.5): every trip at its own two
+        // positions, not a zone centre; trips between the same two doors (one
+        // household's commuters to one workplace) are one pair with their summed
+        // weight. Built once per pass; Evaluate then searches once per distinct origin
+        // door, and the geometry cache on the table is shared by every problem.
+        private LineSetProblem BuildPairTable()
+        {
+            var pairIndex = new Dictionary<(float, float, float, float), int>();
+            var ox = new List<float>();
+            var oz = new List<float>();
+            var dx = new List<float>();
+            var dz = new List<float>();
+            var weight = new List<float>();
+            for (int i = 0; i < m_Journeys.Count; i++)
+            {
+                Trip trip = m_Journeys[i];
+                var key = (trip.m_Origin.x, trip.m_Origin.y, trip.m_Destination.x, trip.m_Destination.y);
+                if (pairIndex.TryGetValue(key, out int existing))
+                {
+                    weight[existing] += trip.m_Weight;
+                    continue;
+                }
+
+                pairIndex.Add(key, ox.Count);
+                ox.Add(trip.m_Origin.x);
+                oz.Add(trip.m_Origin.y);
+                dx.Add(trip.m_Destination.x);
+                dz.Add(trip.m_Destination.y);
+                weight.Add(trip.m_Weight);
+            }
+
+            var table = new LineSetProblem
+            {
+                PairCount = ox.Count,
+                PairOx = ox.ToArray(),
+                PairOz = oz.ToArray(),
+                PairDx = dx.ToArray(),
+                PairDz = dz.ToArray(),
+                PairWeight = weight.ToArray(),
+            };
+            table.Geometry = SuitabilityLineSet.GeometryOf(table);
+            return table;
         }
 
         // Share of journeys served at both ends once the chosen candidates' stops join the
@@ -4888,9 +4910,10 @@ namespace StationSuitabilityOverlay
             StopContext stops,
             List<int> scratch,
             RejectionTally tally,
-            List<SuggestedRoute> resolved)
+            List<SuggestedRoute> resolved,
+            RoutePass pass)
         {
-            if (!SettleMode(settings, candidate, index, facts, stops, out float utilisation, out ModePreset? nextUp))
+            if (!SettleMode(settings, candidate, index, facts, stops, pass, out float utilisation, out ModePreset? nextUp))
             {
                 tally.Unjustified++;
                 return;
@@ -4908,7 +4931,7 @@ namespace StationSuitabilityOverlay
             {
                 SuggestedRoute variant = candidate.CopyFor(larger);
                 SuitabilityRoutes.Restop(variant, larger, stops);
-                variant.EnabledDemand = RidersAlone(settings, variant);
+                variant.EnabledDemand = RidersAlone(settings, variant, pass);
                 DeferredLog.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: also offered as a {larger} " +
                     $"({variant.Stops.Count} stops, riders/day alone={(variant.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)})");
@@ -4934,9 +4957,9 @@ namespace StationSuitabilityOverlay
 
             onRoad.Group = candidate.Group;
             onRoad.DemandScored = true;
-            onRoad.EnabledDemand = RidersAlone(settings, onRoad);
+            onRoad.EnabledDemand = RidersAlone(settings, onRoad, pass);
             tally.Retraced++;
-            if (!SettleMode(settings, onRoad, index, facts, stops, out _, out ModePreset? roadNextUp))
+            if (!SettleMode(settings, onRoad, index, facts, stops, pass, out _, out ModePreset? roadNextUp))
             {
                 return;
             }
@@ -4950,7 +4973,7 @@ namespace StationSuitabilityOverlay
             {
                 SuggestedRoute variant = onRoad.CopyFor(largerRoad);
                 SuitabilityRoutes.Restop(variant, largerRoad, stops);
-                variant.EnabledDemand = RidersAlone(settings, variant);
+                variant.EnabledDemand = RidersAlone(settings, variant, pass);
                 if (PassesLineGates(variant, index, facts, tally))
                 {
                     resolved.Add(variant);
@@ -4998,7 +5021,7 @@ namespace StationSuitabilityOverlay
         // Chooses the mode from the route's own riders, re-placing its stops for the
         // mode and re-measuring once, since stops and riders depend on each other.
         // False when no vehicle of any mode on the network is installed.
-        private bool SettleMode(Setting settings, SuggestedRoute route, int index, FleetFacts facts, StopContext stops, out float utilisation, out ModePreset? nextUp)
+        private bool SettleMode(Setting settings, SuggestedRoute route, int index, FleetFacts facts, StopContext stops, RoutePass pass, out float utilisation, out ModePreset? nextUp)
         {
             nextUp = null;
             if (!TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out ModePreset mode, out utilisation))
@@ -5011,12 +5034,12 @@ namespace StationSuitabilityOverlay
             if (mode != route.Mode)
             {
                 SuitabilityRoutes.Restop(route, mode, stops);
-                route.EnabledDemand = RidersAlone(settings, route);
+                route.EnabledDemand = RidersAlone(settings, route, pass);
                 if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out ModePreset again, out utilisation) && again != mode)
                 {
                     mode = again;
                     SuitabilityRoutes.Restop(route, mode, stops);
-                    route.EnabledDemand = RidersAlone(settings, route);
+                    route.EnabledDemand = RidersAlone(settings, route, pass);
                     _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out _, out utilisation);
                 }
             }
@@ -5041,15 +5064,15 @@ namespace StationSuitabilityOverlay
 
         // The journey weight that would ride this line on its own against the existing
         // network (the same evaluation WeighCandidatesAlone makes for the pool).
-        private float RidersAlone(Setting settings, SuggestedRoute route)
+        private float RidersAlone(Setting settings, SuggestedRoute route, RoutePass pass)
         {
             if (route.Stops.Count < 2)
             {
                 return 0f;
             }
 
-            LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute> { route }, 1);
-            float[] before = SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
+            LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute> { route }, 1, pass);
+            float[] before = pass.Baseline ??= SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
             return (float)SuitabilityLineSet.Evaluate(probe, s_OnlyCandidate, 1, before).Riders[0];
         }
 

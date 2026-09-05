@@ -50,6 +50,9 @@ namespace StationSuitabilityOverlay
         }
 
         public int Count => m_Trips.Count;
+
+        // The window's contents for the save file, oldest first; restore with Record.
+        public IReadOnlyList<ObservedTrip> Trips => m_Trips;
         public uint WindowFrames => m_WindowFrames;
         public int EvictedSinceLastReport => m_Evicted;
         public int DroppedAtCapSinceLastReport => m_Dropped;

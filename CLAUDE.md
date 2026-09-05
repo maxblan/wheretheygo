@@ -252,6 +252,20 @@ terrain texture and every UI payload all live in it. The pipeline stages have cl
 4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`) and judged
    (`SuitabilityLineHealth.cs`).
 
+### The save state
+
+`SuitabilitySaveState.cs` (a partial of the overlay system) implements `IDefaultSerializable`, which
+is how the game persists a world system into the save (`SystemSerializerLibrary`, keyed by the
+system's assembly-qualified type name). It carries the current suggestions, the observed
+shopping/leisure journeys and the line readings, so a loaded city does not start cold and the
+first route pass waits its normal interval. Two rules the format lives by: the block is **one
+length-prefixed byte payload behind a format version**, because `ComponentSystemSerializer`
+throws "Data size mismatch" unless a load consumes exactly what was written — an unknown version
+reads the length, skips the bytes and starts cold; and a save made with the mod loads without it
+(`SystemSerializer.DeserializeType` logs "Not serializable type" and skips the block). Bump
+`SaveFormatVersion` whenever the payload layout changes; never make the parser depend on the game
+state at load, it runs before the first `OnUpdate`.
+
 ### The verification export
 
 `SuitabilityVerificationExport.cs` (a partial of the overlay system) writes the

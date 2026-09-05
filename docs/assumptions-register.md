@@ -236,6 +236,8 @@ Rückfragen oben entschieden (RF → ✅):
 | A5.5 Prefab-Werte | Befund: Intervalle 45/45/60/90/90 s, Standzeit 1–10 s, Beschleunigung 5–6 m/s² | Planungstakt = Tabelle 300/240/200/480/600 s, δ = max(Physik, 15 s); **RF offen: Takt als Planungsvariable?** |
 | A6.x Obergrenze | Befund 17:06: Bus mit 154 % gewählt (Modus an fremder Variante gemessen) | Modus an eigenen Fahrgästen nach Neusetzen der Halte; nächste Stufe als Variante; Set-Obergrenze 100 % |
 | A0.5 Paare | Reisen Tür zu Tür statt Zonenzentren; Türen sind in der Wegesuche Senken (kein Fußweg durch eine Haustür) | Semantik im Spec §6.2 v2; Evaluator angepasst |
+| Warmstart | Nutzer 2026-09-05: „eigenes Savefile, damit kein Cold Start nach jedem Laden“ | Vorschläge, beobachtete Wege und Linien-Messungen werden über `IDefaultSerializable` in den Spielstand geschrieben (Format-Version, längenpräfixierter Payload; Laden ohne Mod überspringt den Block). Erster Pass nach dem Laden wartet den normalen Takt |
+| Restlaufzeit | Budget 15 s; Paartabelle und Basislinie einmal je Pass statt je Variante (Modusauflösung 8 s → erwartet < 1 s) | Messung im nächsten Spiellauf |
 
 ---
 

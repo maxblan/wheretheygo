@@ -86,6 +86,8 @@ Note that for route planning, *any* served stop counts as somewhere to change â€
 
 The suggestions are then chosen **as a set**, not one at a time. A branch-and-bound search over subsets of the candidate pool maximises the passenger time saved, after first satisfying the equity floor as far as it can be reached, and either proves its set optimal or reports the best it found together with a ceiling when its node budget runs out. Two rules make a set admissible: every line must reach the utilisation floor on the riders the whole set gives it, so a feeder's riders count for the trunk it feeds; and no line may be a duplicate, meaning at least half of its riders would travel no slower without it. A second metro shadowing the first therefore never appears â€” with the first in the set it carries nobody. Suggestions are drawn as coloured polylines with stop markers while the infoview is open.
 
+**The mod remembers.** Its suggestions, the shopping and leisure journeys it has observed and the line readings it has collected are written into the save, so a loaded city shows its lines at once, keeps a day's worth of demand and judges its lines from the readings it already had, instead of starting cold. A save made with the mod loads fine without it; the game skips the block.
+
 The **Route objective** setting changes what a line is grown for: maximum ridership follows the busiest journeys and may leave outlying districts unserved; maximum coverage spreads out to reach more districts even where demand is thin; balanced does both.
 
 Known limits, since these matter when reading the output:
