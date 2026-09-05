@@ -70,6 +70,7 @@ namespace StationSuitabilityOverlay.Tests
             Run("Line set: the exact selection matches brute force under utilisation and duplicate rules", LineSetMatchesBruteForce);
             Run("Line set: the equity floor ranks coverage before time saved", LineSetEquityFirst);
             Run("Line set: a line above the utilisation ceiling makes its set infeasible", LineSetCeiling);
+            Run("Line set: greedy and swap search reach the trunk-and-feeder pair before the exact search runs", LineSetLocalSearch);
             Run("Line set: one capped search per origin zone equals one search per pair", LineSetGroupedEqualsPerPair);
             Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
             Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
@@ -1376,6 +1377,17 @@ namespace StationSuitabilityOverlay.Tests
                 AssertTrue(evaluation is not null && SuitabilityLineSet.Utilisation(problem, capped.Chosen[k], evaluation.Riders[capped.Chosen[k]]) <= problem.UtilisationCeiling,
                     "every chosen line stays under the ceiling");
             }
+        }
+
+        private static void LineSetLocalSearch()
+        {
+            LineSetProblem problem = FeederProblem();
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            AssertTrue(solution.Optimal && solution.Count == 2, "the exact search still closes");
+            AssertTrue(solution.GreedyTimeSaved > 0.0, "the greedy build found a feasible set");
+            AssertTrue(solution.LocalSearchTimeSaved >= solution.GreedyTimeSaved, "swaps never lose against the greedy build");
+            AssertTrue(Math.Abs(solution.LocalSearchTimeSaved - solution.TimeSaved) < 1e-6 * Math.Max(1.0, solution.TimeSaved),
+                $"on the feeder problem the swap search already holds the optimum ({solution.LocalSearchTimeSaved} vs {solution.TimeSaved})");
         }
 
         private static void LineSetMatchesBruteForce()

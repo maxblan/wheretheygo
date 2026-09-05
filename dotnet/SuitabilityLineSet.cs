@@ -107,6 +107,10 @@ namespace StationSuitabilityOverlay
         public int Infeasible;
         // Set evaluations the search made (each one routes every journey).
         public long Evaluations;
+        // What the greedy build and the swap local search reached before the exact
+        // search took over (the incumbent it started from); seconds·journeys per day.
+        public double GreedyTimeSaved;
+        public double LocalSearchTimeSaved;
         public double[] StandaloneTimeSaved = Array.Empty<double>();
     }
 
@@ -567,6 +571,8 @@ namespace StationSuitabilityOverlay
 
             var search = new Search(problem, before, order, nodeBudget, cancellation);
             search.Run();
+            solution.GreedyTimeSaved = search.GreedySaved;
+            solution.LocalSearchTimeSaved = search.LocalSearchSaved;
             solution.Nodes = search.Nodes;
             solution.Infeasible = search.Infeasible;
             solution.Evaluations = search.Evaluations + 1 + n;
@@ -598,6 +604,8 @@ namespace StationSuitabilityOverlay
             public long Nodes;
             public int Infeasible;
             public long Evaluations;
+            public double GreedySaved;
+            public double LocalSearchSaved;
             public bool Exhausted;
             public double OpenBoundSaved;
             public readonly int[] Best;
@@ -616,10 +624,138 @@ namespace StationSuitabilityOverlay
                 Best = new int[problem.MaxLines];
             }
 
+            // Greedy build, then swap local search, then the exact search from that
+            // incumbent. The first two are the practical answer (the transit route
+            // network design literature reaches its best-known solutions with exactly
+            // such neighbourhood moves, and a good incumbent is what makes a bound
+            // prune); the third is the proof attempt, which closes on small pools and
+            // otherwise reports how far the ceiling still stands above the incumbent.
             public void Run()
             {
                 Consider(Array.Empty<int>(), 0);
-                Explore(0, 0, float.MaxValue, double.MaxValue);
+                int[] incumbent = GreedyBuild(out int count);
+                GreedySaved = BestSaved;
+                SwapSearch(incumbent, count);
+                LocalSearchSaved = BestSaved;
+                if (!m_Cancellation.IsCancellationRequested)
+                {
+                    Explore(0, 0, float.MaxValue, double.MaxValue);
+                }
+                else
+                {
+                    Exhausted = true;
+                }
+            }
+
+            // Adds, one at a time, the candidate that improves the key most while the
+            // set stays feasible; stops when nothing improves or MaxLines is reached.
+            private int[] GreedyBuild(out int count)
+            {
+                var chosen = new int[m_Problem.MaxLines];
+                count = 0;
+                while (count < m_Problem.MaxLines && !m_Cancellation.IsCancellationRequested)
+                {
+                    int bestCandidate = -1;
+                    float bestCoverage = BestCoverage;
+                    double bestSaved = BestSaved;
+                    for (int p = 0; p < m_Order.Length; p++)
+                    {
+                        int candidate = m_Order[p];
+                        if (Contains(chosen, count, candidate) || SharesGroup(m_Problem, chosen, count, candidate))
+                        {
+                            continue;
+                        }
+
+                        chosen[count] = candidate;
+                        LineSetEvaluation evaluation = EvaluateSet(chosen, count + 1);
+                        if (!Feasible(chosen, count + 1, evaluation))
+                        {
+                            Infeasible++;
+                            continue;
+                        }
+
+                        float capped = Capped(evaluation.Coverage);
+                        if (Compare(capped, evaluation.TimeSaved, bestCoverage, bestSaved) > 0)
+                        {
+                            bestCandidate = candidate;
+                            bestCoverage = capped;
+                            bestSaved = evaluation.TimeSaved;
+                        }
+                    }
+
+                    if (bestCandidate < 0)
+                    {
+                        break;
+                    }
+
+                    chosen[count++] = bestCandidate;
+                    Consider(Prefix(chosen, count), count);
+                }
+
+                return chosen;
+            }
+
+            // Replaces one chosen line by one outside the set whenever that improves
+            // the key, until no swap does. Every set met is a candidate answer.
+            private void SwapSearch(int[] chosen, int count)
+            {
+                bool improved = count > 0;
+                while (improved && !m_Cancellation.IsCancellationRequested)
+                {
+                    improved = false;
+                    for (int k = 0; k < count && !improved; k++)
+                    {
+                        int original = chosen[k];
+                        for (int p = 0; p < m_Order.Length; p++)
+                        {
+                            int candidate = m_Order[p];
+                            if (Contains(chosen, count, candidate))
+                            {
+                                continue;
+                            }
+
+                            chosen[k] = candidate;
+                            if (!OneVariantPerGroup(m_Problem, chosen, count))
+                            {
+                                continue;
+                            }
+
+                            double savedBefore = BestSaved;
+                            float coverageBefore = BestCoverage;
+                            Consider(Prefix(chosen, count), count);
+                            if (Compare(BestCoverage, BestSaved, coverageBefore, savedBefore) > 0)
+                            {
+                                improved = true;
+                                break;
+                            }
+                        }
+
+                        if (!improved)
+                        {
+                            chosen[k] = original;
+                        }
+                    }
+                }
+            }
+
+            private static bool Contains(int[] chosen, int count, int candidate)
+            {
+                for (int k = 0; k < count; k++)
+                {
+                    if (chosen[k] == candidate)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            private static int[] Prefix(int[] chosen, int count)
+            {
+                var prefix = new int[count];
+                Array.Copy(chosen, prefix, count);
+                return prefix;
             }
 
             // The lexicographic key: equity share capped at the floor, then time saved.

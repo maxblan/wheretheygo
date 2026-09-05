@@ -137,7 +137,7 @@ Voraussetzung überall: eine **festgelegte Zielfunktion**. A2.3, A4.1 und A7.5 h
 | S4 Lattice | **Bereits exakt** (Kürzestweg unter dem Kostenmodell) | — | — |
 | S4 Straße | Erst definierbar, wenn ein Ziel steht; „max. Flow bei Längenlimit" ist längster-Pfad-artig, NP-hart | Ziel wählen | Greedy bleibt, ausgewiesen als Heuristik |
 | S5 Halte je Linie | **Ja**, dynamische Programmierung pro Linie (1-D-Problem, Furth & Rahbee) | Ziel: Score-Summe unter Abstandsregeln | — |
-| S7 Linienmenge | **Nur begrenzt.** NP-hart, keine Konstantfaktor-Garantie; exakt per Enumeration bis ≈ 10 000 Teilmengen (z. B. 39 Kandidaten bei K ≤ 3), 39 bei K = 5 sind 667 928 | Zielfunktion der Menge festlegen | Greedy + lokale Verbesserung (Tausch) + exakte Schranke aus Teil-Enumeration, klar als „nicht bewiesen optimal" markiert |
+| S7 Linienmenge | **Nur begrenzt.** NP-hart, keine Konstantfaktor-Garantie; exakt per Enumeration bis ≈ 10 000 Teilmengen (z. B. 39 Kandidaten bei K ≤ 3), 39 bei K = 5 sind 667 928 | Zielfunktion der Menge festlegen | Greedy + lokale Verbesserung (Tausch) + exakte Schranke aus Teil-Enumeration, klar als „nicht bewiesen optimal" markiert | **Stand 2026-09-05: umgesetzt wie vorhergesagt** — exakt bis ≈ 3 Linien, darüber Greedy + Tausch-Lokalsuche mit ausgewiesener Obergrenze (A7.5) |
 | Gesamtproblem S2 + S5 + S7 gemeinsam | **Nein** (Stand der Forschung: 15-Knoten-Benchmarks) | — | gestufte Optima mit ausgewiesenem Verlust (C7.5) |
 
 Nächster Schritt liegt bei dir: markiere in diesem Register, welche Annahmen bleiben,
@@ -207,7 +207,7 @@ gestellt, Entscheidung noch offen):
 | A6.x ✅ umgesetzt (Phase 7) | „Rest sinnvoll" | Modus = kleinster der Netzleiter, dessen Fahrzeuge beim Planungstakt nicht überlastet sind (Auslastung ≤ 100 %), gemessen an den eigenen Fahrgästen nach Neuplatzierung der Halte; die nächste Stufe wird zusätzlich als Kandidat angeboten und das Set kennt eine Auslastungs-Obergrenze von 100 % (Befund 17:06: Bus mit 154 % gewählt); Flow-Vielfache, Reichweiten-Anteile, Gleis-Erleichterung und Ein-Bus-Floor gestrichen; Werte aus `TransportLineData`, `PublicTransportVehicleData`, `CarData`/`TrainData`/`WatercraftData` |
 | A7.2 ✅ umgesetzt (Phase 7) | **Realismus** | Geplant wird mit 1 : 1 : 1; die TCQSM-gewichtete Zeit (2,2 / 2,1 / 1) wird aus denselben Wegen als Diagnose je Set ausgegeben (`LineSetEvaluation.Walk/Wait/RideSeconds`) |
 | A7.4 ✅ umgesetzt (Phase 7) | Literatur | Der 0,6-Rabatt und die Einstellung „Transferstrafe" sind gestrichen; ein Umstieg kostet genau seinen Fußweg und die Wartezeit der nächsten Linie, wie im Spiel |
-| A7.5 ✅ umgesetzt (Phase 7, Stufe 1) | Optimal; unklar welche Zielfunktion | Netzziel gemeinsam: Branch-and-Bound über Teilmengen ≤ RouteCount mit monotoner Vereinigungsschranke (`SuitabilityLineSet.Solve`); bewiesen optimal oder bestes Set + Obergrenze bei Knotenbudget 20 000. Pipeline `lineset_time`: vollständige Enumeration auf 5 synthetischen Instanzen, Gap 0 |
+| A7.5 ✅ umgesetzt (Phase 7; Verfahren 2026-09-05 abends erweitert) | Optimal; unklar welche Zielfunktion | Netzziel gemeinsam über `SuitabilityLineSet.Solve` in drei Stufen: Greedy-Aufbau → Tausch-Lokalsuche → exakte Branch-and-Bound-Suche vom gefundenen Set aus (monotone Vereinigungsschranke, Gruppen-Ausschluss, Eltern-Schranke). Bewiesen optimal, wenn die Suche im Budget schließt (Valmare bei 3 Linien: ja, 1,3 s); sonst bestes Set + Obergrenze, und der Nutzer sieht im Log „best found, NOT proven optimal“. **Nutzerentscheidung 2026-09-05: annähernd optimal ist akzeptabel, wenn die Laufzeit sinkt** → Budget 30 s, Pass höchstens alle 300 s, Bewertung türfrei und parallel auf halben Kernen. Messung Export 17:59 (K = 5, 68 Kandidaten): Lokalsuche 441,7 k s·Wege/Tag in ≈ 3 s; exakte Suche allein (60 s im Spiel) 422,0 k; Build davor 305,1 k; Obergrenze 630,6 k, Suche schließt nicht. Literatur: exakte Modelle skalieren nicht (Borndörfer/Grötschel/Pfetsch 2007; „Line Planning at Scale“ 2026), Nachbarschaftssuche erreicht Best-known (TRNDP-Review 2019, VNS 2022); Greedy-Garantie 1 − e^(−γ) nur bei Submodularität (Das/Kempe), hier durch Zubringer-Komplementarität nicht gegeben. Pipeline `lineset_time`: 7 synthetische Instanzen mit vollständiger Enumeration, Gap 0 |
 
 **Antwort vom 2026-09-05: „Ja zu allem"**, mit drei Abweichungen — damit sind alle
 Rückfragen oben entschieden (RF → ✅):
@@ -226,6 +226,16 @@ Rückfragen oben entschieden (RF → ✅):
 | A5.1/A5.4 | harte Untergrenze 50 % des Haltabstands; Halt genau dann, wenn Zugangsgewinn > Verzögerung der Durchfahrer |
 | A6.x | Modus nach Kapazitätsbedarf bei Soll-Takt, Werte aus dem Spiel |
 | Phase 3 | Einzugszeiten Bus/Tram 6 · Metro/Fähre 11 · Zug 16 min, linear fallend; Zugang 2 min zum Netzknoten; Bevölkerung je Wohngebäude; Kapazität/Überfüllung ignoriert |
+
+**Nachträge vom 2026-09-05 (Performance, Spieltests 12:25 / 17:06 / 17:15 / 17:58):**
+
+| # | Entscheidung / Befund | Folge |
+|---|---|---|
+| Laufzeit | Nutzer: „Kartoffel-PC“-Ziel, zunächst ohne Qualitätsverlust; später: „annähernd optimal ist akzeptabel, wenn die Laufzeit sinkt“ | Routen-Pipeline auf einem Worker; Hauptthread gesperrt, solange er läuft; Hauptthread je Refresh 64 ms (vorher 174–336, davor Sekunden-Freeze) |
+| A7.5 Verfahren | s. o.: Greedy → Tausch → exakt, Budget 30 s, Pass alle 300 s, Bewertung türfrei (Mehrquellen-Dijkstra über Haltestellen) und parallel auf halben Kernen; Gruppen (Varianten einer Trasse schließen sich aus) | Pass ≈ 15–20 s statt 114 s; bessere Sets |
+| A5.5 Prefab-Werte | Befund: Intervalle 45/45/60/90/90 s, Standzeit 1–10 s, Beschleunigung 5–6 m/s² | Planungstakt = Tabelle 300/240/200/480/600 s, δ = max(Physik, 15 s); **RF offen: Takt als Planungsvariable?** |
+| A6.x Obergrenze | Befund 17:06: Bus mit 154 % gewählt (Modus an fremder Variante gemessen) | Modus an eigenen Fahrgästen nach Neusetzen der Halte; nächste Stufe als Variante; Set-Obergrenze 100 % |
+| A0.5 Paare | Reisen Tür zu Tür statt Zonenzentren; Türen sind in der Wegesuche Senken (kein Fußweg durch eine Haustür) | Semantik im Spec §6.2 v2; Evaluator angepasst |
 
 ---
 

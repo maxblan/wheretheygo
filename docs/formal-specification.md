@@ -467,16 +467,25 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
   Feasibility is a property of the set, not of a line alone (F1 and F2 both move
   with the other members).
 
-The mod maximises Key over feasible A by depth-first branch-and-bound
-(`Search`): candidates ordered by standalone saved (desc, index tiebreak);
+The mod maximises Key over feasible A in three stages (`Search.Run`, since
+2026-09-05 evening): (1) a **greedy build** — add the candidate that improves
+Key most while the set stays feasible, until MaxLines or no improvement; (2) a
+**swap local search** — replace one chosen line by one outside the set whenever
+that improves Key, until no swap does (the transit route network design
+literature reaches its best-known solutions with such neighbourhood moves;
+greedy alone carries the Das–Kempe (1 − e^{−γ}) guarantee only for the
+submodularity ratio γ, which complementarity keeps below 1 here); (3) the exact
+**depth-first branch-and-bound** from that incumbent: candidates ordered by
+standalone saved (desc, index tiebreak);
 include-first DFS that never adds a second variant of a group already in the
 set; every prefix is a candidate answer; **bound** = Key(chosen ∪ all remaining)
 — and a subtree is skipped outright once the incumbent has passed the bound its
 parent computed, of which every union below is a subset — valid because both components are monotone in A (a line can
 only shorten a journey or serve another door; the cap keeps the first
 component monotone). A node budget (`DefaultNodeBudget` = 20 000 bound
-evaluations) or the caller's cancellation token (the mod passes a 60 s wall-clock
-budget on its worker, and starts a pass at most every 300 s unless the objective
+evaluations) or the caller's cancellation token (the mod passes a 30 s wall-clock
+budget on its worker — the incumbent of stages 1–2 is usually reached within a
+few seconds, the remainder is the proof attempt, and starts a pass at most every 300 s unless the objective
 or line count changed) stops the search; the solution then reports `Optimal =
 false` and `UpperBoundTimeSaved` = max over open bounds — the "best found plus
 ceiling" regime, and the log names it. Evaluations of sets of ≤ K lines are

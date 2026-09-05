@@ -271,7 +271,7 @@ namespace StationSuitabilityOverlay
         // Wall-clock budget for the line-set search on the worker. Past it the search
         // keeps the best set found and reports the open bound as the ceiling
         // (SuitabilityLineSet.Solve); the log says which regime the result is in.
-        private const int LineSetTimeBudgetSeconds = 60;
+        private const int LineSetTimeBudgetSeconds = 30;
 
         // A route pass is started at most this often unless the objective or the line
         // count changed or there are no suggestions yet. The demand refresh itself
@@ -4600,6 +4600,7 @@ namespace StationSuitabilityOverlay
                 $"{(solution.Optimal ? "(proven optimal" : $"(best found, NOT proven optimal; ceiling {(solution.UpperBoundTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)}")} " +
                 $"under equity floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} % (set reaches {(solution.Coverage * 100f).ToString("F1", CultureInfo.InvariantCulture)} %), " +
                 $"utilisation floor {settings.UtilisationFloorPercent.ToString(CultureInfo.InvariantCulture)} % and ceiling {(TransitModes.MaxPlannedUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, duplicate share {(DuplicateRiderShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} %), " +
+                $"greedy {(solution.GreedyTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h, after swaps {(solution.LocalSearchTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h, " +
                 $"{(solution.Nodes).ToString(CultureInfo.InvariantCulture)} search nodes, {(solution.Evaluations).ToString(CultureInfo.InvariantCulture)} set evaluations, {(solution.Infeasible).ToString(CultureInfo.InvariantCulture)} infeasible sets met, " +
                 $"{(elapsedMs).ToString(CultureInfo.InvariantCulture)} ms of a {(LineSetTimeBudgetSeconds).ToString(CultureInfo.InvariantCulture)} s budget{realism}");
         }
