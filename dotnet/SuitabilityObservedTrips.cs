@@ -13,6 +13,8 @@ namespace StationSuitabilityOverlay
         public float m_DestinationX;
         public float m_DestinationZ;
         public byte m_Purpose;
+        // The game clock when the journey was seen, as a day fraction (Daytime).
+        public float m_TimeOfDay;
     }
 
     // A rolling window of observed shopping and leisure journeys (register A0.1).

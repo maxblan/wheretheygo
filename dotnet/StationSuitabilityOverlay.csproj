@@ -44,6 +44,12 @@
 		<Reference Include="Colossal.Mathematics">
 			<Private>false</Private>
 		</Reference>
+		<!-- Needed only to READ Game.Prefabs.EconomyParameterData (the city's working hours for
+		     the day/night shift classification): the struct carries a Colossal.Collections
+		     AnimationCurve1 field, and the compiler needs the type to name the component. -->
+		<Reference Include="Colossal.Collections">
+			<Private>false</Private>
+		</Reference>
 		<Reference Include="Colossal.Logging">
 			<Private>false</Private>
 		</Reference>

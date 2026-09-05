@@ -148,7 +148,7 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 ### The purity rule
 
 Numeric logic belongs in files that use `System.*` only, so they can be linked into the offline test
-project. Fourteen files are on that side, and `SuitabilityScoring.Tests.csproj` links all fourteen:
+project. Fifteen files are on that side, and `SuitabilityScoring.Tests.csproj` links all fifteen:
 
 - `SuitabilityScoring.cs` — percentiles, site candidates and the greedy ranking, geodesic catchment, weight fitting
 - `SuitabilityWalkAccess.cs` — the heatmap's terms since Phase 3: the pedestrian graph with
@@ -177,6 +177,8 @@ project. Fourteen files are on that side, and `SuitabilityScoring.Tests.csproj` 
 - `SuitabilityStopPlan.cs` — where a line calls: the exact dynamic programme over candidate
   positions that trades the boarders' access gain against the through-riders' delay, with
   forced interchanges and the gap floor
+- `SuitabilityDaytime.cs` — the game's day and night (22:00–06:00), the shifts' ride times, per-period
+  utilisation and the day/night schedule recommendation for suggested and existing lines
 - `SuitabilityLineHealth.cs` — verdicts and improvement plans
 - `TransitMode.cs` — the `ModePreset`/`RouteGoal` enums and every per-mode table
 - `SuitabilityExportJson.cs` — the verification export's canonical JSON and its digest.

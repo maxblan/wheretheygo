@@ -238,6 +238,7 @@ Rückfragen oben entschieden (RF → ✅):
 | A0.5 Paare | Reisen Tür zu Tür statt Zonenzentren; Türen sind in der Wegesuche Senken (kein Fußweg durch eine Haustür) | Semantik im Spec §6.2 v2; Evaluator angepasst |
 | Warmstart | Nutzer 2026-09-05: „eigenes Savefile, damit kein Cold Start nach jedem Laden“ | Vorschläge, beobachtete Wege und Linien-Messungen werden über `IDefaultSerializable` in den Spielstand geschrieben (Format-Version, längenpräfixierter Payload; Laden ohne Mod überspringt den Block). Erster Pass nach dem Laden wartet den normalen Takt |
 | Restlaufzeit | Budget 15 s; Paartabelle und Basislinie einmal je Pass statt je Variante (Modusauflösung 8 s → erwartet < 1 s) | Messung im nächsten Spiellauf |
+| A8 Betriebszeiten | Nutzer 2026-09-05: Vorschläge und Linienzustand sollen sagen, ob eine Linie tags, nachts oder ganztags fahren soll | Spielfakten dekompiliert: Nacht = 22:00–06:00 (`TransportLineSystem`), Policies `RouteOption.Day/Night`; Schichten auf `EconomyParameterData.m_WorkDayStart/End` (+8 h Abend, +16 h Nacht), Schüler wie Tagschicht, Bürger-Offset ±1 h nicht modelliert. Empfehlung: nur tags, wenn die Nacht unter dem Auslastungs-Floor liegt und der Tag nicht (spiegelbildlich nur nachts); Bestandslinien nach Perioden-Mittel des Fensters mit ≥ 4 Messungen je Periode und nur bei ganztägigem Betrieb. **Entscheidung offen: soll die Mengenauswahl den Fahrplan mitoptimieren (Sitze nur in der Betriebsperiode)?** Heute ist er eine Empfehlung nach der Auswahl |
 
 ---
 

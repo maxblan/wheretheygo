@@ -47,6 +47,14 @@ namespace StationSuitabilityOverlay
         public int m_Stops;
         public LineVerdict m_Verdict;
         public int m_AddVehicles;
+        // The schedule the line runs today and the one its readings argue for (the
+        // same when nothing argues; Daytime.Advise), with the evidence.
+        public LineSchedule m_Schedule;
+        public LineSchedule m_ScheduleAdvice;
+        public float m_DayUsage;
+        public float m_NightUsage;
+        public int m_DaySamples;
+        public int m_NightSamples;
 
         public readonly int Severity
         {

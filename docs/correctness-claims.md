@@ -127,6 +127,16 @@ export kind they cite were removed on 2026-09-05; `git log` has them):
 | C7.6 | Unmeasured zero demand never rejects a candidate (`DemandScored`) | getestet; the gate no longer exists in v2 | historical |
 | C7.7 | Greedy acceptance order faithful; ties reported | getestet; superseded by C7.12 | historical |
 
+## S8 Operating periods (day / night, 2026-09-05)
+
+| # | Claim | Status | Evidence |
+|---|---|---|---|
+| C8.1 | Night is the game's 22:00–06:00 (`normalizedTime` < 0.25 or ≥ 11/12) and the Day/Night policies mean day-only/night-only | getestet against the decompiled `TransportLineSystem` (isNight) and `ScheduleSection`; harness `DaytimeRules` pins the boundaries incl. wrap-around | decompile, harness |
+| C8.2 | A commute's rides are classed by shift: day shift both by day; evening/night shift one ride each side in a 9–17 city | getestet (`DaytimeRules`); the ±1 h per-citizen offset is documented as unmodelled | harness |
+| C8.3 | Period utilisation = boardings / (day seats × period share); recommendation Day / Night / DayAndNight by the floor rule | getestet (`DaytimeRules`, 64.4 % / 5.1 % example) | harness |
+| C8.4 | Period averages of an existing line use only that period's readings with vehicles out; advice only with ≥ 4 readings per period and never for a line that does not run in the other period | getestet (`PeriodAverages`, `DaytimeRules`) | harness |
+| C8.5 | The clock stamped on observed journeys and readings is the game's `TimeSystem.normalizedTime` | **log-verified only** (Unity-side) | mod log |
+
 ## Formal bewiesen (Lean 4) — `verification/lean/`
 
 These are machine-checked theorems about the *specified rules* (exact

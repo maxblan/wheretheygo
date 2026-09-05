@@ -51,6 +51,11 @@ namespace StationSuitabilityOverlay
         // The alignment this candidate is a variant of (SuitabilityRoutes numbers them
         // per pass); variants are alternatives in the set selection. Negative = none.
         public int Group = -1;
+        // When the line should run (Daytime.Recommend on the set's riders by period),
+        // with the utilisation in each period it rests on.
+        public LineSchedule Schedule;
+        public float DayUtilisation;
+        public float NightUtilisation;
 
         // The same alignment as a candidate of another mode: path, flow, riders and
         // provenance copied, stops to be placed for the new mode by the caller.
@@ -67,6 +72,7 @@ namespace StationSuitabilityOverlay
                 BentThroughHub = BentThroughHub,
                 Source = Source,
                 Group = Group,
+                Schedule = Schedule,
             };
             copy.Path.AddRange(Path);
             copy.Nodes.AddRange(Nodes);

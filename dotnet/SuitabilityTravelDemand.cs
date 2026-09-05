@@ -17,6 +17,10 @@ namespace StationSuitabilityOverlay
         public float2 m_Origin;
         public float2 m_Destination;
         public float m_Weight;
+        // Share of this journey's rides that fall in the day period (06:00–22:00,
+        // Daytime): 1 for a day-shift commute, 0.5 for one whose two rides straddle
+        // the night, 0 for a shopping trip seen at 23:00.
+        public float m_DayShare;
     }
 
     // Aggregated demand between two zones. Individual trips are collapsed into
@@ -51,6 +55,10 @@ namespace StationSuitabilityOverlay
 
         public float WorkTripWeight;
         public float SchoolTripWeight;
+        // EconomyParameterData.m_WorkDayStart/End, day fractions; the shift decides
+        // when a commuter rides (Daytime.CommuteDayShare).
+        public float WorkDayStart;
+        public float WorkDayEnd;
 
         public NativeQueue<Trip>.ParallelWriter Trips;
 
@@ -84,16 +92,20 @@ namespace StationSuitabilityOverlay
 
                 Entity citizen = entities[i];
                 float weight;
+                float dayShare;
                 Entity destinationOwner;
                 if (WorkerLookup.HasComponent(citizen))
                 {
-                    destinationOwner = WorkerLookup[citizen].m_Workplace;
+                    Worker worker = WorkerLookup[citizen];
+                    destinationOwner = worker.m_Workplace;
                     weight = WorkTripWeight;
+                    dayShare = Daytime.CommuteDayShare((byte)worker.m_Shift, WorkDayStart, WorkDayEnd);
                 }
                 else if (StudentLookup.HasComponent(citizen))
                 {
                     destinationOwner = StudentLookup[citizen].m_School;
                     weight = SchoolTripWeight;
+                    dayShare = Daytime.CommuteDayShare(0, WorkDayStart, WorkDayEnd);
                 }
                 else
                 {
@@ -111,6 +123,7 @@ namespace StationSuitabilityOverlay
                     m_Origin = new float2(origin.x, origin.z),
                     m_Destination = new float2(destination.x, destination.z),
                     m_Weight = weight,
+                    m_DayShare = dayShare,
                 };
 
                 // Working from the building you live in is not a journey.

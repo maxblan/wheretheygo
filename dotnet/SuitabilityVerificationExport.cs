@@ -511,6 +511,7 @@ namespace StationSuitabilityOverlay
                 .Add("pair_dx_b32", SuitabilityExportJson.BitsArray(problem.PairDx))
                 .Add("pair_dz_b32", SuitabilityExportJson.BitsArray(problem.PairDz))
                 .Add("pair_w_b32", SuitabilityExportJson.BitsArray(problem.PairWeight))
+                .Add("pair_day_share_b32", SuitabilityExportJson.BitsArray(problem.PairDayShare))
                 .Add("base_stop_x_b32", SuitabilityExportJson.BitsArray(problem.BaseStopX))
                 .Add("base_stop_z_b32", SuitabilityExportJson.BitsArray(problem.BaseStopZ))
                 .Add("base_lines", SuitabilityExportJson.Array(lines))

@@ -38,3 +38,7 @@ Nothing type-checks this file, so the guard rails are explicit.
 - **Never hide vanilla UI with a broad selector.** A rule matching `[class*="infoview-menu"]` took
   the game's own Infoansicht button with it. Target only what belongs to this mod, and exclude this
   mod's own elements when matching by icon or asset path.
+
+- **Payload rows grow at the END.** The route row is `mode|km|stops|vehicles|colour|reach|key|schedule|dayUtil|nightUtil`, the
+  health row `id|name|verdict|arg|usage|vehicles|stops|samples|hours|peak|schedule|advice|dayUsage|nightUsage|daySamples|nightSamples`;
+  the `.mjs` indexes by position, so a new field is appended and the old indices never move.

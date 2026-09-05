@@ -263,6 +263,10 @@ namespace StationSuitabilityOverlay
         // is copied into the fields the panel and the renderer read once the task has
         // completed (FinishRoutesIfReady). The pass measured 60+ s on the main thread
         // in a 13-line city — every frame of it a frozen game.
+        // The game clock, for stamping observed journeys and line readings with the
+        // time of day (Daytime), and the city's working hours for the commute shifts.
+        private TimeSystem? m_TimeSystem;
+        private EntityQuery m_EconomyQuery;
         private bool m_RoutesPending;
         private System.Threading.Tasks.Task? m_PendingRoutes;
         private RoutePass? m_PendingRoutePass;
@@ -699,6 +703,7 @@ namespace StationSuitabilityOverlay
             m_ZoneSystem = World.GetOrCreateSystemManaged<Game.Prefabs.ZoneSystem>();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             m_ToolSystem = World.GetOrCreateSystemManaged<ToolSystem>();
+            m_TimeSystem = World.GetOrCreateSystemManaged<TimeSystem>();
             m_NameSystem = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             m_OverlayInfomodeSystem = World.GetOrCreateSystemManaged<OverlayInfomodeSystem>();
 
@@ -908,6 +913,35 @@ namespace StationSuitabilityOverlay
                 All = new[] { ComponentType.ReadOnly<TransportLineData>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>() },
             });
+            m_EconomyQuery = GetEntityQuery(ComponentType.ReadOnly<EconomyParameterData>());
+        }
+
+        private float TimeOfDay => m_TimeSystem?.normalizedTime ?? 0f;
+
+        // The city's working hours as day fractions (EconomyParameterData); the game's
+        // shifts sit on them (Daytime). Logged once so the classification is auditable.
+        private bool m_WorkDayLogged;
+
+        private void ReadWorkDay(out float start, out float end)
+        {
+            start = 0.25f;
+            end = 0.7083f;
+            if (!m_EconomyQuery.IsEmptyIgnoreFilter)
+            {
+                EconomyParameterData economy = m_EconomyQuery.GetSingleton<EconomyParameterData>();
+                start = economy.m_WorkDayStart;
+                end = economy.m_WorkDayEnd;
+            }
+
+            if (!m_WorkDayLogged)
+            {
+                m_WorkDayLogged = true;
+                DeferredLog.Info(
+                    $"Work day from EconomyParameterData: {(start * 24f).ToString("F1", CultureInfo.InvariantCulture)}h to {(end * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
+                    $"evening shift +{(Daytime.EveningShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h, night shift +{(Daytime.NightShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
+                    $"night is {(Daytime.NightStart * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00–{(Daytime.NightEnd * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00 (TransportLineSystem); " +
+                    $"day-shift rides by day {(Daytime.CommuteDayShare(0, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, evening {(Daytime.CommuteDayShare(1, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, night {(Daytime.CommuteDayShare(2, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %");
+            }
         }
 
         protected override void OnUpdate()
@@ -932,7 +966,6 @@ namespace StationSuitabilityOverlay
             SweepPlaceableInfoviews();
             TrackInputChanges();
             HandleExportRequest();
-            AnnounceRestoredRoutes();
             FinishRoutesIfReady(settings);
             if (!m_RoutesPending)
             {
@@ -2537,6 +2570,7 @@ namespace StationSuitabilityOverlay
                 m_TouristLookup.Update(this);
                 m_PropertyRenterLookup.Update(this);
                 m_TransformLookup.Update(this);
+                ReadWorkDay(out float workDayStart, out float workDayEnd);
 
                 var job = new ExtractTripsJob
                 {
@@ -2549,6 +2583,8 @@ namespace StationSuitabilityOverlay
                     TouristLookup = m_TouristLookup,
                     TransformLookup = m_TransformLookup,
                     WorkTripWeight = 1f,
+                    WorkDayStart = workDayStart,
+                    WorkDayEnd = workDayEnd,
                     // School trips are real transit demand but shorter and less
                     // peaked than commutes.
                     // Register A0.3: every purpose weighs the same.
@@ -2658,6 +2694,7 @@ namespace StationSuitabilityOverlay
         // suggestions stay.
         private void FinishRoutesIfReady(Setting settings)
         {
+            AnnounceRestoredRoutes();
             System.Threading.Tasks.Task? pending = m_PendingRoutes;
             RoutePass? pass = m_PendingRoutePass;
             if (!m_RoutesPending || pending is null || pass is null || !pending.IsCompleted)
@@ -2943,6 +2980,7 @@ namespace StationSuitabilityOverlay
                 m_DestinationX = to.x,
                 m_DestinationZ = to.z,
                 m_Purpose = purpose,
+                m_TimeOfDay = TimeOfDay,
             });
         }
 
@@ -3008,6 +3046,7 @@ namespace StationSuitabilityOverlay
                 ObservedTrip observed = m_ObservedTrips[i];
                 var trip = new Trip
                 {
+                    m_DayShare = Daytime.IsNight(observed.m_TimeOfDay) ? 0f : 1f,
                     m_Origin = new float2(observed.m_OriginX, observed.m_OriginZ),
                     m_Destination = new float2(observed.m_DestinationX, observed.m_DestinationZ),
                     m_Weight = scale,
@@ -3314,6 +3353,7 @@ namespace StationSuitabilityOverlay
                         m_Capacity = line.m_Capacity,
                         m_IntervalSeconds = line.m_VehicleInterval,
                         m_Vehicles = line.m_Vehicles,
+                        m_TimeOfDay = TimeOfDay,
                     });
                 }
 
@@ -3334,6 +3374,10 @@ namespace StationSuitabilityOverlay
                 line.m_WindowInterval = average.m_IntervalSeconds;
                 line.m_WindowSamples = average.m_Samples;
                 line.m_WindowGameHours = LineHistory.GameHours(average.m_SpanFrames);
+                line.m_DayUsage = m_LineHistory.TryAveragePeriod(line.m_Id, night: false, out LineAverage day) ? day.m_Usage : 0f;
+                line.m_DaySamples = day.m_Samples;
+                line.m_NightUsage = m_LineHistory.TryAveragePeriod(line.m_Id, night: true, out LineAverage nightAverage) ? nightAverage.m_Usage : 0f;
+                line.m_NightSamples = nightAverage.m_Samples;
             }
 
             // The widest coverage any line has, which is what the oldest reading in the
@@ -4051,6 +4095,18 @@ namespace StationSuitabilityOverlay
                 _ = builder.Append(health.m_WindowGameHours.ToString("F0", CultureInfo.InvariantCulture));
                 _ = builder.Append('|');
                 _ = builder.Append((health.m_PeakUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_Schedule);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_ScheduleAdvice);
+                _ = builder.Append('|');
+                _ = builder.Append((health.m_DayUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                _ = builder.Append('|');
+                _ = builder.Append((health.m_NightUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_DaySamples);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_NightSamples);
             }
 
             s_LineHealthList = builder.ToString();
@@ -4451,6 +4507,7 @@ namespace StationSuitabilityOverlay
                 PairDx = pairs.PairDx,
                 PairDz = pairs.PairDz,
                 PairWeight = pairs.PairWeight,
+                PairDayShare = pairs.PairDayShare,
                 Geometry = pairs.Geometry,
                 BaseStopCount = m_TransitStops.Count,
                 BaseStopX = new float[m_TransitStops.Count],
@@ -4522,6 +4579,7 @@ namespace StationSuitabilityOverlay
             var dx = new List<float>();
             var dz = new List<float>();
             var weight = new List<float>();
+            var dayWeight = new List<float>();
             for (int i = 0; i < m_Journeys.Count; i++)
             {
                 Trip trip = m_Journeys[i];
@@ -4529,6 +4587,7 @@ namespace StationSuitabilityOverlay
                 if (pairIndex.TryGetValue(key, out int existing))
                 {
                     weight[existing] += trip.m_Weight;
+                    dayWeight[existing] += trip.m_Weight * trip.m_DayShare;
                     continue;
                 }
 
@@ -4538,6 +4597,13 @@ namespace StationSuitabilityOverlay
                 dx.Add(trip.m_Destination.x);
                 dz.Add(trip.m_Destination.y);
                 weight.Add(trip.m_Weight);
+                dayWeight.Add(trip.m_Weight * trip.m_DayShare);
+            }
+
+            var dayShare = new float[ox.Count];
+            for (int i = 0; i < dayShare.Length; i++)
+            {
+                dayShare[i] = weight[i] > 0f ? dayWeight[i] / weight[i] : 1f;
             }
 
             var table = new LineSetProblem
@@ -4548,6 +4614,7 @@ namespace StationSuitabilityOverlay
                 PairDx = dx.ToArray(),
                 PairDz = dz.ToArray(),
                 PairWeight = weight.ToArray(),
+                PairDayShare = dayShare,
             };
             table.Geometry = SuitabilityLineSet.GeometryOf(table);
             return table;
@@ -4598,6 +4665,10 @@ namespace StationSuitabilityOverlay
                 if (evaluation is not null)
                 {
                     route.EnabledDemand = (float)evaluation.Riders[order[k]];
+                    LineCandidate line = problem.Candidates[order[k]];
+                    route.DayUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByDay[order[k]], line.HeadwaySeconds, line.VehicleCapacity, Daytime.DayShareOfDay);
+                    route.NightUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByNight[order[k]], line.HeadwaySeconds, line.VehicleCapacity, 1f - Daytime.DayShareOfDay);
+                    route.Schedule = Daytime.Recommend(route.DayUtilisation, route.NightUtilisation, problem.UtilisationFloor);
                 }
 
                 route.Vehicles = RoadVehicles(route, problem.Candidates[order[k]].HeadwaySeconds, ReadFleetFacts().DelayPerStopSeconds(route.Mode));
@@ -4609,7 +4680,8 @@ namespace StationSuitabilityOverlay
                     $"gain {(route.StopPlanGain / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h vs delay {(route.StopPlanDelay / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h a day), " +
                     $"len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, riders/day in the set={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"utilisation={(SuitabilityLineSet.Utilisation(problem, order[k], route.EnabledDemand) * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
-                    $"alone={(solution.StandaloneTimeSaved[order[k]] / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} veh");
+                    $"alone={(solution.StandaloneTimeSaved[order[k]] / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} veh, " +
+                    $"schedule {route.Schedule} (day {(route.DayUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, night {(route.NightUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of the period's seats)");
             }
 
             string realism = evaluation is null
@@ -5304,6 +5376,12 @@ namespace StationSuitabilityOverlay
                 // same and handed one row's hover to the other's line. This is the
                 // identity SuggestionsChanged already compares by.
                 _ = list.Append(RouteKeyOf(r));
+                _ = list.Append('|');
+                _ = list.Append(r.Schedule);
+                _ = list.Append('|');
+                _ = list.Append((r.DayUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                _ = list.Append('|');
+                _ = list.Append((r.NightUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
             }
             s_RouteList = list.ToString();
 

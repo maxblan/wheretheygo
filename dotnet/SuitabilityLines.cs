@@ -53,6 +53,14 @@ namespace StationSuitabilityOverlay
         public float m_WaitAccumulator;
         public bool m_RequireVehicles;
         public bool m_NotEnoughVehicles;
+        // When the line runs today (Route.m_OptionMask: RouteOption.Day / .Night).
+        public LineSchedule m_Schedule;
+        // Mean usage over the window's readings in each period, and how many readings
+        // with vehicles out each period has (LineHistory.TryAveragePeriod).
+        public float m_DayUsage;
+        public float m_NightUsage;
+        public int m_DaySamples;
+        public int m_NightSamples;
 
         // What the line looked like across the last game day, filled in from
         // LineHistory. Everything above is the reading at the instant of collection;
@@ -160,6 +168,7 @@ namespace StationSuitabilityOverlay
                     m_Id = IdentityOf(lineEntity),
                     m_Mode = ModeOf(lineData.m_TransportType),
                     m_Name = ResolveName(entityManager, nameSystem, prefabSystem, lineEntity, lineData.m_TransportType),
+                    m_Schedule = ScheduleOf(entityManager, lineEntity),
                 };
 
                 // A line with no segments is still readable; the reader handles an empty buffer.
@@ -481,6 +490,23 @@ namespace StationSuitabilityOverlay
         }
 
         // Health verdict per line, worst first.
+        // The line's schedule as the player set it (ScheduleSection: the Day policy
+        // marks a day-only line, the Night policy a night-only one, neither = all day).
+        private static LineSchedule ScheduleOf(EntityManager entityManager, Entity lineEntity)
+        {
+            if (!entityManager.TryGetComponent(lineEntity, out Route route))
+            {
+                return LineSchedule.DayAndNight;
+            }
+
+            if (RouteUtils.CheckOption(route, RouteOption.Day))
+            {
+                return LineSchedule.Day;
+            }
+
+            return RouteUtils.CheckOption(route, RouteOption.Night) ? LineSchedule.Night : LineSchedule.DayAndNight;
+        }
+
         public static void Judge(List<ExistingLine> lines, List<LineHealth> health)
         {
             health.Clear();
@@ -535,6 +561,12 @@ namespace StationSuitabilityOverlay
                     m_Stops = line.m_StopIndices.Count,
                     m_Verdict = verdict,
                     m_AddVehicles = addVehicles,
+                    m_Schedule = line.m_Schedule,
+                    m_DayUsage = line.m_DayUsage,
+                    m_NightUsage = line.m_NightUsage,
+                    m_DaySamples = line.m_DaySamples,
+                    m_NightSamples = line.m_NightSamples,
+                    m_ScheduleAdvice = Daytime.Advise(line.m_Schedule, line.m_DayUsage, line.m_DaySamples, line.m_NightUsage, line.m_NightSamples, emptyThreshold, LineHistory.MinSamplesForVerdict),
                 });
             }
 
@@ -557,6 +589,8 @@ namespace StationSuitabilityOverlay
                     $"peak {((line.m_WindowPeakUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, " +
                     $"interval {(line.m_WindowInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"judgedOn={(line.HasWindow ? "window" : "this reading only")}, " +
+                    $"schedule={line.m_Schedule}, day {((line.m_DayUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}% over {(line.m_DaySamples).ToString(CultureInfo.InvariantCulture)} readings, " +
+                    $"night {((line.m_NightUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}% over {(line.m_NightSamples).ToString(CultureInfo.InvariantCulture)} readings, " +
                     $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
             }
 

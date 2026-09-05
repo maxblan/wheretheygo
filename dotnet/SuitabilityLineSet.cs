@@ -35,6 +35,8 @@ namespace StationSuitabilityOverlay
         public float[] PairDx = Array.Empty<float>();
         public float[] PairDz = Array.Empty<float>();
         public float[] PairWeight = Array.Empty<float>();
+        // Share of each pair's rides in the day period (Daytime); empty = all day.
+        public float[] PairDayShare = Array.Empty<float>();
         public int PairCount;
         public float WalkRadius;
         public float BoardPenaltySeconds;
@@ -83,8 +85,11 @@ namespace StationSuitabilityOverlay
         // Σ w · max(0, before − after) in seconds·journeys per day.
         public double TimeSaved;
         public float Coverage;
-        // Journey weight riding each candidate (index = candidate), per day.
+        // Journey weight riding each candidate (index = candidate), per day — and how
+        // much of it rides in the day period (06:00–22:00) and in the night.
         public double[] Riders = Array.Empty<double>();
+        public double[] RidersByDay = Array.Empty<double>();
+        public double[] RidersByNight = Array.Empty<double>();
         // Door-to-door time of every pair under this set (float.MaxValue = not carried).
         public float[] After = Array.Empty<float>();
         // Time-weighted components over all pairs for the realism diagnostic
@@ -156,8 +161,11 @@ namespace StationSuitabilityOverlay
             var evaluation = new LineSetEvaluation
             {
                 Riders = new double[problem.Candidates.Count],
+                RidersByDay = new double[problem.Candidates.Count],
+                RidersByNight = new double[problem.Candidates.Count],
                 After = new float[problem.PairCount],
             };
+            bool hasShares = problem.PairDayShare.Length >= problem.PairCount;
             int lineOffset = problem.BaseLines.Count;
             var legs = new PairLegs(problem.PairCount);
             int nodeCount = network.Graph.NodeCount;
@@ -185,9 +193,12 @@ namespace StationSuitabilityOverlay
                 int[]? ridden = legs.Ridden[i];
                 if (ridden is not null)
                 {
+                    double dayShare = hasShares ? problem.PairDayShare[i] : 1.0;
                     for (int r = 0; r < ridden.Length; r++)
                     {
                         evaluation.Riders[chosen[ridden[r]]] += weight;
+                        evaluation.RidersByDay[chosen[ridden[r]]] += weight * dayShare;
+                        evaluation.RidersByNight[chosen[ridden[r]]] += weight * (1.0 - dayShare);
                     }
                 }
 

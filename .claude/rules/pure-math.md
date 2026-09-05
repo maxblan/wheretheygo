@@ -11,6 +11,7 @@ paths:
   - "dotnet/SuitabilityEquity.cs"
   - "dotnet/SuitabilityLineSet.cs"
   - "dotnet/SuitabilityStopPlan.cs"
+  - "dotnet/SuitabilityDaytime.cs"
   - "dotnet/SuitabilityLineHealth.cs"
   - "dotnet/TransitMode.cs"
   - "dotnet/SuitabilityExportJson.cs"

@@ -116,6 +116,8 @@ namespace StationSuitabilityOverlay.Tests
             Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
             Run("Loading another save restarts the window", WindowResetsWhenFramesRewind);
             Run("Windows can be written out and re-recorded in frame order without changing their averages", WindowsRoundTripThroughTheSave);
+            Run("Daytime: the game's night is 22:00–06:00, shifts place a commute's rides, and a schedule follows the emptier period", DaytimeRules);
+            Run("Daytime: period averages read only the readings of that period with vehicles out", PeriodAverages);
             Run("A deleted line stops being tracked", WindowForgetsDeletedLines);
 
             Run("The game asking for vehicles is taken at its word", VerdictFollowsTheGamesFlags);
@@ -3522,6 +3524,64 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(0.275f, average.m_Usage, 1e-4f, "mean of the per-sample usages");
             AssertEqual(0.45f, average.m_PeakUsage, 1e-4f, "the fuller sample is the peak");
             AssertEqual(1.5f, average.m_Vehicles, 1e-4f, "fleet size averages across the change");
+        }
+
+        private static void DaytimeRules()
+        {
+            // TransportLineSystem: isNight = normalizedTime < 0.25 || normalizedTime >= 11/12.
+            AssertTrue(Daytime.IsNight(0f) && Daytime.IsNight(0.2499f) && !Daytime.IsNight(0.25f), "night ends at 06:00");
+            AssertTrue(!Daytime.IsNight(0.9166f) && Daytime.IsNight(11f / 12f) && Daytime.IsNight(0.99f), "night starts at 22:00");
+            AssertTrue(Daytime.IsNight(1.1f) && !Daytime.IsNight(1.5f), "times wrap around the day");
+
+            // A 9-to-17 city: day shift rides both by day; evening shift (+8 h) leaves at
+            // 17:00 and returns at 01:00; night shift (+16 h) leaves at 01:00, returns at 09:00.
+            const float start = 9f / 24f;
+            const float end = 17f / 24f;
+            AssertEqual(1f, Daytime.CommuteDayShare(0, start, end), 1e-6f, "day shift");
+            AssertEqual(0.5f, Daytime.CommuteDayShare(1, start, end), 1e-6f, "evening shift straddles the night");
+            AssertEqual(0.5f, Daytime.CommuteDayShare(2, start, end), 1e-6f, "night shift straddles the night");
+
+            // 4369 s a day at 300 s and 80 seats both ways = 2330 seats a day, 1553 of
+            // them by day (16 h) and 777 by night; 500 riders by day = 1000 boardings /
+            // 1553 = 64.4 %, 20 riders by night = 40 / 777 = 5.1 %.
+            float dayUtil = Daytime.UtilisationInPeriod(500f, 300f, 80f, Daytime.DayShareOfDay);
+            AssertTrue(dayUtil is > 0.64f and < 0.65f, $"day utilisation {dayUtil}");
+            float nightUtil = Daytime.UtilisationInPeriod(20f, 300f, 80f, 1f - Daytime.DayShareOfDay);
+            AssertTrue(nightUtil is > 0.05f and < 0.06f, $"night utilisation {nightUtil}");
+            AssertTrue(Daytime.Recommend(dayUtil, nightUtil, 0.15f) == LineSchedule.Day, "empty nights: run by day");
+            AssertTrue(Daytime.Recommend(nightUtil, dayUtil, 0.15f) == LineSchedule.Night, "empty days: run by night");
+            AssertTrue(Daytime.Recommend(dayUtil, dayUtil, 0.15f) == LineSchedule.DayAndNight, "both full: all day");
+            AssertTrue(Daytime.Recommend(nightUtil, nightUtil, 0.15f) == LineSchedule.DayAndNight, "both empty is not a schedule question");
+
+            AssertTrue(Daytime.Advise(LineSchedule.DayAndNight, 0.3f, 6, 0.01f, 6, 0.05f, 4) == LineSchedule.Day, "an all-day line empty at night should run by day");
+            AssertTrue(Daytime.Advise(LineSchedule.DayAndNight, 0.3f, 6, 0.01f, 2, 0.05f, 4) == LineSchedule.DayAndNight, "not before the night has enough readings");
+            AssertTrue(Daytime.Advise(LineSchedule.Day, 0.3f, 6, 0f, 0, 0.05f, 4) == LineSchedule.Day, "a day-only line has no night evidence and keeps its schedule");
+        }
+
+        private static void PeriodAverages()
+        {
+            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            uint frame = 1000u;
+            // Six day readings at 50 %, six night readings at 10 %, two night readings with no vehicles out.
+            for (int i = 0; i < 6; i++)
+            {
+                frame += 1000u;
+                history.Record(3, new LineObservation { m_Frame = frame, m_Passengers = 50, m_Capacity = 100, m_IntervalSeconds = 100f, m_Vehicles = 2, m_TimeOfDay = 0.5f });
+                frame += 1000u;
+                history.Record(3, new LineObservation { m_Frame = frame, m_Passengers = 10, m_Capacity = 100, m_IntervalSeconds = 100f, m_Vehicles = 2, m_TimeOfDay = 0.95f });
+            }
+
+            for (int i = 0; i < 2; i++)
+            {
+                frame += 1000u;
+                history.Record(3, new LineObservation { m_Frame = frame, m_Passengers = 0, m_Capacity = 0, m_IntervalSeconds = 0f, m_Vehicles = 0, m_TimeOfDay = 0.1f });
+            }
+
+            AssertTrue(history.TryAveragePeriod(3, night: false, out LineAverage day) && day.m_Samples == 6, "six day readings");
+            AssertEqual(0.5f, day.m_Usage, 1e-6f, "day usage");
+            AssertTrue(history.TryAveragePeriod(3, night: true, out LineAverage night) && night.m_Samples == 6, "six night readings with vehicles out; the two idle ones do not count");
+            AssertEqual(0.1f, night.m_Usage, 1e-6f, "night usage");
+            AssertTrue(!history.TryAveragePeriod(4, night: true, out _), "an unknown line has no period average");
         }
 
         // The save file holds the windows' contents; a load re-records them. Samples

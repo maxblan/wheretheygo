@@ -5,6 +5,8 @@ using System.IO;
 using Colossal.Serialization.Entities;
 using Unity.Collections;
 using Unity.Mathematics;
+using BinaryReader = System.IO.BinaryReader;
+using BinaryWriter = System.IO.BinaryWriter;
 
 namespace StationSuitabilityOverlay
 {
@@ -24,7 +26,7 @@ namespace StationSuitabilityOverlay
     // version can read the length and skip, and only a matching version parses.
     public sealed partial class StationSuitabilityOverlaySystem : IDefaultSerializable
     {
-        private const int SaveFormatVersion = 1;
+        private const int SaveFormatVersion = 2;
         private const int MaxSavePayloadBytes = 64 * 1024 * 1024;
         private bool m_RestoredRoutes;
 
@@ -56,7 +58,7 @@ namespace StationSuitabilityOverlay
         {
             reader.Read(out int version);
             reader.Read(out int length);
-            if (length < 0 || length > MaxSavePayloadBytes)
+            if (length is < 0 or > MaxSavePayloadBytes)
             {
                 // Cannot be consumed exactly, so the load must fail loudly rather than
                 // read garbage into the rest of the save.
@@ -104,6 +106,9 @@ namespace StationSuitabilityOverlay
                     w.Write(route.Vehicles);
                     w.Write(route.BentThroughHub);
                     w.Write(route.Group);
+                    w.Write((byte)route.Schedule);
+                    w.Write(route.DayUtilisation);
+                    w.Write(route.NightUtilisation);
                     WritePoints(w, route.Path);
                     WritePoints(w, route.Stops);
                 }
@@ -119,6 +124,7 @@ namespace StationSuitabilityOverlay
                     w.Write(trip.m_DestinationX);
                     w.Write(trip.m_DestinationZ);
                     w.Write(trip.m_Purpose);
+                    w.Write(trip.m_TimeOfDay);
                 }
 
                 var lineIds = new List<int>(m_LineHistory.LineIds);
@@ -136,6 +142,7 @@ namespace StationSuitabilityOverlay
                         w.Write(sample.m_Capacity);
                         w.Write(sample.m_IntervalSeconds);
                         w.Write(sample.m_Vehicles);
+                        w.Write(sample.m_TimeOfDay);
                     }
                 }
             }
@@ -161,6 +168,9 @@ namespace StationSuitabilityOverlay
                     Vehicles = r.ReadInt32(),
                     BentThroughHub = r.ReadBoolean(),
                     Group = r.ReadInt32(),
+                    Schedule = (LineSchedule)r.ReadByte(),
+                    DayUtilisation = r.ReadSingle(),
+                    NightUtilisation = r.ReadSingle(),
                     DemandScored = true,
                 };
                 ReadPoints(r, route.Path);
@@ -180,6 +190,7 @@ namespace StationSuitabilityOverlay
                     m_DestinationX = r.ReadSingle(),
                     m_DestinationZ = r.ReadSingle(),
                     m_Purpose = r.ReadByte(),
+                    m_TimeOfDay = r.ReadSingle(),
                 });
             }
 
@@ -198,6 +209,7 @@ namespace StationSuitabilityOverlay
                         m_Capacity = r.ReadInt32(),
                         m_IntervalSeconds = r.ReadSingle(),
                         m_Vehicles = r.ReadInt32(),
+                        m_TimeOfDay = r.ReadSingle(),
                     }));
                 }
             }
@@ -214,7 +226,7 @@ namespace StationSuitabilityOverlay
 
             // Frame order across lines: a sample older than the newest seen would
             // otherwise clear the window (that is how a rewound clock is detected).
-            readings.Sort((a, b) => a.sample.m_Frame.CompareTo(b.sample.m_Frame));
+            readings.Sort(static (a, b) => a.sample.m_Frame.CompareTo(b.sample.m_Frame));
             m_LineHistory.Clear();
             for (int i = 0; i < readings.Count; i++)
             {

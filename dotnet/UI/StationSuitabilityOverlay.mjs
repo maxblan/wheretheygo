@@ -199,7 +199,15 @@ function RouteList({ raw, selected }) {
                         // The figure the list is ordered by, so the gap between the
                         // first row and the second is visible rather than implied.
                         h("div", { className: "sso-route-reach" },
-                            t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0"))));
+                            t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0")),
+                        // When to run it. The game offers all day, day only (06:00–22:00) or
+                        // night only per line; the recommendation rests on how full the
+                        // line would be in each period on its own riders.
+                        h("div", { className: "sso-route-reach" },
+                            t("RouteSchedule", "run {0} · {1}% full by day, {2}% by night")
+                                .replace("{0}", t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day"))
+                                .replace("{1}", parts[8] || "0")
+                                .replace("{2}", parts[9] || "0"))));
             })));
 }
 
@@ -245,6 +253,12 @@ function describePlan(t, raw) {
 
 // Every other t(...) call in this file carries its English inline so a key missing
 // from a locale degrades to English rather than to a blank line. These did not.
+const SCHEDULE_FALLBACKS = {
+    DayAndNight: "all day",
+    Day: "by day only (06:00\u201322:00)",
+    Night: "by night only (22:00\u201306:00)",
+};
+
 const VERDICT_FALLBACKS = {
     AtModeCapacity: "at capacity \u2014 upgrade to {0}",
     Overcrowded: "overcrowded \u2014 add {0} vehicle(s)",
@@ -299,6 +313,23 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
                         .replace("{1}", String(samples))
                         .replace("{2}", parts[9] || "0")
                     : t("BasisSingle", "single reading so far");
+                // What the line's own readings say about its schedule: the mean usage
+                // of each period and, when one period is empty and the other is not,
+                // the schedule to switch to. Only shown once both periods have readings.
+                const scheduleNow = parts[10] || "DayAndNight";
+                const scheduleAdvice = parts[11] || scheduleNow;
+                const daySamples = parseInt(parts[14], 10) || 0;
+                const nightSamples = parseInt(parts[15], 10) || 0;
+                const scheduleText = (daySamples > 0 || nightSamples > 0)
+                    ? t("HealthSchedule", "runs {0} · {1}% full by day, {2}% by night")
+                        .replace("{0}", t("Schedule." + scheduleNow, SCHEDULE_FALLBACKS[scheduleNow] || "all day"))
+                        .replace("{1}", parts[12] || "0")
+                        .replace("{2}", parts[13] || "0")
+                      + (scheduleAdvice !== scheduleNow
+                        ? t("HealthScheduleAdvice", " \u2192 switch to {0}")
+                            .replace("{0}", t("Schedule." + scheduleAdvice, SCHEDULE_FALLBACKS[scheduleAdvice] || scheduleAdvice))
+                        : "")
+                    : null;
                 return h("div", { className: "sso-health", key: index },
                     h("div", { className: "sso-health-head" },
                         h("div", {
@@ -309,6 +340,7 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
                         h("div", { className: "sso-route-meta" }, meta)),
                     h("div", { className: "sso-health-note" }, note),
                     h("div", { className: "sso-health-basis" }, basis),
+                    scheduleText ? h("div", { className: "sso-health-basis" }, scheduleText) : null,
                     healthy ? null : h("button", {
                         className: "sso-improve",
                         onClick: () => trigger("improveLine", index),

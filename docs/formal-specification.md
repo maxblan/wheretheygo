@@ -730,6 +730,40 @@ utilisation floor 15 % (all three are Options sliders; the floor was 25 % until 
   the mod's share/sums/Gini/counts; the evaluator re-derives everything with exact
   integer times and the stated double summation order; game = subject = evaluator.
 
+## 7d. Operating periods — day and night (2026-09-05, user request)
+
+Game facts (decompiled): `TransportLineSystem` calls it night when the day fraction
+`normalizedTime` is < 0.25 or ≥ 11/12 — **night is 22:00–06:00, day 06:00–22:00**;
+a line with the `RouteOption.Day` policy is inactive at night, one with
+`RouteOption.Night` inactive by day (the UI's `RouteSchedule` Day / Night /
+DayAndNight). Workers leave for work at `EconomyParameterData.m_WorkDayStart` plus a
+per-citizen offset of ±1 h and return at `m_WorkDayEnd` plus the same offset; the
+evening shift adds 0.33 of a day, the night shift 0.67 (`WorkerSystem.GetTimeToWork`);
+students keep the day shift's hours (`StudentSystem.GetTimeToStudy`).
+
+Model (`SuitabilityDaytime`):
+- every journey carries a **day share** ∈ [0, 1] of its rides: a commute's two rides
+  are classed by their shift's nominal times (the ±1 h offset is not modelled), an
+  observed shopping/leisure journey by the clock when it was seen; door pairs carry
+  the weight-mean of their journeys' shares (`PairDayShare`);
+- the set evaluation splits each line's riders into day and night
+  (`RidersByDay/Night`); a suggested line's utilisation per period is boardings over
+  the seats offered in that period (the day's seats × 16/24 or 8/24);
+- **recommendation** (`Daytime.Recommend`): run by day only when the night period is
+  under the utilisation floor while the day is not; by night only in the mirror
+  case; otherwise all day. Both periods under the floor is not a schedule question.
+- **existing lines** (`Daytime.Advise`): readings carry the clock; the window's mean
+  usage per period counts only readings with vehicles out; an all-day line whose
+  night mean is under the empty threshold while the day mean is not is advised to
+  run by day (mirror: by night), once both periods have ≥ 4 readings. A day-only line
+  has no night evidence and is never told to extend on this basis.
+
+Verification: the rules are pure and harness-tested (night boundaries, shift shares
+for a 9–17 city, period utilisation arithmetic, both recommendation rules, period
+averages that skip idle readings); the game-side stamping of the clock is
+log-verified (`Work day from EconomyParameterData …` states the hours and the
+resulting shift shares).
+
 ## 8. Determinism inventory (whole mod)
 
 - **No RNG anywhere** (pure or ECS half). No time-dependent arithmetic (timers gate

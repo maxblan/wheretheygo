@@ -14,6 +14,8 @@ namespace StationSuitabilityOverlay
         public int m_Capacity;
         public float m_IntervalSeconds;
         public int m_Vehicles;
+        // The game clock at the reading, as a day fraction (Daytime.IsNight).
+        public float m_TimeOfDay;
     }
 
     // What a line looked like across the window, rather than at the instant the
@@ -183,7 +185,36 @@ namespace StationSuitabilityOverlay
         public bool TryAverage(int lineId, out LineAverage average)
         {
             average = default;
-            if (!m_ByLine.TryGetValue(lineId, out List<LineObservation>? samples) || samples.Count == 0)
+            return m_ByLine.TryGetValue(lineId, out List<LineObservation>? samples) && Average(samples, out average);
+        }
+
+        // The same averages over the readings of one period only — night is the
+        // game's 22:00–06:00 — and only over readings with vehicles out (a line that
+        // does not run at night has capacity 0 then, which is no evidence about demand).
+        public bool TryAveragePeriod(int lineId, bool night, out LineAverage average)
+        {
+            average = default;
+            if (!m_ByLine.TryGetValue(lineId, out List<LineObservation>? all))
+            {
+                return false;
+            }
+
+            var samples = new List<LineObservation>();
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (all[i].m_Capacity > 0 && Daytime.IsNight(all[i].m_TimeOfDay) == night)
+                {
+                    samples.Add(all[i]);
+                }
+            }
+
+            return Average(samples, out average);
+        }
+
+        private static bool Average(List<LineObservation> samples, out LineAverage average)
+        {
+            average = default;
+            if (samples.Count == 0)
             {
                 return false;
             }
