@@ -1,21 +1,18 @@
----
+﻿---
 paths:
-  - "dotnet/StationSuitabilityOverlaySystem.cs"
-  - "dotnet/SuitabilityRouteRenderer.cs"
-  - "dotnet/SuitabilityPanelUISystem.cs"
-  - "dotnet/SuitabilityLines.cs"
-  - "dotnet/SuitabilityRoutes.cs"
-  - "dotnet/SuitabilityRoadGraph.cs"
-  - "dotnet/SuitabilityLattice.cs"
-  - "dotnet/SuitabilityTravelDemand.cs"
-  - "dotnet/SuitabilityMasks.cs"
+  - "dotnet/**/Gathering/**"
+  - "dotnet/**/Systems/**"
+  - "dotnet/Overlay/**"
+  - "dotnet/Presentation/*.cs"
   - "dotnet/Mod.cs"
+  - "dotnet/Setting.cs"
 ---
 
 # Game-facing systems
 
-You are in the half that talks to Cities: Skylines II. Nothing here can be executed outside the
-game, so the discipline that replaces testing is: verify the API against the real assembly, and log
+You are in the half that talks to Cities: Skylines II: the `Gathering/` readers, the `Systems/`
+partials of `StationSuitabilityOverlaySystem`, and the `Overlay/` and `Presentation/` shell. Nothing
+here can be executed outside the game, so the discipline that replaces testing is: verify the API against the real assembly, and log
 enough that a wrong number is visible in the log rather than only on screen.
 
 - **Decompile before writing code against any game API.** Do not infer a component's meaning from
@@ -54,7 +51,7 @@ enough that a wrong number is visible in the log rather than only on screen.
 - **Ordering of game buffers is not a detail.** `RouteWaypoint`/`RouteSegment` on the *line* are
   travel-ordered and index-aligned. `ConnectedRoute` on a stop is not ordered and must never be
   used to infer a sequence.
-- **A network's identity must be set.** `SuitabilityRoadGraph.Network` drives whether an alignment
+- **A network's identity must be set.** `AlignmentNetwork.Network` drives whether an alignment
   has to be re-traced on streets before a road vehicle may run it. Left at its enum default, every
   graph claimed to be a road and ferry alignments were drawn as buses across open water.
 - **Keep the arithmetic out of here.** Anything numerically interesting belongs in the pure files

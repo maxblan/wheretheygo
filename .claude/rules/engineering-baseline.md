@@ -1,4 +1,4 @@
-# Engineering baseline
+﻿# Engineering baseline
 
 Merged from fourteen book rule sets (`.claude/books/`), deduplicated and conflict-resolved.
 Where two books disagreed, one ruling shipped — the reasoning is in `.claude/books/RULINGS.md`.
@@ -40,8 +40,8 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   name the missing boundary before continuing. Two fan-outs here are the design, not a smell: a new
   panel control moves together through `Setting.cs`, `SuitabilityPanelUISystem.cs`, the `.mjs`, the
   `.css` and both locale files; and a new scoring term moves through `SuitabilityWalkAccess.cs`, the
-  combine/normalize pass in `StationSuitabilityOverlaySystem.cs`, the infomode registration and the
-  legend. Complete those in one change rather than reporting them as coupling.
+  combine pass in `SuitabilityHeatmap.cs`, the F1 partial of the overlay system, the infomode
+  registration in `SuitabilityInfoview.cs` and the legend. Complete those in one change rather than reporting them as coupling.
 - When a change needs yet another special-case branch, look for the missing named concept first.
 
 ## Complexity and abstraction
@@ -54,8 +54,8 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   explicit parameters, the way `PlaceStops` takes a scoring callback. Introduce an interface only
   when a second real implementor exists today, or when it is the mechanism reversing a dependency
   direction.
-- Both rules govern *new* indirection. `SuitabilityRoadGraph`'s uniform wrapper over the real road
-  entities and the free-form lattices, the `float2Like` shim that keeps the graph math Unity-free,
+- Both rules govern *new* indirection. `AlignmentNetwork`'s uniform view over the streets and the
+  free-form lattices, the `float2Like` vector that keeps the pure core Unity-free,
   and `SuitabilityPanelUISystem`'s one-line binding forwarders exist by design — do not dissolve or
   flag them. Pass-through code outside your change point gets recorded, not deleted.
 - Never split a function because of its line count. Split when it mixes conceptual phases

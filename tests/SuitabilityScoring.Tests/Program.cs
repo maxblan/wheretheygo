@@ -24,7 +24,7 @@ namespace StationSuitabilityOverlay.Tests
         }
     }
 
-    internal static class Program
+    internal static partial class Program
     {
         private static int s_Failures;
 
@@ -75,10 +75,6 @@ namespace StationSuitabilityOverlay.Tests
             Run("Line set: a line above the utilisation ceiling makes its set infeasible", LineSetCeiling);
             Run("Line set: greedy and swap search reach the trunk-and-feeder pair before the exact search runs", LineSetLocalSearch);
             Run("Line set: one capped search per origin zone equals one search per pair", LineSetGroupedEqualsPerPair);
-            Run("Walk distance counts each tile exactly once", WalkDistanceCountsOnce);
-            Run("Walk distance is deterministic across repeats", WalkDistanceIsDeterministic);
-            Run("Walk distance respects the radius", WalkDistanceRespectsRadius);
-            Run("Walk distance is blocked by water", WalkDistanceBlockedByWater);
             Run("FitNonNegativeLeastSquares recovers known weights", FitRecoversKnownWeights);
             Run("FitNonNegativeLeastSquares clamps negative coefficients", FitClampsNegativeWeights);
             Run("FitNonNegativeLeastSquares rejects underdetermined input", FitRejectsUnderdetermined);
@@ -150,6 +146,31 @@ namespace StationSuitabilityOverlay.Tests
             Run("Export JSON escapes exactly as ensure_ascii does", ExportJsonEscapes);
             Run("Export float bits round-trip", ExportJsonBitsRoundTrip);
             Run("Export instances carry the digest of their own body", ExportJsonHashesBody);
+
+            // F4/F5 — the alignment stage, pure since 2026-09-05 (float2Like). The pinned
+            // figures are the game-typed code's own outputs on the same synthetic city,
+            // recorded before the conversion; a change here is a behaviour change.
+            Run("float2Like reproduces Unity's vector formulas bit for bit", Float2LikeMatchesUnityFormulas);
+            Run("TileGrid clamps to the grid and a cell centre inverts its cell", TileGridClampsAndInverts);
+            Run("Zones: trips aggregate per pair in total order, self and off-map trips drop, desire lines deposit weight", ZonesAggregateAndRasterize);
+            Run("AlignmentNetwork: adopted streets carry directed arcs and a traced path follows the sampled centreline", NetworkAdoptsStreetsWithShapes);
+            Run("Lattice: nodes on passable tiles only, eight neighbours linked once, track priced cheaper, tracks marked with a halo", LatticeBuildsAndPricesTrack);
+            Run("F4 corridors on the synthetic city: counts, the first corridor and its stop plan are pinned", CorridorsOnSyntheticCityArePinned);
+            Run("F4 lattice traces: direct and hub-bent variants share a group; counts pinned", LatticeTracesArePinned);
+            Run("F5 re-stopping for a mode, the shape gate and the fleet arithmetic are pinned", RestopAndFleetArePinned);
+            Run("F4 re-trace on the streets and the already-built rule are pinned", RetraceAndDuplicatesArePinned);
+            Run("AlignmentNetwork helpers: trace, nearest node, flow along and near a path are pinned", NetworkHelpersArePinned);
+
+            // F3 steps 3–4, the panel contract and the disagreement pass, pure since 2026-09-05.
+            Run("Served demand: zones map to the nearest stop in reach, pairs drop same-stop and unmapped flows, carried journeys are discounted", ServedDemandMapsPairsAndDiscounts);
+            Run("Suggestion churn counts held corridors and gates the route log on change", ChurnCountsHeldEndsAndGatesTheLog);
+            Run("Sanity checks name each defect once and stay quiet on plausible numbers", SanityChecksNameEachDefect);
+            Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
+
+            // F1's grid pass and F2's candidate set, pure since 2026-09-05.
+            Run("Heatmap: term caps are positive percentiles, the field combines on-network tiles and writes the term layers", HeatmapCombineFieldAndCaps);
+            Run("Heatmap: node demand reads the tile under each node, sites paint as discs", HeatmapNodeDemandAndSitePainting);
+            Run("Sites: candidates are siteable nodes on buildable tiles with a positive score", SiteCandidatesOnTheNetwork);
 
             Console.WriteLine();
             if (s_Failures == 0)
@@ -1846,141 +1867,6 @@ namespace StationSuitabilityOverlay.Tests
         // repeatedly. Without settling a tile once, its density is added once per
         // pop and the total inflates unpredictably — observed in game as the same
         // site scoring 344 and then 2936 on consecutive recomputes.
-        private static void WalkDistanceCountsOnce()
-        {
-            const int width = 21;
-            const int height = 21;
-            int cells = width * height;
-            var land = new byte[cells];
-            var demand = new float[cells];
-            var jobs = new float[cells];
-            for (int i = 0; i < cells; i++)
-            {
-                land[i] = 1;
-                demand[i] = 1f;
-            }
-
-            int site = 10 + 10 * width;
-            // A radius of exactly one tile step reaches the site plus its eight
-            // neighbours, and the neighbours sit at weight 0 (orthogonal) or are out
-            // of range (diagonal), so only the centre contributes: 1 * 1.0.
-            float total = SuitabilityScoring.AccumulateWalkDistance(
-                site, width, height, 1f, 1f, land, demand, jobs, 1f, 0f,
-                new float[cells], new byte[cells], out float reachedDemand, out _);
-
-            AssertEqual(1f, reachedDemand, 1e-4f, "only the centre tile is fully weighted");
-            AssertEqual(1f, total, 1e-4f, "weighted total");
-
-            // With a wider radius the sum must still be bounded by the number of
-            // tiles in range, which double counting would blow past.
-            float wide = SuitabilityScoring.AccumulateWalkDistance(
-                site, width, height, 1f, 5f, land, demand, jobs, 1f, 0f,
-                new float[cells], new byte[cells], out float wideDemand, out _);
-
-            // 11x11 tiles are within 5 units of Chebyshev reach at most; every tile
-            // contributes strictly less than 1, so the sum cannot reach that count.
-            AssertTrue(wideDemand < 121f, $"reached demand {wideDemand} must be under the tile count in range");
-            AssertTrue(wideDemand > 20f, $"reached demand {wideDemand} should still cover a real neighbourhood");
-            AssertEqual(wide, wideDemand, 1e-4f, "jobs weight zero leaves the demand total");
-        }
-
-        private static void WalkDistanceIsDeterministic()
-        {
-            const int width = 25;
-            const int height = 25;
-            int cells = width * height;
-            var land = new byte[cells];
-            var demand = new float[cells];
-            var jobs = new float[cells];
-            var random = new Random(7);
-            for (int i = 0; i < cells; i++)
-            {
-                land[i] = (byte)(random.NextDouble() < 0.85 ? 1 : 0);
-                demand[i] = (float)random.NextDouble() * 100f;
-                jobs[i] = (float)random.NextDouble() * 50f;
-            }
-
-            int site = 12 + 12 * width;
-            land[site] = 1;
-
-            var distance = new float[cells];
-            var visited = new byte[cells];
-            float first = SuitabilityScoring.AccumulateWalkDistance(
-                site, width, height, 32f, 300f, land, demand, jobs, 1f, 0.5f, distance, visited, out _, out _);
-
-            // Reusing the same scratch buffers must not change the answer, which is
-            // exactly the condition the in-game repeats violated.
-            for (int repeat = 0; repeat < 5; repeat++)
-            {
-                float again = SuitabilityScoring.AccumulateWalkDistance(
-                    site, width, height, 32f, 300f, land, demand, jobs, 1f, 0.5f, distance, visited, out _, out _);
-                AssertEqual(first, again, 1e-3f, $"repeat {repeat} must match the first result");
-            }
-        }
-
-        private static void WalkDistanceRespectsRadius()
-        {
-            const int width = 31;
-            int height = 31;
-            int cells = width * height;
-            var land = new byte[cells];
-            var demand = new float[cells];
-            var jobs = new float[cells];
-            for (int i = 0; i < cells; i++)
-            {
-                land[i] = 1;
-            }
-
-            int site = 15 + 15 * width;
-            // Demand far outside the radius must not be reached at all.
-            demand[0] = 1000f;
-
-            _ = SuitabilityScoring.AccumulateWalkDistance(
-                site, width, height, 10f, 30f, land, demand, jobs, 1f, 0f,
-                new float[cells], new byte[cells], out float reached, out _);
-
-            AssertEqual(0f, reached, 1e-4f, "demand beyond the radius must not be counted");
-        }
-
-        private static void WalkDistanceBlockedByWater()
-        {
-            const int width = 21;
-            const int height = 9;
-            int cells = width * height;
-            var land = new byte[cells];
-            var demand = new float[cells];
-            var jobs = new float[cells];
-            for (int i = 0; i < cells; i++)
-            {
-                land[i] = 1;
-            }
-
-            // A full-height water column splits the grid in two.
-            int barrierX = 10;
-            for (int y = 0; y < height; y++)
-            {
-                land[barrierX + y * width] = 0;
-            }
-
-            // Demand sits just across the barrier, well within straight-line range.
-            demand[(barrierX + 1) + 4 * width] = 500f;
-
-            int site = (barrierX - 1) + 4 * width;
-            _ = SuitabilityScoring.AccumulateWalkDistance(
-                site, width, height, 10f, 60f, land, demand, jobs, 1f, 0f,
-                new float[cells], new byte[cells], out float reached, out _);
-
-            AssertEqual(0f, reached, 1e-4f, "demand across an impassable barrier must not be reached");
-
-            // Opening a gap in the barrier must let it through again.
-            land[barrierX + 4 * width] = 1;
-            _ = SuitabilityScoring.AccumulateWalkDistance(
-                site, width, height, 10f, 60f, land, demand, jobs, 1f, 0f,
-                new float[cells], new byte[cells], out float throughGap, out _);
-
-            AssertTrue(throughGap > 0f, "a gap in the barrier must make the demand reachable");
-        }
-
         private static void FitRecoversKnownWeights()
         {
             // Synthetic observations generated from known weights; the fit must

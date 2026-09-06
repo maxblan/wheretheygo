@@ -22,6 +22,21 @@ namespace StationSuitabilityOverlay
             }
 
             Log.Info(nameof(OnLoad));
+            DeferredLog.Sink = static (level, text) =>
+            {
+                switch (level)
+                {
+                    case DeferredLogLevel.Warn:
+                        Log.Warn(text);
+                        break;
+                    case DeferredLogLevel.Error:
+                        Log.Error(text);
+                        break;
+                    default:
+                        Log.Info(text);
+                        break;
+                }
+            };
 
             if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
             {

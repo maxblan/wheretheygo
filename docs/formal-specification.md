@@ -1,7 +1,9 @@
 # Formal specification of the problems the mod actually computes
 
 Status: complete against the code as of commit `b96e9bd` (working tree, 2026-09-03).
-Line references cite `StationSuitabilityOverlaySystem.cs` unless another file is named.
+Line references cite `StationSuitabilityOverlaySystem` (since 2026-09-05 a partial class split by
+feature under `dotnet/F<n>*/Systems/`; the pure code it calls sits in the `Planning/` folders) unless
+another file is named. Folder `F<n>` implements stage `S<n>` below.
 
 This document specifies, in exact terms, the computational problems solved by
 `StationSuitabilityOverlay`. It is written for verification: every set, parameter and
@@ -156,7 +158,7 @@ every run regardless.**
 
 ## 3. S4 — Alignments
 
-### 3.1 Lattice direct alignment (`TracePath` on `SuitabilityRoadGraph`)
+### 3.1 Lattice direct alignment (`TracePath` on `AlignmentNetwork`, formerly `SuitabilityRoadGraph`)
 
 Instance: undirected graph G = (V, E), edge costs c_e ∈ ℚ_{>0}. Lattice costs:
 128 (orthogonal) or 128·1.41421356 (diagonal — a hard-coded 7-digit constant, not
@@ -288,7 +290,7 @@ weight):
    closer than the gap floor to an earlier forced call lose the flag. Inadmissible
    positions between the termini are dropped; arc lengths are measured from the
    first terminus. `through_c` = the assigned flow of the path edge nearest to
-   candidate c (`SuitabilityRoadGraph.FlowNear`).
+   candidate c (`AlignmentNetwork.FlowNear`).
 2. **Doors**: every journey end within H·1.2 m of P between the termini, with the
    arc length of its projection.
 3. **Objective** (`SuitabilityStopPlan.Solve`), for a chosen set S containing both

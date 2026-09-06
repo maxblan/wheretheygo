@@ -11,7 +11,7 @@ SHELL := /bin/bash
 
 PROJECT     := dotnet/StationSuitabilityOverlay.csproj
 TESTS       := tests/SuitabilityScoring.Tests
-UI_MODULE   := dotnet/UI/StationSuitabilityOverlay.mjs
+UI_MODULE   := dotnet/Presentation/UI/StationSuitabilityOverlay.mjs
 CONFIG      ?= Release
 OUTPUT      := dotnet/bin/$(CONFIG)/net48/StationSuitabilityOverlay.dll
 
@@ -25,7 +25,7 @@ UI_LOG      := $(USERDATA)/Logs/UI.log
 DOTNET_WIN  := powershell.exe -NoProfile -Command
 
 .DEFAULT_GOAL := help
-.PHONY: help build debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
+.PHONY: help build compile debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
 
 help: ## Show this help
 	@echo "StationSuitabilityOverlay — targets:"
@@ -37,6 +37,12 @@ help: ## Show this help
 
 build: ## Compile and deploy to the game's Mods folder (close the game first)
 	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG)"
+
+# Runs only the compiler (analyzers included): Mod.targets hooks the post-processor
+# and the deploy onto AfterBuild, which -t:Compile never reaches, so the running
+# game's locked DLL is left alone and bin/ stays as it was deployed.
+compile: ## Compile without deploying — safe while the game is running
+	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG) -t:Compile -nologo -v:q"
 
 debug: ## Compile and deploy the Debug configuration
 	@$(MAKE) --no-print-directory build CONFIG=Debug

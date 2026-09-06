@@ -1,41 +1,35 @@
----
+﻿---
 paths:
-  - "dotnet/SuitabilityScoring.cs"
-  - "dotnet/SuitabilityExactSites.cs"
-  - "dotnet/SuitabilityWalkAccess.cs"
-  - "dotnet/SuitabilityGraphMath.cs"
-  - "dotnet/SuitabilityTransit.cs"
-  - "dotnet/SuitabilityLineHistory.cs"
-  - "dotnet/SuitabilityObservedTrips.cs"
-  - "dotnet/SuitabilityDirectedRoads.cs"
-  - "dotnet/SuitabilityEquity.cs"
-  - "dotnet/SuitabilityLineSet.cs"
-  - "dotnet/SuitabilityStopPlan.cs"
-  - "dotnet/SuitabilityDaytime.cs"
-  - "dotnet/SuitabilityLineHealth.cs"
-  - "dotnet/TransitMode.cs"
-  - "dotnet/SuitabilityExportJson.cs"
+  - "dotnet/**/Planning/**"
   - "tests/SuitabilityScoring.Tests/**"
+  - "verification/subject/**"
 ---
 
 # The testable core
 
-You are in the half of this mod that can be executed without the game. These files use `System.*`
-only, which is what lets `tests/SuitabilityScoring.Tests` link them and run offline. That property
-is the whole reason they exist as separate files.
+You are in the half of this mod that can be executed without the game: every `Planning/` folder
+under `dotnet/`. These files use `System.*` only, which is what lets `tests/SuitabilityScoring.Tests`
+and `verification/subject` link them by glob and run offline. That property is the whole reason the
+`Planning/` folders exist.
 
 - **No Unity, ECS, Colossal or Game types here** — not `float2`, not `Entity`, not
-  `EntityManager`, not `math.*`, not even in a signature. `float2Like` in
-  `SuitabilityGraphMath.cs` exists precisely because `Unity.Mathematics.float2` may not appear.
-  A single such reference breaks the test project for every algorithm in the file.
-- **A per-mode fact belongs in `TransitMode.cs`**, as one more `switch` beside the others. That
+  `EntityManager`, not `math.*`, not even in a signature. `float2Like` and `int2Like`
+  (`Common/Planning/float2Like.cs`) exist precisely because `Unity.Mathematics.float2` may not
+  appear: use `float2Like.Distance/DistanceSq/Lerp/Dot` and `System.Math`, whose formulas are the
+  ones decompiled from Unity's, so the pure result is bit-identical to the game's. A single Unity
+  reference breaks the test project for every algorithm in the folder.
+- **Integer casts that rely on wrapping must say `unchecked`.** The mod compiles this code with
+  overflow checking off (Burst), the harness and the subject with it on; `DoorIndex.Key` is the
+  precedent.
+- **`DeferredLog` is allowed** (it is in `Common/Planning`): it reaches the game only through the
+  sink `Mod.OnLoad` binds, and drops lines offline.
+- **A per-mode fact belongs in `Common/Planning/TransitMode.cs`**, as one more `switch` beside the others. That
   file exists because `ModePreset` used to be nested inside `Setting`, which drags in Colossal and
   Game: with no Unity-free home for a mode table, five of them grew separate copies in separate
   files — two byte-for-byte identical — and a sixth in the panel's JavaScript.
 - **Algorithms belong here, not in the ECS systems.** If you are about to write a loop with real
-  arithmetic in `StationSuitabilityOverlaySystem.cs`, `SuitabilityRoutes.cs` or
-  `SuitabilityLines.cs`, ask whether it can be expressed against plain arrays and moved here
-  instead. Every numerical bug this mod has shipped that stayed hidden — demand counted once per
+  arithmetic in a `Systems/` partial of `StationSuitabilityOverlaySystem` or in a `Gathering/`
+  reader, ask whether it can be expressed against plain arrays and moved here instead. Every numerical bug this mod has shipped that stayed hidden — demand counted once per
   Dijkstra pop, corridor flow summed instead of averaged, transfers costing nothing because an
   undirected graph made the alight edge a free boarding — was invisible until the math was
   reachable from a test.

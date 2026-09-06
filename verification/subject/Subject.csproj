@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -14,24 +14,11 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
-    <!-- The system under test: the mod's pure files, linked UNCHANGED — the same
+    <!-- The system under test: the mod's pure core, linked UNCHANGED — the same
          linking the offline test harness uses. Nothing in this project reimplements
          mod logic; Program.cs is IO plus the argument wiring documented in
          docs/formal-specification.md. -->
-    <Compile Include="../../dotnet/SuitabilityScoring.cs" Link="SuitabilityScoring.cs" />
-    <Compile Include="../../dotnet/SuitabilityExactSites.cs" Link="SuitabilityExactSites.cs" />
-    <Compile Include="../../dotnet/SuitabilityWalkAccess.cs" Link="SuitabilityWalkAccess.cs" />
-    <Compile Include="../../dotnet/SuitabilityObservedTrips.cs" Link="SuitabilityObservedTrips.cs" />
-    <Compile Include="../../dotnet/SuitabilityDirectedRoads.cs" Link="SuitabilityDirectedRoads.cs" />
-    <Compile Include="../../dotnet/SuitabilityEquity.cs" Link="SuitabilityEquity.cs" />
-    <Compile Include="../../dotnet/SuitabilityLineSet.cs" Link="SuitabilityLineSet.cs" />
-    <Compile Include="../../dotnet/SuitabilityStopPlan.cs" Link="SuitabilityStopPlan.cs" />
-    <Compile Include="../../dotnet/SuitabilityDaytime.cs" Link="SuitabilityDaytime.cs" />
-    <Compile Include="../../dotnet/SuitabilityGraphMath.cs" Link="SuitabilityGraphMath.cs" />
-    <Compile Include="../../dotnet/SuitabilityTransit.cs" Link="SuitabilityTransit.cs" />
-    <Compile Include="../../dotnet/SuitabilityLineHistory.cs" Link="SuitabilityLineHistory.cs" />
-    <Compile Include="../../dotnet/TransitMode.cs" Link="TransitMode.cs" />
-    <Compile Include="../../dotnet/SuitabilityLineHealth.cs" Link="SuitabilityLineHealth.cs" />
+    <Compile Include="../../dotnet/**/Planning/*.cs" Link="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

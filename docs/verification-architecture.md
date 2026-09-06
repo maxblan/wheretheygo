@@ -48,7 +48,7 @@ Two sources, same schema:
 - **Synthetic instances** (`verification/instances/`): deterministic generators for
   bounded cases — these are what complete enumeration and the counterexample search
   run on.
-- **Game exports** (implemented 2026-09-03, `dotnet/SuitabilityVerificationExport.cs`):
+- **Game exports** (implemented 2026-09-03, `dotnet/F11Export/Systems/StationSuitabilityOverlaySystem.VerificationExport.cs`):
   `Options → Export verification instance` writes canonical instances of the live city
   to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Three
   files per press — `heatmap_walk` (the access pass's own inputs plus a sample of its

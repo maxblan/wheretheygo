@@ -7,10 +7,10 @@ charset = utf-8-bom
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[dotnet/SuitabilityExportJson.cs]
+[dotnet/F11Export/Planning/SuitabilityExportJson.cs]
 end_of_line = lf
 
-[dotnet/SuitabilityVerificationExport.cs]
+[dotnet/F11Export/Systems/StationSuitabilityOverlaySystem.VerificationExport.cs]
 end_of_line = lf
 
 [*.{json,mjs,css,md,yml}]

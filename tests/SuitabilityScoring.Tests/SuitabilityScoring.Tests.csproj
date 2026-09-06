@@ -20,26 +20,16 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
-    <!-- The mod's pure scoring math, shared rather than duplicated. It uses no
-         Unity types precisely so it can be linked here. -->
-    <Compile Include="../../dotnet/SuitabilityScoring.cs" Link="SuitabilityScoring.cs" />
-    <Compile Include="../../dotnet/SuitabilityExactSites.cs" Link="SuitabilityExactSites.cs" />
-    <Compile Include="../../dotnet/SuitabilityWalkAccess.cs" Link="SuitabilityWalkAccess.cs" />
-    <Compile Include="../../dotnet/SuitabilityObservedTrips.cs" Link="SuitabilityObservedTrips.cs" />
-    <Compile Include="../../dotnet/SuitabilityDirectedRoads.cs" Link="SuitabilityDirectedRoads.cs" />
-    <Compile Include="../../dotnet/SuitabilityEquity.cs" Link="SuitabilityEquity.cs" />
-    <Compile Include="../../dotnet/SuitabilityLineSet.cs" Link="SuitabilityLineSet.cs" />
-    <Compile Include="../../dotnet/SuitabilityStopPlan.cs" Link="SuitabilityStopPlan.cs" />
-    <Compile Include="../../dotnet/SuitabilityDaytime.cs" Link="SuitabilityDaytime.cs" />
-    <Compile Include="../../dotnet/SuitabilityGraphMath.cs" Link="SuitabilityGraphMath.cs" />
-    <Compile Include="../../dotnet/SuitabilityTransit.cs" Link="SuitabilityTransit.cs" />
-    <Compile Include="../../dotnet/SuitabilityLineHistory.cs" Link="SuitabilityLineHistory.cs" />
-    <Compile Include="../../dotnet/TransitMode.cs" Link="TransitMode.cs" />
-    <Compile Include="../../dotnet/SuitabilityLineHealth.cs" Link="SuitabilityLineHealth.cs" />
-    <!-- The verification export's wire format. Linked so the golden-vector test can
-         pin it against verification/common/canonical.py, which refuses any file whose
-         digest it cannot reproduce. -->
-    <Compile Include="../../dotnet/SuitabilityExportJson.cs" Link="SuitabilityExportJson.cs" />
+    <Compile Include="AlignmentTests.cs" />
+    <Compile Include="PipelineTests.cs" />
+    <Compile Include="HeatmapTests.cs" />
+    <!-- The mod's whole pure core, linked rather than duplicated: every file in a
+         Planning folder under dotnet/ uses System.* only, precisely so it compiles here. A Unity
+         type in any of them breaks this build, which is the purity check.
+         SuitabilityExportJson.cs is among them so the golden-vector test can pin the
+         wire format against verification/common/canonical.py, which refuses any file
+         whose digest it cannot reproduce. -->
+    <Compile Include="../../dotnet/**/Planning/*.cs" Link="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

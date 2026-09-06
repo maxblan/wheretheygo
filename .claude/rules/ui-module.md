@@ -1,12 +1,12 @@
 ---
 paths:
-  - "dotnet/UI/**"
-  - "dotnet/SuitabilityPanelUISystem.cs"
+  - "dotnet/Presentation/UI/**"
+  - "dotnet/Presentation/SuitabilityPanelUISystem.cs"
 ---
 
 # The panel module
 
-`dotnet/UI/StationSuitabilityOverlay.mjs` and its `.css` are hand-written and never compiled: the
+`dotnet/Presentation/UI/StationSuitabilityOverlay.mjs` and its `.css` are hand-written and never compiled: the
 game loads `<AssemblyName>.mjs` from the mod root, and the csproj flattens them out of `UI/` on copy.
 Nothing type-checks this file, so the guard rails are explicit.
 
