@@ -15,7 +15,9 @@ Herkunfts-Kategorien:
 - **Nutzer** — Voreinstellung, die der Spieler ändern kann.
 
 Verifikationsstand jeder Regel: `docs/correctness-claims.md`. Dieses Register sagt,
-*was* gerechnet wird — nicht, ob es richtig gerechnet wird (das ist geprüft).
+*was* gerechnet wird — nicht, ob es richtig gerechnet wird (das ist geprüft). Jede
+Zahl, die hier steht, steht im Code genau einmal: `dotnet/Common/Planning/Assumptions.cs`
+(Nutzerregel 2026-09-06).
 
 ---
 
@@ -120,15 +122,20 @@ Verifikationsstand jeder Regel: `docs/correctness-claims.md`. Dieses Register sa
 | A7.6 | Annahme-Gates | Länge ≥ Modusminimum; Nachfrage > 0 ∨ Flow ≥ 25 % Referenz; Flow > 1; Nachfrage ≥ Bus-Floor; kein Duplikat (≥ 75 % der Halte ≤ 150 m an bestehender Linie) | Urteil | Filtert Vorschläge | — |
 | A7.7 | Referenz | mittlerer positiver Kantenflow des Netzes; Lattice-Untergrenze 25 % der Straße | Urteil | Skaliert alle Flow-Schwellen | — |
 
-## 8. Linien-Gesundheit (nicht Teil der Optimierung)
+## 8. Linien-Gesundheit (S9; v2 seit 2026-09-06, Antworten des Nutzers auf 31 Fragen)
 
-| # | Annahme | Wert / Regel | Herkunft |
-|---|---|---|---|
-| A8.1 | voll ≥ 85 % Auslastung; leer ≤ 6 % ∧ ≤ 35 % des Stadt-Medians ∧ Spitze ≤ 3× | Urteil |
-| A8.2 | lange Wartezeit: ≥ 2 × eigener Solltakt ∧ ≥ 1,5 × Median ∧ ≥ 60 s | Urteil |
-| A8.3 | Flotte = round(Umlaufzeit / Solltakt), Ziel-Auslastung 0,7 | Spiel · Urteil |
-
----
+| # | Annahme | Wert / Regel | Herkunft | Wirkung |
+|---|---|---|---|---|
+| A8.1 | Leer nur relativ zur Stadt | leer ⇔ mittlere Belegung ≤ min(6 %, 0,35 × oberer Median der Belegungen) ∧ Spitze ≤ 3 × diese Schranke; oberer Median = Wert an Index n/2 der sortierten Liste | Urteil (Werte) · **Lean:** höchstens n/2 Linien können unter der Schranke liegen | Ein Signal von zwei für „umleiten oder entfernen“; allein löst es nichts aus |
+| A8.2 | Nachfrage einer Bestandslinie = Fahrgäste, die das Routing der bekannten Wege über das heutige Netz ihr zuordnet (`LineSetEvaluation.BaseRiders`, nach Tag/Nacht gesplittet), aus dem Basislauf jedes Routen-Passes | dieselbe Routing-Regel wie S7, kein zweites Modell (Frage 30a) | Spiel/Modell | Bis zum ersten Pass „keine Nachfrage bekannt“: dann kein Entfernen, kein Fahrplan-Rat, Flotte nur aus der Last |
+| A8.3 | Planungslast = 90.-Perzentil (nearest rank) der Fahrgäste an Bord über die aktiven Lesungen des Fensters; Flotte für die Last = ⌈Last ÷ (0,7 × Plätze je Fahrzeug)⌉; Zielauslastung 0,7 | Urteil (0,7; Frage 4b/13a) · **Lean:** minimale Flotte | Maximum wird gespeichert und angezeigt, bemisst aber nichts |
+| A8.4 | Lesungen ohne Fahrzeuge (Kapazität 0: inaktive Linie) zählen in keinem Mittel; Fenster 1 Spieltag, ≥ 4 aktive Lesungen, sonst die Momentaufnahme | Frage 10b/7a | Nur-Tag-Linien werden nachts nicht als leer gemessen |
+| A8.5 | Lesung alle 15 Spielminuten (262144/96 Frames) auf dem Simulationstakt, unabhängig von der Spielgeschwindigkeit; Pause fügt nichts hinzu | Frage 6b/27a | 96 Lesungen je Spieltag |
+| A8.6 | Urteilsreihenfolge: Flotte unter Soll (Spielflag) → Modus hoch → Route teilen → Entfernen (nur beide Signale) → Modus runter → Flotte hoch → Flotte runter → Fahrplan → gesund | Frage 22a/26a/16a · **Lean:** Reihenfolge und Zwei-Signal-Regel | „Überfüllt“ des Spiels heißt nur: das Spiel bekommt die Fahrzeuge nicht, die der Spieler eingestellt hat |
+| A8.7 | Fahrplan-Rat nach den Perioden-Auslastungen (Nachfrage je Periode bei der empfohlenen Flotte) gegen die 15 % wie bei Vorschlägen; das Routing kennt keinen Fahrplan (Nachtfahrgäste einer Nur-Tag-Linie sind die, die das Netz tragen WÜRDE) | Frage 17b | Grenze dokumentiert, nicht modelliert |
+| A8.8 (Befund) | `TransportLine.m_VehicleInterval` ist kein gemessener Takt: min(10 × Soll, Fahrzeit ÷ Soll-Flotte); auf fahrenden Linien < 1,5 × Soll, auf inaktiven die ganze Fahrzeit | Spiel (dekompiliert 2026-09-06) | Das v1-Urteil „lange Wartezeit“ (≥ 2 ×) war auf fahrenden Linien unerreichbar und ist gestrichen (Frage 25a) |
+| A6.8 (neu) | **Die Fahrzeugspanne des Spiels ist die Taktbedingung** (Frage 31a): Flotte = kleinste Zahl, deren Sitze am Tag die Einsteiger nicht über die Obergrenze (100 %) füllen, geklemmt in die Spanne, die der Fahrzeug-Regler für die Umlaufzeit erlaubt (Policy-Prefab: Modus und Spanne des `VehicleInterval`-Modifikators auf dem Prefab-Intervall); Intervall = Umlauf ÷ Flotte; gilt für Vorschläge und Bestand | Spiel | Die Planungstakt-Tabelle 300/240/200/480/600 s entfällt; A5.5 geschlossen |
+| A6.9 (neu) | Leiter für Bestandslinien = Leiter des Netzes der Linie (`NetworkOf`): erster Modus, dessen Maximalflotte die geforderte Flotte trägt; darüber „Route teilen“; darunter „Modus runter“ (Frage 14a, 15a: Kilometer-Tabelle `MaxSensibleLength` und die Ein-Stufe-Regel `NextModeUp/Down` gestrichen) | Urteil | Bus↔Tram wechseln, Metro/Zug/Fähre haben eine Stufe |
 
 ## Wo „optimal statt greedy" erreichbar ist — Vorab-Einschätzung
 
@@ -206,7 +213,7 @@ gestellt, Entscheidung noch offen):
 | A5.2 ✅ umgesetzt (Phase 7) | Was optimaler ist | Exakte DP über Kandidatenpositionen alle 50 m (`SuitabilityStopPlan`), Zielfunktion Zugangsgewinn − Durchfahrerverzögerung, Untergrenze 50 % des Haltabstands (A5.1) |
 | A5.3 ✅ | gut | bleibt (als Kandidatenerzeugung für die DP) |
 | A5.4 ✅ umgesetzt (Phase 7) | Wert erfragt | Kein Prozentwert: Halt genau dann, wenn Σ w·max(0, H − Gehzeit) der Einsteiger die Verzögerung Durchfahrer·δ übersteigt; δ = Standzeit + v/2a + v/2b aus den Prefabs (A5.5) |
-| A5.5 ✅ (mit RF) | **Werte aus dem Spiel** | Gelesen: Kapazität, Beschleunigung/Bremsen (`CarData`/`TrainData`/`WatercraftData`), Standzeit und Standardintervall (`TransportLineData`). **Befund Valmare 16:51: Intervall Bus/Tram 45 s, Metro 60 s, Zug/Fähre 90 s; Standzeit 1–10 s; Beschleunigung 5–6 m/s².** Damit wäre der 15-%-Floor unerreichbar (257 Fahrgäste = 3 % statt 29 %) und ein Halt fast kostenlos (alle 175 m). Umgesetzt: Planungstakt = Tabelle 300/240/200/480/600 s, δ = max(Physik, 15 s); Prefab-Werte stehen im Log. **RF: Takt als Planungsvariable (Intervall so wählen, dass die Auslastung ein Ziel trifft) statt fester Tabelle?** |
+| A5.5 ✅ (mit RF) | **Werte aus dem Spiel** | Gelesen: Kapazität, Beschleunigung/Bremsen (`CarData`/`TrainData`/`WatercraftData`), Standzeit und Standardintervall (`TransportLineData`). **Befund Valmare 16:51: Intervall Bus/Tram 45 s, Metro 60 s, Zug/Fähre 90 s; Standzeit 1–10 s; Beschleunigung 5–6 m/s².** Damit wäre der 15-%-Floor unerreichbar (257 Fahrgäste = 3 % statt 29 %) und ein Halt fast kostenlos (alle 175 m). Umgesetzt: Planungstakt = Tabelle 300/240/200/480/600 s, δ = max(Physik, 15 s); Prefab-Werte stehen im Log. **RF geschlossen 2026-09-06 (Frage 31a): die Fahrzeugspanne des Spiels ist die Taktbedingung, die Tabelle entfällt (A6.8).** |
 | A6.x ✅ umgesetzt (Phase 7) | „Rest sinnvoll" | Modus = kleinster der Netzleiter, dessen Fahrzeuge beim Planungstakt nicht überlastet sind (Auslastung ≤ 100 %), gemessen an den eigenen Fahrgästen nach Neuplatzierung der Halte; die nächste Stufe wird zusätzlich als Kandidat angeboten und das Set kennt eine Auslastungs-Obergrenze von 100 % (Befund 17:06: Bus mit 154 % gewählt); Flow-Vielfache, Reichweiten-Anteile, Gleis-Erleichterung und Ein-Bus-Floor gestrichen; Werte aus `TransportLineData`, `PublicTransportVehicleData`, `CarData`/`TrainData`/`WatercraftData` |
 | A7.2 ✅ umgesetzt (Phase 7) | **Realismus** | Geplant wird mit 1 : 1 : 1; die TCQSM-gewichtete Zeit (2,2 / 2,1 / 1) wird aus denselben Wegen als Diagnose je Set ausgegeben (`LineSetEvaluation.Walk/Wait/RideSeconds`) |
 | A7.4 ✅ umgesetzt (Phase 7) | Literatur | Der 0,6-Rabatt und die Einstellung „Transferstrafe" sind gestrichen; ein Umstieg kostet genau seinen Fußweg und die Wartezeit der nächsten Linie, wie im Spiel |
@@ -236,7 +243,7 @@ Rückfragen oben entschieden (RF → ✅):
 |---|---|---|
 | Laufzeit | Nutzer: „Kartoffel-PC“-Ziel, zunächst ohne Qualitätsverlust; später: „annähernd optimal ist akzeptabel, wenn die Laufzeit sinkt“ | Routen-Pipeline auf einem Worker; Hauptthread gesperrt, solange er läuft; Hauptthread je Refresh 64 ms (vorher 174–336, davor Sekunden-Freeze) |
 | A7.5 Verfahren | s. o.: Greedy → Tausch → exakt, Budget 30 s, Pass alle 300 s, Bewertung türfrei (Mehrquellen-Dijkstra über Haltestellen) und parallel auf halben Kernen; Gruppen (Varianten einer Trasse schließen sich aus) | Pass ≈ 15–20 s statt 114 s; bessere Sets |
-| A5.5 Prefab-Werte | Befund: Intervalle 45/45/60/90/90 s, Standzeit 1–10 s, Beschleunigung 5–6 m/s² | Planungstakt = Tabelle 300/240/200/480/600 s, δ = max(Physik, 15 s); **RF offen: Takt als Planungsvariable?** |
+| A5.5 Prefab-Werte | Befund: Intervalle 45/45/60/90/90 s, Standzeit 1–10 s, Beschleunigung 5–6 m/s² | Planungstakt = Tabelle 300/240/200/480/600 s, δ = max(Physik, 15 s); **RF geschlossen 2026-09-06: Spielspanne statt Tabelle (A6.8)** |
 | A6.x Obergrenze | Befund 17:06: Bus mit 154 % gewählt (Modus an fremder Variante gemessen) | Modus an eigenen Fahrgästen nach Neusetzen der Halte; nächste Stufe als Variante; Set-Obergrenze 100 % |
 | A0.5 Paare | Reisen Tür zu Tür statt Zonenzentren; Türen sind in der Wegesuche Senken (kein Fußweg durch eine Haustür) | Semantik im Spec §6.2 v2; Evaluator angepasst |
 | Warmstart | Nutzer 2026-09-05: „eigenes Savefile, damit kein Cold Start nach jedem Laden“ | Vorschläge, beobachtete Wege und Linien-Messungen werden über `IDefaultSerializable` in den Spielstand geschrieben (Format-Version, längenpräfixierter Payload; Laden ohne Mod überspringt den Block). Erster Pass nach dem Laden wartet den normalen Takt |
@@ -245,6 +252,30 @@ Rückfragen oben entschieden (RF → ✅):
 | A1.6 v3 / A1.15 / A1.16 | Nutzer 2026-09-05 (Screenshot): Untergrundstraßen und Straßen „im Nirvana" leuchten gelb | Ursache: W4·Zugang additiv, jeder Gehwegknoten binnen 2 min zählte. Entscheidungen des Nutzers: Zugang als Multiplikator (A); Tunnel-/Brückenknoten begehbar, kein Standort (b, auch für Brücken); Nirvana damit erledigt; reine Zonierung zählt nicht. Umgesetzt in `SuitabilityScoring.Combine` (rein, getestet), `WalkGraph.Siteable`/`SnapSite`, `SuitabilityInputs.EndOnGround`; Export-Feld `node_siteable`; Plumbing-Instanz mit Brückenknoten dreiseitig bit-exakt; alte Exporte lesen sich als „alle Standorte" und bleiben unverändert grün. Kalibrierung auf drei Regressoren umgestellt, damit Fit- und Score-Modell dieselbe Formel sind. **Offen: Haltepunkte einer Straßenlinie im Tunnel** — der Haltepunktplan arbeitet auf dem Straßengraphen und kennt die Gleisart/Höhe noch nicht |
 | A9.1 Aktualisierung | Nutzer 2026-09-05: Vorschläge sollen auch ohne Heatmap aktualisieren; die Liste darf sich nicht unter der Auswahl zurücksetzen, das Panel meldet ein Update und der Nutzer übernimmt | Zugangs-, Nachfrage- und Routen-Pass laufen unabhängig vom gezeichneten Overlay (nur das Malen hängt an „aktiv"); ein fertiger Pass wird **gestaged** (`routeUpdate`-Binding = Anzahl, Button „übernehmen" → `applyRouteUpdate`), sofort übernommen nur bei leerer Liste; ein neuerer Pass ersetzt einen wartenden. Nebenwirkung: der Verifikations-Export erscheint jetzt auch bei ausgeschalteter Heatmap |
 | A8 Betriebszeiten | Nutzer 2026-09-05: Vorschläge und Linienzustand sollen sagen, ob eine Linie tags, nachts oder ganztags fahren soll | Spielfakten dekompiliert: Nacht = 22:00–06:00 (`TransportLineSystem`), Policies `RouteOption.Day/Night`; Schichten auf `EconomyParameterData.m_WorkDayStart/End` (+8 h Abend, +16 h Nacht), Schüler wie Tagschicht, Bürger-Offset ±1 h nicht modelliert. Empfehlung: nur tags, wenn die Nacht unter dem Auslastungs-Floor liegt und der Tag nicht (spiegelbildlich nur nachts); Bestandslinien nach Perioden-Mittel des Fensters mit ≥ 4 Messungen je Periode und nur bei ganztägigem Betrieb. **Entscheidung offen: soll die Mengenauswahl den Fahrplan mitoptimieren (Sitze nur in der Betriebsperiode)?** Heute ist er eine Empfehlung nach der Auswahl |
+
+**Entscheidungen vom 2026-09-06 (Linienzustand, 31 Fragen; alle Antworten liegen im Chat-Protokoll vor):**
+
+| # | Entscheidung | Folge |
+|---|---|---|
+| 1b/22a | Beweisziel: Treue (dreiwege-bitgenau) UND Zielfunktion der Empfehlung: kleinster Modus der Leiter, dessen Maximalflotte die Last trägt; Flotte minimal unter Last- und Nachfragebedingung in der Spielspanne | §7e; Lean `Verify.LineHealth` |
+| 2a | Arithmetik aus `SuitabilityLines.Judge` in den reinen Teil (`SuitabilityLineHealth.JudgeAll`) | Subject kann urteilen |
+| 3c | Belegung (gemessen) trägt die Leer-Regel, Nachfrage-Auslastung (Routing) das zweite Signal und den Fahrplan | A8.1/A8.2 |
+| 4b | 90.-Perzentil als Planungslast, Maximum daneben | A8.3 |
+| 5a | oberer Median | A8.1, Lean |
+| 6b/27a | Lesungen in Spielzeit, alle 15 Spielminuten | A8.5 |
+| 7a, 8a, 9a→25a | Fenster/Mindestlesungen bleiben; Leer-Schwellen bleiben; Wartezeit-Urteil gestrichen (Befund A8.8) | — |
+| 10b | inaktive Lesungen raus | A8.4 |
+| 11a/12a | Spieler setzt eine Anzahl; Empfehlung nennt eine Anzahl in der Spielspanne, das Intervall nur zur Anzeige | §5 v3 |
+| 13a/23a | Flotte = max(⌈Last⌉, ⌈Nachfrage⌉) mit ⌈⌉ statt round | A8.3, A6.8 |
+| 14a/15a/16a | S6-Leiter für Bestand; Kilometer-Tabelle weg; Entfernen nur mit zwei Signalen | A6.9, A8.6 |
+| 17b/18a/19a | Fahrplan nach Perioden-Auslastung; Sortierung bleibt; Bus/Tram/Metro/Zug/Fähre | A8.7 |
+| 20a/21a | Spezifikation, Register, Claims, Pipeline-Art `line_health`, Export `-health`, Lean, Harness; direkt v2 | — |
+| 24b→31a | Prefab-Standardintervalle als Takt hätten die 15 % unerreichbar gemacht (Kandidat 20,5 % → ≈ 3 %); stattdessen die Fahrzeugspanne des Spiels als Taktbedingung, keine Tabelle | A5.5 geschlossen, A6.8 |
+| 26a | eigenes Urteil „Flotte unter Soll“ aus den Spielflags | A8.6 |
+| 28a | nearest-rank-Quantil | A8.3 |
+| 29a | Spielspanne auch bei Vorschlägen (Set-Zulässigkeit bei der Flotte, die die Set-Fahrgäste bemessen) | §6.3 F1 v3 |
+| 30a | Fahrgäste je Bestandslinie aus dem Basislauf des Routings | A8.2 |
+| Nutzerregel | alle Rechenkonstanten in `Common/Planning/Assumptions.cs`, kein duplizierter Code | CLAUDE.md |
 
 ---
 

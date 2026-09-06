@@ -9,9 +9,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1092616192,
     "stop_x_b32": [
      0,
@@ -27,9 +29,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1090519040,
     "stop_x_b32": [
      0,
@@ -76,7 +80,7 @@
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "346d345fd172b46af6fa93d88eba31d7d2327c49db97ac1c40fba7e4a0a09c6e",
+ "hash": "f1cc66115b80e4f2803d6fbbc08b3b90f89fbd8ab8d96e38ed75b8dc4190f1c9",
  "kind": "lineset_time",
  "name": "lineset_time-duplicate",
  "schema_version": 1

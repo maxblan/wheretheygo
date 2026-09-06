@@ -9,9 +9,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": 0,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1092616192,
     "stop_x_b32": [
      0,
@@ -27,9 +29,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": 0,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1091567616,
     "stop_x_b32": [
      0,
@@ -45,9 +49,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": 1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1092616192,
     "stop_x_b32": [
      0,
@@ -99,7 +105,7 @@
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "170664323970ef8e4f9aa3fec63ab268f8b621994e655af5ad1bf6e7f2789bc7",
+ "hash": "72f4d7fc3a9fae8760ec26f98400e4bd45759b852f73f01f340eba196504c3ab",
  "kind": "lineset_time",
  "name": "lineset_time-variants",
  "schema_version": 1

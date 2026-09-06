@@ -1,4 +1,4 @@
-// In-game control panel for the Station Suitability overlay.
+﻿// In-game control panel for the Station Suitability overlay.
 //
 // Hand-written ES module rather than a bundled React app: the game exposes React
 // and its binding API on `window`, so no build toolchain is involved and the file
@@ -217,13 +217,13 @@ function RouteList({ raw, selected, update }) {
             })));
 }
 
-// The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|spacing",
+// The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|fleetMin|fleetMax",
 // numbers and tokens only, so the sentence can be assembled in the player's language.
 function describePlan(t, raw) {
     const p = (raw || "").split("|");
-    // Seven fields, as PlanPayload writes them. A short payload used to pass this
+    // Eight fields, as PlanPayload writes them. A short payload used to pass this
     // guard and render "NaN" and "undefined" into the player's language.
-    if (p.length < 7) {
+    if (p.length < 8) {
         return raw || "";
     }
 
@@ -237,6 +237,13 @@ function describePlan(t, raw) {
         text += t("Plan.Delta", " ({0})").replace("{0}", delta > 0 ? "+" + delta : String(delta));
     }
 
+    // The span the game's vehicle slider allows this line; 0 as the maximum means the
+    // policy prefab was not found and the span is open above.
+    const fleetMax = parseInt(p[7], 10);
+    if (fleetMax > 0) {
+        text += t("Plan.Span", ", the game allows {0} to {1}").replace("{0}", p[6]).replace("{1}", p[7]);
+    }
+
     const interval = parseInt(p[3], 10);
     if (interval >= 0) {
         text += t("Plan.Interval", ", i.e. an interval of about {0} s").replace("{0}", String(interval));
@@ -244,11 +251,8 @@ function describePlan(t, raw) {
 
     switch (p[4]) {
         case "Split":
-            return text + t("Plan.Split", "; split it — {0} km is beyond what one {1} line can keep to time")
+            return text + t("Plan.Split", "; split it — {0} km is more than the largest {1} fleet can carry")
                 .replace("{0}", p[5]).replace("{1}", mode);
-        case "ThinStops":
-            return text + t("Plan.ThinStops", "; thin the stops to about {0} — they average {1} m apart, close for a {2}")
-                .replace("{0}", String(Math.round(parseFloat(p[5])))).replace("{1}", p[6]).replace("{2}", mode);
         case "Reroute":
             return text + t("Plan.Reroute",
                 "; or reroute it through denser ground — the suggestions list shows where demand is unserved");
@@ -266,20 +270,32 @@ const SCHEDULE_FALLBACKS = {
 };
 
 const VERDICT_FALLBACKS = {
-    AtModeCapacity: "at capacity \u2014 upgrade to {0}",
-    Overcrowded: "overcrowded \u2014 add {0} vehicle(s)",
-    LongWaits: "long waits with spare room \u2014 shorten the route or run more often",
-    NearlyEmpty: "nearly empty \u2014 reroute or remove",
+    FleetShort: "fleet short \u2014 the game wants {0} more vehicle(s) than it can supply",
+    ModeUp: "too big for its mode \u2014 upgrade to {0}",
+    SplitRoute: "beyond the largest fleet of any mode \u2014 split the route",
+    Remove: "empty and unjustified even as the smallest service \u2014 reroute or remove",
+    ModeDown: "a smaller vehicle would do \u2014 run it as {0}",
+    FleetUp: "add {0} vehicle(s)",
+    FleetDown: "remove {0} vehicle(s)",
+    Schedule: "run it {0}",
     Healthy: "healthy",
 };
 
 const VERDICT_COLORS = {
-    AtModeCapacity: "rgb(230, 60, 50)",
-    Overcrowded: "rgb(240, 140, 40)",
-    LongWaits: "rgb(230, 200, 60)",
-    NearlyEmpty: "rgb(130, 140, 155)",
+    FleetShort: "rgb(240, 140, 40)",
+    ModeUp: "rgb(230, 60, 50)",
+    SplitRoute: "rgb(230, 60, 50)",
+    Remove: "rgb(130, 140, 155)",
+    ModeDown: "rgb(120, 170, 220)",
+    FleetUp: "rgb(240, 140, 40)",
+    FleetDown: "rgb(120, 170, 220)",
+    Schedule: "rgb(230, 200, 60)",
     Healthy: "rgb(80, 190, 120)",
 };
+
+// Verdicts whose argument is a token to translate rather than a number.
+const MODE_ARGUMENT = { ModeUp: true, ModeDown: true };
+const SCHEDULE_ARGUMENT = { Schedule: true };
 
 // Existing lines, worst first, each with the numbers its verdict came from and a
 // button that works out a concrete improvement — a remedy you cannot check is not
@@ -299,11 +315,15 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
                 const index = parseInt(parts[0], 10);
                 const verdict = parts[2] || "Healthy";
                 const healthy = verdict === "Healthy";
-                // Two verdicts carry an argument (vehicles to add, mode to upgrade to)
-                // and have their own key, so the placeholder never shows up bare.
-                const arg = parts[3] || "";
-                const note = t("Verdict." + verdict + (arg ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
-                    .replace("{0}", verdict === "AtModeCapacity" ? t("Mode." + arg, arg) : arg);
+                // Most verdicts carry an argument (vehicles missing or to add, the mode or
+                // schedule to change to) and have their own key, so the placeholder never
+                // shows up bare; a negative fleet change is shown as a count to remove.
+                const rawArg = parts[3] || "";
+                const arg = MODE_ARGUMENT[verdict] ? t("Mode." + rawArg, rawArg)
+                    : SCHEDULE_ARGUMENT[verdict] ? t("Schedule." + rawArg, SCHEDULE_FALLBACKS[rawArg] || rawArg)
+                    : rawArg.replace(/^-/, "");
+                const note = t("Verdict." + verdict + (rawArg ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
+                    .replace("{0}", arg);
                 const meta = t("Meta", "{0}% full, {1} veh, {2} stops")
                     .replace("{0}", parts[4] || "0")
                     .replace("{1}", parts[5] || "0")
@@ -336,6 +356,18 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
                             .replace("{0}", t("Schedule." + scheduleAdvice, SCHEDULE_FALLBACKS[scheduleAdvice] || scheduleAdvice))
                         : "")
                     : null;
+                // The plan behind the verdict, with the span the game allows and the
+                // demand the routing attributes to the line (none before the first pass).
+                const planMode = t("Mode." + (parts[17] || parts[1]), parts[17] || "");
+                const spanMax = parseInt(parts[20], 10) || 0;
+                const planText = t("HealthPlan", "plan: {0} \u00d7 {1}{2} \u00b7 planning load {3} aboard")
+                    .replace("{0}", planMode)
+                    .replace("{1}", parts[18] || "0")
+                    .replace("{2}", spanMax > 0 ? t("HealthPlanSpan", " (game allows {0}\u2013{1})").replace("{0}", parts[19] || "1").replace("{1}", String(spanMax)) : "")
+                    .replace("{3}", parts[21] || "0")
+                    + ((parts[16] || "-") !== "-"
+                        ? t("HealthDemand", " \u00b7 {0} riders/day, {1}% of seats").replace("{0}", parts[22] || "0").replace("{1}", parts[16])
+                        : t("HealthDemandNone", " \u00b7 demand known after the first route pass"));
                 return h("div", { className: "sso-health", key: index },
                     h("div", { className: "sso-health-head" },
                         h("div", {
@@ -346,6 +378,7 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
                         h("div", { className: "sso-route-meta" }, meta)),
                     h("div", { className: "sso-health-note" }, note),
                     h("div", { className: "sso-health-basis" }, basis),
+                    h("div", { className: "sso-health-basis" }, planText),
                     scheduleText ? h("div", { className: "sso-health-basis" }, scheduleText) : null,
                     healthy ? null : h("button", {
                         className: "sso-improve",

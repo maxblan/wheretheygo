@@ -48,11 +48,17 @@ namespace StationSuitabilityOverlay
                     Complain($"{line} reports capacity {(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} with no vehicles");
                 }
 
-                // Half a headway. A wait past an hour means a non-seconds quantity has
-                // been read as seconds — the accumulator trap this mod has hit before.
-                if (entry.m_TypicalWait is > 3600f or < 0f)
+                // The plan clamps into the span the game allows; a fleet outside it, or an
+                // interval past an hour for a line that runs, means the span or the round
+                // trip came from the wrong line.
+                if (entry.m_RecommendedFleet < entry.m_FleetMin || entry.m_RecommendedFleet > entry.m_FleetMax)
                 {
-                    Complain($"{line} typical wait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}s is not a plausible headway — check the units feeding it");
+                    Complain($"{line} recommends {(entry.m_RecommendedFleet).ToString(CultureInfo.InvariantCulture)} vehicles outside the game's span [{(entry.m_FleetMin).ToString(CultureInfo.InvariantCulture)}, {(entry.m_FleetMax).ToString(CultureInfo.InvariantCulture)}]");
+                }
+
+                if (entry.m_RoundTripSeconds > 0f && (entry.m_HeadwaySeconds is > 3600f or < 0f))
+                {
+                    Complain($"{line} plans an interval of {(entry.m_HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)}s — the round trip feeding it is not this line's");
                 }
 
                 if (entry.m_WindowGameHours > 24.5f)

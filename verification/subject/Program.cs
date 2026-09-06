@@ -35,6 +35,7 @@ namespace StationSuitabilityOverlay.Verification
                 "stop_plan" => StopPlan(data),
                 "mode_choice" => ModeChoice(data),
                 "lineset_time" => LineSetTime(data),
+                "line_health" => LineHealthKind(data),
                 "corridor" => CorridorGrowth(data),
                 "heatmap_grid" => HeatmapGrid(data),
                 "heatmap_walk" => HeatmapWalk(data),
@@ -485,9 +486,9 @@ namespace StationSuitabilityOverlay.Verification
 
         // ------------------------------------------------------- S6 mode choice
 
-        // The capacity ladder (S6 v2): riders per day against each mode's seats at its
-        // headway, read from the instance's fleet facts.
-        private static Dictionary<string, object?> ModeChoice(JsonElement data)
+        // The prefab facts and the vehicle-count policy of an instance (mode_choice and
+        // line_health carry the same "facts"/"policy" objects).
+        private static FleetFacts FactsOf(JsonElement data)
         {
             var byMode = new ModeFacts[TransitModes.All.Length];
             for (int m = 0; m < byMode.Length; m++)
@@ -501,29 +502,157 @@ namespace StationSuitabilityOverlay.Verification
                 byMode[(int)mode] = new ModeFacts
                 {
                     Capacity = F32(p.Value.GetProperty("capacity_b32")),
-                    HeadwaySeconds = F32(p.Value.GetProperty("headway_b32")),
+                    PrefabIntervalSeconds = F32(p.Value.GetProperty("prefab_interval_b32")),
                     StopDurationSeconds = F32(p.Value.GetProperty("stop_duration_b32")),
-                    Acceleration = F32(p.Value.GetProperty("acceleration_b32")),
-                    Braking = F32(p.Value.GetProperty("braking_b32")),
+                    Acceleration = p.Value.TryGetProperty("acceleration_b32", out JsonElement a) ? F32(a) : 0f,
+                    Braking = p.Value.TryGetProperty("braking_b32", out JsonElement b) ? F32(b) : 0f,
                 };
             }
 
-            var facts = new FleetFacts(byMode);
+            var policy = new VehicleCountPolicy();
+            if (data.TryGetProperty("policy", out JsonElement po) && po.ValueKind == JsonValueKind.Object)
+            {
+                policy.Known = po.GetProperty("known").GetBoolean();
+                policy.Mode = (IntervalModifierMode)Enum.Parse(typeof(IntervalModifierMode), po.GetProperty("mode").GetString() ?? "Relative");
+                policy.DeltaMin = F32(po.GetProperty("delta_min_b32"));
+                policy.DeltaMax = F32(po.GetProperty("delta_max_b32"));
+            }
+
+            return new FleetFacts(byMode, policy);
+        }
+
+        // The capacity ladder (S6 v3): riders per day against each mode's seats at the
+        // fleet the riders call for within the game's span, from the instance's facts.
+        private static Dictionary<string, object?> ModeChoice(JsonElement data)
+        {
+            FleetFacts facts = FactsOf(data);
             var rows = new List<object>();
             foreach (JsonElement row in data.GetProperty("rows").EnumerateArray())
             {
                 var network = (RouteNetwork)Enum.Parse(typeof(RouteNetwork), row.GetProperty("network").GetString() ?? "Road");
-                bool ok = TransitModes.ChooseMode(network, F32(row.GetProperty("riders_b32")), facts, out ModePreset mode, out float utilisation);
+                float roundTrip = F32(row.GetProperty("round_trip_b32"));
+                bool ok = TransitModes.ChooseMode(network, F32(row.GetProperty("riders_b32")), facts, _ => roundTrip, out ModePreset mode, out FleetPlan fleet);
                 rows.Add(new Dictionary<string, object?>
                 {
                     ["ok"] = ok,
                     ["mode"] = mode.ToString(),
-                    ["utilisation_b32"] = B32(utilisation),
+                    ["fleet"] = fleet.Vehicles,
+                    ["fleet_min"] = fleet.Min,
+                    ["fleet_max"] = fleet.Max == int.MaxValue ? 0 : fleet.Max,
+                    ["headway_b32"] = B32(fleet.HeadwaySeconds),
+                    ["utilisation_b32"] = B32(fleet.Utilisation),
                     ["delay_per_stop_b32"] = B32(facts.DelayPerStopSeconds(mode)),
                 });
             }
 
             return new Dictionary<string, object?> { ["rows"] = rows };
+        }
+
+        // ------------------------------------------------------- S9 line health
+
+        // Rebuilds the captured line-health pass — the lines as collected, the window's
+        // readings, the routing's riders, the facts and floors — and judges it with the
+        // mod's own SuitabilityLineHealth.JudgeAll.
+        private static Dictionary<string, object?> LineHealthKind(JsonElement data)
+        {
+            var problem = new LineHealthProblem
+            {
+                Facts = FactsOf(data),
+                UtilisationFloor = F32(data.GetProperty("utilisation_floor_b32")),
+                UtilisationCeiling = F32(data.GetProperty("utilisation_ceiling_b32")),
+                TargetLoad = F32(data.GetProperty("target_load_b32")),
+                WindowFrames = data.GetProperty("window_frames").GetUInt32(),
+            };
+            foreach (JsonElement l in data.GetProperty("lines").EnumerateArray())
+            {
+                var line = new ExistingLine
+                {
+                    m_Id = l.GetProperty("id").GetInt32(),
+                    m_Name = l.GetProperty("name").GetString() ?? string.Empty,
+                    m_Mode = (ModePreset)Enum.Parse(typeof(ModePreset), l.GetProperty("mode").GetString() ?? "Bus"),
+                    m_LengthMetres = F32(l.GetProperty("loop_metres_b32")),
+                    m_StableDurationSeconds = F32(l.GetProperty("round_trip_b32")),
+                    m_TargetInterval = F32(l.GetProperty("target_interval_b32")),
+                    m_VehicleInterval = F32(l.GetProperty("game_interval_b32")),
+                    m_StopDuration = F32(l.GetProperty("stop_duration_b32")),
+                    m_Vehicles = l.GetProperty("vehicles").GetInt32(),
+                    m_Passengers = l.GetProperty("passengers").GetInt32(),
+                    m_Capacity = l.GetProperty("capacity").GetInt32(),
+                    m_RequireVehicles = l.GetProperty("require_vehicles").GetBoolean(),
+                    m_NotEnoughVehicles = l.GetProperty("not_enough_vehicles").GetBoolean(),
+                    m_Schedule = (LineSchedule)Enum.Parse(typeof(LineSchedule), l.GetProperty("schedule").GetString() ?? "DayAndNight"),
+                    m_RidersPerDay = F32(l.GetProperty("riders_b32")),
+                    m_RidersByDay = F32(l.GetProperty("riders_day_b32")),
+                    m_RidersByNight = F32(l.GetProperty("riders_night_b32")),
+                };
+                int stops = l.GetProperty("stops").GetInt32();
+                for (int i = 0; i < stops; i++)
+                {
+                    line.m_StopIndices.Add(i);
+                }
+
+                int[] passengers = IntArray(l.GetProperty("sample_passengers"));
+                int[] capacity = IntArray(l.GetProperty("sample_capacity"));
+                int[] vehicles = IntArray(l.GetProperty("sample_vehicles"));
+                float[] intervals = F32Array(l.GetProperty("sample_interval_b32"));
+                float[] clock = F32Array(l.GetProperty("sample_time_of_day_b32"));
+                var frames = new List<uint>();
+                foreach (JsonElement f in l.GetProperty("sample_frame").EnumerateArray())
+                {
+                    frames.Add((uint)f.GetInt64());
+                }
+
+                var samples = new LineObservation[frames.Count];
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    samples[i] = new LineObservation
+                    {
+                        m_Frame = frames[i],
+                        m_Passengers = passengers[i],
+                        m_Capacity = capacity[i],
+                        m_Vehicles = vehicles[i],
+                        m_IntervalSeconds = intervals[i],
+                        m_TimeOfDay = clock[i],
+                    };
+                }
+
+                problem.Lines.Add(line);
+                problem.Samples[line.m_Id] = samples;
+            }
+
+            var health = new List<LineHealth>();
+            HealthReference reference = SuitabilityLineHealth.JudgeAll(problem, health);
+            var verdicts = new List<object>();
+            foreach (LineHealth h in health)
+            {
+                verdicts.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = h.m_Id,
+                    ["verdict"] = h.m_Verdict.ToString(),
+                    ["mode"] = h.m_RecommendedMode.ToString(),
+                    ["fleet"] = h.m_RecommendedFleet,
+                    ["fleet_min"] = h.m_FleetMin,
+                    ["fleet_max"] = h.m_FleetMax == int.MaxValue ? 0 : h.m_FleetMax,
+                    ["round_trip_b32"] = B32(h.m_RoundTripSeconds),
+                    ["headway_b32"] = B32(h.m_HeadwaySeconds),
+                    ["utilisation_b32"] = B32(h.m_Utilisation),
+                    ["day_utilisation_b32"] = B32(h.m_DayUtilisation),
+                    ["night_utilisation_b32"] = B32(h.m_NightUtilisation),
+                    ["advice"] = h.m_ScheduleAdvice.ToString(),
+                    ["planning_load"] = h.m_PlanningLoad,
+                    ["usage_b32"] = B32(h.m_Usage),
+                    ["peak_usage_b32"] = B32(h.m_PeakUsage),
+                    ["target_vehicles"] = h.m_TargetVehicles,
+                    ["window_samples"] = h.m_WindowSamples,
+                });
+            }
+
+            return new Dictionary<string, object?>
+            {
+                ["verdicts"] = verdicts,
+                ["median_usage_b32"] = B32(reference.m_MedianUsage),
+                ["empty_threshold_b32"] = B32(reference.m_EmptyThreshold),
+            };
         }
 
         // -------------------------------------------------- S4 corridor growth
@@ -766,7 +895,9 @@ namespace StationSuitabilityOverlay.Verification
                     ExpectedWait = F32(c.GetProperty("expected_wait_b32")),
                     SpeedMetresPerSecond = F32(c.GetProperty("speed_b32")),
                     RideSeconds = OptionalF32Array(c, "ride_seconds_b32"),
-                    HeadwaySeconds = F32(c.GetProperty("headway_b32")),
+                    RoundTripSeconds = F32(c.GetProperty("round_trip_b32")),
+                    FleetMin = c.GetProperty("fleet_min").GetInt32(),
+                    FleetMax = c.GetProperty("fleet_max").GetInt32() == 0 ? int.MaxValue : c.GetProperty("fleet_max").GetInt32(),
                     VehicleCapacity = F32(c.GetProperty("capacity_b32")),
                     Group = c.TryGetProperty("group", out JsonElement group) ? group.GetInt32() : -1,
                 });

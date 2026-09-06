@@ -50,12 +50,15 @@ Two sources, same schema:
   run on.
 - **Game exports** (implemented 2026-09-03, `dotnet/F11Export/Systems/StationSuitabilityOverlaySystem.VerificationExport.cs`):
   `Options → Export verification instance` writes canonical instances of the live city
-  to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Three
+  to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Seven
   files per press — `heatmap_walk` (the access pass's own inputs plus a sample of its
   terms), `sites_walk` (the real score field on network nodes), `road_times`,
-  `coverage` and `lineset_time` (journeys, the real transit graph, the candidate
-  pool and the mod's chosen set). Read-only: nothing in the export changes
-  what the mod computes.
+  `coverage`, `lineset_time` (journeys, the real transit graph, the candidate
+  pool with each candidate's round trip and fleet span, and the mod's chosen set),
+  `stop_plan` and, since 2026-09-06, `line_health` (the judged line-health problem:
+  every line as collected with the routing's riders, the window's readings per line,
+  the prefab facts and the vehicle-count slider policy, and the mod's verdicts and
+  plans). Read-only: nothing in the export changes what the mod computes.
 
   The design point that makes the export worth trusting is *when* it captures: the
   inputs are copied inside `StartCompute`, out of the values being handed to the job,
@@ -63,6 +66,11 @@ Two sources, same schema:
   have been simpler and wrong — the input collections are rebuilt on their own timers,
   so an export could otherwise have described a city the exported terms were never
   computed from.
+
+  The `line_health` file follows the same capture rule at its own seam: the
+  `LineHealthProblem` is snapshotted inside the judgement (the readings are copied
+  there), so a reading taken between the judgement and the export cannot make the
+  instance describe a window the verdicts were not drawn from.
 
   Sampling: the whole grid would be a quarter-million cells per term, so the export
   carries a deterministic sample — one stride over every cell (which covers the
@@ -79,11 +87,11 @@ downstream artifact.
 
 ### 2. Subject runner (`verification/subject/`)
 
-A small C# console project that **links** (does not copy) the six pure files exactly
+A small C# console project that **links** (does not copy) every `Planning/` file exactly
 as `tests/SuitabilityScoring.Tests` does, reads an instance JSON, drives the pure
-entry points (`FindTopSites`, `AccumulateWalkDistance`, `GrowCorridor`, `TracePath`
-semantics via `DijkstraWorkspace`, `SuitabilityTransit.BuildWithZones`/`SuitabilityLineSet.Solve`,
-`PlanCallingPoints`/`SelectCallingPoints`, `TransitModes.ChooseMode`) with the same
+entry points (`SuitabilityExactSites.Solve`, `SuitabilityWalkAccess.Run`, `GrowCorridor`,
+`TracePath` semantics via `DijkstraWorkspace`, `SuitabilityLineSet.Solve`,
+`SuitabilityStopPlan`, `TransitModes.ChooseMode`, `SuitabilityLineHealth.JudgeAll`) with the same
 argument wiring the ECS half uses (documented per call in
 `docs/formal-specification.md`), and writes a solution JSON. This is the *system
 under test*; nothing in it is trusted by the verifier.
@@ -128,7 +136,13 @@ Checks the mod's solution JSON against the instance:
 - S5: offsets/gap/must-call/floor invariants.
 - S6: gate cascade re-evaluation.
 - S7: transit-graph construction re-derived, per-pair shortest itineraries in exact
-  ℚ, credit re-computation; set objective for enumeration.
+  ℚ, credit re-computation; set objective for enumeration; feasibility at the fleet
+  the set's riders size within the game's span (`evaluator/fleet.py`).
+- S6 v3 / S9: the game's fleet arithmetic (fleet ↔ interval, the slider's interval
+  modifier, the span from its two ends) and the mod's fleet rule in the pinned
+  binary32/binary64 arithmetic (`evaluator/fleet.py`); the line verdicts from the
+  exported readings (`evaluator/line_health.py`): window statistics, upper-median bar,
+  ladder, fleet, interval, utilisation, period utilisations, schedule, verdict order.
 
 Float↔ℚ comparison policy: the subject's float outputs are compared against exact
 values with a per-quantity error budget derived from operation counts; any *decision*
@@ -155,6 +169,7 @@ Components that must still be trusted after a green run:
 | The export's wire format | Producing what the pipeline can load | Golden-vector test in the offline harness pins the C# canonical form and digest against `canonical.py` (claim CX.5); on load the pipeline recomputes the digest and refuses a file it cannot reproduce |
 | Subject runner glue | Wiring arguments as the ECS half does | Wiring table in formal-specification.md, reviewed against code; kept minimal |
 | Instance generator | Representativeness of synthetic instances | Property-based generation + adversarial hand-built cases; generators seeded and versioned |
+| The vehicle-count policy read from the prefab | The span really being the slider's | ECS-side read (`SuitabilityFleet.ReadVehicleCountPolicy`) mirrored from the decompiled `VehicleCountSection`; the fleet-facts log line prints the policy and two example spans to compare with the game's own line panel (claim C9.11) |
 | Refmodel generator | Encoding spec → MIP correctly | Cross-checked against the independent evaluator on every instance (candidate sets must agree; on small instances the evaluator's own enumeration must reproduce the certified optimum) |
 | Evaluator objective (S7) | Being the declared reference objective | The enumeration reuses it (subset iteration only); its independence cross-check is against the subject (mod code), not a second Python implementation |
 | Solver | Only when no certificate is produced | Certificate mode preferred; enumeration path removes the solver entirely |
@@ -221,8 +236,11 @@ holds machine-checked proofs (no `sorry`; axioms limited to
 propext/Quot.sound/Classical.choice) for: the shortest-path certificate checker's
 soundness (`check_sound` — the checker is compiled into an executable the
 pipeline runs on every lattice-path certificate), the calling-point plan
-invariants, the keep-rule invariants including the all-zero degenerate case, and
-the boardings/transfer-cost arithmetic. See the "Formal bewiesen" section of
+invariants, the keep-rule invariants including the all-zero degenerate case,
+the boardings/transfer-cost arithmetic, and (2026-09-06, `Verify/LineHealth.lean`)
+the minimality of the fleet rule and its clamp into the game's span, the bound that
+the upper-median empty bar can flag at most half the lines, and the verdict order
+(supply flag first, removal only on both signals). See the "Formal bewiesen" section of
 `docs/correctness-claims.md` for the exact statements and the (small,
 documented) unverified glue: JSON parsing, Python `Fraction` numerator
 extraction, and first-match edge lookup (sound but incomplete under parallel

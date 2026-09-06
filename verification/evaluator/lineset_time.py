@@ -8,7 +8,8 @@ after = min(walk straight there at 1.2 m/s, exact shortest door-to-door), before
 = the same with A empty; saved = Σ w · (before − after)  [the mod forms
 before − after in binary32, then multiplies and sums in double, in pair order].
 Feasibility: each chosen line's riders (journeys whose retained shortest
-itinerary boards it) must give utilisation ≥ floor; a line at least
+itinerary boards it) must give utilisation ≥ floor at the fleet those riders call
+for within the game's span (evaluator.fleet); a line at least
 `duplicate_share` of whose riders travel no slower without it is a duplicate.
 Equity: the served share of the embedded walking-network journeys once the set's
 stops join the served stops (evaluator.coverage rules); the key is
@@ -31,6 +32,7 @@ from evaluator import transit
 from evaluator.tolerances import gamma
 from evaluator.heatmap_walk import Graph as WalkGraph, snap
 from evaluator import coverage as ev_coverage
+from evaluator import fleet as ev_fleet
 
 WALK, ACCESS, RIDE = transit.WALK, transit.ACCESS, transit.RIDE
 
@@ -58,7 +60,8 @@ def parse(instance: dict) -> dict:
             "x": [bits_to_f32(b) for b in c["stop_x_b32"]], "z": [bits_to_f32(b) for b in c["stop_z_b32"]],
             "wait": bits_to_f32(c["expected_wait_b32"]), "speed": bits_to_f32(c["speed_b32"]),
             "ride": None if c.get("ride_seconds_b32") is None else [bits_to_f32(b) for b in c["ride_seconds_b32"]],
-            "headway": bits_to_f32(c["headway_b32"]), "capacity": bits_to_f32(c["capacity_b32"]),
+            "round_trip": bits_to_f32(c["round_trip_b32"]), "capacity": bits_to_f32(c["capacity_b32"]),
+            "fleet_min": int(c.get("fleet_min", 1)), "fleet_max": (None if int(c.get("fleet_max", 0)) == 0 else int(c["fleet_max"])),
             "group": int(c.get("group", -1)),
         } for c in d["candidates"]],
         "max_lines": int(d["max_lines"]),
@@ -168,11 +171,17 @@ def itinerary_lines(net: transit.Network, dist, source: int, dest: int, zone_sta
 
 
 def utilisation(p: dict, c: int, riders: Fraction) -> Fraction:
+    """Boardings over the seats of the fleet the set's riders call for within the
+    game's span (spec §6.3 F1 v3, A6.8): the mod's own double/binary32 arithmetic
+    re-derived in evaluator.fleet, on the riders rounded to binary32 as the mod
+    hands them over."""
     cand = p["candidates"][c]
-    if cand["headway"] <= 0 or cand["capacity"] <= 0 or p["day"] <= 0:
+    if cand["round_trip"] <= 0 or cand["capacity"] <= 0 or p["day"] <= 0:
         return Fraction(0)
-    seats = Fraction(p["day"]) / Fraction(cand["headway"]) * 2 * Fraction(cand["capacity"])
-    return riders * 2 / seats
+    ceiling = p["utilisation_ceiling"] if p["utilisation_ceiling"] > 0 else 1.0
+    _v, _h, u = ev_fleet.plan_fleet(f32.r(float(riders)), cand["round_trip"], cand["capacity"],
+                                    cand["fleet_min"], cand["fleet_max"], ceiling)
+    return Fraction(u)
 
 
 _COVERAGE_CACHE: dict = {}

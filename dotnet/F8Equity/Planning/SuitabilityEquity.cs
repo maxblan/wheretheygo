@@ -172,20 +172,22 @@ namespace StationSuitabilityOverlay
         }
 
         // Boardings a line would carry in a game day over the seats it offers in that
-        // day: journeys × Assumptions.RidesPerJourney (out and back) against the runs
-        // its headway fits into the day, both directions, times capacity. A throughput
-        // ratio — not the game's instantaneous "usage" (passengers on board over
-        // capacity), which the two are related by the mean ride's share of the line.
-        public static float Utilisation(float journeysPerDay, float headwaySeconds, float vehicleCapacity)
+        // day: journeys × RidesPerJourney (out and back) against the runs its headway
+        // fits into the day, both directions, times capacity. A throughput ratio — not
+        // the game's instantaneous "usage" (passengers on board over capacity). The one
+        // utilisation formula of the mod: the mode ladder, the set feasibility, the
+        // period split and the line verdicts all call it. Computed in double, in this
+        // bracketing, and rounded once to binary32 on return.
+        public static float Utilisation(double journeysPerDay, double headwaySeconds, double vehicleCapacity)
         {
-            if (headwaySeconds <= 0f || vehicleCapacity <= 0f)
+            if (headwaySeconds <= 0.0 || vehicleCapacity <= 0.0)
             {
                 return 0f;
             }
 
-            float boardings = journeysPerDay * Assumptions.RidesPerJourney;
-            float seatsPerDay = Assumptions.MovementSecondsPerGameDay / headwaySeconds * 2f * vehicleCapacity;
-            return boardings / seatsPerDay;
+            double boardings = journeysPerDay * Assumptions.RidesPerJourney;
+            double seatsPerDay = Assumptions.MovementSecondsPerGameDay / headwaySeconds * 2.0 * vehicleCapacity;
+            return (float)(boardings / seatsPerDay);
         }
     }
 }

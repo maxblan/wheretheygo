@@ -116,16 +116,16 @@ namespace StationSuitabilityOverlay.Tests
         private static void SanityChecksNameEachDefect()
         {
             var complaints = new List<string>();
-            var healthy = new LineHealth { m_Name = "1", m_Mode = ModePreset.Bus, m_Usage = 0.3f, m_PeakUsage = 0.5f, m_Capacity = 100, m_Vehicles = 2, m_TypicalWait = 150f, m_WindowGameHours = 12f };
+            var healthy = new LineHealth { m_Name = "1", m_Mode = ModePreset.Bus, m_Usage = 0.3f, m_PeakUsage = 0.5f, m_Capacity = 100, m_Vehicles = 2, m_RecommendedFleet = 2, m_FleetMin = 1, m_FleetMax = 10, m_RoundTripSeconds = 1200f, m_HeadwaySeconds = 600f, m_WindowGameHours = 12f };
             var route = MakeRoute(ModePreset.Bus, new float2Like(0f, 0f), new float2Like(400f, 0f), new float2Like(800f, 0f), new float2Like(1200f, 0f));
             route.EnabledDemand = 100f;
             int clear = SuitabilitySanity.Check(new List<LineHealth> { healthy }, new List<SuggestedRoute> { route }, 5000f, 8000f, complaints.Add);
             AssertTrue(clear == 0 && complaints.Count == 0, "a plausible line and route raise nothing");
 
-            var broken = new LineHealth { m_Name = "2", m_Mode = ModePreset.Tram, m_Usage = 2f, m_PeakUsage = 1f, m_Capacity = 100, m_Vehicles = 0, m_TypicalWait = 4000f, m_WindowGameHours = 30f };
+            var broken = new LineHealth { m_Name = "2", m_Mode = ModePreset.Tram, m_Usage = 2f, m_PeakUsage = 1f, m_Capacity = 100, m_Vehicles = 0, m_RecommendedFleet = 0, m_FleetMin = 1, m_FleetMax = 5, m_RoundTripSeconds = 1000f, m_HeadwaySeconds = 4000f, m_WindowGameHours = 30f };
             int lineComplaints = SuitabilitySanity.Check(new List<LineHealth> { broken }, new List<SuggestedRoute>(), 0f, 0f, complaints.Add);
-            AssertTrue(lineComplaints == 5 && complaints.Count == 5, $"usage, peak below mean, capacity without vehicles, wait and window each complain once: {lineComplaints.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(complaints[0].Contains("outside 0..1.5", StringComparison.Ordinal) && complaints[3].Contains("plausible headway", StringComparison.Ordinal), "the messages name the invariant");
+            AssertTrue(lineComplaints == 6 && complaints.Count == 6, $"usage, peak below mean, capacity without vehicles, fleet outside the span, interval and window each complain once: {lineComplaints.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(complaints[0].Contains("outside 0..1.5", StringComparison.Ordinal) && complaints[3].Contains("outside the game's span", StringComparison.Ordinal), "the messages name the invariant");
 
             complaints.Clear();
             var stub = MakeRoute(ModePreset.Bus, new float2Like(0f, 0f), new float2Like(100f, 0f));
@@ -187,9 +187,24 @@ namespace StationSuitabilityOverlay.Tests
                 m_NightUsage = 0.05f,
                 m_DaySamples = 8,
                 m_NightSamples = 4,
+                m_RidersPerDay = 812f,
+                m_Utilisation = 0.234f,
+                m_RecommendedMode = ModePreset.Tram,
+                m_RecommendedFleet = 5,
+                m_FleetMin = 1,
+                m_FleetMax = 13,
+                m_PlanningLoad = 96,
+                m_DayUtilisation = 0.3f,
+                m_NightUtilisation = 0.1f,
             };
             string[] healthFields = SuitabilityPanelPayload.HealthRows(new List<LineHealth> { health }).Split('|');
-            AssertTrue(healthFields.Length == 16, $"the health row has sixteen fields, got {healthFields.Length.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(healthFields.Length == 25, $"the health row has twenty-five fields, got {healthFields.Length.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(healthFields[16] == "23" && healthFields[17] == "Tram" && healthFields[18] == "5" && healthFields[19] == "1" && healthFields[20] == "13", "demand utilisation, plan mode, fleet and span");
+            AssertTrue(healthFields[21] == "96" && healthFields[22] == "812" && healthFields[23] == "30" && healthFields[24] == "10", "planning load, riders and the period utilisations come last");
+            health.m_RidersPerDay = -1f;
+            health.m_FleetMax = int.MaxValue;
+            string[] noDemand = SuitabilityPanelPayload.HealthRows(new List<LineHealth> { health }).Split('|');
+            AssertTrue(noDemand[16] == "-" && noDemand[22] == "-" && noDemand[20] == "0", "no demand reads as a dash, an open span as 0");
             AssertTrue(healthFields[0] == "77" && healthFields[1] == "Line 3" && healthFields[2] == "Healthy" && healthFields[4] == "46" && healthFields[5] == "4" && healthFields[6] == "9", "id, name, verdict, usage, vehicles, stops");
             AssertTrue(healthFields[7] == "12" && healthFields[8] == "6" && healthFields[9] == "90" && healthFields[10] == "DayAndNight" && healthFields[11] == "Day", "evidence, peak, schedule and advice");
             AssertTrue(healthFields[12] == "50" && healthFields[13] == "5" && healthFields[14] == "8" && healthFields[15] == "4", "the period usages and their sample counts come last");

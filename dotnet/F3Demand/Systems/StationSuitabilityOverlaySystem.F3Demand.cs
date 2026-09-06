@@ -150,7 +150,7 @@ namespace StationSuitabilityOverlay
             }
 
             long extractMs = clock.ElapsedMilliseconds;
-            BuildTransitModel(gridSize);
+            BuildTransitModel(settings, gridSize);
             MeasureEquity(settings);
             DiscountServedDemand();
             m_UnservedTravelWeight = ServedDemand.RemainingWeight(m_ZoneFlows);
@@ -200,9 +200,9 @@ namespace StationSuitabilityOverlay
         // Reads the existing transit system and turns it into a routable model, so a
         // journey can be tested against the network that actually exists rather than
         // against how close its ends happen to be to some stop.
-        private void BuildTransitModel(int2 gridSize)
+        private void BuildTransitModel(Setting settings, int2 gridSize)
         {
-            RefreshLineHealth();
+            RefreshLineHealth(settings);
 
             // A city with NO transit at all still gets a model, empty though it is.
             // Returning early here left m_TransitNetwork and m_BaselineSeconds null,
@@ -273,10 +273,10 @@ namespace StationSuitabilityOverlay
                 DeferredLog.Info(
                     $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
                     $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard right now, " +
-                    $"judged at {(entry.m_Usage * 100f).ToString("F1", CultureInfo.InvariantCulture)}% " +
-                    $"(peak {(entry.m_PeakUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%) " +
+                    $"occupancy {(entry.m_Usage * 100f).ToString("F1", CultureInfo.InvariantCulture)}% " +
+                    $"(peak {(entry.m_PeakUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, planning load {(entry.m_PlanningLoad).ToString(CultureInfo.InvariantCulture)}) " +
                     $"{(entry.m_WindowSamples > 0 ? $"from {entry.m_WindowSamples.ToString(CultureInfo.InvariantCulture)} readings over {entry.m_WindowGameHours.ToString("F1", CultureInfo.InvariantCulture)}h" : "from this reading alone")}, " +
-                    $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, typicalWait {(entry.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, plan {entry.m_RecommendedMode} × {(entry.m_RecommendedFleet).ToString(CultureInfo.InvariantCulture)}, " +
                     $"{(entry.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(entry.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km");
             }
         }

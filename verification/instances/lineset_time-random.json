@@ -28,9 +28,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1123024896,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1090519040,
     "stop_x_b32": [
      1157234688,
@@ -46,9 +48,11 @@
    {
     "capacity_b32": 1114636288,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1096810496,
     "stop_x_b32": [
      1157234688,
@@ -64,9 +68,11 @@
    {
     "capacity_b32": 1106247680,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1096810496,
     "stop_x_b32": [
      1157234688,
@@ -80,9 +86,11 @@
    {
     "capacity_b32": 1114636288,
     "expected_wait_b32": 1128792064,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1096810496,
     "stop_x_b32": [
      1148846080,
@@ -98,9 +106,11 @@
    {
     "capacity_b32": 1114636288,
     "expected_wait_b32": 1123024896,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1096810496,
     "stop_x_b32": [
      0,
@@ -116,9 +126,11 @@
    {
     "capacity_b32": 1114636288,
     "expected_wait_b32": 1133903872,
+    "fleet_max": 1,
+    "fleet_min": 1,
     "group": -1,
-    "headway_b32": 1128792064,
     "ride_seconds_b32": null,
+    "round_trip_b32": 1128792064,
     "speed_b32": 1096810496,
     "stop_x_b32": [
      1148846080,
@@ -229,7 +241,7 @@
   "pass_optimal": true,
   "pass_set": true
  },
- "hash": "9cff467796b945069fb2512eb7babede48b7e2bdbb39d2b246ce9b64e38318ed",
+ "hash": "65c19f6913a0733bfd44b84b3abf19cff921b4957740dcef3777db538af62abf",
  "kind": "lineset_time",
  "name": "lineset_time-random",
  "schema_version": 1,

@@ -60,14 +60,20 @@ The mod computes, in order (per recompute):
    alignments (lattices). Heuristic growth; Dijkstra shortest paths.
 5. **S5 Stop placement along a line** (`PlanCallingPoints`, `ScanStopWindows`,
    `SelectCallingPoints`, `ChooseInWindow`): deterministic procedure.
-6. **S6 Mode choice** (`TransitModes.ChooseMode`): deterministic gate cascade.
+6. **S6 Mode choice** (`TransitModes.ChooseMode`, v3 since 2026-09-06): the capacity
+   ladder over the fleet the game's vehicle-count slider allows (§5 v3).
 7. **S7 Line-set selection** (`SuitabilityLineSet.Solve`, v2 since Phase 7): exact
    branch-and-bound over candidate subsets under the lexicographic objective
    (equity share capped at the floor, passenger time saved), with per-line
    utilisation and duplicate feasibility. v1 (`CreditLine` credits and greedy
    `AcceptBestCandidate` rounds) is kept below as history.
 
-Stages S1, S3, S5, S6 are *functions* — verification target: evaluator correctness.
+8. **S9 Line health** (`SuitabilityLineHealth.JudgeAll`, v2 since 2026-09-06, §7e):
+   the existing lines judged and planned from a game-day window of readings and the
+   riders the routing attributes to them. A function of its inputs; the plan it
+   yields is the exact minimum of the fleet rule within the game's span.
+
+Stages S1, S3, S5, S6, S9 are *functions* — verification target: evaluator correctness.
 Stages S2, S4, S7 are *search/selection* — verification targets: feasibility of the
 output, plus exact optimality gap against a declared reference objective.
 
@@ -328,29 +334,62 @@ window iff terminus ∨ forced ∨ score ≥ 0.35·median⁺ (`PlanCallingPoints
 by spacing alone miss the joint optimum; the v2 plan optimises the declared
 objective instead. The Lean theorems remain valid statements about the v1 rules.
 
-## 5. S6 — Mode choice (`ChooseMode`, v2, Phase 7, 2026-09-05; A6.x, A4.6/A6.1, A5.5)
+## 5. S6 — Mode choice (`ChooseMode`, v3, 2026-09-06; A5.5, A6.x, A6.8, A4.6/A6.1)
 
-For the network's ladder — Road: Bus, Tram; Train lattice: Train; Metro lattice:
-Metro; Water: Ferry (**two rail lattices since 2026-09-05 evening**, A4.5 v2: a
-track segment is train or metro track by `TrackLaneData.m_TrackTypes`, and each
-lattice prefers its own kind; a metro alignment therefore never runs on train
-track) — the mode is the first whose vehicles are not overloaded by the
-candidate's standalone riders:
-utilisation(M) = riders·2 / ((D / headway_M) · 2 · capacity_M) ≤ 1, with D = 4369.07
-movement seconds per game day, headway_M = `TargetHeadwayFor` (Bus 300, Tram 240,
-Metro 200, Train 480, Ferry 600 s — the planning table, NOT the prefab default
-interval: Valmare's prefabs say 45/45/60/90/90 s, intervals no player keeps and
-against which the 15 % floor was never calibrated; the prefab value is logged,
-register A5.5/A6.x RF), capacity_M the largest vehicle prefab's seats (carriages
-included). δ per stop = max(prefab stop duration + v/2a + v/2b, 15 s): the prefabs
-give a bus 1 s dwell at 6 m/s², which would make a stop nearly free (RF, same rows). If every mode is overloaded the
-largest is chosen; a network with no vehicle installed yields no mode. The riders
-are re-measured after the stops are placed for the chosen mode (stops and riders
-depend on each other; one further ladder step is taken if they disagree), and the
-alignment is ALSO offered as the next mode up whenever the ladder has one, so the
-set's utilisation ceiling (§6.3 F1) can swap an overloaded bus for a tram. Whether the
-line reaches the utilisation FLOOR is not asked here — a feeder alone rarely fills
-anything — but by the set selection on the set's own riders (§6.3).
+**Game facts (decompiled 2026-09-06, `TransportLineSystem`, `VehicleCountSection`,
+`RouteModifierInitializeSystem.RouteModifierRefreshData`, `RouteUtils.ApplyModifier`).**
+The player sets a vehicle COUNT. The game turns it into an interval and back:
+
+- `fleet(I, T) = max(1, round-half-even(fl32(T / max(1, I))))` — `CalculateVehicleCount`
+  on the interval I and the round trip T (`stableDuration`: path durations plus the
+  line prefab's stop duration at every waypoint with a `VehicleTiming`);
+- `interval(T, v) = fl32(T / max(1, v))` — `CalculateVehicleInterval`;
+- the vehicle-count policy prefab (`UITransportConfigurationPrefab.m_VehicleCountPolicy`)
+  carries a `PolicySliderData` range and one `RouteModifierData` of type
+  `VehicleInterval` with a mode ∈ {Relative, Absolute, InverseRelative} and a range
+  [δ_min, δ_max]; the slider position is lerped onto that range and the modifier
+  applied to the prefab interval I₀ as `value = I₀; value += x; value += value·y`
+  (Absolute: x = δ; Relative: y = δ; InverseRelative: y = 1 / max(0.001, 1 + δ) − 1),
+  every operation binary32;
+- the two ends of the slider therefore bound the fleet a line of round trip T may run:
+  **span(m, T) = [min, max]** of `fleet(interval at δ_min, T)` and `fleet(interval at
+  δ_max, T)`, with the lerp ends evaluated as fl32(δ_min + 0·(δ_max − δ_min)) and
+  fl32(δ_min + 1·(δ_max − δ_min)); span = [1, ∞) while the policy prefab is unknown or
+  the mode has no line prefab (I₀ = 0). The mod reads the policy once per save
+  (`SuitabilityFleet.ReadVehicleCountPolicy`) and logs it.
+
+**Fleet rule (A6.8).** For B boardings' worth of riders a day (journeys, each riding
+twice), round trip T, one vehicle's seats c and the ceiling u = 1 (`MaxPlannedUtilisation`):
+`utilisation(v) = fl32((B·2) / (((D / interval(T, v))·2)·c))` in double with D = 4369.07 s
+(`SuitabilityEquity.Utilisation`, the one utilisation formula of the mod); the fleet is
+**v* = clamp(v_demand, min, max)** with
+`v_demand = max(1, ⌈(B·T) / ((u·D)·c)⌉)` (double, in exactly that bracketing;
+`TransitModes.FleetForDemand`), the interval the line runs is `interval(T, v*)` and the
+utilisation reported is `utilisation(v*)`. v_demand is the least fleet whose seats a day
+the boardings do not fill past u (Lean `Verify.LineHealth.fleetFor_minimal` on the exact
+rule); the clamp leaves a fitting fleet unchanged and puts a load past the span at the
+span's top, where `utilisation(max) > u` says the mode is too small.
+
+**Ladder (`ChooseMode`).** For the network's ladder — Road: Bus, Tram; Train lattice:
+Train; Metro lattice: Metro; Water: Ferry (two rail lattices since 2026-09-05 evening,
+A4.5 v2) — the mode is the first rung with a vehicle installed whose fleet plan on the
+candidate's own riders keeps `utilisation(v*) ≤ u`; the largest installed rung when
+every one is overloaded; no mode when the network has no vehicle. Each rung is judged on
+the round trip the candidate would take AS THAT MODE: the directed street legs out and
+back where the streets have them (the return may take other streets), the loop at the
+mode's cruise speed otherwise, plus the mode's stop delay δ at every call each way
+(`TransitModes.RoundTripSeconds(loop, calls, speed, δ)` = fl32(loop / max(1, speed)) +
+fl32(calls·δ)). δ per stop = max(prefab stop duration + v/2a + v/2b, 15 s) as before
+(A5.5 RF). The riders are re-measured after the stops are placed for the chosen mode
+(one further ladder step if they disagree), and the alignment is ALSO offered as the
+next mode up whenever the ladder has one, so the set's utilisation ceiling (§6.3 F1) can
+swap an overloaded bus for a tram. Before any rider is counted a candidate carries the
+fleet the player would build it with — `fleet(I₀, T)` clamped into the span — whose
+interval halved is the wait the probe routes against (`PrepareFleet`).
+
+The planning-headway table of v2 (300/240/200/480/600 s) is GONE (user decision
+2026-09-06, question 31a): the span the game itself allows is the only bound on the
+interval, and the prefab interval enters only as the base the slider modifies.
 
 **The ladder crosses networks** (`ResolveCandidate`, 2026-09-05 evening, register
 A6.7): a train or metro alignment is first re-traced along streets between its two
@@ -359,18 +398,29 @@ ceiling and passes the shape gates, THAT is the candidate and the rail alignment
 dropped. The rail alignment stands only when no street path exists, when every
 street mode is overloaded (> 100 %) by its own riders, or when the street variant
 fails the gates. A ferry keeps its water alignment and is offered a street variant
-only under the utilisation floor. Before this rule a rail alignment won on speed
-alone: a city with its lines removed was offered three metros of 1.4–5.4 km
-(Valmare, 19:44).
+only under the utilisation floor.
 
 **Shape gates** (`KeepsItsShape`): ≥ 3 stops and ride time ≤ Bus 30 / Tram 35 /
 Metro 30 / Train 60 / Ferry 45 min, ride time = directed street legs (or length at
-cruise speed) + (stops − 2)·δ. The length floors and ceilings of v1
-(`MinLengthFor`, `MaxRouteMetres`), the flow multiples, reach shares, track relief
-and one-bus rider floor are removed; corridor growth and lattice traces are bounded
-by the longest ride the network's modes allow at cruise speed
-(`MaxAlignmentMetresFor`). Verification (`mode_choice`): binary32 re-derivation of
-the ladder, utilisation and δ; bit-exact on the sweep instance.
+cruise speed) + (stops − 2)·δ. Corridor growth and lattice traces are bounded by the
+longest ride the network's modes allow at cruise speed (`MaxAlignmentMetresFor`).
+
+**Verification (`mode_choice`, v3):** the instance carries the fleet facts (capacity,
+prefab interval, stop duration, acceleration, braking per mode), the slider policy and
+per row a network, riders and a round trip; the evaluator (`evaluator/fleet.py`,
+`evaluator/modes.py`) re-derives span, fleet, interval, utilisation and δ in the pinned
+arithmetic; subject = evaluator bit for bit on `mode-choice-sweep` (11 rows: one to six
+buses, the tram past the largest bus fleet, every road mode overloaded, the lattices,
+an unbounded span for a mode without a line prefab).
+
+### 5.2 History: v2 headway table (2026-09-05, retired 2026-09-06)
+
+utilisation(M) = riders·2 / ((D / headway_M) · 2 · capacity_M) ≤ 1 with headway_M from
+the planning table Bus 300, Tram 240, Metro 200, Train 480, Ferry 600 s; the mode was
+the first rung under the ceiling at its table headway, the fleet
+`round-half-even(round trip / max(30, headway_M))`. Verified bit-exact on the v2 sweep.
+Retired because the table was a judgement with no owner in the game and because the
+prefab intervals (45/45/60/90/90 s) it stood in for made the 15 % floor unreachable.
 
 ### 5.1 History: v1 gate cascade (retired 2026-09-05)
 
@@ -468,13 +518,19 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
   variants of one alignment — direct or bent through a hub, one mode or the next
   up, a rail trace or its re-trace along streets — are alternatives, A4.7;
   `LineCandidate.Group`, negative = none), and for every line c ∈ A:
-  (F1) utilisation(c, A) = riders(c, A) · 2 / ((D / headway_c) · 2 · capacity_c) ≥
-  the utilisation floor (0.15 default), with D = movement seconds per game day =
-  4369.07 (`TimeSystem.kTicksPerDay` / 60) — riders are the set's attribution,
-  so a feeder's riders count for the trunk it feeds — and, since 2026-09-05 17:xx,
-  ≤ the utilisation CEILING (`MaxPlannedUtilisation` = 1.0): a line the set fills
-  past its seats is overloaded for its mode and infeasible; the same alignment is
-  offered as the next mode up (§5), which the set then takes instead;
+  (F1, v3 since 2026-09-06) utilisation(c, A) = §5's `utilisation(v*)` at the fleet
+  `v* = clamp(v_demand(riders(c, A)), min_c, max_c)` the set's own riders call for
+  within the game's span for c's round trip (`SuitabilityLineSet.FleetFor`; the
+  candidate carries `RoundTripSeconds`, `VehicleCapacity`, `FleetMin`, `FleetMax`;
+  riders are handed over as fl32) ≥ the utilisation floor (0.15 default) — riders are
+  the set's attribution, so a feeder's riders count for the trunk it feeds — and ≤
+  the utilisation CEILING (`MaxPlannedUtilisation` = 1.0): since the fleet is sized to
+  the ceiling, the floor fails only when the span's minimum fleet is still too many
+  seats (the line is too big for its demand) and the ceiling only when the span's
+  maximum is too few (too small for its mode); the same alignment is offered as the
+  next mode up (§5), which the set then takes instead. The wait the router charges
+  for a candidate is half the interval of its standalone fleet (§5) and does not
+  move with the set, so the routing stays a fixed graph per set;
   (F2) c is **not a duplicate**: with slowed(c) = Σ wᵢ over journeys with
   after(i, A∖{c}) > after(i, A), (riders(c) − slowed(c)) / riders(c) <
   `DuplicateShare` (0.5, A4.3); a line with no riders is a duplicate.
@@ -508,7 +564,10 @@ supersets' duplicate tests). Note the bound is evaluated on the *unfiltered* uni
 completion never prunes a feasible one.
 
 The chosen lines are presented in standalone-saved order; each carries its
-riders, utilisation, saved seconds and the realism-weighted diagnostic.
+riders, the fleet the set's riders size within the span (and the interval it yields),
+its utilisation at that fleet, saved seconds and the realism-weighted diagnostic. The
+baseline evaluation (A = ∅) also attributes riders to every EXISTING line
+(`LineSetEvaluation.BaseRiders`, by period), which §7e reads as a line's demand.
 
 **Reference objective (user decisions 2026-09-05, A4.1/A1.8/A3.1/A4.3/A7.2/
 A7.5):** exactly the Key above over the exported candidate pool — the mod now
@@ -790,22 +849,123 @@ Model (`SuitabilityDaytime`):
 - **recommendation** (`Daytime.Recommend`): run by day only when the night period is
   under the utilisation floor while the day is not; by night only in the mirror
   case; otherwise all day. Both periods under the floor is not a schedule question.
-- **existing lines** (`Daytime.Advise`): readings carry the clock; the window's mean
-  usage per period counts only readings with vehicles out; an all-day line whose
-  night mean is under the empty threshold while the day mean is not is advised to
-  run by day (mirror: by night), once both periods have ≥ 4 readings. A day-only line
-  has no night evidence and is never told to extend on this basis.
+- **existing lines** (since 2026-09-06 the SAME rule, `Daytime.Recommend`, on the
+  riders the baseline routing attributes to the line in each period at the fleet §7e
+  recommends; user decision 17b). The readings' mean occupancy per period (only
+  readings with vehicles out) is shown as evidence but decides nothing. `Daytime.Advise`
+  (v1: period occupancy against the empty bar with ≥ 4 readings per period) is retired.
+  Known limit (register A8.7): the routing does not know a line's schedule, so a
+  day-only line's night riders are those the network WOULD carry if it ran.
+- **period utilisation** is the one utilisation formula on the period's share of a
+  vehicle's seats: `Utilisation(riders_period, interval, c · share)` with the product in
+  double (`Daytime.UtilisationInPeriod`).
 
 Verification: the rules are pure and harness-tested (night boundaries, shift shares
 for a 9–17 city, period utilisation arithmetic, both recommendation rules, period
-averages that skip idle readings); the game-side stamping of the clock is
+averages that skip idle readings); the `line_health` kind re-derives the period
+utilisations and the advice per existing line; the game-side stamping of the clock is
 log-verified (`Work day from EconomyParameterData …` states the hours and the
 resulting shift shares).
+
+## 7e. S9 — Line health (v2, 2026-09-06; A8.1–A8.7, A5.5, A6.8)
+
+Instance kind `line_health`. The existing lines are judged and planned from what the
+game exposes and what the routing attributes to them; the verdict is a classification
+of the plan, the plan the exact minimum of the fleet rule within the game's span.
+
+**Readings (A8.5).** Every `ReadingIntervalFrames` = ⌊262 144 / 96⌋ = 2 730 simulation
+frames (15 game minutes), one `LineObservation` per line: passengers aboard the fleet,
+fleet capacity (seats of every unit incl. carriages), vehicles out, the game's
+`TransportLine.m_VehicleInterval` and the clock (`TimeSystem.normalizedTime`), stamped
+with `SimulationSystem.frameIndex`. A reading is due when none was taken, when a frame
+older than the newest arrives (a rewound clock: the window restarts) or when one
+interval has passed. The window holds one game day (262 144 frames) per line, at most
+512 readings per line, and forgets lines that no longer exist.
+
+**The game's interval is not a measurement.** `m_VehicleInterval` =
+`min(10·I_target, pathDuration / fleet(I_target, T))`, so on a running line it is the
+planned interval (the ratio to the target is < 1.5 by the rounding alone) and on an
+inactive one (a day-only line at night, no active buildings; target fleet 0) the whole
+path duration. No verdict reads it; the transit router charges half of it as the
+game's own pathfinder does (`ExistingLine.ExpectedWait`). The v1 verdict "long waits"
+(≥ 2× the target) could therefore only ever fire on inactive lines and is retired
+(user decision 25a).
+
+**Window statistics (A8.4).** An ACTIVE reading has capacity > 0. Over the active
+readings, in recording order: mean occupancy `fl32(Σ fl32(p/c) / n)`, peak occupancy
+`max fl32(p/c)`, the **planning load** L = the nearest-rank 90 % quantile of the
+passenger counts (the value at position ⌈0.9·n⌉ of the sorted counts; an integer, never
+interpolated), the maximum count, and the count n of active readings. Idle readings
+count nothing. A line is judged on its window once n ≥ 4 (`MinReadingsForVerdict`),
+otherwise on the reading at collection (L = passengers aboard now).
+
+**Reference (A8.1).** Occupancy of every line as judged; `median` = the UPPER median
+(the value at index n/2 of the sorted list); the empty bar `t = min(0.06, fl32(0.35·median))`.
+Because at least ⌈n/2⌉ lines are at or above the upper median and t < median whenever
+median > 0, **at most n/2 lines can be under the bar** (Lean
+`Verify.LineHealth.at_most_half_empty`).
+
+**Ladder and plan (A8.2, A8.3, A6.8, A6.x).** For the network of the line's mode
+(`TransitModes.NetworkOf`, the inverse of `ModesFor`) each rung m with a vehicle
+installed is judged on:
+
+- seats per vehicle c_m: the line's own `capacity / vehicles` (integer division) for
+  its own mode when something is out, the prefab's largest vehicle otherwise;
+- round trip T_m: the game's `stableDuration` for the line's own mode, else
+  `RoundTripSeconds(loop, calls, speed_m, δ_m)` over the loop the vehicles drive and the
+  calls they make on it (a two-way line lists each place twice);
+- the span `[min_m, max_m]` = §5's span(m, T_m);
+- the required fleet `req_m = max(v_load, v_demand)` with
+  `v_load = max(1, ⌈fl32(L / fl32(0.7·c_m))⌉)` (`TargetLoad` 0.7 on the planning load,
+  A8.3) and, when a route pass has attributed riders B to the line,
+  `v_demand = max(1, ⌈(B·T_m) / ((1·D)·c_m)⌉)` (§5), else 1.
+
+The chosen rung is the first with `req_m ≤ max_m`; when none fits, the largest
+installed rung with `split` set; when no rung has a vehicle, the line's own mode with
+c = its own seats and span [1, ∞). Then **v* = clamp(req, min, max)**,
+`interval* = interval(T, v*)`, `utilisation* = utilisation(B, interval*, c)` (−1 without
+demand), the period utilisations §7d on B_day / B_night at interval*, and the schedule
+advice `Recommend(u_day, u_night, floor)` (the line's own schedule without demand). The
+game's own target fleet is `fleet(I_target, T)` (max(1, vehicles) when either is 0).
+
+**Verdict (A8.6), the first rule that applies:**
+
+1. `FleetShort` — `NotEnoughVehicles`, or `RequireVehicles` with vehicles < game target
+   (the game cannot supply what the player set: a depot or money problem, not demand);
+2. `ModeUp` — the chosen rung is above the line's mode;
+3. `SplitRoute` — `split`: not even the largest rung's span carries the load;
+4. `Remove` — the readings say empty (mean ≤ t AND peak ≤ fl32(3·t)) AND, with demand,
+   the utilisation of the SMALLEST installed rung at its fewest allowed vehicles is under
+   the floor: two independent signals, never the readings alone (Lean
+   `remove_needs_both`, `no_remove_without_demand`);
+5. `ModeDown` — the chosen rung is below the line's mode;
+6. `FleetUp` / 7. `FleetDown` — v* above / below the running fleet;
+8. `Schedule` — the advice differs from the line's schedule;
+9. `Healthy`.
+
+Severity for the worst-first order: ModeUp, SplitRoute 4; FleetShort, FleetUp 3; Remove 2;
+ModeDown, FleetDown, Schedule 1; Healthy 0; ties by mean occupancy descending. The plan
+shown is the verdict's own numbers (mode, v*, the change against today, the interval v*
+yields, the span, `Split`/`Reroute`/`Fine` as the shape token).
+
+**Verification.** The export captures the `LineHealthProblem` at the judgement — the
+lines as collected with the routing's riders, the window's readings per line (copied,
+so a later reading cannot desynchronise instance and answer), the facts, the policy and
+the floors — with the mod's verdicts. The subject rebuilds the window with the mod's
+own code and judges; the evaluator (`evaluator/line_health.py`) re-derives every field
+above in the pinned arithmetic; game = subject = evaluator per line on verdict, mode,
+fleet, span, round trip, interval, utilisation, period utilisations, advice, planning
+load, occupancy mean and peak, game target and reading count, plus the median and the
+bar. `line-health-city` (10 lines, one per verdict plus a thin window) pins subject =
+evaluator and the verdict of every line by id.
+
+
 
 ## 8. Determinism inventory (whole mod)
 
 - **No RNG anywhere** (pure or ECS half). No time-dependent arithmetic (timers gate
-  *when* recomputes run, not what they compute).
+  *when* recomputes run, not what they compute; the line readings are taken on the
+  simulation frame, so their cadence in game time is fixed too).
 - Parallelism: `SuitabilityJob` (IJobParallelFor) writes one independent output per
   tile from read-only inputs — deterministic. `ExtractTripsJob` enqueues in
   thread-dependent order — neutralized by dictionary aggregation + total sort;
@@ -854,4 +1014,7 @@ constants follow the spec, so each row names where verification had to move too.
 | 2026-09-05 (evening) | **Two rail lattices and a ladder across networks** (§5 v2: train and metro track split by `TrackLaneData.m_TrackTypes`; a rail alignment is offered only where its street re-trace is overloaded, impossible or fails the gates) | A4.5 v2, A6.7 | mod code; log-verified (`ResolveCandidate` lines) — the export kinds are unchanged |
 | 2026-09-05 (evening) | **Access is a discount, tunnels and bridges are not sites, zoning counts only beside people** (§7 v2 snap `siteable`, combine v3, calibration v2) | A1.6 v2, A1.15, A1.16, A1.14 v2 | `heatmap-walk-plumbing` regenerated with a bridge node (7 tiles, three-way exact); new export field `node_siteable`, absent = all sites; old real exports unchanged |
 | 2026-09-05 (evening) | **Passes run with the heat map hidden; a finished pass is staged** until the panel's button applies it (the list and the drawn lines never change under a selection) | A9.1 | none needed — no number changes; behaviour in the log ("staged" / "adopted") |
+| 2026-09-06 | **The game's vehicle-count slider bounds every fleet** (§5 v3: span from the policy prefab's modifier range and the prefab interval on the line's round trip; fleet = least under the ceiling within the span; the v2 planning-headway table retired; S7 F1 judged at the fleet the set's riders size; wait = half the standalone fleet's interval) | A5.5 (closed), A6.8, A6.x v3 | `mode_choice` kind v3 (`evaluator/fleet.py`), `lineset_time` candidates carry round trip + span (7 instances regenerated, same answers), `mode-choice-sweep` 11 rows |
+| 2026-09-06 | **S9 line health specified and verified** (§7e: readings every 15 game minutes, active readings only, 90 % quantile planning load, upper-median bar, the S6 ladder and fleet rule for existing lines, two-signal removal, schedule by period utilisation; "long waits" retired as unreachable on a running line; "overcrowded" split into the game's supply flag and the fleet rule) | A8.1–A8.7 | new kind `line_health` (three-way exact), export `-health`, Lean `Verify.LineHealth` (fleet minimality, half-city bound, verdict order) |
+| 2026-09-06 | **Every numeric constant in `Common/Planning/Assumptions.cs`** (user rule): 108 values and the per-mode tables moved, no value changed; the subject and the evaluators read the same file's values through the instances | — | none (behaviour-neutral, harness and pipeline unchanged) |
 | 2026-09-04 | Interchange/coverage weight of another mode's stop = **vehicle capacity ÷ bus capacity from the loaded prefabs** (`TransitModes.CapacityWeight`), replacing the table 1/1.2/1.5/2.5/3; a type without a loaded vehicle weighs 0 | A1.10 | heatmap `w_b32` remain instance data; new pure function unit-tested |

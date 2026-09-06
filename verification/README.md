@@ -61,8 +61,9 @@ cross-check is subject (mod code) vs evaluator, not two Python variants.
 | S4 lattice paths | returned path is a minimum-cost path | exact distance-label certificate (solver-free), checked by two independent checkers — a Python one and a **Lean 4 executable whose soundness is machine-proved** (`Verify.PathCert.check_sound`; the ℚ→ℤ scaling covered by `Verify.Scaling.check_scaled_sound`) |
 | S4 corridor growth | GrowCorridor/PeelFlow/DecayNovelty faithful to the spec | bit-exact independent replay (corridors, blocks, full flow/novelty arrays per round) |
 | S5 v2 stop plan (`stop_plan`) | the mod's DP choice of calls is feasible (termini, forced interchanges, σ/2 gap) and of optimal value under the declared objective Σ w·max(0, H − t) − Σ through·δ | exact optimum by complete enumeration of the free candidates (≤ 14) or an independent exact DP; ties reported; game = subject = optimum |
-| S6 v2 mode (`mode_choice`) | the capacity ladder: smallest mode not overloaded at the prefab headway, utilisation and delay per stop | bit-exact binary32 re-derivation |
-| S7 v2 line set (`lineset_time`) | the mod's exact set selection under the passenger-time objective: before/after door-to-door over zone-node routing, riders per line over every shortest itinerary, utilisation and duplicate feasibility on the set, capped equity share, lexicographic key | subject (mod's `Solve`) must reproduce the game's set; exact rational evaluator (time saved within a derived binary32 budget); complete enumeration of all feasible subsets when Σ C(n,k) fits `ENUM_BUDGET`, otherwise exact over subsets of ≤ k′ lines and reported as bounded; key ties counted |
+| S6 v3 mode (`mode_choice`) | the capacity ladder over the fleet the game's vehicle-count slider allows: span from the policy prefab's modifier range on the prefab interval and the line's round trip, fleet = least under the ceiling within the span, interval, utilisation, delay per stop | bit-exact re-derivation of the game's fleet arithmetic and the mod's rule (`evaluator/fleet.py`) |
+| S9 line health (`line_health`) | the existing lines' verdicts and plans from the window's readings (active only, 90 % quantile load), the upper-median empty bar, the ladder and fleet rule on load and routed demand, period utilisations and schedule, the verdict order | three-way exact per line (game export = mod code offline = independent evaluator); synthetic instance pins subject = evaluator and every verdict by id; fleet minimality, the half-city bound and the verdict order are Lean theorems |
+| S7 v2 line set (`lineset_time`) | the mod's exact set selection under the passenger-time objective: before/after door-to-door over zone-node routing, riders per line over every shortest itinerary, utilisation (at the fleet the set's riders size within the game's span, v3) and duplicate feasibility on the set, capped equity share, lexicographic key | subject (mod's `Solve`) must reproduce the game's set; exact rational evaluator (time saved within a derived binary32 budget); complete enumeration of all feasible subsets when Σ C(n,k) fits `ENUM_BUDGET`, otherwise exact over subsets of ≤ k′ lines and reported as bounded; key ties counted |
 | S7 v1 routing/credit and greedy set (historical) | credit formula, greedy gap vs the credited-sum optimum | removed 2026-09-05 with the greedy rounds; the refutations stay in `docs/correctness-claims.md` (C7.4, C7.5) |
 
 The mod claims no global optimality (README); the pipeline's optimality artifacts
@@ -92,8 +93,8 @@ the one thing they cannot — the Burst job, which does not run outside the game
    the folder (`…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`).
 2. Copy the three `real-<city>-<stamp>-*.json` files into `instances/`.
 3. `make -C verification instance I=real-<city>-<stamp>-heatmap` — and the same
-   for `-sites`, `-roads`, `-coverage` and `-lineset`. They behave like any other
-   instance. An export in a wire format the subject no longer reads belongs in
+   for `-sites`, `-roads`, `-coverage`, `-lineset`, `-stops` and `-health`. They behave
+   like any other instance. An export in a wire format the subject no longer reads belongs in
    `instances/superseded/` (gitignored), not in the sweep.
 
 Notes. The `-sites` file is the real score field: the resulting MIP has one

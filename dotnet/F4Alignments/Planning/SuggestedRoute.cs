@@ -34,8 +34,15 @@ namespace StationSuitabilityOverlay
         // genuine corner at the hub, and telling that apart from a lattice staircase
         // the simplifier failed to straighten is otherwise guesswork.
         public bool BentThroughHub;
-        // Fleet the line would need to hold its assumed headway.
+        // The fleet the line would run (TransitModes.PlanFleet on its riders within the
+        // game's span), the interval that fleet yields, the span itself, and the round
+        // trip they were sized on — the loop at cruise or directed speed plus the dwell
+        // at every call each way.
         public int Vehicles;
+        public float HeadwaySeconds;
+        public int FleetMin;
+        public int FleetMax;
+        public float RoundTripSeconds;
         // The graph the alignment was traced on and its node path, kept so the stop
         // planner can read the corridor flow at any point of the line — including
         // after a mode change re-places the stops.

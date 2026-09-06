@@ -48,23 +48,24 @@ namespace StationSuitabilityOverlay
             return (IsNight(outbound) ? 0f : 0.5f) + (IsNight(homeward) ? 0f : 0.5f);
         }
 
-        // Boardings over the seats a line offers during one period only: the day's
-        // seats scaled by the period's share of the day.
+        // Boardings over the seats a line offers during one period only: the seats of a
+        // vehicle scaled by the period's share of the day (the day's runs happen in
+        // both periods in proportion), through the one utilisation formula.
         public static float UtilisationInPeriod(float ridersInPeriod, float headwaySeconds, float vehicleCapacity, float periodShareOfDay)
         {
-            if (headwaySeconds <= 0f || vehicleCapacity <= 0f || periodShareOfDay <= 0f)
+            if (periodShareOfDay <= 0f)
             {
                 return 0f;
             }
 
-            float boardings = ridersInPeriod * Assumptions.RidesPerJourney;
-            float seats = Assumptions.MovementSecondsPerGameDay * periodShareOfDay / headwaySeconds * 2f * vehicleCapacity;
-            return boardings / seats;
+            return SuitabilityEquity.Utilisation(ridersInPeriod, headwaySeconds, (double)vehicleCapacity * periodShareOfDay);
         }
 
-        // The schedule a line should run: all day unless one period falls under the
-        // utilisation floor while the other does not. A line under the floor in both
-        // is not a schedule question and stays all day here.
+        // The schedule a line should run, suggested or existing (register A8, decided
+        // 2026-09-06: one rule for both, on the boardings the routing attributes to the
+        // line in each period): all day unless one period falls under the utilisation
+        // floor while the other does not. A line under the floor in both is not a
+        // schedule question and stays all day here.
         public static LineSchedule Recommend(float dayUtilisation, float nightUtilisation, float floor)
         {
             if (floor <= 0f)
@@ -80,32 +81,6 @@ namespace StationSuitabilityOverlay
             }
 
             if (nightOk && !dayOk)
-            {
-                return LineSchedule.Night;
-            }
-
-            return LineSchedule.DayAndNight;
-        }
-
-        // For an existing line judged from its readings: the same rule on the mean
-        // usage of each period, asked only once both periods have enough readings and
-        // the line actually ran in both (a day-only line has no night readings to
-        // judge, so it is never told to run at night on this evidence).
-        public static LineSchedule Advise(LineSchedule current, float dayUsage, int daySamples, float nightUsage, int nightSamples, float emptyThreshold, int minSamples)
-        {
-            if (current != LineSchedule.DayAndNight || daySamples < minSamples || nightSamples < minSamples || emptyThreshold <= 0f)
-            {
-                return current;
-            }
-
-            bool dayEmpty = dayUsage < emptyThreshold;
-            bool nightEmpty = nightUsage < emptyThreshold;
-            if (nightEmpty && !dayEmpty)
-            {
-                return LineSchedule.Day;
-            }
-
-            if (dayEmpty && !nightEmpty)
             {
                 return LineSchedule.Night;
             }

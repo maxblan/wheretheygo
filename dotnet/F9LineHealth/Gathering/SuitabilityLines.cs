@@ -9,13 +9,12 @@ using Game.Routes;
 using Game.Vehicles;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Mathematics;
 using System.Diagnostics.CodeAnalysis;
 
 namespace StationSuitabilityOverlay
 {
     // Reads the existing transit system: which lines exist, which stops they serve in
-    // order, and how loaded they are.
+    // order, and how loaded they are. The judging is SuitabilityLineHealth (pure).
     //
     // Ordering matters and is easy to get wrong: only RouteWaypoint/RouteSegment on
     // the LINE are in travel order. The ConnectedRoute buffer on a stop is built by
@@ -23,19 +22,10 @@ namespace StationSuitabilityOverlay
     // a line's sequence.
     internal static class SuitabilityLines
     {
-        public static void Collect(
-            EntityManager entityManager,
-            EntityQuery lineQuery,
-            PrefabSystem prefabSystem,
-            Game.UI.NameSystem nameSystem,
-            List<ExistingLine> lines,
-            List<float2Like> stopPositions,
-            Dictionary<Entity, int> stopIndices)
+        // Every passenger line of a modelled mode with at least two waypoints, in query
+        // order — the one loop both the full collection and the reading share.
+        private static void ForEachLine(EntityManager entityManager, EntityQuery lineQuery, Action<Entity, TransportLine, TransportLineData, DynamicBuffer<RouteWaypoint>> visit)
         {
-            lines.Clear();
-            stopPositions.Clear();
-            stopIndices.Clear();
-
             using var entities = lineQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < entities.Length; i++)
             {
@@ -67,6 +57,25 @@ namespace StationSuitabilityOverlay
                     continue;
                 }
 
+                visit(lineEntity, transportLine, lineData, waypoints);
+            }
+        }
+
+        public static void Collect(
+            EntityManager entityManager,
+            EntityQuery lineQuery,
+            PrefabSystem prefabSystem,
+            Game.UI.NameSystem nameSystem,
+            List<ExistingLine> lines,
+            List<float2Like> stopPositions,
+            Dictionary<Entity, int> stopIndices)
+        {
+            lines.Clear();
+            stopPositions.Clear();
+            stopIndices.Clear();
+
+            ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
+            {
                 var line = new ExistingLine
                 {
                     m_Id = IdentityOf(lineEntity),
@@ -81,26 +90,18 @@ namespace StationSuitabilityOverlay
 
                 if (line.m_StopIndices.Count < 2)
                 {
-                    continue;
+                    return;
                 }
 
-                ReadVehicles(entityManager, lineEntity, line);
+                ReadVehicles(entityManager, lineEntity, out line.m_Vehicles, out line.m_Passengers, out line.m_Capacity);
 
-                // The wait a rider actually experiences, the way the game's own
-                // pathfinder computes it.
                 float dwell = lineData.m_StopDuration;
                 line.m_VehicleInterval = transportLine.m_VehicleInterval;
 
                 // Mirrors TransportLineSystem.RefreshLineSegments' stableDuration and
                 // the target interval it feeds to CalculateVehicleCount.
-                line.m_StableDurationSeconds = line.m_LineDurationSeconds + line.m_StopIndices.Count * dwell;
-                float targetInterval = lineData.m_DefaultVehicleInterval;
-                if (entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteModifier> modifiers))
-                {
-                    RouteUtils.ApplyModifier(ref targetInterval, modifiers, RouteModifierType.VehicleInterval);
-                }
-
-                line.m_TargetInterval = targetInterval;
+                line.m_StableDurationSeconds = line.m_LineDurationSeconds + (line.m_StopIndices.Count * dwell);
+                line.m_TargetInterval = TargetInterval(entityManager, lineEntity, lineData);
                 line.m_StopDuration = dwell;
 
                 TransportLineFlags flags = transportLine.m_Flags;
@@ -108,7 +109,43 @@ namespace StationSuitabilityOverlay
                 line.m_NotEnoughVehicles = (flags & TransportLineFlags.NotEnoughVehicles) != 0;
 
                 lines.Add(line);
+            });
+        }
+
+        // One reading of every line — the counts the rolling window keeps (register
+        // A8.5) — without rebuilding the collection the route worker may be reading.
+        public static void Observe(EntityManager entityManager, EntityQuery lineQuery, uint frame, float timeOfDay, LineHistory history, HashSet<int> liveLineIds)
+        {
+            liveLineIds.Clear();
+            ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
+            {
+                int id = IdentityOf(lineEntity);
+                _ = liveLineIds.Add(id);
+                ReadVehicles(entityManager, lineEntity, out int vehicles, out int passengers, out int capacity);
+                history.Record(id, new LineObservation
+                {
+                    m_Frame = frame,
+                    m_Passengers = passengers,
+                    m_Capacity = capacity,
+                    m_IntervalSeconds = transportLine.m_VehicleInterval,
+                    m_Vehicles = vehicles,
+                    m_TimeOfDay = timeOfDay,
+                });
+            });
+            history.RetainOnly(liveLineIds);
+        }
+
+        // The interval the player set: the prefab default with the line's own
+        // vehicle-count modifier applied (RouteUtils.ApplyModifier).
+        private static float TargetInterval(EntityManager entityManager, Entity lineEntity, TransportLineData lineData)
+        {
+            float targetInterval = lineData.m_DefaultVehicleInterval;
+            if (entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteModifier> modifiers))
+            {
+                RouteUtils.ApplyModifier(ref targetInterval, modifiers, RouteModifierType.VehicleInterval);
             }
+
+            return targetInterval;
         }
 
         // A line identity that survives its neighbours being deleted.
@@ -141,18 +178,10 @@ namespace StationSuitabilityOverlay
             Dictionary<Entity, int> stopIndices)
         {
             float pendingSeconds = 0f;
-            float waitSum = 0f;
-            int waitCount = 0;
 
             for (int w = 0; w < waypoints.Length; w++)
             {
                 Entity waypoint = waypoints[w].m_Waypoint;
-
-                if (entityManager.TryGetComponent(waypoint, out WaitingPassengers waiting))
-                {
-                    waitSum += waiting.m_AverageWaitingTime;
-                    waitCount++;
-                }
 
                 if (entityManager.TryGetComponent(waypoint, out Connected connected) &&
                     entityManager.HasComponent<Game.Routes.TransportStop>(connected.m_Connected))
@@ -180,39 +209,40 @@ namespace StationSuitabilityOverlay
                     line.m_LineDurationSeconds += path.m_Duration;
                 }
             }
-
-            line.m_WaitAccumulator = waitCount > 0 ? waitSum / waitCount : 0f;
         }
 
         // Fleet size, and how full it is. Capacity comes from the vehicle prefab, and
         // multi-unit consists are walked through their layout so a coupled train
         // counts every carriage.
-        private static void ReadVehicles(EntityManager entityManager, Entity lineEntity, ExistingLine line)
+        private static void ReadVehicles(EntityManager entityManager, Entity lineEntity, out int vehicles, out int passengers, out int capacity)
         {
-            if (!entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteVehicle> vehicles))
+            vehicles = 0;
+            passengers = 0;
+            capacity = 0;
+            if (!entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteVehicle> fleet))
             {
                 return;
             }
 
-            line.m_Vehicles = vehicles.Length;
-            for (int v = 0; v < vehicles.Length; v++)
+            vehicles = fleet.Length;
+            for (int v = 0; v < fleet.Length; v++)
             {
-                Entity vehicle = vehicles[v].m_Vehicle;
+                Entity vehicle = fleet[v].m_Vehicle;
                 if (entityManager.TryGetBuffer(vehicle, isReadOnly: true, out DynamicBuffer<LayoutElement> layout) && layout.Length > 0)
                 {
                     for (int u = 0; u < layout.Length; u++)
                     {
-                        AddUnit(entityManager, layout[u].m_Vehicle, line);
+                        AddUnit(entityManager, layout[u].m_Vehicle, ref passengers, ref capacity);
                     }
                 }
                 else
                 {
-                    AddUnit(entityManager, vehicle, line);
+                    AddUnit(entityManager, vehicle, ref passengers, ref capacity);
                 }
             }
         }
 
-        private static void AddUnit(EntityManager entityManager, Entity unit, ExistingLine line)
+        private static void AddUnit(EntityManager entityManager, Entity unit, ref int passengers, ref int capacity)
         {
             if (!entityManager.TryGetComponent(unit, out PrefabRef prefabRef) ||
                 !entityManager.TryGetComponent(prefabRef.m_Prefab, out PublicTransportVehicleData vehicleData))
@@ -220,10 +250,10 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            line.m_Capacity += vehicleData.m_PassengerCapacity;
-            if (entityManager.TryGetBuffer(unit, isReadOnly: true, out DynamicBuffer<Passenger> passengers))
+            capacity += vehicleData.m_PassengerCapacity;
+            if (entityManager.TryGetBuffer(unit, isReadOnly: true, out DynamicBuffer<Passenger> passengerBuffer))
             {
-                line.m_Passengers += passengers.Length;
+                passengers += passengerBuffer.Length;
             }
         }
 
@@ -350,50 +380,6 @@ namespace StationSuitabilityOverlay
             return result;
         }
 
-        // Median share of fleet capacity in use across the city's lines.
-        private static float MedianUsage(List<ExistingLine> lines)
-        {
-            if (lines.Count == 0)
-            {
-                return 0f;
-            }
-
-            var usages = new List<float>(lines.Count);
-            for (int i = 0; i < lines.Count; i++)
-            {
-                ExistingLine line = lines[i];
-                usages.Add(line.Usage);
-            }
-
-            usages.Sort();
-            return usages[usages.Count / 2];
-        }
-
-        // How far past its own target the typical line in this city is running. The
-        // long-wait verdict is measured against this, so it reports the lines that are
-        // unusual here rather than every line at once.
-        private static float MedianIntervalRatio(List<ExistingLine> lines)
-        {
-            var ratios = new List<float>(lines.Count);
-            for (int i = 0; i < lines.Count; i++)
-            {
-                ExistingLine line = lines[i];
-                if (line.m_TargetInterval > 0f && line.JudgedInterval > 0f)
-                {
-                    ratios.Add(line.JudgedInterval / line.m_TargetInterval);
-                }
-            }
-
-            if (ratios.Count == 0)
-            {
-                return 0f;
-            }
-
-            ratios.Sort();
-            return ratios[ratios.Count / 2];
-        }
-
-        // Health verdict per line, worst first.
         // The line's schedule as the player set it (ScheduleSection: the Day policy
         // marks a day-only line, the Night policy a night-only one, neither = all day).
         private static LineSchedule ScheduleOf(EntityManager entityManager, Entity lineEntity)
@@ -409,110 +395,6 @@ namespace StationSuitabilityOverlay
             }
 
             return RouteUtils.CheckOption(route, RouteOption.Night) ? LineSchedule.Night : LineSchedule.DayAndNight;
-        }
-
-        public static void Judge(List<ExistingLine> lines, List<LineHealth> health)
-        {
-            health.Clear();
-
-            // "Nearly empty" cannot be an absolute share of capacity. Usage here is an
-            // INSTANTANEOUS count of riders aboard against total fleet capacity, and on
-            // a working city almost every healthy line sits between 1% and 6% of that.
-            // A fixed threshold therefore flagged 12 of 19 lines, which is noise. The
-            // city's own median is the honest reference: a line is empty relative to
-            // how busy this city's transit actually runs.
-            float medianUsage = MedianUsage(lines);
-            float longWaitMultiple =
-                MedianIntervalRatio(lines) * Assumptions.LongWaitShareAboveMedian;
-            float emptyThreshold = math.min(
-                Assumptions.EmptyUsage,
-                medianUsage * Assumptions.EmptyShareOfMedian);
-
-            for (int i = 0; i < lines.Count; i++)
-            {
-                ExistingLine line = lines[i];
-                float usage = line.Usage;
-
-                // Exactly TransportLineSystem.CalculateVehicleCount(targetInterval,
-                // stableDuration) — the game's own formula, against the same inputs the
-                // game uses. Anything else disagrees with the fleet the game is already
-                // maintaining and produces advice like "9 vehicles, target 1".
-                int target = line.m_StableDurationSeconds > 0f && line.m_TargetInterval > 0f
-                    ? math.max(1, (int)math.round(line.m_StableDurationSeconds / math.max(1f, line.m_TargetInterval)))
-                    : math.max(1, line.m_Vehicles);
-
-                LineVerdict verdict = SuitabilityLineHealth.Judge(
-                    usage, line.HasWindow ? line.m_WindowPeakUsage : usage,
-                    line.JudgedInterval, line.m_TargetInterval, longWaitMultiple, line.m_Vehicles, target,
-                    line.m_RequireVehicles, line.m_NotEnoughVehicles, emptyThreshold, out int addVehicles);
-
-                health.Add(new LineHealth
-                {
-                    m_Index = i + 1,
-                    m_Id = line.m_Id,
-                    m_Name = line.m_Name,
-                    m_Mode = line.m_Mode,
-                    m_Vehicles = line.m_Vehicles,
-                    m_TargetVehicles = target,
-                    m_Passengers = line.m_Passengers,
-                    m_Capacity = line.m_Capacity,
-                    m_Usage = usage,
-                    m_WindowSamples = line.HasWindow ? line.m_WindowSamples : 0,
-                    m_WindowGameHours = line.m_WindowGameHours,
-                    m_PeakUsage = line.HasWindow ? line.m_WindowPeakUsage : usage,
-                    m_TypicalWait = line.JudgedInterval * 0.5f,
-                    m_LengthKm = line.m_LengthMetres / 1000f,
-                    m_Stops = line.m_StopIndices.Count,
-                    m_Verdict = verdict,
-                    m_AddVehicles = addVehicles,
-                    m_Schedule = line.m_Schedule,
-                    m_DayUsage = line.m_DayUsage,
-                    m_NightUsage = line.m_NightUsage,
-                    m_DaySamples = line.m_DaySamples,
-                    m_NightSamples = line.m_NightSamples,
-                    m_ScheduleAdvice = Daytime.Advise(line.m_Schedule, line.m_DayUsage, line.m_DaySamples, line.m_NightUsage, line.m_NightSamples, emptyThreshold, Assumptions.MinReadingsForVerdict),
-                });
-            }
-
-            for (int i = 0; i < lines.Count; i++)
-            {
-                ExistingLine line = lines[i];
-                Mod.Log.Info(
-                    $"Line {(i + 1).ToString(CultureInfo.InvariantCulture)} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
-                    $"len={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, ride={(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                    $"roundTrip={(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                    $"interval={(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s (target {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
-                    $"expectedWait={(line.ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s (from {(line.HasWindow ? "windowed" : "instantaneous")} headway {(line.JudgedInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
-                    $"waitAccumulator={(line.m_WaitAccumulator).ToString("F0", CultureInfo.InvariantCulture)} (game units, not seconds), " +
-                    $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)}, " +
-                    $"aboard={(line.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(line.m_Capacity).ToString(CultureInfo.InvariantCulture)} " +
-                    $"({((line.m_Capacity > 0 ? line.m_Passengers * 100f / line.m_Capacity : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% right now), " +
-                    $"window({(line.m_WindowSamples).ToString(CultureInfo.InvariantCulture)} readings over " +
-                    $"{(line.m_WindowGameHours).ToString("F1", CultureInfo.InvariantCulture)}h: " +
-                    $"mean {((line.m_WindowUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, " +
-                    $"peak {((line.m_WindowPeakUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, " +
-                    $"interval {(line.m_WindowInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
-                    $"judgedOn={(line.HasWindow ? "window" : "this reading only")}, " +
-                    $"schedule={line.m_Schedule}, day {((line.m_DayUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}% over {(line.m_DaySamples).ToString(CultureInfo.InvariantCulture)} readings, " +
-                    $"night {((line.m_NightUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}% over {(line.m_NightSamples).ToString(CultureInfo.InvariantCulture)} readings, " +
-                    $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
-            }
-
-            Mod.Log.Info(
-                $"Line health long-wait bar: a line is flagged past {(math.max(Assumptions.LongWaitMultipleOfTarget, longWaitMultiple)).ToString("F2", CultureInfo.InvariantCulture)}x its own target interval " +
-                $"(city median is {(MedianIntervalRatio(lines)).ToString("F2", CultureInfo.InvariantCulture)}x)");
-            Mod.Log.Info(
-                $"Line health empty bar: flagged only if the mean is under {((emptyThreshold * 100f)).ToString("F1", CultureInfo.InvariantCulture)}% " +
-                $"AND the peak under {((emptyThreshold * Assumptions.EmptyPeakAllowance * 100f)).ToString("F1", CultureInfo.InvariantCulture)}%");
-            Mod.Log.Info(
-                $"Line health reference: medianUsage={(medianUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, " +
-                $"emptyBelow={(emptyThreshold * 100f).ToString("F1", CultureInfo.InvariantCulture)}% of fleet capacity");
-
-            health.Sort(static (a, b) =>
-            {
-                int bySeverity = b.Severity.CompareTo(a.Severity);
-                return bySeverity != 0 ? bySeverity : b.m_Usage.CompareTo(a.m_Usage);
-            });
         }
     }
 }

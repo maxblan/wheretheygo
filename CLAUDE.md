@@ -168,11 +168,11 @@ sections, then the shell. Inside each feature folder the code is split by what i
 | `F6Modes` | S6 §5 | `TransitMode.Choice` | `SuitabilityFleet` | `.F6Modes`, `.F6Fleet` |
 | `F7LineSet` | S7 §6 | `SuitabilityTransit`, `SuitabilityLineSet` | — | `.F7LineSet` |
 | `F8Equity` | §7c | `SuitabilityEquity` | — | `.F8Equity` |
-| `F9LineHealth` | — | `ExistingLine`, `SuitabilityLineHistory`, `SuitabilityLineHealth` | `SuitabilityLines` | `.F9LineHealth` |
+| `F9LineHealth` | §7e | `ExistingLine`, `SuitabilityLineHistory`, `SuitabilityLineHealth` (window, ladder, fleet plan, verdicts) | `SuitabilityLines` (collect, observe) | `.F9LineHealth` |
 | `F10Calibration` | §7 v2 | (the fit is in `SuitabilityScoring`) | `SuitabilityCalibration` | `.F10Calibration` |
 | `F11Export` | — | `SuitabilityExportJson` | — | `.VerificationExport` |
 | `F12Diagnostics` | — | `SuitabilityDiagnostics` (sanity checks, churn) | — | `.F12Diagnostics` |
-| `Common` | §0, §7d | `float2Like`/`int2Like`, `TileGrid`, `SuitabilityDaytime`, `TransitMode` (per-mode tables), `DeferredLog` | — | — |
+| `Common` | §0, §7d | `Assumptions` (EVERY numeric constant and per-mode table), `float2Like`/`int2Like`, `TileGrid`, `SuitabilityDaytime`, `TransitMode` (enums, ladders, colours), `DeferredLog` | — | — |
 | `Overlay` | — | — | — | `StationSuitabilityOverlaySystem` (orchestration), `.Panel`, `.RoutePass`, `.SaveState`, `SuitabilityInfoview`, `SuitabilityInfomodePrefab` |
 | `Presentation` | — | `SuitabilityPanelPayload` | — | `SuitabilityRouteRenderer`, `SuitabilityPanelUISystem`, `UI/` |
 
@@ -208,12 +208,19 @@ test run, with overflow checking on, and a Unity type in any of them breaks the 
   the pure code and map the result back. Several silent bugs — double-counted demand, summed
   instead of averaged corridor flow, free transfers, a corridor's node walk starting from a node
   that was not on the line — were only caught because the math was reachable from a test.
-- **A per-mode fact goes in `Common/Planning/TransitMode.cs`**, as one more `switch` beside the
-  others. Everything true of a mode is keyed on `ModePreset`, and while that enum was nested inside
-  `Setting` — which imports Colossal, Game.Modding, Game.Settings and Game.UI — no Unity-free file
-  could own a per-mode table, so five of them grew separate copies across separate files and a
-  sixth in the panel's JavaScript. The mode *choice* (`ChooseMode`, `FleetFacts`) is the F6 half of
-  the same partial class.
+- **Every number the mod computes with lives in `Common/Planning/Assumptions.cs`** (user rule,
+  2026-09-06): thresholds, speeds, spacings, windows, budgets, refresh cadences, options defaults
+  and the per-mode tables (`CruiseSpeedFor`, `StopSpacingFor`, `CatchmentMs`, `MaxRideSecondsFor`),
+  each annotated with its register row. Before writing a literal anywhere else, look there; a
+  value that lives in one file cannot drift between two, which is how five copies of one mode
+  table, a walk speed copied at 1.4 after the mod moved to 1.2 and a planning-headway table
+  beside the prefab intervals all happened. `TransitMode.cs` keeps what is structure, not a
+  value: the enums, `ModesFor`/`NetworkOf`, the colours. The subject runner and the evaluators
+  never retype a value either — it reaches them through the instance files. UI slider bounds and
+  wire-format versions stay with the settings page and the serializers.
+- **A per-mode fact is one more `switch` in `Assumptions.cs`**, keyed on `ModePreset`; the mode
+  *choice* (`ChooseMode`, `FleetFacts`, the game's fleet arithmetic `GameFleet`/`GameInterval`/
+  `FleetSpan`) is the F6 half of `TransitModes`.
 - **`SuitabilityExportJson` is pure for one reason:** the format is a CONTRACT with
   `verification/common/canonical.py`, which recomputes the digest on load and refuses any file it
   cannot reproduce, so a golden-vector test is the only thing standing between a wire-format drift
@@ -276,8 +283,14 @@ produced. The pipeline stages have clean seams (`UpdateTravelDemand` → `BuildT
    the fields the panel, renderer and export read only when the task has completed. Code that
    can run on the worker logs through `DeferredLog`, never `Mod.Log`: the game's logger is an
    unguarded stream writer, so the worker's lines wait in a buffer and are flushed on adoption.
-4. **Line health** — existing lines read in travel order (`SuitabilityLines.cs`), folded into the
-   rolling window (`SuitabilityLineHistory.cs`) and judged (`SuitabilityLineHealth.cs`).
+4. **Line health** — a reading of every line every 15 game minutes (`SuitabilityLines.Observe`
+   → `LineHistory`, on the simulation frame, never gated on the route worker); the full
+   collection in travel order (`SuitabilityLines.Collect`) every 30 s while no pass is out; the
+   riders the last pass's baseline attributed to each existing line (`AdoptExistingLineRiders`);
+   then `SuitabilityLineHealth.JudgeAll` on a `LineHealthProblem` captured at that instant (the
+   export reads the same object). Verdicts are a classification of the plan: the S6 ladder and
+   the fleet rule within the game's vehicle-slider span, judged on the window's 90 % planning
+   load and the routed riders; "empty" needs the readings AND the demand (spec §7e).
 
 None of this is gated on the heat map being drawn: the passes run whenever a city is loaded, and
 `active` only decides whether scores are painted. A finished route pass is **staged**
@@ -348,10 +361,17 @@ Hard-won facts worth not rediscovering:
 
 - `RouteWaypoint`/`RouteSegment` on the **line** are travel-ordered and index-aligned. `ConnectedRoute`
   on a stop is *not* ordered and must never be used to infer a sequence.
-- Fleet size is `round(stableDuration / targetInterval)`, where `stableDuration` includes the dwell at
-  every stop and `targetInterval` is `TransportLineData.m_DefaultVehicleInterval` with the line's
-  `RouteModifier` applied. `TransportLine.m_VehicleInterval` is the *achieved* interval, capped at 10x
-  the target. The player sets the interval, never a vehicle count.
+- Fleet size is `round(stableDuration / targetInterval)` (to even), where `stableDuration` includes the
+  dwell at every stop and `targetInterval` is `TransportLineData.m_DefaultVehicleInterval` with the
+  line's `RouteModifier` applied. **The player sets a vehicle COUNT** (`VehicleCountSection`); the game
+  turns it into a slider position on the vehicle-count policy prefab, lerps that onto the
+  `VehicleInterval` modifier's range and applies the modifier to the prefab interval — so the two ends
+  of the slider bound the fleet (`TransitModes.FleetSpan`, read from
+  `UITransportConfigurationPrefab.m_VehicleCountPolicy`). `TransportLine.m_VehicleInterval` is NOT a
+  measured headway: `min(10 × target, pathDuration / targetFleet)`, i.e. the planned interval on a
+  running line and the whole path duration on an inactive one (a day-only line at night). The
+  `RequireVehicles`/`NotEnoughVehicles` flags mean "fewer out than the target" / "a request the game
+  could not fill" — supply, not demand.
 - `WaitingPassengers.m_AverageWaitingTime` is a pathfinder accumulator, not seconds; one stranded rider
   drives it into the thousands.
 - A line's display name is a *formatted* name — the C# label helper returns the raw

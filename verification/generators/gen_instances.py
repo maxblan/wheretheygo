@@ -9,7 +9,8 @@ Instance kinds and what they verify (see docs/formal-specification.md):
                      to the certified max-sum optimum (SCIP exact + VIPR).
   lattice_path   S4  Dijkstra path optimality (exact distance-label certificate).
   stop_plan      S5 v2  the stop-plan objective: mod DP vs exact optimum (enumeration/DP).
-  mode_choice    S6 v2  the capacity ladder re-evaluated in binary32.
+  mode_choice    S6 v3  the capacity ladder over the game's fleet span, re-evaluated exactly.
+  line_health    S9     the line verdicts and plans from the window's readings and the demand.
   lineset_time   S7 v2  passenger-time set objective: the mod's exact B&B against a
                      complete enumeration of feasible subsets.
 """
@@ -492,31 +493,115 @@ def order_stats():
 
 # ----------------------------------------------------------- mode_choice (S6)
 
-def mode_choice_sweep():
-    """The capacity ladder (S6 v2): riders per day climb from bus to tram and from
-    metro to train as the smaller vehicle overloads at its own headway; a network
-    with no vehicle installed yields no mode; a missing line prefab falls back to
-    the table headway."""
-    def facts(cap, hw, stop, acc, brk):
-        return {"capacity_b32": f32_bits(cap), "headway_b32": f32_bits(hw), "stop_duration_b32": f32_bits(stop),
+def fleet_facts():
+    """The game's fleet facts as the mod reads them (capacity, prefab interval, stop
+    duration, acceleration, braking per mode) and a relative slider policy from a
+    quarter to four times the prefab interval. Water has no line prefab (interval 0:
+    unbounded span)."""
+    def facts(cap, interval, stop, acc, brk):
+        return {"capacity_b32": f32_bits(cap), "prefab_interval_b32": f32_bits(interval), "stop_duration_b32": f32_bits(stop),
                 "acceleration_b32": f32_bits(acc), "braking_b32": f32_bits(brk)}
-    rows = [{"network": n, "riders_b32": f32_bits(r)} for n, r in [
-        ("Road", 100.0), ("Road", 1200.0), ("Road", 2000.0), ("Road", 100000.0),
-        ("Rail", 5000.0), ("Rail", 30000.0), ("Rail", 1e9),
-        ("Water", 10.0), ("Water", 5000.0)]]
     return {
-        "kind": "mode_choice", "name": "mode-choice-sweep",
-        "comment": "capacity ladder over the game's fleet facts; Water has no line prefab (table headway)",
-        "data": {
-            "rows": rows,
-            "facts": {
-                "Bus": facts(80.0, 300.0, 15.0, 1.5, 1.5), "Tram": facts(240.0, 240.0, 15.0, 1.2, 1.2),
-                "Metro": facts(540.0, 200.0, 20.0, 1.2, 1.2), "Train": facts(1680.0, 480.0, 30.0, 1.0, 1.0),
-                "Ferry": facts(400.0, 0.0, 40.0, 0.5, 0.5),
-            },
+        "facts": {
+            "Bus": facts(80.0, 300.0, 15.0, 1.5, 1.5), "Tram": facts(240.0, 300.0, 15.0, 1.2, 1.2),
+            "Metro": facts(540.0, 200.0, 20.0, 1.2, 1.2), "Train": facts(1680.0, 480.0, 30.0, 1.0, 1.0),
+            "Ferry": facts(400.0, 0.0, 40.0, 0.5, 0.5),
         },
+        "policy": {"known": True, "mode": "Relative", "delta_min_b32": f32_bits(-0.75), "delta_max_b32": f32_bits(3.0)},
+    }
+
+
+def mode_choice_sweep():
+    """The capacity ladder (S6 v3): the fleet is sized to the riders within the span
+    the slider allows for a 1000 s round trip (bus 1..13); riders climb from one bus
+    to six, then past the largest bus fleet to the tram, then overload every road
+    mode; the metro and train lattices carry their own mode; a network with no
+    vehicle installed yields no mode; a mode without a line prefab has an unbounded
+    span."""
+    rows = [{"network": n, "riders_b32": f32_bits(r), "round_trip_b32": f32_bits(t)} for n, r, t in [
+        ("Road", 100.0, 1000.0), ("Road", 2000.0, 1000.0), ("Road", 5000.0, 1000.0), ("Road", 100000.0, 1000.0),
+        ("Road", 2000.0, 3000.0), ("Rail", 5000.0, 1000.0), ("Rail", 30000.0, 1000.0), ("Rail", 1e9, 1000.0),
+        ("Metro", 5000.0, 2000.0), ("Water", 10.0, 1000.0), ("Water", 5000.0, 1000.0)]]
+    inst = {
+        "kind": "mode_choice", "name": "mode-choice-sweep",
+        "comment": "capacity ladder over the game's fleet facts and slider span; Water has no line prefab (unbounded span)",
+        "data": {"rows": rows},
         "expect": {"pass": True},
     }
+    inst["data"].update(fleet_facts())
+    return inst
+
+
+# ------------------------------------------------------------- line_health (S9)
+
+def _health_line(id_, mode, vehicles, per_vehicle, round_trip, stops, aboard, idle=0, tod=0.5,
+                 riders=-1.0, riders_day=0.0, riders_night=0.0, schedule="DayAndNight",
+                 require=False, not_enough=False, target_interval=None, loop=6000.0):
+    frames, passengers, capacity, vehicles_s, intervals, clock = [], [], [], [], [], []
+    frame = 1000
+    interval_frames = 262144 // 96
+    for a in aboard:
+        frame += interval_frames
+        frames.append(frame); passengers.append(a); capacity.append(vehicles * per_vehicle)
+        vehicles_s.append(vehicles); intervals.append(round_trip / max(1, vehicles)); clock.append(tod)
+    for _ in range(idle):
+        frame += interval_frames
+        frames.append(frame); passengers.append(0); capacity.append(0); vehicles_s.append(0); intervals.append(0.0); clock.append(0.95)
+    return {
+        "id": id_, "name": "L%d" % id_, "mode": mode, "stops": stops, "loop_metres_b32": f32_bits(loop),
+        "round_trip_b32": f32_bits(round_trip),
+        "target_interval_b32": f32_bits(round_trip / max(1, vehicles) if target_interval is None else target_interval),
+        "game_interval_b32": f32_bits(round_trip / max(1, vehicles)), "stop_duration_b32": f32_bits(15.0),
+        "vehicles": vehicles, "passengers": aboard[-1] if aboard else 0, "capacity": vehicles * per_vehicle,
+        "require_vehicles": require, "not_enough_vehicles": not_enough, "schedule": schedule,
+        "riders_b32": f32_bits(riders), "riders_day_b32": f32_bits(riders_day), "riders_night_b32": f32_bits(riders_night),
+        "sample_frame": frames, "sample_passengers": passengers, "sample_capacity": capacity,
+        "sample_vehicles": vehicles_s, "sample_interval_b32": f32_list(intervals), "sample_time_of_day_b32": f32_list(clock),
+    }
+
+
+def line_health_city():
+    """Nine lines, one per verdict plus a thin window, on the harness's facts (bus
+    80 seats, 300 s prefab interval, slider span 1..13 for a 1000 s round trip):
+      1 FleetUp   3 buses, planning load 205 -> 4 buses at 70 %
+      2 ModeUp    load 1200 needs 22 buses of 13 allowed -> 8 trams
+      3 ModeDown  tram carrying 100 fits 2 buses
+      4 Split     metro load 9100 > 20 trains × 378
+      5 FleetShort the game wants round(1000 / 100) = 10, 6 run, RequireVehicles set
+      6 FleetDown 10 buses for 50 riders -> 1
+      7 Healthy   2 buses for 100 riders, no demand data
+      8 Remove    empty by the readings (1..2 of 160) AND 10 riders a day under the floor as one bus
+      9 Schedule  right-sized, 298 of 300 riders by day -> run by day
+      10 thin     two readings: judged on the last one (200 aboard -> FleetUp)
+    No game answers: subject and evaluator must agree exactly; the verdicts are
+    expected by id."""
+    lines = [
+        _health_line(1, "Bus", 3, 80, 1000.0, 20, [50, 60, 200, 180, 190, 210, 195, 100, 120, 205], riders=500.0, riders_day=400.0, riders_night=100.0),
+        _health_line(2, "Bus", 10, 80, 1000.0, 20, [1100, 1200, 1150, 1180, 1200, 1210]),
+        _health_line(3, "Tram", 2, 240, 1000.0, 20, [90, 100, 95, 100, 98, 100]),
+        _health_line(4, "Metro", 5, 540, 1000.0, 20, [9000, 9100, 9000, 9050, 9000, 9100]),
+        _health_line(5, "Bus", 6, 80, 1000.0, 20, [300, 320, 310, 330, 300, 320], require=True, target_interval=100.0),
+        _health_line(6, "Bus", 10, 80, 1000.0, 20, [40, 50, 45, 50, 48, 50], idle=2),
+        _health_line(7, "Bus", 2, 80, 1000.0, 20, [90, 100, 95, 100, 98, 100]),
+        _health_line(8, "Bus", 2, 80, 1000.0, 20, [1, 2, 1, 2, 2, 1], riders=10.0, riders_day=8.0, riders_night=2.0),
+        _health_line(9, "Bus", 2, 80, 1000.0, 20, [100, 105, 100, 104, 100, 102], riders=300.0, riders_day=298.0, riders_night=2.0),
+        _health_line(10, "Bus", 2, 80, 1000.0, 20, [10, 200]),
+    ]
+    inst = {
+        "kind": "line_health", "name": "line-health-city",
+        "comment": "one line per verdict on the harness facts; subject = evaluator exactly, verdicts expected by id",
+        "data": {
+            "lines": lines,
+            "utilisation_floor_b32": f32_bits(0.15), "utilisation_ceiling_b32": f32_bits(1.0),
+            "target_load_b32": f32_bits(0.7), "window_frames": 262144,
+            "median_usage_b32": None, "empty_threshold_b32": None, "verdicts": None,
+        },
+        "expect": {"subject_exact": True, "verdict_by_id": {
+            "1": "FleetUp", "2": "ModeUp", "3": "ModeDown", "4": "SplitRoute", "5": "FleetShort",
+            "6": "FleetDown", "7": "Healthy", "8": "Remove", "9": "Schedule", "10": "FleetUp"}},
+    }
+    inst["data"].update(fleet_facts())
+    return inst
 
 
 # -------------------------------------------------------------- corridor (S4)
@@ -690,6 +775,9 @@ def lt_common(name, comment, pairs, candidates, k, utilisation_floor, duplicate_
 
 
 def lt_candidate(stops, wait, speed, headway=200.0, capacity=30.0, group=-1):
+    """A candidate whose fleet is pinned to one vehicle (span [1, 1]) with a round
+    trip equal to the headway the case was designed around, so the interval the
+    game derives is exactly that headway (S6 v3: interval = round trip / fleet)."""
     return {
         "group": group,
         "stop_x_b32": f32_list([s[0] for s in stops]),
@@ -697,7 +785,9 @@ def lt_candidate(stops, wait, speed, headway=200.0, capacity=30.0, group=-1):
         "expected_wait_b32": f32_bits(wait),
         "speed_b32": f32_bits(speed),
         "ride_seconds_b32": None,
-        "headway_b32": f32_bits(headway),
+        "round_trip_b32": f32_bits(headway),
+        "fleet_min": 1,
+        "fleet_max": 1,
         "capacity_b32": f32_bits(capacity),
     }
 
@@ -1194,6 +1284,7 @@ def main():
         stop_plan_forced(),
         stop_plan_random(),
         mode_choice_sweep(),
+        line_health_city(),
         corridor_street(),
         corridor_bridge(),
         corridor_maxlen(),

@@ -54,6 +54,9 @@ namespace StationSuitabilityOverlay
             // times, built once per pass and shared by every set problem of the pass.
             public LineSetProblem? PairTable;
             public float[]? Baseline;
+            // The base network routed alone: the riders of every existing line (in the
+            // order of m_ExistingLines when the pass started) for the line verdicts.
+            public LineSetEvaluation? BaselineEvaluation;
             // Where the worker's time went, for the log.
             public long AssignMs;
             public long AlignmentMs;
@@ -141,6 +144,7 @@ namespace StationSuitabilityOverlay
             }
 
             DeferredLog.Info($"Route pass finished: {(elapsed).ToString("F1", CultureInfo.InvariantCulture)} s on the worker, {(pass.Routes.Count).ToString(CultureInfo.InvariantCulture)} suggestions");
+            AdoptExistingLineRiders(pass);
             if (m_Routes.Count == 0)
             {
                 AdoptPass(pass);
@@ -178,6 +182,25 @@ namespace StationSuitabilityOverlay
                 LogSanityChecks(pass.TotalZoneWeight);
             }
 
+        }
+
+        // What the base network carries is a fact about the existing lines, not about
+        // the suggestions, so it is taken over the moment the pass finishes — staged or
+        // not. The collection the pass routed is the one still held (line collection
+        // waits for the worker), so index i is m_ExistingLines[i].
+        private void AdoptExistingLineRiders(RoutePass pass)
+        {
+            LineSetEvaluation? baseline = pass.BaselineEvaluation;
+            if (baseline is null)
+            {
+                return;
+            }
+
+            m_ExistingLineRiders.Clear();
+            for (int i = 0; i < baseline.BaseRiders.Length && i < m_ExistingLines.Count; i++)
+            {
+                m_ExistingLineRiders[m_ExistingLines[i].m_Id] = ((float)baseline.BaseRiders[i], (float)baseline.BaseRidersByDay[i], (float)baseline.BaseRidersByNight[i]);
+            }
         }
 
         private void DiscardPendingRoutes()

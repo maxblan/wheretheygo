@@ -174,6 +174,27 @@ namespace StationSuitabilityOverlay
                 _ = builder.Append(health.m_DaySamples);
                 _ = builder.Append('|');
                 _ = builder.Append(health.m_NightSamples);
+                _ = builder.Append('|');
+                // The plan (2026-09-06): demand utilisation at the recommended fleet ("-"
+                // before the first route pass), the recommended mode and fleet, the span
+                // the game allows (max 0 = unbounded), the planning load and the riders.
+                _ = builder.Append(health.HasDemand ? (health.m_Utilisation * 100f).ToString("F0", CultureInfo.InvariantCulture) : "-");
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_RecommendedMode);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_RecommendedFleet);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_FleetMin);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_FleetMax == int.MaxValue ? 0 : health.m_FleetMax);
+                _ = builder.Append('|');
+                _ = builder.Append(health.m_PlanningLoad);
+                _ = builder.Append('|');
+                _ = builder.Append(health.HasDemand ? health.m_RidersPerDay.ToString("F0", CultureInfo.InvariantCulture) : "-");
+                _ = builder.Append('|');
+                _ = builder.Append((health.m_DayUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
+                _ = builder.Append('|');
+                _ = builder.Append((health.m_NightUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
             }
 
             return builder.ToString();

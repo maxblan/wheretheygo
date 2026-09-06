@@ -3,8 +3,8 @@
 
 Per instance: validate -> subject (mod code) -> independent checks -> reference
 optimum (SCIP exact + VIPR, independently checked, for `sites`; complete
-enumeration for `lineset_time`; solver-free rational certificate for `lattice_path`)
--> verdict. Exit code 0 only if every instance's verdict passes the contract in
+enumeration for `lineset_time`; solver-free rational certificate for `lattice_path`;
+exact re-derivation for the function-shaped kinds incl. `line_health`) -> verdict. Exit code 0 only if every instance's verdict passes the contract in
 verification/README.md.
 
 Usage:
@@ -35,6 +35,7 @@ from evaluator import roadtimes as ev_roadtimes  # noqa: E402
 from evaluator import coverage as ev_coverage  # noqa: E402
 from evaluator.checkcert_dirpath import check_directed_certificate  # noqa: E402
 from evaluator import lineset_time as ev_lineset_time  # noqa: E402
+from evaluator import line_health as ev_line_health  # noqa: E402
 from evaluator import modes as ev_modes  # noqa: E402
 from evaluator import orderstats as ev_orderstats  # noqa: E402
 from evaluator import paths as ev_paths  # noqa: E402
@@ -553,7 +554,7 @@ def base_pass(kind: str, verdict: dict) -> bool:
         return bool(verdict.get("pass_path") and verdict.get("certificate_verified")
                     and lean_ok is not False)
     if kind in ("stop_plan", "mode_choice", "corridor",
-                "heatmap_grid", "heatmap_walk", "order_stats", "coverage"):
+                "heatmap_grid", "heatmap_walk", "order_stats", "coverage", "line_health"):
         return bool(verdict.get("evaluator", {}).get("ok"))
     if kind == "lineset_time":
         return bool(verdict.get("pass_set") and verdict.get("pass_optimal"))
@@ -649,6 +650,12 @@ def run_instance(name: str, stamp: str, version_info: dict) -> bool:
         verdict = {"evaluator": ev_orderstats.check(instance, solution)}
     elif kind == "lineset_time":
         verdict = check_lineset_time(instance, solution, out_dir, notes)
+    elif kind == "line_health":
+        report = ev_line_health.check(instance, solution)
+        verdict = {"evaluator": report, "three_way_exact": report["three_way_exact"],
+                   "subject_exact": report["subject_exact"], "verdict_by_id": report["verdict_by_id"]}
+        if not report["game_present"]:
+            notes.append("synthetic instance: subject vs evaluator only (no game answers)")
     else:
         print(f"[{name}] unknown kind {kind}")
         return False

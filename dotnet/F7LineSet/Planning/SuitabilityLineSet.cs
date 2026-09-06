@@ -13,8 +13,13 @@ namespace StationSuitabilityOverlay
         public float ExpectedWait;
         public float SpeedMetresPerSecond;
         public float[]? RideSeconds;
-        public float HeadwaySeconds;
+        // What the utilisation of the candidate rests on: its round trip, the seats of
+        // one vehicle and the fleet span the game allows it (A6.8) — the fleet itself is
+        // sized to the riders a set hands the line (FleetFor).
+        public float RoundTripSeconds;
         public float VehicleCapacity;
+        public int FleetMin = 1;
+        public int FleetMax = int.MaxValue;
         // Variants of one alignment — direct or bent through a hub, one mode or the next
         // up, a rail trace or its re-trace along streets — share a group and are
         // alternatives: a set holds at most one of a group (register A4.7). Negative =
@@ -90,6 +95,12 @@ namespace StationSuitabilityOverlay
         public double[] Riders = Array.Empty<double>();
         public double[] RidersByDay = Array.Empty<double>();
         public double[] RidersByNight = Array.Empty<double>();
+        // The same attribution for the EXISTING lines (index = position in BaseLines):
+        // what the network as it stands carries, which is what the line verdicts read
+        // as a line's demand (register A8.2, decided 2026-09-06).
+        public double[] BaseRiders = Array.Empty<double>();
+        public double[] BaseRidersByDay = Array.Empty<double>();
+        public double[] BaseRidersByNight = Array.Empty<double>();
         // Door-to-door time of every pair under this set (float.MaxValue = not carried).
         public float[] After = Array.Empty<float>();
         // Time-weighted components over all pairs for the realism diagnostic
@@ -162,6 +173,9 @@ namespace StationSuitabilityOverlay
                 Riders = new double[problem.Candidates.Count],
                 RidersByDay = new double[problem.Candidates.Count],
                 RidersByNight = new double[problem.Candidates.Count],
+                BaseRiders = new double[problem.BaseLines.Count],
+                BaseRidersByDay = new double[problem.BaseLines.Count],
+                BaseRidersByNight = new double[problem.BaseLines.Count],
                 After = new float[problem.PairCount],
             };
             bool hasShares = problem.PairDayShare.Length >= problem.PairCount;
@@ -195,9 +209,21 @@ namespace StationSuitabilityOverlay
                     double dayShare = hasShares ? problem.PairDayShare[i] : 1.0;
                     for (int r = 0; r < ridden.Length; r++)
                     {
-                        evaluation.Riders[chosen[ridden[r]]] += weight;
-                        evaluation.RidersByDay[chosen[ridden[r]]] += weight * dayShare;
-                        evaluation.RidersByNight[chosen[ridden[r]]] += weight * (1.0 - dayShare);
+                        // Lines below the offset are the existing network's, in
+                        // BaseLines order; the rest are the chosen candidates.
+                        int line = ridden[r];
+                        if (line < lineOffset)
+                        {
+                            evaluation.BaseRiders[line] += weight;
+                            evaluation.BaseRidersByDay[line] += weight * dayShare;
+                            evaluation.BaseRidersByNight[line] += weight * (1.0 - dayShare);
+                        }
+                        else
+                        {
+                            evaluation.Riders[chosen[line - lineOffset]] += weight;
+                            evaluation.RidersByDay[chosen[line - lineOffset]] += weight * dayShare;
+                            evaluation.RidersByNight[chosen[line - lineOffset]] += weight * (1.0 - dayShare);
+                        }
                     }
                 }
 
@@ -410,7 +436,8 @@ namespace StationSuitabilityOverlay
 
         // Walks the retained shortest itinerary back from the alighting stop to the
         // stop the journey started at, splitting its cost into walk, wait and ride and
-        // noting each ridden candidate line once (RidesPerJourney is applied by the
+        // noting each ridden line once — existing lines and chosen candidates alike, by
+        // their index in the transit network (RidesPerJourney is applied by the
         // utilisation formula). The starting stop's distance is the origin's access walk.
         private static void AttributeItinerary(
             TransitNetwork network, DijkstraWorkspace workspace, int alight,
@@ -436,8 +463,8 @@ namespace StationSuitabilityOverlay
                         break;
                     case TransitEdgeKind.Access:
                         into.Wait[pair] += cost;
-                        int line = network.EdgeLine[edge] - lineOffset;
-                        if (line >= 0 && line < count)
+                        int line = network.EdgeLine[edge];
+                        if (line >= 0 && line < lineOffset + count)
                         {
                             ridden ??= new List<int>();
                             if (!ridden.Contains(line))
@@ -531,19 +558,26 @@ namespace StationSuitabilityOverlay
             return false;
         }
 
+        // The fleet a candidate runs for the riders a set hands it: sized to the ceiling
+        // within the game's span (TransitModes.PlanFleet; A6.8).
+        public static FleetPlan FleetFor(LineSetProblem problem, int candidate, double riders)
+        {
+            LineCandidate line = problem.Candidates[candidate];
+            float ceiling = problem.UtilisationCeiling > 0f ? problem.UtilisationCeiling : Assumptions.MaxPlannedUtilisation;
+            return TransitModes.PlanFleet((float)riders, line.RoundTripSeconds, line.VehicleCapacity, line.FleetMin, line.FleetMax, ceiling);
+        }
+
         // Boardings per game day over seats offered per game day, for one candidate given
-        // the journey weight riding it in a set.
+        // the journey weight riding it in a set, at the fleet that weight is sized to.
         public static float Utilisation(LineSetProblem problem, int candidate, double riders)
         {
             LineCandidate line = problem.Candidates[candidate];
-            if (line.HeadwaySeconds <= 0f || line.VehicleCapacity <= 0f || problem.MovementSecondsPerDay <= 0f)
+            if (line.RoundTripSeconds <= 0f || line.VehicleCapacity <= 0f || problem.MovementSecondsPerDay <= 0f)
             {
                 return 0f;
             }
 
-            double boardings = riders * Assumptions.RidesPerJourney;
-            double seats = problem.MovementSecondsPerDay / line.HeadwaySeconds * 2.0 * line.VehicleCapacity;
-            return (float)(boardings / seats);
+            return FleetFor(problem, candidate, riders).Utilisation;
         }
 
         public static LineSetSolution Solve(LineSetProblem problem, long nodeBudget)

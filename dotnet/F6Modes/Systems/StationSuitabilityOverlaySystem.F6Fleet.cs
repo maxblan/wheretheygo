@@ -14,10 +14,16 @@ namespace StationSuitabilityOverlay
 
         private EntityQuery m_LinePrefabQuery;
 
+        // The UI transport configuration singleton, which names the vehicle-count policy
+        // prefab (Game.Prefabs.UITransportConfigurationPrefab.m_VehicleCountPolicy).
+        private EntityQuery m_TransportConfigQuery;
+
         // Capacity per mode, read once from the prefabs. Prefabs do not change while a
         // save is loaded, so this is built on the first compute and kept; a reload
         // rebuilds it with the rest of the system.
         private ModeFacts[]? m_FleetFacts;
+
+        private VehicleCountPolicy? m_VehicleCountPolicy;
 
         // Largest vehicle capacity per Game.Prefabs.TransportType (index = enum value),
         // read alongside m_FleetFacts. The interchange weights derive from it.
@@ -37,6 +43,7 @@ namespace StationSuitabilityOverlay
                 None = new[] { ComponentType.ReadOnly<Deleted>() },
             });
             m_EconomyQuery = GetEntityQuery(ComponentType.ReadOnly<EconomyParameterData>());
+            m_TransportConfigQuery = GetEntityQuery(ComponentType.ReadOnly<UITransportConfigurationData>());
         }
 
         // Capacity weight per Game.Prefabs.TransportType index, from the loaded prefabs
@@ -80,13 +87,14 @@ namespace StationSuitabilityOverlay
         // do not change while a save is loaded, and a reload rebuilds the system.
         private FleetFacts ReadFleetFacts()
         {
-            if (m_FleetFacts is null)
+            if (m_FleetFacts is null || m_VehicleCountPolicy is null)
             {
-                m_FleetFacts = SuitabilityFleet.Read(EntityManager, m_VehiclePrefabQuery, m_LinePrefabQuery, out float[] byType);
+                m_VehicleCountPolicy = SuitabilityFleet.ReadVehicleCountPolicy(EntityManager, m_PrefabSystem, m_TransportConfigQuery);
+                m_FleetFacts = SuitabilityFleet.Read(EntityManager, m_VehiclePrefabQuery, m_LinePrefabQuery, m_VehicleCountPolicy, out float[] byType);
                 m_TypeCapacities = byType;
             }
 
-            return new FleetFacts(m_FleetFacts);
+            return new FleetFacts(m_FleetFacts, m_VehicleCountPolicy);
         }
     }
 }

@@ -1,86 +1,111 @@
 {
- "comment": "capacity ladder over the game's fleet facts; Water has no line prefab (table headway)",
+ "comment": "capacity ladder over the game's fleet facts and slider span; Water has no line prefab (unbounded span)",
  "data": {
   "facts": {
    "Bus": {
     "acceleration_b32": 1069547520,
     "braking_b32": 1069547520,
     "capacity_b32": 1117782016,
-    "headway_b32": 1133903872,
+    "prefab_interval_b32": 1133903872,
     "stop_duration_b32": 1097859072
    },
    "Ferry": {
     "acceleration_b32": 1056964608,
     "braking_b32": 1056964608,
     "capacity_b32": 1137180672,
-    "headway_b32": 0,
+    "prefab_interval_b32": 0,
     "stop_duration_b32": 1109393408
    },
    "Metro": {
     "acceleration_b32": 1067030938,
     "braking_b32": 1067030938,
     "capacity_b32": 1141309440,
-    "headway_b32": 1128792064,
+    "prefab_interval_b32": 1128792064,
     "stop_duration_b32": 1101004800
    },
    "Train": {
     "acceleration_b32": 1065353216,
     "braking_b32": 1065353216,
     "capacity_b32": 1154613248,
-    "headway_b32": 1139802112,
+    "prefab_interval_b32": 1139802112,
     "stop_duration_b32": 1106247680
    },
    "Tram": {
     "acceleration_b32": 1067030938,
     "braking_b32": 1067030938,
     "capacity_b32": 1131413504,
-    "headway_b32": 1131413504,
+    "prefab_interval_b32": 1133903872,
     "stop_duration_b32": 1097859072
    }
+  },
+  "policy": {
+   "delta_max_b32": 1077936128,
+   "delta_min_b32": 3208642560,
+   "known": true,
+   "mode": "Relative"
   },
   "rows": [
    {
     "network": "Road",
-    "riders_b32": 1120403456
+    "riders_b32": 1120403456,
+    "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
-    "riders_b32": 1150681088
+    "riders_b32": 1157234688,
+    "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
-    "riders_b32": 1157234688
+    "riders_b32": 1167867904,
+    "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
-    "riders_b32": 1203982336
+    "riders_b32": 1203982336,
+    "round_trip_b32": 1148846080
+   },
+   {
+    "network": "Road",
+    "riders_b32": 1157234688,
+    "round_trip_b32": 1161527296
    },
    {
     "network": "Rail",
-    "riders_b32": 1167867904
+    "riders_b32": 1167867904,
+    "round_trip_b32": 1148846080
    },
    {
     "network": "Rail",
-    "riders_b32": 1189765120
+    "riders_b32": 1189765120,
+    "round_trip_b32": 1148846080
    },
    {
     "network": "Rail",
-    "riders_b32": 1315859240
+    "riders_b32": 1315859240,
+    "round_trip_b32": 1148846080
+   },
+   {
+    "network": "Metro",
+    "riders_b32": 1167867904,
+    "round_trip_b32": 1157234688
    },
    {
     "network": "Water",
-    "riders_b32": 1092616192
+    "riders_b32": 1092616192,
+    "round_trip_b32": 1148846080
    },
    {
     "network": "Water",
-    "riders_b32": 1167867904
+    "riders_b32": 1167867904,
+    "round_trip_b32": 1148846080
    }
   ]
  },
  "expect": {
   "pass": true
  },
- "hash": "9eab7df5ed285d76d5eb3399878370322ee440c0a71c3a87941506b6d9e7bdaa",
+ "hash": "5fb026f3cc9b1a018d14d69da175dab07dd83ed8c496502e09d83daaa0b5d0ce",
  "kind": "mode_choice",
  "name": "mode-choice-sweep",
  "schema_version": 1

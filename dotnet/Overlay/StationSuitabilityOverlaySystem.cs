@@ -511,10 +511,15 @@ namespace StationSuitabilityOverlay
             // panel then showed line verdicts and "1 Messung" beside them, which is
             // exactly as broken as it sounds. Reading six lines is cheap; the route
             // pipeline below is what stays gated.
+            //
+            // The READING runs on the simulation clock (every ReadingIntervalFrames,
+            // A8.5) and touches nothing the route worker holds; the JUDGING, which
+            // rebuilds the line collection the worker reads, waits for the worker.
+            ObserveLines();
             if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds && !m_RoutesPending)
             {
                 m_LastLineSample = now;
-                RefreshLineHealth();
+                RefreshLineHealth(settings);
             }
 
             // Also ungated on `active`: a journey not seen is demand not counted.

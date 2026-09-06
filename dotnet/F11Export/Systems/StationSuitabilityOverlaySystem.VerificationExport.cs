@@ -148,6 +148,12 @@ namespace StationSuitabilityOverlay
                     WriteInstance(folder, $"real-{city}-{stamp}-stops", stops);
                 }
 
+                string? health = BuildLineHealthInstance($"real-{city}-{stamp}-health");
+                if (health is not null)
+                {
+                    WriteInstance(folder, $"real-{city}-{stamp}-health", health);
+                }
+
                 Mod.Log.Info(
                     $"Verification export written to {folder} " +
                     $"(grid {(capture.m_Grid.x).ToString(CultureInfo.InvariantCulture)}x{(capture.m_Grid.y).ToString(CultureInfo.InvariantCulture)}, " +
@@ -481,7 +487,9 @@ namespace StationSuitabilityOverlay
                     .Add("expected_wait_b32", SuitabilityExportJson.Bits(line.ExpectedWait))
                     .Add("speed_b32", SuitabilityExportJson.Bits(line.SpeedMetresPerSecond))
                     .Add("ride_seconds_b32", line.RideSeconds is null ? SuitabilityExportJson.Null() : SuitabilityExportJson.BitsArray(line.RideSeconds))
-                    .Add("headway_b32", SuitabilityExportJson.Bits(line.HeadwaySeconds))
+                    .Add("round_trip_b32", SuitabilityExportJson.Bits(line.RoundTripSeconds))
+                    .Add("fleet_min", SuitabilityExportJson.Int(line.FleetMin))
+                    .Add("fleet_max", SuitabilityExportJson.Int(line.FleetMax == int.MaxValue ? 0 : line.FleetMax))
                     .Add("capacity_b32", SuitabilityExportJson.Bits(line.VehicleCapacity))
                     .Add("group", SuitabilityExportJson.Int(line.Group))
                     .Add("mode", SuitabilityExportJson.Str(m_LineSetResolved[c].Mode.ToString()))
@@ -733,6 +741,141 @@ namespace StationSuitabilityOverlay
                 .Add("name", SuitabilityExportJson.Str(name))
                 .Add("data", data)
                 .BuildHashed(ExportSchemaVersion);
+        }
+
+        // The line-health pass as it was judged (F9 v2, the `line_health` kind): every
+        // line as collected with the routing's riders, the window's readings per line,
+        // the prefab facts and the vehicle-count policy, the floors, and the verdicts
+        // and plans the mod drew. The inputs are the LineHealthProblem captured at the
+        // judgement, so a reading taken since cannot make the instance inconsistent.
+        private string? BuildLineHealthInstance(string name)
+        {
+            LineHealthProblem? problem = m_HealthProblem;
+            if (problem is null || problem.Lines.Count == 0)
+            {
+                return null;
+            }
+
+            var lines = new List<string>(problem.Lines.Count);
+            for (int i = 0; i < problem.Lines.Count; i++)
+            {
+                ExistingLine line = problem.Lines[i];
+                LineObservation[] samples = problem.Samples.TryGetValue(line.m_Id, out LineObservation[]? found) ? found : Array.Empty<LineObservation>();
+                var frames = new long[samples.Length];
+                var passengers = new int[samples.Length];
+                var capacity = new int[samples.Length];
+                var vehicles = new int[samples.Length];
+                var intervals = new float[samples.Length];
+                var clock = new float[samples.Length];
+                for (int k = 0; k < samples.Length; k++)
+                {
+                    frames[k] = samples[k].m_Frame;
+                    passengers[k] = samples[k].m_Passengers;
+                    capacity[k] = samples[k].m_Capacity;
+                    vehicles[k] = samples[k].m_Vehicles;
+                    intervals[k] = samples[k].m_IntervalSeconds;
+                    clock[k] = samples[k].m_TimeOfDay;
+                }
+
+                lines.Add(new SuitabilityJsonObject()
+                    .Add("id", SuitabilityExportJson.Int(line.m_Id))
+                    .Add("name", SuitabilityExportJson.Str(line.m_Name))
+                    .Add("mode", SuitabilityExportJson.Str(line.m_Mode.ToString()))
+                    .Add("stops", SuitabilityExportJson.Int(line.m_StopIndices.Count))
+                    .Add("loop_metres_b32", SuitabilityExportJson.Bits(line.m_LengthMetres))
+                    .Add("round_trip_b32", SuitabilityExportJson.Bits(line.m_StableDurationSeconds))
+                    .Add("target_interval_b32", SuitabilityExportJson.Bits(line.m_TargetInterval))
+                    .Add("game_interval_b32", SuitabilityExportJson.Bits(line.m_VehicleInterval))
+                    .Add("stop_duration_b32", SuitabilityExportJson.Bits(line.m_StopDuration))
+                    .Add("vehicles", SuitabilityExportJson.Int(line.m_Vehicles))
+                    .Add("passengers", SuitabilityExportJson.Int(line.m_Passengers))
+                    .Add("capacity", SuitabilityExportJson.Int(line.m_Capacity))
+                    .Add("require_vehicles", SuitabilityExportJson.Bool(line.m_RequireVehicles))
+                    .Add("not_enough_vehicles", SuitabilityExportJson.Bool(line.m_NotEnoughVehicles))
+                    .Add("schedule", SuitabilityExportJson.Str(line.m_Schedule.ToString()))
+                    .Add("riders_b32", SuitabilityExportJson.Bits(line.m_RidersPerDay))
+                    .Add("riders_day_b32", SuitabilityExportJson.Bits(line.m_RidersByDay))
+                    .Add("riders_night_b32", SuitabilityExportJson.Bits(line.m_RidersByNight))
+                    .Add("sample_frame", LongArray(frames))
+                    .Add("sample_passengers", SuitabilityExportJson.IntArray(passengers))
+                    .Add("sample_capacity", SuitabilityExportJson.IntArray(capacity))
+                    .Add("sample_vehicles", SuitabilityExportJson.IntArray(vehicles))
+                    .Add("sample_interval_b32", SuitabilityExportJson.BitsArray(intervals))
+                    .Add("sample_time_of_day_b32", SuitabilityExportJson.BitsArray(clock))
+                    .Build());
+            }
+
+            var verdicts = new List<string>(m_LineHealth.Count);
+            for (int i = 0; i < m_LineHealth.Count; i++)
+            {
+                LineHealth health = m_LineHealth[i];
+                verdicts.Add(new SuitabilityJsonObject()
+                    .Add("id", SuitabilityExportJson.Int(health.m_Id))
+                    .Add("verdict", SuitabilityExportJson.Str(health.m_Verdict.ToString()))
+                    .Add("mode", SuitabilityExportJson.Str(health.m_RecommendedMode.ToString()))
+                    .Add("fleet", SuitabilityExportJson.Int(health.m_RecommendedFleet))
+                    .Add("fleet_min", SuitabilityExportJson.Int(health.m_FleetMin))
+                    .Add("fleet_max", SuitabilityExportJson.Int(health.m_FleetMax == int.MaxValue ? 0 : health.m_FleetMax))
+                    .Add("round_trip_b32", SuitabilityExportJson.Bits(health.m_RoundTripSeconds))
+                    .Add("headway_b32", SuitabilityExportJson.Bits(health.m_HeadwaySeconds))
+                    .Add("utilisation_b32", SuitabilityExportJson.Bits(health.m_Utilisation))
+                    .Add("day_utilisation_b32", SuitabilityExportJson.Bits(health.m_DayUtilisation))
+                    .Add("night_utilisation_b32", SuitabilityExportJson.Bits(health.m_NightUtilisation))
+                    .Add("advice", SuitabilityExportJson.Str(health.m_ScheduleAdvice.ToString()))
+                    .Add("planning_load", SuitabilityExportJson.Int(health.m_PlanningLoad))
+                    .Add("usage_b32", SuitabilityExportJson.Bits(health.m_Usage))
+                    .Add("peak_usage_b32", SuitabilityExportJson.Bits(health.m_PeakUsage))
+                    .Add("target_vehicles", SuitabilityExportJson.Int(health.m_TargetVehicles))
+                    .Add("window_samples", SuitabilityExportJson.Int(health.m_WindowSamples))
+                    .Build());
+            }
+
+            VehicleCountPolicy policy = problem.Facts.Policy;
+            var data = new SuitabilityJsonObject()
+                .Add("lines", SuitabilityExportJson.Array(lines))
+                .Add("facts", FleetFactsJson(problem.Facts))
+                .Add("policy", new SuitabilityJsonObject()
+                    .Add("known", SuitabilityExportJson.Bool(policy.Known))
+                    .Add("mode", SuitabilityExportJson.Str(policy.Mode.ToString()))
+                    .Add("delta_min_b32", SuitabilityExportJson.Bits(policy.DeltaMin))
+                    .Add("delta_max_b32", SuitabilityExportJson.Bits(policy.DeltaMax))
+                    .Build())
+                .Add("utilisation_floor_b32", SuitabilityExportJson.Bits(problem.UtilisationFloor))
+                .Add("utilisation_ceiling_b32", SuitabilityExportJson.Bits(problem.UtilisationCeiling))
+                .Add("target_load_b32", SuitabilityExportJson.Bits(problem.TargetLoad))
+                .Add("window_frames", SuitabilityExportJson.Int(problem.WindowFrames))
+                .Add("median_usage_b32", SuitabilityExportJson.Bits(m_HealthReference.m_MedianUsage))
+                .Add("empty_threshold_b32", SuitabilityExportJson.Bits(m_HealthReference.m_EmptyThreshold))
+                .Add("verdicts", SuitabilityExportJson.Array(verdicts))
+                .Build();
+
+            return new SuitabilityJsonObject()
+                .Add("kind", SuitabilityExportJson.Str("line_health"))
+                .Add("name", SuitabilityExportJson.Str(name))
+                .Add("comment", SuitabilityExportJson.Str("exported from a live city at the last line-health judgement"))
+                .Add("data", data)
+                .BuildHashed(ExportSchemaVersion);
+        }
+
+        // The prefab facts per mode, as the mode_choice and line_health kinds read them.
+        private static string FleetFactsJson(FleetFacts facts)
+        {
+            var byMode = new SuitabilityJsonObject();
+            ModePreset[] modes = TransitModes.All;
+            for (int m = 0; m < modes.Length; m++)
+            {
+                ModePreset mode = modes[m];
+                _ = byMode.Add(mode.ToString(), new SuitabilityJsonObject()
+                    .Add("capacity_b32", SuitabilityExportJson.Bits(facts.CapacityFor(mode)))
+                    .Add("prefab_interval_b32", SuitabilityExportJson.Bits(facts.PrefabIntervalFor(mode)))
+                    .Add("stop_duration_b32", SuitabilityExportJson.Bits(facts.StopDurationFor(mode)))
+                    .Add("acceleration_b32", SuitabilityExportJson.Bits(facts.AccelerationFor(mode)))
+                    .Add("braking_b32", SuitabilityExportJson.Bits(facts.BrakingFor(mode)))
+                    .Add("delay_per_stop_b32", SuitabilityExportJson.Bits(facts.DelayPerStopSeconds(mode)))
+                    .Build());
+            }
+
+            return byMode.Build();
         }
 
         private static string LongArray(long[] values)

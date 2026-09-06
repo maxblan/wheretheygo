@@ -313,11 +313,11 @@ namespace StationSuitabilityOverlay.Tests
                 }
 
                 var byMode = new ModeFacts[5];
-                byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, HeadwaySeconds = 45f, StopDurationSeconds = 5f, Acceleration = 4f, Braking = 5f };
-                byMode[(int)ModePreset.Metro] = new ModeFacts { Capacity = 600f, HeadwaySeconds = 60f, StopDurationSeconds = 20f, Acceleration = 1.2f, Braking = 1.5f };
-                byMode[(int)ModePreset.Tram] = new ModeFacts { Capacity = 200f, HeadwaySeconds = 45f, StopDurationSeconds = 10f, Acceleration = 1.5f, Braking = 2f };
-                byMode[(int)ModePreset.Train] = new ModeFacts { Capacity = 800f, HeadwaySeconds = 90f, StopDurationSeconds = 30f, Acceleration = 0.8f, Braking = 1f };
-                byMode[(int)ModePreset.Ferry] = new ModeFacts { Capacity = 100f, HeadwaySeconds = 90f, StopDurationSeconds = 30f, Acceleration = 0.5f, Braking = 0.8f };
+                byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, PrefabIntervalSeconds = 45f, StopDurationSeconds = 5f, Acceleration = 4f, Braking = 5f };
+                byMode[(int)ModePreset.Metro] = new ModeFacts { Capacity = 600f, PrefabIntervalSeconds = 60f, StopDurationSeconds = 20f, Acceleration = 1.2f, Braking = 1.5f };
+                byMode[(int)ModePreset.Tram] = new ModeFacts { Capacity = 200f, PrefabIntervalSeconds = 45f, StopDurationSeconds = 10f, Acceleration = 1.5f, Braking = 2f };
+                byMode[(int)ModePreset.Train] = new ModeFacts { Capacity = 800f, PrefabIntervalSeconds = 90f, StopDurationSeconds = 30f, Acceleration = 0.8f, Braking = 1f };
+                byMode[(int)ModePreset.Ferry] = new ModeFacts { Capacity = 100f, PrefabIntervalSeconds = 90f, StopDurationSeconds = 30f, Acceleration = 0.5f, Braking = 0.8f };
                 Facts = new FleetFacts(byMode);
                 var hubX = new float[6];
                 var hubZ = new float[6];
@@ -474,8 +474,11 @@ namespace StationSuitabilityOverlay.Tests
             AssertBits(0x43FBA411u, ride, "ride seconds");
             AssertTrue(SuitabilityRoutes.KeepsItsShape(copy, ride), "within the tram's ride limit");
             AssertTrue(!SuitabilityRoutes.KeepsItsShape(copy, Assumptions.MaxRideSecondsFor(ModePreset.Tram) + 1f), "over the limit the shape gate fails");
-            AssertTrue(SuitabilityRoutes.EstimateVehicles(copy.Mode, copy.Length, copy.Stops.Count, city.Facts.HeadwayFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode)) == 4, "fleet from length at cruise speed");
-            AssertTrue(SuitabilityRoutes.EstimateVehiclesFromRoundTrip(1234.5f, copy.Stops.Count, 300f, 20f) == 5, "fleet from a measured round trip");
+            float roundTrip = TransitModes.RoundTripSeconds(copy.Length * 2f, copy.Stops.Count * 2, Assumptions.CruiseSpeedFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode));
+            AssertTrue(roundTrip > 2f * ride, "the loop with a dwell at every call each way outlasts two one-way rides");
+            AssertBits(0x44865208u, roundTrip, "round trip seconds: an 8.8 km loop at 12 m/s plus twenty tram calls");
+            city.Facts.FleetSpanFor(copy.Mode, roundTrip, out int min, out int max);
+            AssertTrue(min == 1 && max == int.MaxValue, "the synthetic city has no slider policy, so the span is open above");
         }
 
         private static void RetraceAndDuplicatesArePinned()

@@ -267,3 +267,50 @@ well-defined problem against which S2/S7 optimality can be certified.
 **UNVERIFIED (not relied on):** Untermann's walking-distance percentages; any primary
 source for an "acceptable transfer walk of 2–3 minutes"; the specific inequality index
 used by Camporeale et al.; Zhao et al. 2003 numeric thresholds.
+
+## 11. Line health: fleet sizing, load standards and monitoring (added 2026-09-06, for S9 v2)
+
+What S9 now computes and what the literature says about each piece. Marked (V) only
+where the primary text was read; everything else is stated as "practice" and carries
+no weight in `docs/correctness-claims.md`.
+
+**Fleet from cycle time and headway.** The identity the game itself uses — vehicles =
+round trip ÷ interval — is the textbook fleet-size relation N = T_cycle / h (Vuchic,
+*Urban Transit: Operations, Planning and Economics*, Wiley 2005, ch. 2; Ceder, *Public
+Transit Planning and Operation*, Elsevier 2007 / CRC 2016, ch. 6–7). The mod does not
+derive it: it mirrors `TransportLineSystem.CalculateVehicleCount` (V, decompiled) and
+proves the derived fleet rule minimal (Lean CF.8).
+
+**Frequency from the peak load.** Setting a line's frequency so that the load at the
+busiest point does not exceed a design load is the "max load" method of Furth & Wilson
+("Setting Frequencies on Bus Routes: Theory and Practice", *Transportation Research
+Record* 818, 1981) and Ceder ("Bus frequency determination using passenger count data",
+*Transportation Research Part A* 18(5–6), 1984, doi 10.1016/0191-2607(84)90019-0). S9's
+`v_load = ⌈L / (0.7·c)⌉` is that rule with L the fleet-wide planning load; the 0.7 is a
+judgement (register A8.3) standing in for the design load factor, which TCQSM (TCRP
+Report 165, 2013, ch. 5) treats as an agency policy value — commonly seated load for
+long trips and up to crush load for short peak trips — not a constant. The fleet-wide
+count aboard is not the max-load-point count; the 0.7 is also what absorbs that gap.
+
+**A quantile as the planning statistic.** Sizing to a high percentile of observed loads
+rather than to the single maximum is standard monitoring practice (TCQSM's peak-15-minute
+loads; agency load standards are stated as shares of trips exceeding a load) but the 90th
+percentile here is the user's decision (2026-09-06, question 4b), not a literature value.
+
+**Occupancy vs. throughput utilisation.** Two quantities carry the word "utilisation" in
+this mod and the register keeps them apart: occupancy (riders aboard ÷ seats, a snapshot
+— what the game's own UI shows) drives the relative "empty" bar; throughput utilisation
+(boardings a day ÷ seats offered a day) drives the floor, the ladder and the schedule.
+TCQSM's load factor is the former, its productivity measures (boardings per revenue
+hour) the latter.
+
+**Waiting time.** The v1 "long waits" verdict rested on the game's `m_VehicleInterval`,
+which turned out (decompiled 2026-09-06) not to be a measurement; the verdict is
+retired. The literature's headway-based waiting models — E[W] = h/2 for random arrivals
+at short headways (Welding 1957; Osuna & Newell 1972, *Transportation Science* 6(1)),
+(h/2)(1 + CV²) under irregular headways — would need observed vehicle arrivals
+(`VehicleTiming` at the waypoints), which the mod does not read yet.
+
+**Relative thresholds.** The upper-median bar has no literature source; its one
+provable property — it can flag at most half the lines — is CF.9.
+

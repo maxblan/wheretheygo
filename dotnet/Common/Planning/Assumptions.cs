@@ -332,11 +332,9 @@ namespace StationSuitabilityOverlay
         public const float MinStopSeparationMetres = 20f;
 
         // ---- S6 modes and fleets
+        // Out and back: every journey the demand model knows boards twice a day.
         public const float RidesPerJourney = 2f;
 
-        // The mode a struggling line should grow into. Ordered by capacity, so a bus
-        // becomes a tram before it becomes a metro — suggesting the largest possible
-        // jump would rarely be actionable.
         // Fallbacks for prefab facts the save does not carry (A5.5: the game's own
         // values are read at run time and logged; these only stand in for a missing
         // vehicle or line prefab).
@@ -345,14 +343,19 @@ namespace StationSuitabilityOverlay
         public const float DefaultAcceleration = 1.5f;
 
         // Past this share of its seats a mode is overloaded and the next one up is
-        // wanted (A6.x: the game's own capacities decide the mode).
+        // wanted (A6.x: the game's own capacities decide the mode). Also the ceiling
+        // the fleet of a line is sized to on its daily boardings (A6.8): the smallest
+        // fleet whose seats a day the boardings do not exceed.
         public const float MaxPlannedUtilisation = 1f;
 
         // A suggested line has at least this many stops: two stops are a shuttle, not a
         // service (register A4.6/A6.1, 2026-09-05).
         public const int MinStops = 3;
 
-        public const float MinPlannedHeadwaySeconds = 30f;
+        // The share of its seats a vehicle is planned to fill at the busiest reading
+        // (A8.3): the fleet of an existing line is the smallest that carries the
+        // planning load at this fill, leaving the rest for the peaks the readings miss.
+        public const float TargetLoad = 0.7f;
 
         // ---- S7 line set
         // Two candidates of one mode whose stops all lie within this distance of each
@@ -375,60 +378,35 @@ namespace StationSuitabilityOverlay
         public const float DuplicateRiderShare = 0.5f;
 
         // ---- S9 line health
-        // Above this share of capacity a line is effectively full.
-        public const float FullUsage = 0.85f;
-
-        // Below this it is not carrying enough to justify itself. Usage is an
-        // INSTANTANEOUS snapshot of passengers against fleet capacity, and a healthy
-        // line sits well under half full most of the time — at 0.15 this flagged 18 of
-        // 19 lines on a working city, which is noise rather than advice.
+        // Below this share of capacity a line is not carrying enough to justify itself
+        // (A8.1). Occupancy is a snapshot of passengers aboard against fleet capacity,
+        // and a healthy line sits well under half full most of the time — at 0.15 this
+        // flagged 18 of 19 lines on a working city, which is noise rather than advice.
         public const float EmptyUsage = 0.06f;
 
         // A line is only "empty" if it is far below what this city's lines normally
-        // carry. Without the relative test a fixed threshold flags most of a healthy
-        // network, because usage is an instantaneous snapshot.
+        // carry (A8.1). Without the relative test a fixed threshold flags most of a
+        // healthy network. Because the reference is the city's upper median, at most
+        // half the lines can ever fall under this bar (Lean: Verify.LineHealth).
         public const float EmptyShareOfMedian = 0.35f;
 
         // How far above the empty threshold a line's BUSIEST reading may sit and still
-        // count as empty. A line that never reaches three times the bar even at its
-        // peak is genuinely carrying nobody; one that does has a demand pattern, and
+        // count as empty (A8.1). A line that never reaches three times the bar even at
+        // its peak is genuinely carrying nobody; one that does has a demand pattern, and
         // the answer to that is a timetable, not a demolition.
         public const float EmptyPeakAllowance = 3f;
 
-        // A line is running too infrequently when it is at least this many times its
-        // OWN target interval. The player sets the target; the game sizes the fleet
-        // from it. Two times means the line is achieving less than half the frequency
-        // it is being paid for, which is a fact about this line rather than a
-        // comparison against some other mode's timetable.
-        //
-        // An absolute threshold could not do this job. At a flat 150 s, a train with a
-        // 180 s target running at 356 s (2.0x) was flagged for "long waits" while a
-        // ferry with a 90 s target running at 293 s (3.3x) was called healthy — the
-        // line furthest from its own timetable was the one reported as fine. A 42 s
-        // bus and a 180 s train cannot share one bar.
-        public const float LongWaitMultipleOfTarget = 2f;
+        // The planning load of a line is this quantile (nearest rank) of the passengers
+        // aboard over the window's active readings (A8.4, user decision 2026-09-06): the
+        // single busiest reading is kept beside it for the display but sizes nothing.
+        public const float PlanningLoadQuantile = 0.9f;
 
-        // ...and at least this much worse than what this city's lines normally manage.
-        //
-        // The absolute part alone is not a threshold, it is a coin flip: every line in
-        // a working city sits somewhere around twice its target, because the game only
-        // adds vehicles in whole units and the player's target is an aspiration. On a
-        // six-line network with ratios of 1.8, 1.8, 2.1, 2.2, 2.3 and 3.3, a flat 2x
-        // bar flagged four of the six — the same noise the fixed 150 s bar produced,
-        // and the reason EmptyShareOfMedian exists a few lines above. Taking the
-        // stricter of the two leaves the genuine outlier and nothing else.
-        public const float LongWaitShareAboveMedian = 1.5f;
+        // Readings are taken in GAME time, this many per game day (A8.5, 2026-09-06),
+        // so the sample is the same at every simulation speed. 96 = one every 15 game
+        // minutes; the frame gate below is the day divided by it.
+        public const int ReadingsPerGameDay = 96;
 
-        // Below this the wait is not worth mentioning however badly the line is
-        // missing its target: doubling a 20 s headway is not a problem a player needs
-        // telling about.
-        //
-        // NOT from WaitingPassengers.m_TypicalWaitingTime: that is an accumulator the
-        // game keeps for its pathfinder — max(ongoing/waiting, concluded/boarded),
-        // quantised to 5 — so a single stranded rider drives it to thousands. Read as
-        // seconds it reported 45-minute waits on a line running every two minutes, and
-        // flagged 8 of 18 lines on that basis.
-        public const float LongWait = 60f;
+        public const uint ReadingIntervalFrames = FramesPerGameDay / ReadingsPerGameDay;
 
         // Enough readings that one outlier cannot carry a verdict on its own. Below
         // this the caller is told to fall back to the instantaneous reading rather

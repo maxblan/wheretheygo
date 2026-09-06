@@ -8,8 +8,9 @@ using Transform = Game.Objects.Transform;
 
 namespace StationSuitabilityOverlay
 {
-    // The existing lines: read in travel order, folded into the rolling window, judged,
-    // and re-traced on request for the improvement plan.
+    // The existing lines: read in game time into the rolling window, collected in
+    // travel order, handed the routing's riders, judged (SuitabilityLineHealth), and
+    // re-traced on request for the improvement plan.
     public sealed partial class StationSuitabilityOverlaySystem
     {
         // Existing transit system: the lines themselves, the routable model of them,
@@ -24,25 +25,35 @@ namespace StationSuitabilityOverlay
 
         private readonly List<LineHealth> m_LineHealth = new List<LineHealth>();
 
+        // The inputs the verdicts were drawn from, captured at the judgement so the
+        // export describes exactly that pass (LineHealthProblem), and the city-wide bar.
+        private LineHealthProblem? m_HealthProblem;
+
+        private HealthReference m_HealthReference;
+
         private SuggestedRoute? m_ImprovedRoute;
 
-        // A game day of line readings. Judging a line on the single reading a refresh
-        // happens to land on condemned a one-boat ferry as empty whenever its boat was
-        // mid-crossing; the window is what a verdict rests on instead.
+        // A game day of line readings, one every ReadingIntervalFrames of simulation
+        // time. Judging a line on the single reading a refresh happens to land on
+        // condemned a one-boat ferry as empty whenever its boat was mid-crossing; the
+        // window is what a verdict rests on instead.
         private readonly LineHistory m_LineHistory = new LineHistory(Assumptions.FramesPerGameDay);
 
         private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
 
-        private uint m_LastHistoryFrame;
+        // What the last route pass's baseline attributed to each existing line, by line
+        // id: riders a day and their split by period (LineSetEvaluation.BaseRiders).
+        private readonly Dictionary<int, (float riders, float day, float night)> m_ExistingLineRiders =
+            new Dictionary<int, (float riders, float day, float night)>();
 
         private uint m_LastLineRefreshFrame;
 
         private float m_LastLineSample;
 
         // Expected rider wait in seconds at a stop position, taken from the best line
-        // that actually calls there — the same windowed headway the verdicts and the
-        // transit router use. Zero when no collected line has a stop within reach,
-        // which tells the calibration there is nothing honest to record here.
+        // that actually calls there — the same windowed interval the transit router
+        // uses. Zero when no collected line has a stop within reach, which tells the
+        // calibration there is nothing honest to record here.
         private float ExpectedWaitAt(float2 position)
         {
             float best = 0f;
@@ -80,13 +91,33 @@ namespace StationSuitabilityOverlay
             return best;
         }
 
-        // Reads the lines, folds this reading into the rolling window and re-judges
-        // them. Cheap next to the route pipeline — it walks the lines and nothing else
-        // — which is what lets it run on its own regardless of what is on screen.
+        // One reading of every line into the window when one is due (register A8.5:
+        // every ReadingIntervalFrames of SIMULATION time, so the sample is the same at
+        // every speed and a paused game adds nothing). Reads counts only, never the
+        // collection the route worker holds, so it runs whether or not a pass is out.
+        private void ObserveLines()
+        {
+            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
+            if (simulation is null)
+            {
+                return;
+            }
+
+            uint frame = simulation.frameIndex;
+            if (frame == 0u || !m_LineHistory.ReadingDue(frame))
+            {
+                return;
+            }
+
+            SuitabilityLines.Observe(EntityManager, m_LineQuery, frame, TimeOfDay, m_LineHistory, m_LiveLineIds);
+        }
+
+        // Reads the lines, hands them the window and the routing's riders, and judges
+        // them. Cheap next to the route pipeline — it walks the lines and nothing else.
         //
         // Idempotent within a simulation frame, so the route pipeline can call it
         // without the background tick making it happen twice.
-        private void RefreshLineHealth()
+        private void RefreshLineHealth(Setting settings)
         {
             var simulation = World.GetExistingSystemManaged<SimulationSystem>();
             uint frame = simulation?.frameIndex ?? 0u;
@@ -98,104 +129,91 @@ namespace StationSuitabilityOverlay
             m_LastLineRefreshFrame = frame;
             SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
                 m_ExistingLines, m_TransitStops, m_StopIndices);
-            RecordLineWindow();
-            SuitabilityLines.Judge(m_ExistingLines, m_LineHealth);
-            UpdateLineHealthText();
-        }
-
-        // Folds this collection's readings into the rolling window and hands each line
-        // back its own averages.
-        //
-        // Stamped with SimulationSystem.frameIndex rather than the wall clock, because
-        // the window is 24 GAME hours: frames stop while the game is paused and run
-        // faster when the player fast forwards, and a real-time window would drain
-        // itself in the pause menu and cover a quarter of a day at 4x.
-        private void RecordLineWindow()
-        {
-            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
-            if (simulation is null)
-            {
-                return;
-            }
-
-            uint frame = simulation.frameIndex;
-
-            // A paused game keeps handing back the same frame. Recording it repeatedly
-            // would stack identical readings and let a pause decide the average.
-            bool advanced = frame != m_LastHistoryFrame;
-            if (advanced)
-            {
-                m_LastHistoryFrame = frame;
-                m_LiveLineIds.Clear();
-                for (int i = 0; i < m_ExistingLines.Count; i++)
-                {
-                    ExistingLine line = m_ExistingLines[i];
-                    _ = m_LiveLineIds.Add(line.m_Id);
-                    m_LineHistory.Record(line.m_Id, new LineObservation
-                    {
-                        m_Frame = frame,
-                        m_Passengers = line.m_Passengers,
-                        m_Capacity = line.m_Capacity,
-                        m_IntervalSeconds = line.m_VehicleInterval,
-                        m_Vehicles = line.m_Vehicles,
-                        m_TimeOfDay = TimeOfDay,
-                    });
-                }
-
-                m_LineHistory.RetainOnly(m_LiveLineIds);
-            }
-
             for (int i = 0; i < m_ExistingLines.Count; i++)
             {
                 ExistingLine line = m_ExistingLines[i];
-                if (!m_LineHistory.TryAverage(line.m_Id, out LineAverage average))
+                if (m_ExistingLineRiders.TryGetValue(line.m_Id, out (float riders, float day, float night) demand))
                 {
-                    line.m_WindowSamples = 0;
-                    continue;
+                    line.m_RidersPerDay = demand.riders;
+                    line.m_RidersByDay = demand.day;
+                    line.m_RidersByNight = demand.night;
                 }
-
-                line.m_WindowUsage = average.m_Usage;
-                line.m_WindowPeakUsage = average.m_PeakUsage;
-                line.m_WindowInterval = average.m_IntervalSeconds;
-                line.m_WindowSamples = average.m_Samples;
-                line.m_WindowGameHours = LineHistory.GameHours(average.m_SpanFrames);
-                line.m_DayUsage = m_LineHistory.TryAveragePeriod(line.m_Id, night: false, out LineAverage day) ? day.m_Usage : 0f;
-                line.m_DaySamples = day.m_Samples;
-                line.m_NightUsage = m_LineHistory.TryAveragePeriod(line.m_Id, night: true, out LineAverage nightAverage) ? nightAverage.m_Usage : 0f;
-                line.m_NightSamples = nightAverage.m_Samples;
             }
 
-            // The widest coverage any line has, which is what the oldest reading in the
-            // window buys us. Lines added later have less and say so on their own row.
+            LineHealthProblem problem = SuitabilityLineHealth.Capture(
+                m_ExistingLines, m_LineHistory, ReadFleetFacts(),
+                settings.UtilisationFloorPercent / 100f, Assumptions.MaxPlannedUtilisation, Assumptions.TargetLoad);
+            m_HealthReference = SuitabilityLineHealth.JudgeAll(problem, m_LineHealth);
+            m_HealthProblem = problem;
+            LogLineHealth(frame);
+            UpdateDataCoverage();
+            UpdateLineHealthText();
+        }
+
+        private void LogLineHealth(uint frame)
+        {
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                ExistingLine line = m_ExistingLines[i];
+                DeferredLog.Info(
+                    $"Line {(i + 1).ToString(CultureInfo.InvariantCulture)} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
+                    $"loop={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, roundTrip={(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"gameInterval={(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s (planned, not measured; target {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
+                    $"routerWait={(line.ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)} ({(line.CapacityPerVehicle).ToString(CultureInfo.InvariantCulture)} seats each), " +
+                    $"aboard={(line.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(line.m_Capacity).ToString(CultureInfo.InvariantCulture)}, " +
+                    $"window({(line.m_WindowSamples).ToString(CultureInfo.InvariantCulture)} active of {(line.m_WindowReadings).ToString(CultureInfo.InvariantCulture)} readings over " +
+                    $"{(line.m_WindowGameHours).ToString("F1", CultureInfo.InvariantCulture)}h: mean {((line.m_WindowUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, " +
+                    $"peak {((line.m_WindowPeakUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}%, planning load {(line.m_WindowPlanningLoad).ToString(CultureInfo.InvariantCulture)} riders, max {(line.m_WindowMaxAboard).ToString(CultureInfo.InvariantCulture)}), " +
+                    $"judgedOn={(line.HasWindow ? "window" : "this reading only")}, " +
+                    $"demand={(line.HasDemand ? $"{(line.m_RidersPerDay).ToString("F0", CultureInfo.InvariantCulture)} riders/day (day {(line.m_RidersByDay).ToString("F0", CultureInfo.InvariantCulture)}, night {(line.m_RidersByNight).ToString("F0", CultureInfo.InvariantCulture)})" : "no route pass yet")}, " +
+                    $"schedule={line.m_Schedule}, day {((line.m_DayUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}% over {(line.m_DaySamples).ToString(CultureInfo.InvariantCulture)} readings, " +
+                    $"night {((line.m_NightUsage * 100f)).ToString("F0", CultureInfo.InvariantCulture)}% over {(line.m_NightSamples).ToString(CultureInfo.InvariantCulture)} readings, " +
+                    $"flags(require={line.m_RequireVehicles}, notEnough={line.m_NotEnoughVehicles})");
+            }
+
+            for (int i = 0; i < m_LineHealth.Count; i++)
+            {
+                LineHealth entry = m_LineHealth[i];
+                DeferredLog.Info(
+                    $"Line \"{entry.m_Name}\" ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
+                    $"plan {entry.m_RecommendedMode} × {(entry.m_RecommendedFleet).ToString(CultureInfo.InvariantCulture)} of [{(entry.m_FleetMin).ToString(CultureInfo.InvariantCulture)}, {(entry.m_FleetMax == int.MaxValue ? "?" : entry.m_FleetMax.ToString(CultureInfo.InvariantCulture))}] " +
+                    $"(round trip {(entry.m_RoundTripSeconds).ToString("F0", CultureInfo.InvariantCulture)}s -> interval {(entry.m_HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)}s), " +
+                    $"game target {(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
+                    $"utilisation {(entry.HasDemand ? (entry.m_Utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture) + " %" : "n/a")} " +
+                    $"(day {(entry.m_DayUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, night {(entry.m_NightUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, advice {entry.m_ScheduleAdvice}), " +
+                    $"occupancy mean {(entry.m_Usage * 100f).ToString("F1", CultureInfo.InvariantCulture)} % peak {(entry.m_PeakUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)} %");
+            }
+
+            DeferredLog.Info(
+                $"Line health reference at frame {(frame).ToString(CultureInfo.InvariantCulture)}: medianOccupancy={(m_HealthReference.m_MedianUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, " +
+                $"emptyBelow={(m_HealthReference.m_EmptyThreshold * 100f).ToString("F1", CultureInfo.InvariantCulture)}% (peak under {(m_HealthReference.m_EmptyThreshold * Assumptions.EmptyPeakAllowance * 100f).ToString("F1", CultureInfo.InvariantCulture)}%); " +
+                $"window tracks {(m_LineHistory.TrackedLines).ToString(CultureInfo.InvariantCulture)} lines over {(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} game hours, " +
+                $"a reading every {(Assumptions.ReadingIntervalFrames).ToString(CultureInfo.InvariantCulture)} frames, {(Assumptions.MinReadingsForVerdict).ToString(CultureInfo.InvariantCulture)} active readings before a verdict uses it, " +
+                $"evicted={(m_LineHistory.EvictedSinceLastReport).ToString(CultureInfo.InvariantCulture)}, droppedAtCap={(m_LineHistory.DroppedAtCapSinceLastReport).ToString(CultureInfo.InvariantCulture)}");
+            m_LineHistory.ClearCounters();
+        }
+
+        // The widest coverage any line has, which is what the oldest reading in the
+        // window buys us. Lines added later have less and say so on their own row.
+        private void UpdateDataCoverage()
+        {
             float coveredHours = 0f;
             int readings = 0;
             for (int i = 0; i < m_ExistingLines.Count; i++)
             {
                 ExistingLine line = m_ExistingLines[i];
                 coveredHours = math.max(coveredHours, line.m_WindowGameHours);
-                readings = math.max(readings, line.m_WindowSamples);
+                readings = math.max(readings, line.m_WindowReadings);
             }
 
             s_DataCoverage = SuitabilityPanelPayload.DataCoverageRow(
                 coveredHours, readings, LineHistory.GameHours(m_LineHistory.WindowFrames),
                 m_TripObserver.Window.Count, LineHistory.GameHours(m_TripObserver.Window.SpanFrames));
-
-            DeferredLog.Info(
-                $"Line window: frame={(frame).ToString(CultureInfo.InvariantCulture)} (advanced={advanced}), " +
-                $"tracking {(m_LineHistory.TrackedLines).ToString(CultureInfo.InvariantCulture)} lines over " +
-                $"{(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} game hours, " +
-                $"{(Assumptions.MinReadingsForVerdict).ToString(CultureInfo.InvariantCulture)} readings needed before a verdict uses it, " +
-                $"evicted={(m_LineHistory.EvictedSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
-                $"droppedAtCap={(m_LineHistory.DroppedAtCapSinceLastReport).ToString(CultureInfo.InvariantCulture)}");
-            m_LineHistory.ClearCounters();
         }
 
-        // Builds the improvement plan for whichever line the panel asked about. Run
-        // here rather than in the binding so it uses the same measurements the list
-        // was built from.
-        // Answers the panel's request immediately. It reads only the cached health and
-        // line data, so there is no reason to make the player wait for the next demand
-        // refresh — which is what made the button feel broken.
+        // Answers the panel's request immediately from the cached health: the plan is
+        // the verdict's own numbers, so there is nothing to wait for.
         private void HandleImprovementRequest()
         {
             if (s_ImproveRequest < 0 || m_LineHealth.Count == 0)
@@ -233,24 +251,18 @@ namespace StationSuitabilityOverlay
                     DeferredLog.Info($"Improvement requested for line id {(requested).ToString(CultureInfo.InvariantCulture)}, which no longer exists.");
                     return;
                 }
-                int perVehicle = health.m_Vehicles > 0 ? health.m_Capacity / health.m_Vehicles : health.m_Capacity;
 
-                // Aim to fill about 70%: full enough to justify the service, with room
-                // for the peaks the averages hide.
-                SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
-                    health, line.m_LengthMetres, line.m_StableDurationSeconds, perVehicle, 0.7f);
+                SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(health);
                 s_ImprovePlan = SuitabilityLineHealth.PlanPayload(plan);
                 s_ImprovedLine = health.m_Id;
 
                 BuildImprovedRoute(health, line);
 
                 DeferredLog.Info(
-                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): " +
-                    $"{SuitabilityLineHealth.Improve(health, line.m_LengthMetres, line.m_StableDurationSeconds, perVehicle, 0.7f)} " +
+                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {SuitabilityLineHealth.Improve(health)} " +
                     $"[measured: {(health.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(health.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard, {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(health.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} veh, " +
-                    $"typicalWait {(health.m_TypicalWait).ToString("F0", CultureInfo.InvariantCulture)}, {(health.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(health.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km, " +
-                    $"perVehicle {(perVehicle).ToString(CultureInfo.InvariantCulture)}, roundTrip {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                    $"targetInterval {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s]");
+                    $"planning load {(health.m_PlanningLoad).ToString(CultureInfo.InvariantCulture)} riders, {(health.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(health.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km, " +
+                    $"roundTrip {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, targetInterval {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s]");
                 return;
             }
         }
@@ -277,11 +289,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            ModePreset mode = health.m_Verdict == LineVerdict.AtModeCapacity
-                ? TransitModes.NextModeUp(health.m_Mode)
-                : health.m_Verdict == LineVerdict.NearlyEmpty
-                    ? TransitModes.NextModeDown(health.m_Mode)
-                    : health.m_Mode;
+            ModePreset mode = health.m_RecommendedMode;
 
             // Re-trace on the network the recommended mode can actually use. Tracing a
             // train on the road graph reported "no road path between its endpoints" and
@@ -316,9 +324,12 @@ namespace StationSuitabilityOverlay
 
             route.Length = length;
             route.CapturedFlow = graph.FlowAlong(scratch);
-            FleetFacts facts = ReadFleetFacts();
             SuitabilityRoutes.Restop(route, mode, BuildStopContext());
-            route.Vehicles = RoadVehicles(route, facts.HeadwayFor(mode), facts.DelayPerStopSeconds(mode));
+            route.Vehicles = health.m_RecommendedFleet;
+            route.HeadwaySeconds = health.m_HeadwaySeconds;
+            route.FleetMin = health.m_FleetMin;
+            route.FleetMax = health.m_FleetMax;
+            route.RoundTripSeconds = health.m_RoundTripSeconds;
 
             m_ImprovedRoute = route.Stops.Count >= 2 ? route : null;
             s_ImprovedRouteDrawn = m_ImprovedRoute is not null;
@@ -328,6 +339,5 @@ namespace StationSuitabilityOverlay
                 $"(was {(health.m_LengthKm).ToString("F2", CultureInfo.InvariantCulture)}), {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops (was {(health.m_Stops).ToString(CultureInfo.InvariantCulture)}), " +
                 $"{(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles (was {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}), corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}");
         }
-
     }
 }

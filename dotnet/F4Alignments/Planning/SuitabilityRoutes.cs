@@ -786,24 +786,6 @@ namespace StationSuitabilityOverlay
             return true;
         }
 
-        // Fleet needed to hold the mode's assumed headway around the whole line, from
-        // its length at cruise speed — the estimate for alignments without streets.
-        public static int EstimateVehicles(ModePreset mode, float lengthMetres, int stops, float headwaySeconds, float delayPerStopSeconds)
-        {
-            float speed = Assumptions.CruiseSpeedFor(mode);
-            // Out and back.
-            return EstimateVehiclesFromRoundTrip((lengthMetres * 2f) / Math.Max(1f, speed), stops, headwaySeconds, delayPerStopSeconds);
-        }
-
-        // The same fleet arithmetic from a measured out-and-back driving time, dwelling
-        // at every stop in each direction.
-        public static int EstimateVehiclesFromRoundTrip(float drivingSeconds, int stops, float headwaySeconds, float delayPerStopSeconds)
-        {
-            float roundTrip = drivingSeconds + (stops * 2 * delayPerStopSeconds);
-            // ToEven is what Unity's math.round (Math.Round without an argument) did here.
-            return Math.Max(1, (int)Math.Round(roundTrip / Math.Max(Assumptions.MinPlannedHeadwaySeconds, headwaySeconds), MidpointRounding.ToEven));
-        }
-
         // Re-traces a corridor on the ROAD network between the same endpoints.
         //
         // Needed because falling back across mode families changes what the alignment

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace StationSuitabilityOverlay.Tests
@@ -119,13 +120,11 @@ namespace StationSuitabilityOverlay.Tests
             Run("Daytime: period averages read only the readings of that period with vehicles out", PeriodAverages);
             Run("A deleted line stops being tracked", WindowForgetsDeletedLines);
 
-            Run("The game asking for vehicles is taken at its word", VerdictFollowsTheGamesFlags);
-            Run("A full line already at its fleet target is at mode capacity", VerdictAtModeCapacity);
-            Run("A line that fills up at its peak is not \"nearly empty\"", VerdictEmptyNeedsALowPeakToo);
-            Run("Long waits are judged against the line's own target", VerdictLongWaitsAreRelative);
-            Run("A plan never asks for fewer vehicles than the game already wants", PlanRespectsTheGamesTarget);
-            Run("A plan is sized from the peak, not from one reading", PlanSizesFromThePeak);
-            Run("A plan quotes the interval that yields its fleet", PlanQuotesAnInterval);
+            Run("Fleet arithmetic mirrors the game: fleet, interval, slider span, load and demand sizing", FleetArithmeticMirrorsTheGame);
+            Run("Health window skips idle readings and takes the nearest-rank quantile", HealthWindowSkipsIdleReadingsAndTakesTheQuantile);
+            Run("Health: the ladder and the fleet within the game's span decide the verdict", HealthLadderAndVerdicts);
+            Run("Health: removal needs two signals, the schedule follows the period utilisations", HealthDemandSignals);
+            Run("Health: the upper-median bar can flag at most half the lines", HealthReferenceBoundsTheEmptyBar);
             Run("Growth carries straight on unless a turn is worth it", GrowthPrefersToCarryStraightOn);
             Run("Growth heads away from where it started", GrowthHeadsAwayFromItsOtherEnd);
             Run("A detour to an interchange is worth only so much", ADetourIsWorthOnlySoMuch);
@@ -1138,7 +1137,7 @@ namespace StationSuitabilityOverlay.Tests
 
         private static LineCandidate Line(float wait, float speed, params (float x, float z)[] stops)
         {
-            var line = new LineCandidate { StopX = new float[stops.Length], StopZ = new float[stops.Length], ExpectedWait = wait, SpeedMetresPerSecond = speed, HeadwaySeconds = wait * 2f, VehicleCapacity = 80f };
+            var line = new LineCandidate { StopX = new float[stops.Length], StopZ = new float[stops.Length], ExpectedWait = wait, SpeedMetresPerSecond = speed, RoundTripSeconds = wait * 2f, FleetMin = 1, FleetMax = 1, VehicleCapacity = 80f };
             for (int i = 0; i < stops.Length; i++)
             {
                 line.StopX[i] = stops[i].x;
@@ -1251,7 +1250,7 @@ namespace StationSuitabilityOverlay.Tests
                 for (int c = 0; c < 3; c++)
                 {
                     int stops = 2 + (int)Next(3f);
-                    var line = new LineCandidate { StopX = new float[stops], StopZ = new float[stops], ExpectedWait = 100f + Next(200f), SpeedMetresPerSecond = 8f + Next(10f), HeadwaySeconds = 300f, VehicleCapacity = 60f };
+                    var line = new LineCandidate { StopX = new float[stops], StopZ = new float[stops], ExpectedWait = 100f + Next(200f), SpeedMetresPerSecond = 8f + Next(10f), RoundTripSeconds = 300f, FleetMin = 1, FleetMax = 1, VehicleCapacity = 60f };
                     for (int k = 0; k < stops; k++)
                     {
                         int z = (int)Next(zones);
@@ -2618,181 +2617,377 @@ namespace StationSuitabilityOverlay.Tests
             }
         }
 
-        // Judging a line: the thresholds below were all moved off fixed values after
-        // they flagged most of a healthy network, so each test pins the relative rule
-        // rather than the number it happens to produce.
-        private static LineHealth Line(
-            float usage,
-            float peakUsage,
-            int vehicles,
-            int targetVehicles,
-            int capacity = 100,
-            ModePreset mode = ModePreset.Bus)
+        // Judging a line (F9 v2, register A8): the readings, the game's fleet arithmetic,
+        // the ladder and the plan. The thresholds moved off fixed values after they
+        // flagged most of a healthy network, so the tests pin the rules, not numbers.
+        private static FleetFacts HealthFacts()
         {
-            return new LineHealth
+            var byMode = new ModeFacts[TransitModes.All.Length];
+            byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, PrefabIntervalSeconds = 300f, StopDurationSeconds = 15f, Acceleration = 1.5f, Braking = 1.5f };
+            byMode[(int)ModePreset.Tram] = new ModeFacts { Capacity = 240f, PrefabIntervalSeconds = 300f, StopDurationSeconds = 15f, Acceleration = 1.2f, Braking = 1.2f };
+            byMode[(int)ModePreset.Metro] = new ModeFacts { Capacity = 540f, PrefabIntervalSeconds = 200f, StopDurationSeconds = 20f, Acceleration = 1.2f, Braking = 1.2f };
+            byMode[(int)ModePreset.Train] = new ModeFacts { Capacity = 1680f, PrefabIntervalSeconds = 480f, StopDurationSeconds = 30f, Acceleration = 1f, Braking = 1f };
+            byMode[(int)ModePreset.Ferry] = new ModeFacts { Capacity = 400f, PrefabIntervalSeconds = 600f, StopDurationSeconds = 40f, Acceleration = 0.5f, Braking = 0.5f };
+            // A relative modifier from a quarter to four times the prefab interval: a
+            // 1000 s bus round trip then runs 1 to 13 vehicles.
+            var policy = new VehicleCountPolicy { Known = true, Mode = IntervalModifierMode.Relative, DeltaMin = -0.75f, DeltaMax = 3f, SliderMin = 0f, SliderMax = 1f };
+            return new FleetFacts(byMode, policy);
+        }
+
+        private static ExistingLine HealthLine(int id, ModePreset mode, int vehicles, int perVehicle, float roundTrip, int stops, float loopMetres = 6000f)
+        {
+            var line = new ExistingLine
             {
+                m_Id = id,
+                m_Name = "L" + id.ToString(CultureInfo.InvariantCulture),
                 m_Mode = mode,
                 m_Vehicles = vehicles,
-                m_TargetVehicles = targetVehicles,
-                m_Capacity = capacity,
-                m_Passengers = (int)(usage * capacity),
-                m_Usage = usage,
-                m_PeakUsage = peakUsage,
-                m_Stops = 10,
+                m_Capacity = vehicles * perVehicle,
+                m_StableDurationSeconds = roundTrip,
+                m_LineDurationSeconds = roundTrip - (stops * 15f),
+                m_TargetInterval = roundTrip / Math.Max(1, vehicles),
+                m_LengthMetres = loopMetres,
+                m_StopDuration = 15f,
+                m_VehicleInterval = roundTrip / Math.Max(1, vehicles),
             };
+            for (int s = 0; s < stops; s++)
+            {
+                line.m_StopIndices.Add(s);
+            }
+
+            return line;
         }
 
-        // TransportLineFlags already says when the game wants more vehicles, so that
-        // signal is read rather than re-derived.
-        private static void VerdictFollowsTheGamesFlags()
+        // `aboard` per reading over the last part of a game day, a quarter of an hour
+        // apart, by day; `idle` readings with nothing out are appended.
+        private static void Readings(LineHealthProblem problem, ExistingLine line, int[] aboard, int idle = 0, float timeOfDay = 0.5f)
         {
-            LineVerdict verdict = SuitabilityLineHealth.Judge(
-                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 60f, targetInterval: 60f,
-                longWaitMultiple: 2f, vehicles: 3, targetVehicles: 6,
-                requireVehicles: false, notEnoughVehicles: true, emptyThreshold: 0.05f,
-                out int addVehicles);
+            var samples = new List<LineObservation>();
+            uint frame = 1000u;
+            for (int i = 0; i < aboard.Length; i++)
+            {
+                frame += Assumptions.ReadingIntervalFrames;
+                samples.Add(new LineObservation { m_Frame = frame, m_Passengers = aboard[i], m_Capacity = line.m_Capacity, m_Vehicles = line.m_Vehicles, m_IntervalSeconds = line.m_VehicleInterval, m_TimeOfDay = timeOfDay });
+            }
 
-            AssertTrue(verdict == LineVerdict.Overcrowded, $"expected Overcrowded, got {verdict}");
-            AssertEqual(3, addVehicles, 0, "the shortfall against the game's own target");
+            for (int i = 0; i < idle; i++)
+            {
+                frame += Assumptions.ReadingIntervalFrames;
+                samples.Add(new LineObservation { m_Frame = frame, m_Passengers = 0, m_Capacity = 0, m_Vehicles = 0, m_IntervalSeconds = 0f, m_TimeOfDay = 0.95f });
+            }
+
+            problem.Samples[line.m_Id] = samples.ToArray();
+            line.m_Passengers = aboard.Length > 0 ? aboard[aboard.Length - 1] : 0;
         }
 
-        // Full AND already running the fleet the interval calls for: more vehicles are
-        // not available, so the mode itself is the ceiling.
-        private static void VerdictAtModeCapacity()
+        private static LineHealthProblem HealthProblem(params ExistingLine[] lines)
         {
-            LineVerdict atCapacity = SuitabilityLineHealth.Judge(
-                usage: 0.9f, peakUsage: 0.95f, achievedInterval: 60f, targetInterval: 60f,
-                longWaitMultiple: 2f, vehicles: 6, targetVehicles: 6,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out _);
-            AssertTrue(atCapacity == LineVerdict.AtModeCapacity, $"expected AtModeCapacity, got {atCapacity}");
-
-            // The same load with room in the fleet is a service problem, not a mode one.
-            LineVerdict crowded = SuitabilityLineHealth.Judge(
-                usage: 0.9f, peakUsage: 0.95f, achievedInterval: 60f, targetInterval: 60f,
-                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 6,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out int addVehicles);
-            AssertTrue(crowded == LineVerdict.Overcrowded, $"expected Overcrowded, got {crowded}");
-            AssertEqual(2, addVehicles, 0, "vehicles to add");
+            var problem = new LineHealthProblem
+            {
+                Facts = HealthFacts(),
+                UtilisationFloor = 0.15f,
+                UtilisationCeiling = Assumptions.MaxPlannedUtilisation,
+                TargetLoad = Assumptions.TargetLoad,
+                WindowFrames = Assumptions.FramesPerGameDay,
+            };
+            problem.Lines.AddRange(lines);
+            return problem;
         }
 
-        // "Reroute or remove" is the most destructive advice the mod gives. A line
-        // that fills twice a day and idles the rest averages out looking dead, so the
-        // peak has to be low too.
-        private static void VerdictEmptyNeedsALowPeakToo()
+        private static LineHealth Judged(LineHealthProblem problem, int id)
         {
-            LineVerdict peaky = SuitabilityLineHealth.Judge(
-                usage: 0.03f, peakUsage: 0.30f, achievedInterval: 60f, targetInterval: 60f,
-                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out _);
-            AssertTrue(peaky != LineVerdict.NearlyEmpty,
-                $"a line that fills at its peak must not be called empty, got {peaky}");
+            var health = new List<LineHealth>();
+            _ = SuitabilityLineHealth.JudgeAll(problem, health);
+            for (int i = 0; i < health.Count; i++)
+            {
+                if (health[i].m_Id == id)
+                {
+                    return health[i];
+                }
+            }
 
-            LineVerdict dead = SuitabilityLineHealth.Judge(
-                usage: 0.03f, peakUsage: 0.04f, achievedInterval: 60f, targetInterval: 60f,
-                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out _);
-            AssertTrue(dead == LineVerdict.NearlyEmpty, $"expected NearlyEmpty, got {dead}");
+            throw new InvalidOperationException("line not judged");
         }
 
-        // A 42 s bus and a 180 s train cannot share one stopwatch: the bar is a
-        // multiple of the line's OWN target, and a wait too short to notice is never
-        // worth reporting however badly the target is missed.
-        private static void VerdictLongWaitsAreRelative()
+        // TransportLineSystem.CalculateVehicleCount / CalculateVehicleInterval, the
+        // slider's interval arithmetic, and the span the two ends of the slider bound.
+        private static void FleetArithmeticMirrorsTheGame()
         {
-            LineVerdict late = SuitabilityLineHealth.Judge(
-                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 400f, targetInterval: 120f,
-                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out _);
-            AssertTrue(late == LineVerdict.LongWaits, $"expected LongWaits, got {late}");
+            AssertEqual(4, TransitModes.GameFleet(300f, 1234.5f), 0, "1234.5 / 300 = 4.1 rounds to 4");
+            AssertEqual(2, TransitModes.GameFleet(1f, 2.5f), 0, "the game rounds half to even: 2.5 -> 2");
+            AssertEqual(4, TransitModes.GameFleet(1f, 3.5f), 0, "3.5 -> 4");
+            AssertEqual(1, TransitModes.GameFleet(1000f, 100f), 0, "never below one vehicle");
+            AssertEqual(1000f, TransitModes.GameFleet(0f, 1000f), 0f, "an interval under a second is clamped to one second");
+            AssertEqual(250f, TransitModes.GameInterval(1000f, 4), 0f, "the interval a fleet yields");
+            AssertEqual(1000f, TransitModes.GameInterval(1000f, 0), 0f, "no vehicles counts as one");
 
-            // Three times a 20 s target is still only a 30 s wait.
-            LineVerdict brisk = SuitabilityLineHealth.Judge(
-                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 60f, targetInterval: 20f,
-                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out _);
-            AssertTrue(brisk == LineVerdict.Healthy,
-                $"doubling a short headway is not worth reporting, got {brisk}");
+            AssertEqual(75f, TransitModes.IntervalAt(300f, IntervalModifierMode.Relative, -0.75f), 1e-4f, "relative: I + I·δ");
+            AssertEqual(1200f, TransitModes.IntervalAt(300f, IntervalModifierMode.Relative, 3f), 1e-4f, "relative, upper end");
+            AssertEqual(360f, TransitModes.IntervalAt(300f, IntervalModifierMode.Absolute, 60f), 1e-4f, "absolute: I + δ");
+            AssertEqual(150f, TransitModes.IntervalAt(300f, IntervalModifierMode.InverseRelative, 1f), 1e-3f, "inverse relative: I / (1 + δ)");
 
-            // A line missing a target the game never set has nothing to be late against.
-            LineVerdict noTarget = SuitabilityLineHealth.Judge(
-                usage: 0.4f, peakUsage: 0.5f, achievedInterval: 900f, targetInterval: 0f,
-                longWaitMultiple: 2f, vehicles: 4, targetVehicles: 4,
-                requireVehicles: false, notEnoughVehicles: false, emptyThreshold: 0.05f,
-                out _);
-            AssertTrue(noTarget == LineVerdict.Healthy, $"expected Healthy, got {noTarget}");
+            var policy = new VehicleCountPolicy { Known = true, Mode = IntervalModifierMode.Relative, DeltaMin = -0.75f, DeltaMax = 3f };
+            TransitModes.FleetSpan(policy, 300f, 1000f, out int min, out int max);
+            AssertTrue(min == 1 && max == 13, $"a 1000 s round trip on a 300 s prefab interval runs 1 to 13 vehicles, got [{min.ToString(CultureInfo.InvariantCulture)}, {max.ToString(CultureInfo.InvariantCulture)}]");
+            var reversed = new VehicleCountPolicy { Known = true, Mode = IntervalModifierMode.Relative, DeltaMin = 3f, DeltaMax = -0.75f };
+            TransitModes.FleetSpan(reversed, 300f, 1000f, out int min2, out int max2);
+            AssertTrue(min2 == 1 && max2 == 13, "the span does not depend on which end of the slider is which");
+            TransitModes.FleetSpan(new VehicleCountPolicy(), 300f, 1000f, out int min3, out int max3);
+            AssertTrue(min3 == 1 && max3 == int.MaxValue, "an unknown policy leaves the fleet unbounded above");
+
+            AssertEqual(1, TransitModes.FleetForLoad(0f, 80f, 0.7f), 0, "no load, one vehicle");
+            AssertEqual(2, TransitModes.FleetForLoad(57f, 80f, 0.7f), 0, "57 riders at 70 % of 80 seats need a second vehicle");
+            AssertEqual(1, TransitModes.FleetForLoad(56f, 80f, 0.7f), 0, "56 fit one");
+            // 2000 riders a day, 1000 s round trip, 80 seats, ceiling 1: 2000·1000 / (4369.07·80) = 5.72 -> 6.
+            AssertEqual(6, TransitModes.FleetForDemand(2000f, 1000f, 80f, 1f), 0, "the smallest fleet under the ceiling");
+            FleetPlan plan = TransitModes.PlanFleet(2000f, 1000f, 80f, 1, 13, 1f);
+            AssertTrue(plan.Vehicles == 6 && plan.Utilisation <= 1f && plan.Utilisation > 0.9f, $"six buses at {(1000f / 6f).ToString("F0", CultureInfo.InvariantCulture)} s carry 2000 riders at {(plan.Utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %");
+            AssertEqual(plan.Utilisation, SuitabilityEquity.Utilisation(2000f, plan.HeadwaySeconds, 80f), 0f, "the plan's utilisation is the one formula at the plan's interval");
+            FleetPlan clamped = TransitModes.PlanFleet(2000f, 1000f, 80f, 1, 3, 1f);
+            AssertTrue(clamped.Vehicles == 3 && clamped.Utilisation > 1f, "clamped to the span, the ceiling is exceeded and says so");
+            FleetPlan minimal = TransitModes.PlanFleet(5f, 1000f, 80f, 2, 13, 1f);
+            AssertTrue(minimal.Vehicles == 2, "never below the span's minimum");
+            AssertEqual(1000f, TransitModes.RoundTripSeconds(9000f, 20, 9f, 0f), 1e-3f, "a 9 km loop at 9 m/s without dwell");
+            AssertEqual(1300f, TransitModes.RoundTripSeconds(9000f, 20, 9f, 15f), 1e-3f, "plus the dwell at every one of twenty calls");
         }
 
-        // Recommending fewer vehicles than the game is already asking for produced
-        // "overcrowded — add 1 vehicle" beside "run it with 1 vehicle (-3)".
-        private static void PlanRespectsTheGamesTarget()
+        // Idle readings say nothing about demand; the planning load is the nearest-rank
+        // quantile of what was counted aboard, never an interpolation.
+        private static void HealthWindowSkipsIdleReadingsAndTakesTheQuantile()
         {
-            LineHealth health = Line(usage: 0.9f, peakUsage: 0.95f, vehicles: 2, targetVehicles: 9);
-            health.m_Verdict = LineVerdict.AtModeCapacity;
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
+            int[] aboard = { 10, 80, 20, 30, 40, 50, 60, 70, 90, 100 };
+            uint frame = 100u;
+            for (int i = 0; i < aboard.Length; i++)
+            {
+                frame += Assumptions.ReadingIntervalFrames;
+                history.Record(1, new LineObservation { m_Frame = frame, m_Passengers = aboard[i], m_Capacity = 200, m_Vehicles = 2, m_IntervalSeconds = 300f, m_TimeOfDay = 0.5f });
+            }
 
-            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
-                health, lengthMetres: 6000f, roundTripSeconds: 1800f, capacityPerVehicle: 50, targetLoad: 0.7f);
-
-            AssertTrue(plan.m_Vehicles >= 9, $"plan asks for {plan.m_Vehicles}, below the game's target of 9");
-            AssertTrue(plan.m_VehicleDelta > 0, "a line short of vehicles is not told to shrink");
+            frame += Assumptions.ReadingIntervalFrames;
+            history.Record(1, new LineObservation { m_Frame = frame, m_Passengers = 0, m_Capacity = 0, m_Vehicles = 0, m_IntervalSeconds = 0f, m_TimeOfDay = 0.95f });
+            AssertTrue(history.TryAverage(1, out LineAverage average), "history exists");
+            AssertTrue(average.m_Samples == 10 && average.m_Readings == 11, "ten active readings of eleven");
+            AssertEqual(0.275f, average.m_Usage, 1e-5f, "the idle reading does not drag the mean down");
+            AssertEqual(90, average.m_PlanningLoad, 0, "the 90th percentile of ten counts is the ninth smallest");
+            AssertEqual(100, average.m_MaxAboard, 0, "the busiest reading is kept beside it");
+            AssertEqual(0.5f, average.m_PeakUsage, 1e-6f, "peak occupancy");
+            AssertEqual(2, LineHistory.Quantile(new List<int> { 2 }, 0.9f), 0, "one value is its own quantile");
+            AssertEqual(1, LineHistory.Quantile(new List<int> { 3, 1, 2 }, 0.3f), 0, "rank ceil(0.9) = 1");
+            AssertTrue(history.ReadingDue(frame + Assumptions.ReadingIntervalFrames) && !history.ReadingDue(frame + 10u), "a reading is due one interval after the newest");
+            AssertTrue(history.ReadingDue(5u), "a rewound clock is due (and restarts the window)");
         }
 
-        // Sizing from the instantaneous count condemned a ferry whose only boat was
-        // mid-crossing to a fleet for nobody, even though the window said it was full.
-        private static void PlanSizesFromThePeak()
+        // The ladder for existing lines is the suggestions' ladder: the first mode whose
+        // largest allowed fleet carries the load; the fleet is the smallest that does.
+        private static void HealthLadderAndVerdicts()
         {
-            LineHealth health = Line(usage: 0.8f, peakUsage: 0.9f, vehicles: 2, targetVehicles: 2, capacity: 200);
-            health.m_Passengers = 0;   // caught between arrivals
-            health.m_Verdict = LineVerdict.Overcrowded;
+            // Bus, 3 vehicles × 80 seats, 1000 s round trip: span [1, 13]. Planning load
+            // (P90 of the readings) 200 riders -> 4 buses at 70 %: FleetUp by one.
+            ExistingLine up = HealthLine(1, ModePreset.Bus, 3, 80, 1000f, 20);
+            up.m_RidersPerDay = 500f;
+            up.m_RidersByDay = 400f;
+            up.m_RidersByNight = 100f;
+            LineHealthProblem problem = HealthProblem(up);
+            Readings(problem, up, new[] { 50, 60, 200, 180, 190, 210, 195, 100, 120, 205 });
+            LineHealth judged = Judged(problem, 1);
+            AssertTrue(judged.m_Verdict == LineVerdict.FleetUp && judged.m_RecommendedFleet == 4 && judged.m_RecommendedMode == ModePreset.Bus,
+                $"expected FleetUp to 4 buses, got {judged.m_Verdict} {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)} {judged.m_RecommendedMode}");
+            AssertTrue(judged.m_FleetMin == 1 && judged.m_FleetMax == 13, "the span of the bus on this round trip");
+            AssertEqual(250f, judged.m_HeadwaySeconds, 1e-3f, "the interval four buses yield");
+            AssertEqual(205, judged.m_PlanningLoad, 0, "the planning load is the window's 90th percentile");
+            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "1", "the argument is the change of fleet");
 
-            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
-                health, lengthMetres: 4000f, roundTripSeconds: 600f, capacityPerVehicle: 100, targetLoad: 0.7f);
+            // The load exceeds the largest bus fleet: 1200 riders need 22 buses of the
+            // 13 allowed -> Tram (240 seats: 8 trams of the 13 allowed).
+            ExistingLine big = HealthLine(2, ModePreset.Bus, 10, 80, 1000f, 20);
+            problem = HealthProblem(big);
+            Readings(problem, big, new[] { 1100, 1200, 1150, 1180, 1200, 1210 });
+            judged = Judged(problem, 2);
+            AssertTrue(judged.m_Verdict == LineVerdict.ModeUp && judged.m_RecommendedMode == ModePreset.Tram && judged.m_RecommendedFleet == 8,
+                $"expected ModeUp to 8 trams, got {judged.m_Verdict} {judged.m_RecommendedMode} × {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
 
-            // 0.9 * 200 = 180 riders at a 70% fill over 100-seat vehicles is 3.
-            AssertTrue(plan.m_Vehicles >= 3,
-                $"plan must carry the window's peak load, got {plan.m_Vehicles} vehicles");
+            // A tram carrying a bus load runs as a bus: 100 riders fit two buses.
+            ExistingLine light = HealthLine(3, ModePreset.Tram, 2, 240, 1000f, 20);
+            problem = HealthProblem(light);
+            Readings(problem, light, new[] { 90, 100, 95, 100, 98, 100 });
+            judged = Judged(problem, 3);
+            AssertTrue(judged.m_Verdict == LineVerdict.ModeDown && judged.m_RecommendedMode == ModePreset.Bus && judged.m_RecommendedFleet == 2,
+                $"expected ModeDown to 2 buses, got {judged.m_Verdict} {judged.m_RecommendedMode} × {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
+
+            // A metro has a one-rung ladder: a load past its largest fleet (20 trains of
+            // 540 seats at 70 % carry 7560) means a split.
+            ExistingLine metro = HealthLine(4, ModePreset.Metro, 5, 540, 1000f, 20);
+            problem = HealthProblem(metro);
+            Readings(problem, metro, new[] { 9000, 9100, 9000, 9050, 9000, 9100 });
+            judged = Judged(problem, 4);
+            AssertTrue(judged.m_Verdict == LineVerdict.SplitRoute && judged.m_RecommendedFleet == judged.m_FleetMax,
+                $"expected SplitRoute at the span's top, got {judged.m_Verdict} {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)} of {judged.m_FleetMax.ToString(CultureInfo.InvariantCulture)}");
+
+            // The game's own flags win over everything: it is short of the fleet the
+            // player set (target = round(1000 / 100) = 10, 6 running).
+            ExistingLine starved = HealthLine(5, ModePreset.Bus, 6, 80, 1000f, 20);
+            starved.m_TargetInterval = 100f;
+            starved.m_RequireVehicles = true;
+            problem = HealthProblem(starved);
+            Readings(problem, starved, new[] { 300, 320, 310, 330, 300, 320 });
+            judged = Judged(problem, 5);
+            AssertTrue(judged.m_Verdict == LineVerdict.FleetShort && judged.m_TargetVehicles == 10 && judged.m_MissingVehicles == 4, $"expected FleetShort by 4, got {judged.m_Verdict} target {judged.m_TargetVehicles.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "4", "the missing count is the argument");
+
+            // Over-served: 10 buses for 50 riders is a FleetDown to one.
+            ExistingLine over = HealthLine(6, ModePreset.Bus, 10, 80, 1000f, 20);
+            problem = HealthProblem(over);
+            Readings(problem, over, new[] { 40, 50, 45, 50, 48, 50 });
+            judged = Judged(problem, 6);
+            AssertTrue(judged.m_Verdict == LineVerdict.FleetDown && judged.m_RecommendedFleet == 1, $"expected FleetDown to 1, got {judged.m_Verdict} {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "-9", "a negative change of fleet");
+
+            // Right-sized: 2 buses, load 100 -> 2 buses. Healthy without demand data.
+            ExistingLine fine = HealthLine(7, ModePreset.Bus, 2, 80, 1000f, 20);
+            problem = HealthProblem(fine);
+            Readings(problem, fine, new[] { 90, 100, 95, 100, 98, 100 });
+            judged = Judged(problem, 7);
+            AssertTrue(judged.m_Verdict == LineVerdict.Healthy && !judged.HasDemand, $"expected Healthy, got {judged.m_Verdict}");
+            AssertTrue(judged.m_ScheduleAdvice == judged.m_Schedule, "no demand, no schedule advice");
+
+            // Too few readings: judged on the reading at collection (the last one).
+            ExistingLine thin = HealthLine(8, ModePreset.Bus, 2, 80, 1000f, 20);
+            problem = HealthProblem(thin);
+            Readings(problem, thin, new[] { 10, 200 });
+            judged = Judged(problem, 8);
+            AssertTrue(judged.m_WindowSamples == 0 && judged.m_PlanningLoad == 200 && judged.m_Verdict == LineVerdict.FleetUp, "two readings are not a window; the instantaneous count sizes the fleet");
         }
 
-        // The player cannot set a vehicle count in Cities: Skylines II, so the
-        // actionable number is the interval that produces the fleet.
-        private static void PlanQuotesAnInterval()
+        // Remove needs two signals; the schedule follows the period utilisations at the
+        // recommended fleet; the demand constraint can outweigh the measured load.
+        private static void HealthDemandSignals()
         {
-            LineHealth health = Line(usage: 0.5f, peakUsage: 0.6f, vehicles: 4, targetVehicles: 4);
-            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
-                health, lengthMetres: 5000f, roundTripSeconds: 1200f, capacityPerVehicle: 60, targetLoad: 0.7f);
+            // Empty by the readings (mean 1 % against a city median of 20 %) AND under the
+            // floor even as one bus (10 riders a day): remove.
+            ExistingLine empty = HealthLine(1, ModePreset.Bus, 2, 80, 1000f, 20);
+            empty.m_RidersPerDay = 10f;
+            ExistingLine busy = HealthLine(2, ModePreset.Bus, 2, 80, 1000f, 20);
+            ExistingLine busier = HealthLine(3, ModePreset.Bus, 2, 80, 1000f, 20);
+            LineHealthProblem problem = HealthProblem(empty, busy, busier);
+            Readings(problem, empty, new[] { 1, 2, 1, 2, 2, 1 });
+            Readings(problem, busy, new[] { 32, 30, 34, 32, 30, 34 });
+            Readings(problem, busier, new[] { 40, 44, 40, 44, 40, 44 });
+            LineHealth judged = Judged(problem, 1);
+            AssertTrue(judged.m_Verdict == LineVerdict.Remove, $"expected Remove, got {judged.m_Verdict}");
+            AssertTrue(judged.m_Utilisation is > 0f and < 0.15f, "its demand sits under the floor");
 
-            AssertTrue(plan.m_IntervalSeconds > 0, "an interval must be quoted when the round trip is known");
-            AssertEqual(1200f / plan.m_Vehicles, plan.m_IntervalSeconds, 1f,
-                "the interval must be the one that yields the recommended fleet");
+            // The same readings without demand data: only one signal, so a FleetDown
+            // (the load fits one bus), never a removal.
+            empty.m_RidersPerDay = -1f;
+            judged = Judged(problem, 1);
+            AssertTrue(judged.m_Verdict == LineVerdict.FleetDown, $"one signal is not enough to remove: {judged.m_Verdict}");
 
-            // With no round trip there is no honest number to quote.
-            SuitabilityLineHealth.ImprovePlan unknown = SuitabilityLineHealth.Plan(
-                health, lengthMetres: 5000f, roundTripSeconds: 0f, capacityPerVehicle: 60, targetLoad: 0.7f);
-            AssertTrue(unknown.m_IntervalSeconds < 0, "an unknown round trip is reported as such, not as zero");
+            // Empty by the readings but with demand the routing does see (the readings
+            // caught the boat mid-crossing): kept, fleet sized to the demand.
+            empty.m_RidersPerDay = 600f;
+            judged = Judged(problem, 1);
+            AssertTrue(judged.m_Verdict != LineVerdict.Remove, $"demand above the floor keeps the line: {judged.m_Verdict}");
+            AssertTrue(judged.m_RecommendedFleet >= 2, "600 riders a day need at least two buses under the ceiling");
+
+            // Schedule: the fleet is right, the nights are empty -> run by day.
+            ExistingLine daytime = HealthLine(4, ModePreset.Bus, 2, 80, 1000f, 20);
+            daytime.m_RidersPerDay = 300f;
+            daytime.m_RidersByDay = 298f;
+            daytime.m_RidersByNight = 2f;
+            problem = HealthProblem(daytime, busy);
+            Readings(problem, daytime, new[] { 100, 105, 100, 104, 100, 102 });
+            Readings(problem, busy, new[] { 32, 30, 34, 32, 30, 34 });
+            judged = Judged(problem, 4);
+            AssertTrue(judged.m_Verdict == LineVerdict.Schedule && judged.m_ScheduleAdvice == LineSchedule.Day, $"expected a day-only advice, got {judged.m_Verdict} {judged.m_ScheduleAdvice}");
+            AssertTrue(judged.m_DayUtilisation > 0.15f && judged.m_NightUtilisation < 0.15f, "the day carries the riders, the night does not reach the floor");
+            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "Day", "the schedule token is the argument");
+            daytime.m_Schedule = LineSchedule.Day;
+            judged = Judged(problem, 4);
+            AssertTrue(judged.m_Verdict == LineVerdict.Healthy, "already running by day, nothing to advise");
+
+            // Demand can ask for more than the readings: 2000 riders a day on a bus with
+            // a light planning load still need six buses under the ceiling.
+            ExistingLine demanded = HealthLine(5, ModePreset.Bus, 2, 80, 1000f, 20);
+            demanded.m_RidersPerDay = 2000f;
+            demanded.m_RidersByDay = 1400f;
+            demanded.m_RidersByNight = 600f;
+            problem = HealthProblem(demanded);
+            Readings(problem, demanded, new[] { 20, 25, 20, 25, 20, 25 });
+            judged = Judged(problem, 5);
+            AssertTrue(judged.m_Verdict == LineVerdict.FleetUp && judged.m_RecommendedFleet == 6, $"expected six buses for the demand, got {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(judged.m_Utilisation <= 1f, "the fleet keeps the demand under the ceiling");
+        }
+
+        // The relative bar is measured against the upper median, so it can never mark
+        // more than half the lines; the reference itself is pinned.
+        private static void HealthReferenceBoundsTheEmptyBar()
+        {
+            AssertEqual(0f, SuitabilityLineHealth.UpperMedian(new List<float>()), 0f, "no lines, no median");
+            AssertEqual(0.2f, SuitabilityLineHealth.UpperMedian(new List<float> { 0.1f, 0.3f, 0.2f }), 0f, "odd count: the middle value");
+            AssertEqual(0.2f, SuitabilityLineHealth.UpperMedian(new List<float> { 0.1f, 0.3f, 0.2f, 0.05f }), 0f, "even count: the upper of the two middle values (0.1 and 0.2)");
+
+            var rng = new Random(20260906);
+            for (int trial = 0; trial < 200; trial++)
+            {
+                int n = 1 + rng.Next(12);
+                var lines = new List<ExistingLine>();
+                for (int i = 0; i < n; i++)
+                {
+                    lines.Add(new ExistingLine { m_Id = i, m_Capacity = 100, m_Passengers = rng.Next(0, 30) });
+                }
+
+                HealthReference reference = SuitabilityLineHealth.ReferenceOf(lines);
+                AssertTrue(reference.m_EmptyThreshold <= Assumptions.EmptyUsage + 1e-7f, "the bar never exceeds the absolute share");
+                int flagged = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    if (lines[i].Usage <= reference.m_EmptyThreshold && reference.m_MedianUsage > 0f)
+                    {
+                        flagged++;
+                    }
+                }
+
+                AssertTrue(flagged <= n / 2, $"at most half of {n.ToString(CultureInfo.InvariantCulture)} lines can be under the relative bar, {flagged.ToString(CultureInfo.InvariantCulture)} were");
+            }
         }
 
         // The panel assembles its sentence from these fields, so a payload short of
         // them renders "NaN" and "undefined" into the player's language.
         private static void PlanPayloadIsComplete()
         {
-            LineHealth health = Line(usage: 0.5f, peakUsage: 0.6f, vehicles: 4, targetVehicles: 4);
-            health.m_Stops = 30;
-            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(
-                health, lengthMetres: 3000f, roundTripSeconds: 900f, capacityPerVehicle: 60, targetLoad: 0.7f);
-
+            var health = new LineHealth
+            {
+                m_Mode = ModePreset.Bus,
+                m_Vehicles = 4,
+                m_RecommendedMode = ModePreset.Tram,
+                m_RecommendedFleet = 6,
+                m_FleetMin = 1,
+                m_FleetMax = 13,
+                m_RoundTripSeconds = 1000f,
+                m_HeadwaySeconds = 1000f / 6f,
+                m_LengthKm = 3f,
+                m_Verdict = LineVerdict.ModeUp,
+            };
+            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(health);
+            AssertTrue(plan.m_Mode == ModePreset.Tram && plan.m_Vehicles == 6 && plan.m_VehicleDelta == 2 && plan.m_IntervalSeconds == 167, "the plan is the verdict's numbers");
+            AssertTrue(plan.m_Shape == SuitabilityLineHealth.PlanShape.Fine, "a mode change is not a shape problem");
             string[] parts = SuitabilityLineHealth.PlanPayload(plan).Split('|');
-            AssertEqual(7, parts.Length, 0, "the panel reads mode|vehicles|delta|interval|shape|value|spacing");
-            AssertTrue(parts[0] == plan.m_Mode.ToString(), "field 0 is the mode token");
-            AssertTrue(parts[4] == plan.m_Shape.ToString(), "field 4 is the shape token");
+            AssertEqual(8, parts.Length, 0, "the panel reads mode|vehicles|delta|interval|shape|value|fleetMin|fleetMax");
+            AssertTrue(parts[0] == "Tram" && parts[4] == "Fine" && parts[6] == "1" && parts[7] == "13", "tokens and span");
             for (int i = 0; i < parts.Length; i++)
             {
                 AssertTrue(parts[i].Length > 0, $"field {i} must not be empty");
             }
+
+            health.m_Verdict = LineVerdict.SplitRoute;
+            AssertTrue(SuitabilityLineHealth.Plan(health).m_Shape == SuitabilityLineHealth.PlanShape.Split, "a split verdict is a split plan");
+            health.m_Verdict = LineVerdict.Remove;
+            AssertTrue(SuitabilityLineHealth.Plan(health).m_Shape == SuitabilityLineHealth.PlanShape.Reroute, "a removal is a reroute plan");
+            health.m_FleetMax = int.MaxValue;
+            AssertTrue(SuitabilityLineHealth.PlanPayload(SuitabilityLineHealth.Plan(health)).Split('|')[7] == "0", "an unbounded span travels as 0");
+            health.m_RoundTripSeconds = 0f;
+            AssertTrue(SuitabilityLineHealth.Plan(health).m_IntervalSeconds < 0, "an unknown round trip is reported as such, not as zero");
         }
 
         // The walk pass is bucketed because route scoring rebuilds this network once per
@@ -2852,38 +3047,47 @@ namespace StationSuitabilityOverlay.Tests
         private static FleetFacts RealFacts()
         {
             // Cities: Skylines II's own vehicle capacities and default intervals as the
-            // mod reads them off the loaded prefabs; written down here only so the
-            // harness has something to feed ChooseMode.
+            // mod reads them off the loaded prefabs, with a slider policy from a quarter
+            // to four times the interval; written down here only so the harness has
+            // something to feed ChooseMode.
             var byMode = new ModeFacts[TransitModes.All.Length];
-            byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, HeadwaySeconds = 300f, StopDurationSeconds = 15f, Acceleration = 1.5f, Braking = 1.5f };
-            byMode[(int)ModePreset.Tram] = new ModeFacts { Capacity = 240f, HeadwaySeconds = 240f, StopDurationSeconds = 15f, Acceleration = 1.2f, Braking = 1.2f };
-            byMode[(int)ModePreset.Metro] = new ModeFacts { Capacity = 540f, HeadwaySeconds = 200f, StopDurationSeconds = 20f, Acceleration = 1.2f, Braking = 1.2f };
-            byMode[(int)ModePreset.Train] = new ModeFacts { Capacity = 1680f, HeadwaySeconds = 480f, StopDurationSeconds = 30f, Acceleration = 1f, Braking = 1f };
-            byMode[(int)ModePreset.Ferry] = new ModeFacts { Capacity = 400f, HeadwaySeconds = 600f, StopDurationSeconds = 40f, Acceleration = 0.5f, Braking = 0.5f };
-            return new FleetFacts(byMode);
+            byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, PrefabIntervalSeconds = 300f, StopDurationSeconds = 15f, Acceleration = 1.5f, Braking = 1.5f };
+            byMode[(int)ModePreset.Tram] = new ModeFacts { Capacity = 240f, PrefabIntervalSeconds = 240f, StopDurationSeconds = 15f, Acceleration = 1.2f, Braking = 1.2f };
+            byMode[(int)ModePreset.Metro] = new ModeFacts { Capacity = 540f, PrefabIntervalSeconds = 200f, StopDurationSeconds = 20f, Acceleration = 1.2f, Braking = 1.2f };
+            byMode[(int)ModePreset.Train] = new ModeFacts { Capacity = 1680f, PrefabIntervalSeconds = 480f, StopDurationSeconds = 30f, Acceleration = 1f, Braking = 1f };
+            byMode[(int)ModePreset.Ferry] = new ModeFacts { Capacity = 400f, PrefabIntervalSeconds = 600f, StopDurationSeconds = 40f, Acceleration = 0.5f, Braking = 0.5f };
+            var policy = new VehicleCountPolicy { Known = true, Mode = IntervalModifierMode.Relative, DeltaMin = -0.75f, DeltaMax = 3f };
+            return new FleetFacts(byMode, policy);
         }
 
         private static void ModeClimbsTheLadderByCapacity()
         {
             FleetFacts facts = RealFacts();
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100f, facts, out ModePreset mode, out float utilisation) && mode == ModePreset.Bus,
+            static float RoundTrip(ModePreset mode) => 1000f;
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100f, facts, RoundTrip, out ModePreset mode, out FleetPlan fleet) && mode == ModePreset.Bus,
                 "a hundred riders a day fit a bus");
-            AssertTrue(utilisation is > 0f and < 0.1f, $"bus utilisation {utilisation}");
-            // 2000 riders: 4000 boardings against 4369/300·2·80 = 2330 bus seats a day.
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 2000f, facts, out mode, out utilisation) && mode == ModePreset.Tram,
-                "two thousand riders overload a bus and take the tram");
-            AssertTrue(utilisation is > 0.4f and < 0.5f, $"tram utilisation {utilisation}");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100000f, facts, out mode, out _) && mode == ModePreset.Tram,
-                "when every road mode is overloaded the largest is still named");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Metro, 5000f, facts, out mode, out _) && mode == ModePreset.Metro,
+            AssertTrue(fleet.Vehicles == 1 && fleet.Min == 1 && fleet.Max == 13, $"one bus of the 1..13 the slider allows, got {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)} of [{fleet.Min.ToString(CultureInfo.InvariantCulture)}, {fleet.Max.ToString(CultureInfo.InvariantCulture)}]");
+            AssertTrue(fleet.Utilisation is > 0.28f and < 0.29f, $"bus utilisation {fleet.Utilisation}");
+            // 2000 riders: 4000 boardings; six buses at 167 s offer 4194 seats a day.
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 2000f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Bus && fleet.Vehicles == 6,
+                $"two thousand riders fit six buses within the span, got {mode} × {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(fleet.Utilisation is > 0.9f and <= 1f, $"six-bus utilisation {fleet.Utilisation}");
+            // 5000 riders: 22 buses would be needed, 13 are allowed -> tram (240 seats).
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 5000f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram,
+                $"past the largest bus fleet the tram takes over, got {mode}");
+            AssertTrue(fleet.Vehicles == 5 && fleet.Utilisation <= 1f, $"five trams, got {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)} at {fleet.Utilisation}");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100000f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram && fleet.Utilisation > 1f,
+                "when every road mode is overloaded the largest is still named, over the ceiling");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Metro, 5000f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Metro,
                 "the metro lattice carries metros");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 30000f, facts, out mode, out _) && mode == ModePreset.Train,
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 30000f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Train,
                 "the train lattice carries trains");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Water, 10f, facts, out mode, out _) && mode == ModePreset.Ferry, "water carries ferries only");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Water, 10f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Ferry, "water carries ferries only");
 
             var none = new FleetFacts(new ModeFacts[TransitModes.All.Length]);
-            AssertTrue(!TransitModes.ChooseMode(RouteNetwork.Road, 100f, none, out _, out _), "no vehicle installed, no mode");
-            AssertEqual(TransitModes.TargetHeadwayFor(ModePreset.Bus), none.HeadwayFor(ModePreset.Bus), 0f, "a missing line prefab falls back to the table headway");
+            AssertTrue(!TransitModes.ChooseMode(RouteNetwork.Road, 100f, none, RoundTrip, out _, out _), "no vehicle installed, no mode");
+            AssertTrue(TransitModes.NetworkOf(ModePreset.Tram) == RouteNetwork.Road && TransitModes.NetworkOf(ModePreset.Train) == RouteNetwork.Rail
+                && TransitModes.NetworkOf(ModePreset.Metro) == RouteNetwork.Metro && TransitModes.NetworkOf(ModePreset.Ferry) == RouteNetwork.Water, "NetworkOf inverts ModesFor");
         }
 
         private static void StopDelayAndRideLimits()
@@ -3514,9 +3718,9 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(Daytime.Recommend(dayUtil, dayUtil, 0.15f) == LineSchedule.DayAndNight, "both full: all day");
             AssertTrue(Daytime.Recommend(nightUtil, nightUtil, 0.15f) == LineSchedule.DayAndNight, "both empty is not a schedule question");
 
-            AssertTrue(Daytime.Advise(LineSchedule.DayAndNight, 0.3f, 6, 0.01f, 6, 0.05f, 4) == LineSchedule.Day, "an all-day line empty at night should run by day");
-            AssertTrue(Daytime.Advise(LineSchedule.DayAndNight, 0.3f, 6, 0.01f, 2, 0.05f, 4) == LineSchedule.DayAndNight, "not before the night has enough readings");
-            AssertTrue(Daytime.Advise(LineSchedule.Day, 0.3f, 6, 0f, 0, 0.05f, 4) == LineSchedule.Day, "a day-only line has no night evidence and keeps its schedule");
+            // Period utilisation is the one formula on the period's share of a vehicle's seats.
+            AssertEqual(SuitabilityEquity.Utilisation(500f, 300f, 80f * Assumptions.DayShareOfDay), dayUtil, 0f, "the period share scales the seats");
+            AssertEqual(0f, Daytime.UtilisationInPeriod(500f, 300f, 80f, 0f), 0f, "a period of no length has no utilisation");
         }
 
         private static void PeriodAverages()

@@ -39,7 +39,8 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
 - When one conceptual change forces edits across files that are not otherwise related, stop and
   name the missing boundary before continuing. Two fan-outs here are the design, not a smell: a new
   panel control moves together through `Setting.cs`, `SuitabilityPanelUISystem.cs`, the `.mjs`, the
-  `.css` and both locale files; and a new scoring term moves through `SuitabilityWalkAccess.cs`, the
+  `.css` and both locale files (a new verdict token likewise through `LineVerdict`, the `.mjs`
+  fallback tables and both locale files); and a new scoring term moves through `SuitabilityWalkAccess.cs`, the
   combine pass in `SuitabilityHeatmap.cs`, the F1 partial of the overlay system, the infomode
   registration in `SuitabilityInfoview.cs` and the legend. Complete those in one change rather than reporting them as coupling.
 - When a change needs yet another special-case branch, look for the missing named concept first.
@@ -119,7 +120,9 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   documents as travel-ordered, a decompiled formula being mirrored). Then the comment *is* the
   enforcement: say so, name the game type or system it comes from, and state the consequence of
   violating it.
-- Turn closed sets into enums and inline literals into named constants at their declaration.
+- Turn closed sets into enums and inline literals into named constants — in
+  `dotnet/Common/Planning/Assumptions.cs`, the one file every numeric value the mod computes
+  with lives in (user rule 2026-09-06), annotated with its register row.
 - Wrap a primitive in a type only when it validates at construction, prevents mixing two
   same-shaped values, or carries a unit — then keep the field private so no caller can bypass or
   re-check the invariant. A wrapper with a public field is noise; leave it primitive instead. Where

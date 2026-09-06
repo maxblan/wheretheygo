@@ -212,27 +212,8 @@ namespace StationSuitabilityOverlay
             m_RoadLegs.Add((from, to, ms, leg));
         }
 
-        // Out and back over the directed network — the return leg may take other
-        // streets than the outward one — plus a dwell at every call each way. Falls
-        // back to the cruise-speed estimate where a leg has no directed path.
-        private int RoadVehicles(SuggestedRoute route, float headwaySeconds, float delayPerStopSeconds)
-        {
-            if (route.Network != RouteNetwork.Road || m_RoadGraph.Directed is null || route.Stops.Count < 2)
-            {
-                return SuitabilityRoutes.EstimateVehicles(route.Mode, route.Length, route.Stops.Count, headwaySeconds, delayPerStopSeconds);
-            }
-
-            float speed = Assumptions.CruiseSpeedFor(route.Mode);
-            double roundTrip = 0.0;
-            for (int i = 1; i < route.Stops.Count; i++)
-            {
-                roundTrip += LegSeconds(route.Stops[i - 1], route.Stops[i], speed);
-                roundTrip += LegSeconds(route.Stops[i], route.Stops[i - 1], speed);
-            }
-
-            return SuitabilityRoutes.EstimateVehiclesFromRoundTrip((float)roundTrip, route.Stops.Count, headwaySeconds, delayPerStopSeconds);
-        }
-
+        // One directed street leg in seconds, the cruise-speed chord where the streets
+        // have no drivable path between the two points.
         private double LegSeconds(float2Like from, float2Like to, float cruiseSpeed)
         {
             long ms = RoadLegMs(from, to);

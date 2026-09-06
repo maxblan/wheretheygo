@@ -114,32 +114,6 @@ namespace StationSuitabilityOverlay
             return busCapacity > 0f && capacity > 0f ? capacity / busCapacity : 0f;
         }
 
-        // Past this length a line cannot hold a headway and should be split.
-        public static float MaxSensibleLength(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Tram: return 12000f;
-                case ModePreset.Metro: return 20000f;
-                case ModePreset.Train: return 60000f;
-                case ModePreset.Ferry: return 20000f;
-                default: return 9000f;
-            }
-        }
-
-        // The headway a healthy line of this mode should be able to hold, in seconds.
-        public static float TargetHeadwayFor(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Tram: return 240f;
-                case ModePreset.Metro: return 200f;
-                case ModePreset.Train: return 480f;
-                case ModePreset.Ferry: return 600f;
-                default: return 300f;
-            }
-        }
-
         // Modes a given alignment can carry, best capacity first. Choosing among these
         // is what lets an under-used road corridor come back as something feasible
         // instead of being dropped for not justifying a tram.
@@ -166,6 +140,19 @@ namespace StationSuitabilityOverlay
             }
         }
 
+        // The network a mode's lines run on — the inverse of ModesFor, so an existing
+        // line climbs the same ladder a suggestion does (register A6.x for both).
+        public static RouteNetwork NetworkOf(ModePreset mode)
+        {
+            switch (mode)
+            {
+                case ModePreset.Train: return RouteNetwork.Rail;
+                case ModePreset.Metro: return RouteNetwork.Metro;
+                case ModePreset.Ferry: return RouteNetwork.Water;
+                default: return RouteNetwork.Road;
+            }
+        }
+
         // The longest alignment a mode's ride limit can hold at cruise speed with no
         // stops — the growth and trace bound; the real limit is checked with stops.
         public static float MaxAlignmentMetresFor(RouteNetwork network)
@@ -185,28 +172,6 @@ namespace StationSuitabilityOverlay
         {
             float driving = lengthMetres / Math.Max(1f, cruiseSpeed);
             return driving + (Math.Max(0, stops - 2) * delayPerStop);
-        }
-
-        public static ModePreset NextModeUp(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Bus: return ModePreset.Tram;
-                case ModePreset.Tram: return ModePreset.Metro;
-                case ModePreset.Metro: return ModePreset.Train;
-                default: return mode;
-            }
-        }
-
-        public static ModePreset NextModeDown(ModePreset mode)
-        {
-            switch (mode)
-            {
-                case ModePreset.Train: return ModePreset.Metro;
-                case ModePreset.Metro: return ModePreset.Tram;
-                case ModePreset.Tram: return ModePreset.Bus;
-                default: return mode;
-            }
         }
 
         // How a line of this mode is drawn, roughly following transit-map convention.

@@ -151,6 +151,7 @@ namespace StationSuitabilityOverlay
 
             onRoad.Group = candidate.Group;
             onRoad.DemandScored = true;
+            PrepareFleet(onRoad, facts);
             onRoad.EnabledDemand = RidersAlone(settings, onRoad, pass);
             if (!SettleMode(settings, onRoad, index, facts, stops, pass, out float roadUtilisation, out ModePreset? roadNextUp))
             {
@@ -196,7 +197,12 @@ namespace StationSuitabilityOverlay
 
             SuggestedRoute variant = route.CopyFor(larger);
             SuitabilityRoutes.Restop(variant, larger, stops);
+            PrepareFleet(variant, facts);
             variant.EnabledDemand = RidersAlone(settings, variant, pass);
+            if (TransitModes.ChooseMode(variant.Network, variant.EnabledDemand, facts, m => RoundTripSecondsOf(variant, m, facts), out ModePreset settled, out FleetPlan fleet) && settled == larger)
+            {
+                ApplyFleet(variant, fleet, facts);
+            }
             DeferredLog.Info(
                 $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: also offered as a {larger} " +
                 $"({variant.Stops.Count} stops, riders/day alone={(variant.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)})");
@@ -243,13 +249,61 @@ namespace StationSuitabilityOverlay
             return dropped;
         }
 
+        // The round trip a candidate would take as a given mode: the directed street
+        // legs out and back where the streets have them (the return may take other
+        // streets than the outward leg), the loop at cruise speed otherwise, plus the
+        // dwell at every call each way — the game's stableDuration for a line that does
+        // not exist yet.
+        private float RoundTripSecondsOf(SuggestedRoute route, ModePreset mode, FleetFacts facts)
+        {
+            float delay = facts.DelayPerStopSeconds(mode);
+            float speed = Assumptions.CruiseSpeedFor(mode);
+            if (route.Network != RouteNetwork.Road || m_RoadGraph.Directed is null || route.Stops.Count < 2)
+            {
+                return TransitModes.RoundTripSeconds(route.Length * 2f, route.Stops.Count * 2, speed, delay);
+            }
+
+            double driving = 0.0;
+            for (int i = 1; i < route.Stops.Count; i++)
+            {
+                driving += LegSeconds(route.Stops[i - 1], route.Stops[i], speed);
+                driving += LegSeconds(route.Stops[i], route.Stops[i - 1], speed);
+            }
+
+            return (float)driving + (route.Stops.Count * 2 * delay);
+        }
+
+        // The fleet a candidate would start with as the player builds it — the prefab
+        // interval within the game's span — before any rider has been counted. What the
+        // probe routes against; SettleMode then sizes the fleet to the riders.
+        private void PrepareFleet(SuggestedRoute route, FleetFacts facts)
+        {
+            route.RoundTripSeconds = RoundTripSecondsOf(route, route.Mode, facts);
+            facts.FleetSpanFor(route.Mode, route.RoundTripSeconds, out route.FleetMin, out route.FleetMax);
+            int atPrefab = TransitModes.GameFleet(facts.PrefabIntervalFor(route.Mode), route.RoundTripSeconds);
+            route.Vehicles = TransitModes.Clamp(atPrefab, route.FleetMin, route.FleetMax);
+            route.HeadwaySeconds = TransitModes.GameInterval(route.RoundTripSeconds, route.Vehicles);
+        }
+
+        private void ApplyFleet(SuggestedRoute route, FleetPlan fleet, FleetFacts facts)
+        {
+            route.RoundTripSeconds = RoundTripSecondsOf(route, route.Mode, facts);
+            route.Vehicles = fleet.Vehicles;
+            route.HeadwaySeconds = fleet.HeadwaySeconds;
+            route.FleetMin = fleet.Min;
+            route.FleetMax = fleet.Max;
+        }
+
         // Chooses the mode from the route's own riders, re-placing its stops for the
         // mode and re-measuring once, since stops and riders depend on each other.
-        // False when no vehicle of any mode on the network is installed.
+        // False when no vehicle of any mode on the network is installed. The route
+        // leaves with the fleet the ladder sized within the game's span (A5.5/A6.8).
         private bool SettleMode(Setting settings, SuggestedRoute route, int index, FleetFacts facts, StopContext stops, RoutePass pass, out float utilisation, out ModePreset? nextUp)
         {
             nextUp = null;
-            if (!TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out ModePreset mode, out utilisation))
+            utilisation = 0f;
+            float RoundTripFor(ModePreset m) => RoundTripSecondsOf(route, m, facts);
+            if (!TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out ModePreset mode, out FleetPlan fleet))
             {
                 DeferredLog.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {route.Network}, riders/day={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, no vehicle of any {route.Network} mode is installed");
@@ -259,15 +313,20 @@ namespace StationSuitabilityOverlay
             if (mode != route.Mode)
             {
                 SuitabilityRoutes.Restop(route, mode, stops);
+                PrepareFleet(route, facts);
                 route.EnabledDemand = RidersAlone(settings, route, pass);
-                if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out ModePreset again, out utilisation) && again != mode)
+                if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out ModePreset again, out fleet) && again != mode)
                 {
                     mode = again;
                     SuitabilityRoutes.Restop(route, mode, stops);
+                    PrepareFleet(route, facts);
                     route.EnabledDemand = RidersAlone(settings, route, pass);
-                    _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, out _, out utilisation);
+                    _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out _, out fleet);
                 }
             }
+
+            ApplyFleet(route, fleet, facts);
+            utilisation = fleet.Utilisation;
 
             ModePreset[] ladder = TransitModes.ModesFor(route.Network);
             int rung = Array.IndexOf(ladder, mode);
@@ -282,7 +341,9 @@ namespace StationSuitabilityOverlay
 
             DeferredLog.Info(
                 $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {route.Network} -> {mode}{(route.BentThroughHub ? " via an interchange" : string.Empty)}, " +
-                $"riders/day alone={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, utilisation alone={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
+                $"riders/day alone={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, fleet {(fleet.Vehicles).ToString(CultureInfo.InvariantCulture)} of [{(fleet.Min).ToString(CultureInfo.InvariantCulture)}, {(fleet.Max == int.MaxValue ? "?" : fleet.Max.ToString(CultureInfo.InvariantCulture))}] " +
+                $"(round trip {(route.RoundTripSeconds).ToString("F0", CultureInfo.InvariantCulture)} s -> interval {(fleet.HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)} s), " +
+                $"utilisation alone={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
                 $"{route.Stops.Count} stops, len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m");
             return true;
         }
