@@ -136,19 +136,27 @@ namespace TransitArchitect
                     high = new Color(1f, 1f, 1f, 0.95f);
                     break;
                 case SuitabilityLayer.TransitAccess:
-                    // Walking time from a building to the nearest served stop, so the
-                    // ramp runs the other way round: green is a short walk. Object
-                    // colours are opaque — alpha here would make the building
-                    // translucent rather than lightly tinted.
-                    low = new Color(0.18f, 0.72f, 0.30f, 1f);
-                    medium = new Color(0.95f, 0.80f, 0.20f, 1f);
-                    high = new Color(0.85f, 0.20f, 0.15f, 1f);
+                    // Walking time from a building to the nearest served stop: pale
+                    // straw is a short walk, deep red-brown is at or beyond the horizon.
+                    // ColorBrewer YlOrRd, chosen with the map ramp below as a pair
+                    // (author's request 2026-09-06): warm against that one's cool, and
+                    // both run monotonically from light to dark, so red-green and
+                    // blue-yellow colour blindness — and a greyscale screenshot — still
+                    // read them. Object colours are opaque; alpha here would make the
+                    // building translucent rather than tinted.
+                    low = new Color(1f, 0.97f, 0.75f, 1f);
+                    medium = new Color(0.99f, 0.55f, 0.24f, 1f);
+                    high = new Color(0.50f, 0f, 0.15f, 1f);
                     break;
                 default:
-                    // The combined score keeps the original green/yellow/red ramp.
-                    low = new Color(0.12f, 0.46f, 0.18f, 0f);
-                    medium = new Color(0.94f, 0.84f, 0.25f, 0.65f);
-                    high = new Color(0.85f, 0.22f, 0.12f, 0.95f);
+                    // The combined score: where a new stop would do the most good. Pale
+                    // to deep blue (ColorBrewer Blues), the cool half of the pair with
+                    // the building ramp above. It replaced a green-yellow-red ramp,
+                    // which was unreadable next to the building colours for anyone with
+                    // red-green colour blindness and, on a green map, for everyone else.
+                    low = new Color(0.78f, 0.86f, 0.94f, 0f);
+                    medium = new Color(0.26f, 0.57f, 0.78f, 0.62f);
+                    high = new Color(0.03f, 0.19f, 0.42f, 0.95f);
                     break;
             }
         }

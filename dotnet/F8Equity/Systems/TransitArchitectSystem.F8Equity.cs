@@ -50,6 +50,42 @@ namespace TransitArchitect
 
         internal float2 AccessFieldWorldMin => m_AccessFieldWorldMin;
 
+        // The walk one building faces, read back out of the same field that colours it.
+        // The selected-building panel shows this, so what the player is told and what
+        // they can see on the map are one number by construction.
+        //
+        // Seconds rather than the stored byte: the byte is the walk as a fraction of the
+        // equity horizon, which is a setting, so it means nothing on its own. `served`
+        // is false at or beyond the horizon — 255 is the far end of the ramp, not a
+        // measurement, and reporting "10 min" for a building an hour from any stop would
+        // be a lie the colour does not tell.
+        internal bool TryGetAccessAt(float3 position, out int walkSeconds, out bool served)
+        {
+            walkSeconds = 0;
+            served = false;
+            byte[]? field = m_AccessByTile;
+            int2 grid = m_AccessFieldGrid;
+            if (field is null || grid.x <= 0 || grid.y <= 0 || field.Length != grid.x * grid.y || m_EquityHorizonMs <= 0)
+            {
+                return false;
+            }
+
+            int x = (int)math.floor((position.x - m_AccessFieldWorldMin.x) / Assumptions.TileSize);
+            int z = (int)math.floor((position.z - m_AccessFieldWorldMin.y) / Assumptions.TileSize);
+            if (x < 0 || z < 0 || x >= grid.x || z >= grid.y)
+            {
+                return false;
+            }
+
+            byte value = field[(z * grid.x) + x];
+            served = value < byte.MaxValue;
+            walkSeconds = (int)((long)value * m_EquityHorizonMs / (255L * 1000L));
+            return true;
+        }
+
+        // How long a walk still counts as served, for the panel to say so.
+        internal int EquityHorizonMinutes => m_EquityHorizonMs / 60_000;
+
         // The colour-group index the transit-access infomode is active in, 0 when the
         // player has it switched off.
         internal int TransitAccessInfomodeIndex => m_Infoview.ObjectLayerIndex(SuitabilityLayer.TransitAccess);

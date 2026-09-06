@@ -55,8 +55,17 @@ access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
 - [ ] Choose the notification icon prefab from the names the run logged (`s_LineNotificationIconName`
       is empty, so the rebuild markers are off). The save offers 160; "Passenger Transport" is the
       likely one
-- [ ] Second in-game run: verify the note rows, the suggestions section, the building colours (the
-      log now says in one line whether it is colouring and why not), the site rings, both locales
+- [x] Second in-game run (13:57): building colours, terrain alpha, note rows and slider bars all
+      confirmed. Follow-ups from it are done — see below
+- [x] The mod's own window is retired; the two city-wide figures live in the game's infoview panel
+      (author's request 2026-09-06)
+- [x] Colour-blind-safe pair of ramps: suitability = Blues, building walk time = YlOrRd, cool against
+      warm and both monotone in lightness (author's request 2026-09-06)
+- [x] The walk that coloured a building is shown in that building's own window, through an
+      `InfoSectionBase` (author's request 2026-09-06)
+- [x] Suggestions carry a header row and fit on one line each; German singular/plural split
+- [ ] Third in-game run: the figures inside the infoview panel, the building row, the new ramps,
+      the suggestions header
 
 ## 3. Repository hygiene
 

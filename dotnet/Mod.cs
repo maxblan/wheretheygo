@@ -84,6 +84,11 @@ namespace TransitArchitect
             // reads it (both are Rendering, in that order).
             updateSystem.UpdateAfter<BuildingAccessColorSystem, ObjectColorSystem>(SystemUpdatePhase.Rendering);
 
+            // The walk-to-transit row in the game's own selected-building window. A
+            // section registers itself with SelectedInfoUISystem in OnCreate, so it only
+            // has to exist and be updated.
+            updateSystem.UpdateAt<BuildingAccessSection>(SystemUpdatePhase.UIUpdate);
+
             // Bindings for the in-game control panel. The panel's own code ships as
             // TransitArchitect.mjs beside the DLL, which the game loads by
             // matching the assembly name.

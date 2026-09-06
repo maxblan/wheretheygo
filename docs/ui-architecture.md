@@ -282,3 +282,35 @@ Two smaller findings, both about how much of the screen the mod was claiming:
 - A terrain infomode whose low colour has any alpha at all paints the **whole map**: a
   tile scores zero wherever it is off the walk network, which was 198 091 of 200 704
   tiles on Valmare. Every terrain ramp's low end is now fully transparent.
+
+## Second run, and the end of the mod's own window (2026-09-06 13:57)
+
+The run confirmed the ordering fix (buildings colour), the terrain alpha (the countryside
+is plain again), the note rows (vanilla columns stay under their headings) and the slider
+bars. Three things followed from it.
+
+**The mod has no window of its own any more.** The two city-wide figures moved into the
+game's infoview panel, beside the legend they describe (author's request). That is done by
+extending `InfoviewPanelSpace` — the divider the panel draws exactly once, between its
+MAP LEGEND heading and the infomode checkboxes — which is the only seam that lands
+*inside* the panel's rounded box. Extending `ActiveInfoviewPanel` itself can only append a
+second box below it, because its body is assembled inline from a `switch` over infoview ids
+that a mod's id falls out of. With the window gone, `PanelOpen` is gone too: the routes,
+the site rings and the map are one view now, opened and closed together like any vanilla
+infoview, and the toolbar button just switches that infoview.
+
+**A row in the selected-building window** shows the walk that coloured that building. C# side
+is an `InfoSectionBase` with `group = "TransitArchitectAccess"` registering itself through
+`SelectedInfoUISystem.AddMiddleSection`; UI side is one key written into
+`selectedInfoSectionComponents`, whose setter is an `Object.assign`, so it adds a section
+without touching the hundred the game registers. A group with no component is simply not
+drawn, so the two sides can be updated in either order.
+
+**The two ramps are now a colour-blind-safe pair.** The suitability map is ColorBrewer
+Blues (transparent → deep blue), the building walk time is ColorBrewer YlOrRd (pale straw →
+deep red-brown). Cool against warm, and both monotone in lightness, so red-green and
+blue-yellow colour blindness — and a greyscale screenshot — still separate them. They also
+no longer collide with each other, which the shared green-yellow-red ramp did.
+
+The two font-missing glyphs (`▴`, `✕`) that rendered as tofu went with the window. Anything
+added later must use the game's own icon SVGs rather than box-drawing characters.

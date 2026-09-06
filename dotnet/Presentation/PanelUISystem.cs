@@ -24,11 +24,6 @@ namespace TransitArchitect
             base.OnCreate();
             m_OverlaySystem = World.GetOrCreateSystemManaged<TransitArchitectSystem>();
 
-            // Visibility is driven by the mod's own toolbar button rather than by the
-            // infoview menu, so the panel is the single entry point.
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "visible",
-                () => m_OverlaySystem is not null && m_OverlaySystem.PanelOpen));
-
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
                 m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
 
@@ -55,20 +50,6 @@ namespace TransitArchitect
             AddBinding(new TriggerBinding<bool>(Group, "setHeatmap", value =>
             {
                 m_OverlaySystem?.SetInfoviewActive(value);
-            }));
-
-            AddBinding(new TriggerBinding(Group, "toggle", () =>
-            {
-                if (m_OverlaySystem is null)
-                {
-                    return;
-                }
-
-                bool open = !m_OverlaySystem.PanelOpen;
-                m_OverlaySystem.PanelOpen = open;
-                // Opening the panel turns the overlay on and closing turns it off, so
-                // the button behaves like the other mods' toolbar toggles.
-                m_OverlaySystem.SetInfoviewActive(open);
             }));
 
             AddBinding(new TriggerBinding<int>(Group, "applyPlan", static id =>

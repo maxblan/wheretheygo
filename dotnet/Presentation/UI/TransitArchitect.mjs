@@ -53,148 +53,65 @@ function h(tag, props, ...children) {
     return React.createElement(tag, props, ...children);
 }
 
-// A checkbox in the shape the game uses, rather than an On/Off pill: the vanilla
-// Options page next door is full of these, and a green button saying "An" was the one
-// control on screen that announced itself as somebody's mod.
-function Toggle({ label, value, onToggle }) {
-    const t = useTranslate();
-    return h("div", { className: "ta-row" },
-        h("div", { className: "ta-label" }, label),
-        h("button", {
-            className: "ta-toggle" + (value ? " ta-toggle-on" : ""),
-            title: value ? t("On", "On") : t("Off", "Off"),
-            onClick: () => onToggle(!value),
-        }, value ? "\u2713" : ""));
-}
-
-function Readout({ label, value, caption, filled, dim, extra }) {
-    return h("div", { className: "ta-readout" },
-        h("div", { className: "ta-readout-label" }, label),
-        h("div", { className: "ta-readout-value" }, value),
-        filled === undefined ? null : h("div", { className: "ta-readout-track" },
-            h("div", {
-                className: "ta-readout-fill" + (dim ? " ta-readout-fill-short" : ""),
-                style: { width: Math.max(0, Math.min(100, filled)) + "%" },
-            })),
-        caption ? h("div", { className: "ta-readout-caption" }, caption) : null,
-        extra || null);
-}
-
-function DataCoverage({ raw }) {
-    const t = useTranslate();
-    const parts = (raw || "").split("|");
-    const hours = parts[0] || "0";
-    const readings = parseInt(parts[1], 10) || 0;
-    // Not `window`: that shadows the global this module reads React and the binding
-    // API off. The length of the window is C#'s to state, not this file's.
-    const windowHours = parts[2] || "24";
-    const observedTrips = parseInt(parts[3], 10) || 0;
-    const observedHours = parts[4] || "0";
-    // Shopping and leisure journeys are watched, not read from the save, so the panel
-    // says how many it has seen and over how long — the reader can then judge how much
-    // of the demand picture is filled in.
-    const observed = h("div", { className: "ta-readout-caption" },
-        (observedTrips
-            ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
-            : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
-            .replace("{0}", String(observedTrips))
-            .replace("{1}", observedHours));
-
-    if (!readings) {
-        return h(Readout, {
-            label: t("DataBasis", "Data collected"),
-            value: t("DataBasisNone", "nothing yet"),
-            caption: t("DataBasisEmpty", "readings start with your first line"),
-            extra: observed,
-        });
-    }
-
-    return h(Readout, {
-        label: t("DataBasis", "Data collected"),
-        value: hours + " h",
-        caption: t("DataBasisCaption", "of the last {0} h · {1} readings")
-            .replace("{0}", windowHours)
-            .replace("{1}", String(readings)),
-        filled: (parseFloat(hours) / parseFloat(windowHours)) * 100,
-        extra: observed,
-    });
-}
-
-function Equity({ raw }) {
-    const t = useTranslate();
-    const parts = (raw || "").split("|");
-    if (parts.length < 4) {
-        return h(Readout, {
-            label: t("Equity", "Served journeys"),
-            value: t("EquityEmpty", "not measured yet"),
-        });
-    }
-
-    const share = parseFloat(parts[0]);
-    const target = parseFloat(parts[2]);
-    return h(Readout, {
-        label: t("Equity", "Served journeys"),
-        value: parts[0] + " %",
-        caption: t("EquityCaption", "reach a served stop within {0} min at both ends · target {1} % · Gini {2}")
-            .replace("{0}", parts[1])
-            .replace("{1}", parts[2])
-            .replace("{2}", parts[3]),
-        filled: share,
-        dim: share < target,
-    });
-}
-
-// What is left of the mod's own window (author's decision 6a, 2026-09-06): the two
-// figures that describe the whole city, and the switch for the map. Every knob moved to
-// the Options page, and the two lists moved into the game's Transportation Overview, so
-// nothing here duplicates a place the player would look first.
+// The two city-wide figures, in the game's own infoview panel (author's request
+// 2026-09-06). They used to live in a window of the mod's own, which is one window too
+// many: they describe the map that panel is the legend for.
 //
-// No legend of its own any more. The infomodes derive from GradientInfomodeBasePrefab,
-// so the game draws its own gradient legend for them, which is the one a player already
-// knows.
-function Panel() {
+// Built from the game's own InfoviewPanelLabel where it resolves, so the rows match the
+// ones the vanilla panels draw, and from plain markup where it does not — a renamed
+// export must cost a plainer row, never a missing figure.
+function figureRow(label, value, caption) {
+    const Label = vanillaLabel;
+    return h("div", { className: "ta-figure" },
+        Label
+            ? h(Label, { small: true, text: label, rightText: value })
+            : h("div", { className: "ta-figure-row" },
+                h("div", { className: "ta-figure-label" }, label),
+                h("div", { className: "ta-figure-value" }, value)),
+        caption ? h("div", { className: "ta-figure-caption" }, caption) : null);
+}
+
+function InfoviewFigures() {
     const t = useTranslate();
-    const visible = useBound("visible", false);
-    const [collapsed, setCollapsed] = React.useState(false);
-
-    const heatmap = useBound("heatmap", true);
-    const dataCoverage = useBound("dataCoverage", "");
-    const equity = useBound("equity", "");
-
-    if (!visible) {
+    // Hooks first and unconditionally: the panel this sits in is shared with every
+    // vanilla infoview, so this component renders for all of them and returns nothing
+    // for the ones that are not ours.
+    const ours = useBound("heatmap", false);
+    const equityRaw = useBound("equity", "");
+    const coverageRaw = useBound("dataCoverage", "");
+    if (!ours) {
         return null;
     }
 
-    // The title bar carries the two things a game panel's title bar carries: fold and
-    // close. Written as buttons with symbols rather than a dash appended to the title,
-    // which is what the first cut did and what read as a typo.
-    const header = h("div", { className: "ta-header" },
-        h("div", { className: "ta-title" }, t("Title", "Transit Architect")),
-        h("button", {
-            className: "ta-icon",
-            title: t(collapsed ? "Expand" : "Collapse", collapsed ? "Expand" : "Collapse"),
-            onClick: () => setCollapsed(!collapsed),
-        }, collapsed ? "\u25be" : "\u25b4"),
-        h("button", {
-            className: "ta-icon",
-            title: t("Close", "Close"),
-            onClick: () => trigger("toggle"),
-        }, "\u2715"));
+    const rows = [];
 
-    if (collapsed) {
-        return h("div", { className: "ta-panel ta-panel-collapsed" }, header);
+    const equity = (equityRaw || "").split("|");
+    if (equity.length >= 4) {
+        rows.push(figureRow(
+            t("Equity", "Served journeys"),
+            equity[0] + " %",
+            t("EquityCaption", "reach a served stop within {0} min at both ends · target {1} % · Gini {2}")
+                .replace("{0}", equity[1]).replace("{1}", equity[2]).replace("{2}", equity[3])));
     }
 
-    return h("div", { className: "ta-panel" },
-        header,
-        h("div", { className: "ta-body" },
-            h(Equity, { raw: equity }),
-            h(DataCoverage, { raw: dataCoverage }),
-            h(Toggle, {
-                label: t("Heatmap", "Suitability map"),
-                value: heatmap,
-                onToggle: (next) => trigger("setHeatmap", next),
-            })));
+    const coverage = (coverageRaw || "").split("|");
+    const readings = parseInt(coverage[1], 10) || 0;
+    const observedTrips = parseInt(coverage[3], 10) || 0;
+    const observed = (observedTrips
+        ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
+        : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
+        .replace("{0}", String(observedTrips))
+        .replace("{1}", coverage[4] || "0");
+    rows.push(figureRow(
+        t("DataBasis", "Data collected"),
+        readings ? (coverage[0] || "0") + " h" : t("DataBasisNone", "nothing yet"),
+        (readings
+            ? t("DataBasisCaption", "of the last {0} h · {1} readings")
+                .replace("{0}", coverage[2] || "24")
+                .replace("{1}", String(readings))
+            : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
+
+    return h("div", { className: "ta-figures" }, rows);
 }
 
 // Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their
@@ -205,12 +122,12 @@ function Panel() {
 // the whole box itself.
 function ToolbarButton() {
     const t = useTranslate();
-    const open = useBound("visible", false);
+    const open = useBound("heatmap", false);
     return h("div", { className: "ta-toolbar-slot" },
         h("button", {
             className: "ta-toolbar-button" + (open ? " ta-toolbar-button-on" : ""),
             title: t("Title", "Transit Architect"),
-            onClick: () => trigger("toggle"),
+            onClick: () => trigger("setHeatmap", !open),
         },
             h("img", {
                 className: "ta-toolbar-icon",
@@ -237,12 +154,23 @@ const VANILLA = {
     lineItem: "game-ui/game/components/transportation-overview-panel/transport-line-item/transport-line-item.tsx",
     page: "game-ui/game/components/transportation-overview-panel/transportation-overview-page.tsx",
     pageStyle: "game-ui/game/components/transportation-overview-panel/transportation-overview-page.module.scss",
+    // The infoview panel's own building blocks. InfoviewPanelSpace is the divider the
+    // panel draws once, between the MAP LEGEND heading and the infomode checkboxes, so
+    // extending it is what puts our figures INSIDE that panel rather than in a second
+    // box under it. It renders more than once only for the zone infoviews, which are
+    // never ours.
+    infoSpace: "game-ui/game/components/infoviews/active-infoview-panel/components/infoview-panel-space.tsx",
+    infoLabels: "game-ui/game/components/infoviews/active-infoview-panel/components/labels/labels.tsx",
+    // The map from a C# section's `group` to the component that draws it. Its setter
+    // is an Object.assign, so writing one key adds a section without disturbing the
+    // hundred the game registers.
+    sections: "game-ui/game/components/selected-info-panel/selected-info-sections/selected-info-sections.tsx",
 };
 
-// The vanilla page's own cell classes, so our column is exactly as wide as a
-// numeric one and moves with the game's own layout. Empty when the module is not
-// where it used to be, and then the fallback class in our CSS applies.
 let pageClasses = {};
+
+// The game's own label row, or null when the export has moved.
+let vanillaLabel = null;
 
 function readVanilla(registry, path, exportName) {
     try {
@@ -438,9 +366,13 @@ function TransitNote({ parts }) {
             structural ? t("NoteShow", "show me") : t("NoteApply", "apply")));
 }
 
-// Suggestions, under the vanilla list and in its shape. They are not game entities,
-// so they cannot be rows of that list; a section of our own below it is the honest
-// place for them.
+// Suggestions, under the vanilla list. They are not game entities, so they cannot be
+// rows of that list; a section of our own below it is the honest place for them.
+//
+// It carries its own header row, unlike the verdict notes above: this IS our table, so
+// nothing stops it having headings, and without them "2.7 km · 8 · 6" is a puzzle.
+// Every cell is one line — the first cut wrapped the reach sentence onto a second line
+// and turned five rows into ten.
 function SuggestionsSection() {
     const t = useTranslate();
     const raw = useBound("routeList", "");
@@ -451,6 +383,9 @@ function SuggestionsSection() {
         return null;
     }
 
+    const wide = pageClasses.cellWide || "";
+    const cell = pageClasses.cellDouble || "";
+
     return h("div", { className: "ta-suggestions" },
         h("div", { className: "ta-suggestions-head" },
             h("div", { className: "ta-suggestions-title" }, t("SuggestedLines", "Suggested lines")),
@@ -460,6 +395,16 @@ function SuggestionsSection() {
                     onClick: () => trigger("applyRouteUpdate"),
                 }, t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
                 : null),
+
+        h("div", { className: "ta-suggestion ta-suggestion-head" },
+            h("div", { className: "ta-swatch ta-swatch-blank" }),
+            h("div", { className: wide + " ta-suggestion-name" }, t("ColMode", "Mode")),
+            h("div", { className: cell }, t("ColLength", "Length")),
+            h("div", { className: cell }, t("ColStops", "Stops")),
+            h("div", { className: cell }, t("ColVehicles", "Vehicles")),
+            h("div", { className: cell }, t("ColSchedule", "Runs")),
+            h("div", { className: cell }, t("ColReach", "Unlocks"))),
+
         rows.map((row, index) => {
             const parts = row.split("|");
             const mode = parts[0] || "Bus";
@@ -471,18 +416,68 @@ function SuggestionsSection() {
                 onMouseLeave: () => trigger("highlightRoute", -1),
             },
                 h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } }),
-                h("div", { className: (pageClasses.cellWide || "") + " ta-suggestion-name" }, t("Mode." + mode, mode)),
-                h("div", { className: (pageClasses.cellDouble || "") }, (parts[1] || "?") + " " + t("Km", "km")),
-                h("div", { className: (pageClasses.cellDouble || "") }, (parts[2] || "?") + " " + t("Stops", "stops")),
-                h("div", { className: (pageClasses.cellDouble || "") }, (parts[3] || "?") + " " + t("Vehicles", "veh")),
+                h("div", { className: wide + " ta-suggestion-name" }, t("Mode." + mode, mode)),
+                h("div", { className: cell }, (parts[1] || "?") + " " + t("Km", "km")),
+                h("div", { className: cell }, parts[2] || "?"),
+                h("div", { className: cell }, parts[3] || "?"),
                 // When to run it. The game offers all day, day only or night only per
                 // line, and the recommendation rests on how full this line would be in
                 // each period on its own riders.
-                h("div", { className: (pageClasses.cellDouble || "") },
+                h("div", { className: cell },
                     t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
-                h("div", { className: (pageClasses.cellDouble || "") + " ta-suggestion-reach" },
-                    t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0")));
+                // The figure the list is ordered by, so the gap between the first row
+                // and the second is visible rather than implied.
+                h("div", { className: cell + " ta-suggestion-reach" }, (parts[5] || "0") + " %"));
         }));
+}
+
+// The walk-to-transit row in the game's own selected-building window, drawn from what
+// BuildingAccessSection wrote. The props are that section's JSON: a section whose
+// group has no component here is simply not drawn, so this file and the C# side can be
+// updated in either order without a broken panel in between.
+function BuildingAccessRow({ walkSeconds, served, horizonMinutes }) {
+    const t = useTranslate();
+    const minutes = Math.round((walkSeconds || 0) / 60);
+    const Label = vanillaLabel;
+    const value = served
+        ? t("WalkMinutes", "{0} min").replace("{0}", String(minutes))
+        : t("WalkBeyond", "over {0} min").replace("{0}", String(horizonMinutes || 0));
+
+    // Deliberately the same words as the infomode this number colours the building
+    // for, so a player who has both open sees one fact stated twice, not two facts.
+    return h("div", { className: "ta-building" },
+        Label
+            ? h(Label, { small: true, text: t("BuildingWalk", "Walk to transit"), rightText: value })
+            : h("div", { className: "ta-figure-row" },
+                h("div", { className: "ta-figure-label" }, t("BuildingWalk", "Walk to transit")),
+                h("div", { className: "ta-figure-value" }, value)),
+        h("div", { className: "ta-figure-caption" },
+            served
+                ? t("BuildingWalkServed", "to the nearest stop your lines serve")
+                : t("BuildingWalkUnserved", "no served stop within the walking horizon")));
+}
+
+// Puts the two city-wide figures inside the game's infoview panel, under its heading.
+function extendInfoview(registry) {
+    vanillaLabel = readVanilla(registry, VANILLA.infoLabels, "InfoviewPanelLabel");
+
+    if (readVanilla(registry, VANILLA.infoSpace, "InfoviewPanelSpace")) {
+        registry.extend(VANILLA.infoSpace, "InfoviewPanelSpace", (Original) => (props) =>
+            h(React.Fragment, null, h(Original, props), h(InfoviewFigures, null)));
+    }
+}
+
+// Adds one entry to the game's section map. Assignment, not extend: the export's setter
+// is an Object.assign, so this adds a key and leaves every other section alone.
+function registerBuildingSection(registry) {
+    try {
+        const module = registry && registry.registry ? registry.registry.get(VANILLA.sections) : null;
+        if (module) {
+            module.selectedInfoSectionComponents = { TransitArchitectAccess: BuildingAccessRow };
+        }
+    } catch (error) {
+        console.warn("[TransitArchitect] the selected-info section map has moved: " + error);
+    }
 }
 
 // Wraps a vanilla line row so our note sits UNDER it. Beside it does not work: the
@@ -523,14 +518,15 @@ const register = (moduleRegistry) => {
         return;
     }
 
-    moduleRegistry.append("Game", Panel);
+    // No window of the mod's own any more. Everything it has to say now lives where the
+    // player is already looking: the figures in the game's infoview panel, the verdicts
+    // and suggestions in the Transportation Overview, one row in the selected-building
+    // window, and every setting in the Options page.
     moduleRegistry.append("GameTopLeft", ToolbarButton);
-    // The infoview row is no longer hidden. It was, back when the mod spoke only
-    // through a window of its own; now that it offers a suitability heat map and a
-    // transit-access view of the buildings, a row in the game's own infoview menu is
-    // exactly where a player expects to find them.
+    extendInfoview(moduleRegistry);
     extendOverview(moduleRegistry);
-    console.info("[TransitArchitect] Control panel registered.");
+    registerBuildingSection(moduleRegistry);
+    console.info("[TransitArchitect] UI registered.");
 };
 
 export const hasCSS = true;

@@ -9,161 +9,54 @@
  * subtree or injected into a component whose ancestors are not ours — cohtml drops the
  * whole declaration when a custom variable does not resolve, which once left the
  * toolbar button with no width at all. The values below are read off the vanilla
- * panels so the result matches them without depending on them. */
+ * panels so the result matches them without depending on them.
+ *
+ * The mod has no window of its own. Everything styled here is a few rows injected into
+ * panels the game already draws, which is why there is so little of it. */
 
 /* ---------------------------------------------------------------------------
-   The mod's own window: two city-wide figures and the map switch. */
+   Two figures in the game's infoview panel, and one row in its selected-building
+   window. Both borrow InfoviewPanelLabel for the label/value line, so only the caption
+   under it and the spacing around it are ours. */
 
-.ta-panel {
-    /* Right-hand side on purpose: the vanilla infoview legend owns the top-left. */
-    position: absolute;
-    top: 60rem;
-    right: 60rem;
-    /* Sized to its content, with a ceiling. The old fixed 620rem was twice as wide as
-       anything in it once the lists moved into the game's own overview. */
-    width: 300rem;
-    max-height: 78vh;
-    display: flex;
-    flex-direction: column;
-    background-color: rgba(11, 19, 28, 0.94);
-    border-radius: 4rem;
-    color: #dfe8f2;
-    font-size: 12rem;
-    pointer-events: auto;
-    z-index: 20;
+.ta-figures {
+    margin: 2rem 0 6rem 0;
 }
 
-.ta-panel-collapsed {
-    width: 300rem;
+.ta-figure {
+    margin-bottom: 5rem;
 }
 
-/* A title bar in the shape the game uses: name on the left, controls on the right. */
-.ta-header {
+.ta-building {
+    margin: 4rem 10rem;
+}
+
+/* The fallback line, used only when InfoviewPanelLabel has been renamed out from under
+   us. Same shape, plainer type. */
+.ta-figure-row {
     display: flex;
     flex-direction: row;
-    align-items: center;
-    padding: 4rem 4rem 4rem 10rem;
-    background-color: rgba(28, 45, 66, 0.95);
-    border-radius: 4rem 4rem 0 0;
+    align-items: baseline;
 }
 
-.ta-title {
+.ta-figure-label {
     flex: 1 1 auto;
     min-width: 0;
-    color: #ffffff;
-    font-size: 13rem;
-    text-transform: uppercase;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: #dfe8f2;
+    font-size: 12rem;
 }
 
-.ta-icon {
+.ta-figure-value {
     flex: 0 0 auto;
-    width: 22rem;
-    height: 22rem;
-    margin-left: 2rem;
-    padding: 0;
-    background-color: transparent;
-    border: none;
-    border-radius: 3rem;
-    color: #a8bccf;
-    font-size: 13rem;
-    text-align: center;
-    cursor: pointer;
-}
-
-.ta-icon:hover {
-    background-color: rgba(120, 170, 220, 0.25);
     color: #ffffff;
+    font-size: 12rem;
 }
 
-.ta-body {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    padding: 8rem 10rem 10rem 10rem;
-}
-
-/* One figure: quiet label, the number large, the bar it fills, the qualification
-   underneath. */
-.ta-readout {
-    margin-bottom: 12rem;
-}
-
-.ta-readout-label {
-    color: #8fa6bb;
-    font-size: 10rem;
-    text-transform: uppercase;
-    margin-bottom: 1rem;
-}
-
-.ta-readout-value {
-    color: #ffffff;
-    font-size: 20rem;
-}
-
-.ta-readout-track {
-    height: 5rem;
-    margin: 4rem 0 3rem 0;
-    background-color: rgba(255, 255, 255, 0.12);
-    border-radius: 3rem;
-    overflow: hidden;
-}
-
-.ta-readout-fill {
-    height: 100%;
-    background-color: rgb(74, 157, 224);
-    border-radius: 3rem;
-}
-
-/* Below target. Amber rather than a dimmed blue: "not there yet" is a state worth
-   naming, and opacity alone read as a rendering accident. */
-.ta-readout-fill-short {
-    background-color: rgb(232, 160, 54);
-}
-
-.ta-readout-caption {
+/* What the figure rests on. Small and quiet: it qualifies the number above, it is not
+   a finding of its own. */
+.ta-figure-caption {
     color: #93a8bd;
     font-size: 10rem;
-}
-
-/* The map switch, as close to a vanilla checkbox row as a plain button gets. */
-.ta-row {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-}
-
-.ta-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    color: #dfe8f2;
-    font-size: 12rem;
-}
-
-.ta-toggle {
-    flex: 0 0 auto;
-    width: 20rem;
-    height: 20rem;
-    padding: 0;
-    background-color: rgba(255, 255, 255, 0.1);
-    border: 1rem solid rgba(160, 190, 220, 0.5);
-    border-radius: 3rem;
-    color: #ffffff;
-    font-size: 12rem;
-    text-align: center;
-    cursor: pointer;
-}
-
-.ta-toggle:hover {
-    background-color: rgba(120, 170, 220, 0.3);
-}
-
-.ta-toggle-on {
-    background-color: rgb(74, 157, 224);
-    border-color: rgb(140, 200, 245);
-    color: #ffffff;
 }
 
 /* Toolbar toggle, sitting alongside the vanilla top-left buttons.
@@ -317,7 +210,7 @@
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
-    max-height: 180rem;
+    max-height: 260rem;
     overflow-y: auto;
     padding: 6rem 10rem 10rem 10rem;
     border-top: 1rem solid rgba(120, 170, 220, 0.25);
@@ -366,6 +259,24 @@
 
 .ta-suggestion-reach {
     color: #9fb6cc;
+}
+
+/* The section's own header row. The vanilla list's headings are a private const, but
+   this table is ours, so it can say what its columns are. */
+.ta-suggestion-head {
+    color: #93a8bd;
+    font-size: 10rem;
+    text-transform: uppercase;
+    cursor: default;
+}
+
+.ta-suggestion-head:hover {
+    background-color: transparent;
+}
+
+/* Keeps the header's columns over the rows' without a swatch of its own. */
+.ta-swatch-blank {
+    background-color: transparent;
 }
 
 .ta-swatch {

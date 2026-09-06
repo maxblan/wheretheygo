@@ -1,0 +1,80 @@
+﻿using Colossal.Entities;
+using Colossal.UI.Binding;
+using Game.Buildings;
+using Game.UI.InGame;
+using Unity.Entities;
+using Transform = Game.Objects.Transform;
+
+namespace TransitArchitect
+{
+    // A section in the game's own selected-building window: the walk from this
+    // building to the nearest stop the city's lines actually serve (author's request
+    // 2026-09-06).
+    //
+    // It is the SAME number that colours the building in the transit-access infoview,
+    // read back out of the same tile field, so the map and the panel cannot disagree.
+    // The city-wide Gini in the mod's figures is the spread of exactly these walks;
+    // this is the one building's contribution to it.
+    //
+    // The section renders through a component the .mjs registers under the group name
+    // below, in the game's selectedInfoSectionComponents map. Sections whose group has
+    // no component are simply not drawn, so a UI module that failed to load costs a
+    // missing row rather than a broken panel.
+    public sealed partial class BuildingAccessSection : InfoSectionBase
+    {
+        public const string SectionGroup = "TransitArchitectAccess";
+
+        protected override string group => SectionGroup;
+
+#pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
+        // runs before any update.
+        private TransitArchitectSystem m_Overlay;
+#pragma warning restore CS8618
+
+        private int m_WalkSeconds;
+
+        private bool m_Served;
+
+        private int m_HorizonMinutes;
+
+        protected override void OnCreate()
+        {
+            base.OnCreate();
+            m_Overlay = World.GetOrCreateSystemManaged<TransitArchitectSystem>();
+            m_InfoUISystem.AddMiddleSection(this);
+        }
+
+        protected override void Reset()
+        {
+            m_WalkSeconds = 0;
+            m_Served = false;
+            m_HorizonMinutes = 0;
+        }
+
+        // Buildings only, and only once the equity pass has measured a field. Anything
+        // else leaves the section invisible, which is how the game hides a section.
+        protected override void OnUpdate()
+        {
+            visible = EntityManager.HasComponent<Building>(selectedEntity)
+                && EntityManager.TryGetComponent(selectedEntity, out Transform transform)
+                && m_Overlay.TryGetAccessAt(transform.m_Position, out m_WalkSeconds, out m_Served);
+
+            base.OnUpdate();
+        }
+
+        protected override void OnProcess()
+        {
+            m_HorizonMinutes = m_Overlay.EquityHorizonMinutes;
+        }
+
+        public override void OnWriteProperties(IJsonWriter writer)
+        {
+            writer.PropertyName("walkSeconds");
+            writer.Write(m_WalkSeconds);
+            writer.PropertyName("served");
+            writer.Write(m_Served);
+            writer.PropertyName("horizonMinutes");
+            writer.Write(m_HorizonMinutes);
+        }
+    }
+}

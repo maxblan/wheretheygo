@@ -123,12 +123,11 @@ namespace TransitArchitect
                 return;
             }
 
-            // Draw while the mod's panel is open. Deliberately NOT gated on our
-            // infoview being active: the heat map is a separate toggle beside "Show
-            // routes" in the panel, and keying off the infoview meant turning the heat
-            // map off silently took the route suggestions with it. Still suppressed
-            // under someone else's infoview, which is what the old gate was really for.
-            if (!m_OverlaySystem.PanelOpen || m_OverlaySystem.ForeignInfoviewActive)
+            // Draw while OUR infoview is the active one. That used to be "while the
+            // mod's panel is open", back when the mod had a panel of its own; now the
+            // suggestions, the site rings and the map are one view, opened together and
+            // closed together, which is the behaviour every vanilla infoview has.
+            if (!m_OverlaySystem.IsInfoviewActive || m_OverlaySystem.ForeignInfoviewActive)
             {
                 return;
             }

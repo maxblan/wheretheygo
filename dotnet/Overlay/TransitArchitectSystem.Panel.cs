@@ -126,9 +126,6 @@ namespace TransitArchitect
         internal List<SuggestedRoute> SuggestedRoutes => m_Routes;
 
         // Whether the mod's own panel is open. Owned here rather than in the UI system
-        // because the renderer needs it too, and one fact needs one owner.
-        public bool PanelOpen { get; set; }
-
         // Opens or closes our infoview on behalf of the toolbar button. Activation
         // still goes through ToolSystem.infoview, which is what assigns the terrain
         // overlay channel our heat map is drawn into.
@@ -185,10 +182,14 @@ namespace TransitArchitect
             }
 
             s_RouteList = PanelPayload.RouteRows(m_Routes, m_UnservedTravelWeight);
-            s_RouteSummary = Loc.Text(
-                "Suggestions",
-                "{0} suggestion(s) ready — open the Transportation overview to see them.",
-                m_Routes.Count.ToString(CultureInfo.InvariantCulture));
+            // One key per grammatical number. "{0} Vorschlag/Vorschläge" is what one
+            // key doing both jobs looked like on the page.
+            s_RouteSummary = m_Routes.Count == 1
+                ? Loc.Text("Suggestions.One", "1 suggestion ready — open the Transportation overview to see it.")
+                : Loc.Text(
+                    "Suggestions",
+                    "{0} suggestions ready — open the Transportation overview to see them.",
+                    m_Routes.Count.ToString(CultureInfo.InvariantCulture));
         }
     }
 }
