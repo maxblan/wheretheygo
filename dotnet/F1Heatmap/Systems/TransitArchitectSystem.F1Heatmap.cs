@@ -129,6 +129,9 @@ namespace TransitArchitect
 
         private int m_EdgesWithoutPavement;
 
+        // How many gaps the pedestrian network had to be stitched across (WalkBridging).
+        private int m_WalkBridges;
+
         private readonly List<float2> m_HomePositions = new List<float2>();
 
         private readonly List<float> m_HomeResidents = new List<float>();
@@ -323,7 +326,8 @@ namespace TransitArchitect
             DeferredLog.Info(
                 $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, " +
                 $"walk network {(output.Result.Demand.Length > 0 ? m_AccessInputs?.Graph.NodeCount ?? 0 : 0).ToString(CultureInfo.InvariantCulture)} nodes " +
-                $"({(m_EdgesWithoutPavement).ToString(CultureInfo.InvariantCulture)} edges without a pedestrian lane skipped), " +
+                $"({(m_EdgesWithoutPavement).ToString(CultureInfo.InvariantCulture)} edges without a pedestrian lane skipped, " +
+                $"{(m_WalkBridges).ToString(CultureInfo.InvariantCulture)} gaps bridged at up to {(Assumptions.WalkBridgeMetres).ToString("F0", CultureInfo.InvariantCulture)} m), " +
                 $"{(output.TilesOnNetwork).ToString(CultureInfo.InvariantCulture)} tiles within {(Assumptions.AccessWalkMs / 1000).ToString(CultureInfo.InvariantCulture)} s of a node, " +
                 $"homes={(m_PendingHomeCount).ToString(CultureInfo.InvariantCulture)} ({(m_HouseholdsWithoutHome).ToString(CultureInfo.InvariantCulture)} households without a home skipped), " +
                 $"jobSites={(m_PendingJobSiteCount).ToString(CultureInfo.InvariantCulture)}, zonedCells={(m_PendingZonedCount).ToString(CultureInfo.InvariantCulture)}, " +
@@ -406,7 +410,7 @@ namespace TransitArchitect
                 SuitabilityInputs.CollectWalkNetwork(
                     EntityManager, m_NodeQuery, m_AllEdgeQuery,
                     out float[] nodeX, out float[] nodeZ, out int[] edgeA, out int[] edgeB, out float[] edgeMetres,
-                    out bool[] siteable, out m_EdgesWithoutPavement);
+                    out bool[] siteable, out m_EdgesWithoutPavement, out m_WalkBridges);
                 m_WalkGraph = WalkGraph.Build(nodeX, nodeZ, edgeA, edgeB, edgeMetres, edgeA.Length, siteable);
                 int offGround = 0;
                 for (int n = 0; n < siteable.Length; n++)

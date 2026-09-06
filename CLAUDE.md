@@ -48,6 +48,9 @@ also returns a spurious exit code when it runs before the game has released its 
 a deploy by comparing file sizes, not by trusting the exit code**. `make deploy` encodes the
 wait-and-compare, and `build`, `deploy` and `strict` all wait for the handles first —
 `tools/wait-for-unlock.ps1` probes them four times a second and returns the moment they are free.
+A failed wait **aborts**: building anyway once cost a working deployment, because MSBuild removes
+the Mods folder before it writes, so it deleted everything it could and then failed on the one file
+the running game still held. There is nothing to gain by trying; the build cannot win that race.
 That probe has to run as a WINDOWS process: WSL's DrvFs ignores Windows share locks, so the same
 test from bash reports every file as free even while the game has it loaded.
 

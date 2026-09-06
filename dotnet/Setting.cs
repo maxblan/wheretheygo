@@ -282,21 +282,6 @@ namespace TransitArchitect
             set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
         }
 
-        // A get-only string property renders as a read-only field in the options
-        // page and is re-evaluated every frame the page is open, so the readout
-        // needs no refresh plumbing of its own.
-        //
-        // Deliberately NOT [SettingsUIMultilineText]: that widget takes its body
-        // from the display-name action rather than the property value, so a getter
-        // like this one renders an empty box under the label. The full breakdown
-        // goes to the log; this stays a single line.
-        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
-        [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
-        [SuppressMessage("Performance", "CA1822:Mark members as static",
-            Justification = "The game's settings UI binds to instance properties by "
-                + "reflection; a static member would not appear in the Options page.")]
-        public string CalibrationStatus => TransitArchitectSystem.CalibrationStatusText;
-
         [SettingsUIButton]
         [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
         [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
@@ -603,8 +588,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CalibrationStatus)), "Model quality" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.CalibrationStatus)), "The mod samples ridership at your served stops while the game runs, then fits the weights to it." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyFittedWeights)), "Apply fitted weights" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyFittedWeights)), "Overwrite the demand, jobs, accessibility and future weights with the fitted values above. Does nothing until enough samples have been collected." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Reset collected samples" },
@@ -675,6 +658,7 @@ namespace TransitArchitect
                 { "TransitArchitect.Panel[NoteShow]", "show me" },
                 { "TransitArchitect.Panel[NoSuggestions]", "nothing worth adding right now \u2014 let the city run" },
                 { "TransitArchitect.Panel[SuggestionsTab]", "SUGGESTIONS" },
+                { "TransitArchitect.Panel[ShowRoutes]", "Suggested lines" },
                 { "TransitArchitect.Panel[SuggestedLines]", "Suggested lines" },
                 { "TransitArchitect.Panel[ColMode]", "Mode" },
                 { "TransitArchitect.Panel[ColLength]", "Length" },

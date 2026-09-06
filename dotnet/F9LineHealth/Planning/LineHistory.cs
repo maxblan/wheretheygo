@@ -86,6 +86,27 @@ namespace TransitArchitect
 
         public uint NewestFrame => m_NewestFrame;
 
+        // The oldest reading still held, over every line: how far back the window
+        // actually reaches, as against how far it is allowed to. Reported after a
+        // restore, because "the data basis was not saved" and "the window has moved on
+        // since the save" look identical from the panel and are not the same thing.
+        public uint SpanFrames
+        {
+            get
+            {
+                uint oldest = m_NewestFrame;
+                foreach (KeyValuePair<int, List<LineObservation>> line in m_ByLine)
+                {
+                    if (line.Value.Count > 0 && line.Value[0].m_Frame < oldest)
+                    {
+                        oldest = line.Value[0].m_Frame;
+                    }
+                }
+
+                return m_NewestFrame - oldest;
+            }
+        }
+
         // Samples pushed out of the far end of the window, and samples discarded at
         // the per-line cap, since the last time the counters were read. Logged so a
         // window that is quietly truncating says so.

@@ -15,6 +15,9 @@ namespace TransitArchitect
         // Static bridge for the options page. The settings object is constructed
         // before the world exists, so the button properties and the read-only status
         // text talk to the system through these.
+        // The fit summary, for the log. The options page used to print it; the author
+        // took that line out (2026-09-06) because an R² is not a thing to ask a player
+        // to judge, and the buttons it described are behind the developer switch.
         private static string s_CalibrationStatus = string.Empty;
         // The one-shot report that the game moved the overlay internals, shown above the
         // calibration status because the options page has one read-only field for both.
@@ -23,19 +26,6 @@ namespace TransitArchitect
         private static bool s_ApplyFitRequested;
 
         private static bool s_ResetCalibrationRequested;
-
-        public static string CalibrationStatusText
-        {
-            get
-            {
-                string status = string.IsNullOrEmpty(s_CalibrationStatus)
-                    ? Loc.Text("Calibration.Waiting", "Waiting for a city to load.")
-                    : s_CalibrationStatus;
-                // A pipeline fault is a developer's message and stays in English on
-                // purpose; it names types and files, not things a player can act on.
-                return string.IsNullOrEmpty(s_PipelineStatus) ? status : s_PipelineStatus + "\n" + status;
-            }
-        }
 
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 

@@ -111,7 +111,25 @@ function InfoviewFigures() {
                 .replace("{1}", String(readings))
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
 
-    return h("div", { className: "ta-figures" }, rows);
+    return h("div", { className: "ta-figures" },
+        rows,
+        h(RoutesToggle, null));
+}
+
+// The suggested lines, switchable from the map legend (author's request 2026-09-06).
+// Written as a row of our own rather than as an infomode, because an infomode's ticked
+// state belongs to the infoview and is dropped when it closes — and these lines are
+// drawn under every view, including the game's own transport view while a stop is being
+// placed, which is exactly when a player wants to see them.
+function RoutesToggle() {
+    const t = useTranslate();
+    const on = useBound("showRoutes", true);
+    return h("div", {
+        className: "ta-legend-row",
+        onClick: () => trigger("setShowRoutes", !on),
+    },
+        h("div", { className: "ta-legend-label" }, t("ShowRoutes", "Suggested lines")),
+        h("div", { className: "ta-legend-box" + (on ? " ta-legend-box-on" : "") }, on ? "\u2713" : ""));
 }
 
 // ---------------------------------------------------------------------------
@@ -605,18 +623,11 @@ function extendOverview(registry) {
         registry.extend(VANILLA.page, "TransportationOverviewPage", (Original) => (props) => {
             const mine = useSuggestionsTab();
 
-            // While this page is mounted the overview is open, and the suggested lines
-            // are drawn on the map whether or not the mod's infoview is on. Looking at
-            // the list and not seeing the line it describes was the whole complaint.
-            // The reset closes our tab with the panel, so the tab strip and the body
-            // cannot come back disagreeing about which tab is selected.
-            React.useEffect(() => {
-                trigger("setOverviewOpen", true);
-                return () => {
-                    trigger("setOverviewOpen", false);
-                    setSuggestionsTab(false);
-                };
-            }, []);
+            // Closes our tab with the panel, so the tab strip and the body cannot come
+            // back disagreeing about which tab is selected. Nothing else needs saying
+            // any more: the suggested lines are drawn under every view now, so the
+            // renderer no longer has to be told when this panel is open.
+            React.useEffect(() => () => setSuggestionsTab(false), []);
 
             return mine ? h(SuggestionsPage, null) : h(Original, props);
         });

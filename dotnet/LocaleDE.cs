@@ -92,8 +92,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Anzahl Vorschläge" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "Wie viele Linien vorgeschlagen werden. Jede entnimmt dem Pool die Nachfrage, die sie bedienen würde, sodass spätere Vorschläge die früheren ergänzen." },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CalibrationStatus)), "Modellgüte" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.CalibrationStatus)), "Der Mod erfasst während des Spiels die Fahrgastzahlen an deinen bedienten Haltestellen und passt die Gewichtungen daran an." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyFittedWeights)), "Angepasste Gewichtungen übernehmen" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyFittedWeights)), "Überschreibt die Gewichtungen für Nachfrage, Arbeitsplätze, Erreichbarkeit und künftige Nachfrage mit den oben ermittelten Werten. Ohne genügend Messwerte ohne Wirkung." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Messwerte zurücksetzen" },
@@ -162,6 +160,7 @@ namespace TransitArchitect
                 { "TransitArchitect.Panel[NoteShow]", "zeigen" },
                 { "TransitArchitect.Panel[NoSuggestions]", "gerade lohnt sich nichts \u2014 lass die Stadt laufen" },
                 { "TransitArchitect.Panel[SuggestionsTab]", "VORSCHL\u00c4GE" },
+                { "TransitArchitect.Panel[ShowRoutes]", "Vorgeschlagene Linien" },
                 { "TransitArchitect.Panel[SuggestedLines]", "Vorgeschlagene Linien" },
                 { "TransitArchitect.Panel[ColMode]", "Verkehrsmittel" },
                 { "TransitArchitect.Panel[ColLength]", "L\u00e4nge" },

@@ -117,7 +117,8 @@ namespace TransitArchitect
             out int[] edgeB,
             out float[] edgeMetres,
             out bool[] nodeSiteable,
-            out int edgesWithoutPavement)
+            out int edgesWithoutPavement,
+            out int bridged)
         {
             edgesWithoutPavement = 0;
             using var nodeEntities = nodeQuery.ToEntityArray(Allocator.Temp);
@@ -163,6 +164,13 @@ namespace TransitArchitect
 
             nodeX = xs.ToArray();
             nodeZ = zs.ToArray();
+
+            // The graph as collected is in pieces: a segment without a pavement cuts the
+            // street it belongs to, and everything past it becomes unreachable. Rejoin
+            // the pieces before anyone measures a walk on it — see WalkBridging for what
+            // that was costing.
+            bridged = WalkBridging.Bridge(nodeX, nodeZ, a, b, metres, Assumptions.WalkBridgeMetres);
+
             edgeA = a.ToArray();
             edgeB = b.ToArray();
             edgeMetres = metres.ToArray();

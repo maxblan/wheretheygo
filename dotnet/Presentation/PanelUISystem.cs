@@ -27,6 +27,8 @@ namespace TransitArchitect
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
                 m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
 
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "showRoutes",
+                static () => Mod.Settings is not null && Mod.Settings.ShowRoutes));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", static () => TransitArchitectSystem.RouteListText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeUpdate", static () => TransitArchitectSystem.RouteUpdateText));
             AddBinding(new TriggerBinding(Group, "applyRouteUpdate", static () => TransitArchitectSystem.RequestApplyRouteUpdate()));
@@ -47,9 +49,17 @@ namespace TransitArchitect
         // state to the panel, the other acts on what the player clicks.
         private void AddTriggerBindings()
         {
-            AddBinding(new TriggerBinding<bool>(Group, "setOverviewOpen", static open =>
+            // The map legend's own checkbox for the suggested lines. It writes the same
+            // setting the Options page shows, so the two cannot disagree and the choice
+            // survives a reload.
+            AddBinding(new TriggerBinding<bool>(Group, "setShowRoutes", static show =>
             {
-                TransitArchitectSystem.SetOverviewOpen(open);
+                Setting? settings = Mod.Settings;
+                if (settings is not null)
+                {
+                    settings.ShowRoutes = show;
+                    settings.ApplyAndSave();
+                }
             }));
 
             AddBinding(new TriggerBinding<int>(Group, "applyPlan", static id =>

@@ -168,6 +168,7 @@ namespace TransitArchitect.Tests
             Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
 
             // F1's grid pass and F2's candidate set, pure since 2026-09-05.
+            Run("Walk network: the pieces the game's data leaves are bridged", WalkBridgingJoinsWhatTheDataCuts);
             Run("Heatmap: term caps are positive percentiles, the field combines on-network tiles and writes the term layers", HeatmapCombineFieldAndCaps);
             Run("Heatmap: node demand reads the tile under each node, sites paint as discs", HeatmapNodeDemandAndSitePainting);
             Run("Sites: candidates are siteable nodes on buildable tiles with a positive score", SiteCandidatesOnTheNetwork);

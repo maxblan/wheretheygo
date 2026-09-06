@@ -47,20 +47,6 @@ namespace TransitArchitect
 
         public static void RequestApplyRouteUpdate() => s_ApplyRouteUpdate = true;
 
-        // Whether the game's Transportation Overview is on screen. The UI module says
-        // so, because the panel's visibility lives entirely on that side —
-        // TransportationOverviewUISystem publishes its lines and its selected tab, but
-        // not whether anyone is looking.
-        //
-        // It matters because the suggested lines are drawn on the map for it: reading a
-        // list of lines and not being able to see where they run is the one thing that
-        // list must not do.
-        private static bool s_OverviewOpen;
-
-        public static void SetOverviewOpen(bool open) => s_OverviewOpen = open;
-
-        public bool OverviewOpen => s_OverviewOpen;
-
         // The Options page's heat-map switch. A static request rather than a direct
         // call, because the settings object outlives the system and is edited from the
         // main menu, where there is no city and no system to talk to.

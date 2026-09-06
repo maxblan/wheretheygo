@@ -123,24 +123,20 @@ namespace TransitArchitect
                 return;
             }
 
-            // Draw while our infoview is the active one, and also while the game's
-            // Transportation Overview is open: that panel lists the suggestions, and a
-            // list of lines you cannot see on the map is half an answer.
+            // The suggested lines are drawn whenever they are switched on, under any
+            // infoview or none. Three attempts got this wrong in one direction or the
+            // other, so the rule is now as plain as it can be: "Show routes" is the only
+            // condition, and it is reachable both from the Options page and from a
+            // checkbox in the mod's own map legend.
             //
-            // The foreign-infoview suppression does NOT apply to the overview, and that
-            // is the whole reason the suggestions stayed invisible there: opening the
-            // Transportation Overview switches the map to the game's own transport
-            // infoview, so "somebody else's infoview is up" was true exactly when the
-            // player was looking at our list. Outside the overview it still holds —
-            // another view's colours are not ours to draw over.
-            bool wanted = m_OverlaySystem.IsInfoviewActive || m_OverlaySystem.OverviewOpen;
-            if (!wanted || (m_OverlaySystem.ForeignInfoviewActive && !m_OverlaySystem.OverviewOpen))
-            {
-                return;
-            }
-
-            // "Show routes" is about the suggested LINES; the ranked site markers belong
-            // to the heat map and are switched with it, not with them.
+            // What the earlier gates broke: keying on our own infoview hid the lines in
+            // the Transportation Overview, and keying on "no foreign infoview" hid them
+            // there too (that panel switches the map to the game's transport infoview)
+            // and again while a stop was being placed, which is exactly when a player
+            // wants to see where the mod would put one.
+            //
+            // The ranked site markers are different: they are the heat map's own answer,
+            // so they still come and go with it.
             List<SuggestedRoute> routes = m_OverlaySystem.SuggestedRoutes;
             bool anyRoutes = settings.ShowRoutes && routes is not null && routes.Count > 0;
             bool anySites = m_OverlaySystem.IsInfoviewActive && m_OverlaySystem.SiteCount > 0;

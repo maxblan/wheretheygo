@@ -41,7 +41,7 @@ help: ## Show this help
 	@echo "  CONFIG=Debug changes the configuration (default: Release)."
 
 build: ## Compile and deploy to the game's Mods folder (close the game first)
-	@$(UNLOCK) || echo "Proceeding anyway; the build will say if it cannot write."
+	@$(UNLOCK) || { echo "Deploy refused: the game still holds the deployed files. Close it, or use 'make compile' to check the build without deploying." >&2; exit 1; }
 	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG)"
 
 # Runs only the compiler (analyzers included): Mod.targets hooks the post-processor
@@ -65,7 +65,7 @@ verify: check-ui test build ## Everything a change should pass before a run
 # The compiler's TreatWarningsAsErrors covers C# diagnostics; MSBuild's own
 # --warnaserror also fails on warnings raised by build tasks outside the compiler.
 strict: check-ui format-check ## The full gate: locked restore, no warnings from anything, tests
-	@$(UNLOCK) || echo "Proceeding anyway; the build will say if it cannot write."
+	@$(UNLOCK) || { echo "Refused: the game still holds the deployed files, and this target deploys. Close it first." >&2; exit 1; }
 	$(DOTNET_WIN) "dotnet restore $(PROJECT) --locked-mode"
 	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG) --no-restore --warnaserror"
 	dotnet build $(TESTS) --warnaserror
@@ -87,8 +87,13 @@ format-check: ## Fail if either project deviates from .editorconfig
 # Both waits ASK rather than sleep. The old version slept 25 s after the process exited
 # and 20 s between retries, which is most of a minute of nothing on a machine where the
 # handles are usually free in under a second.
+#
+# And a failed wait ABORTS. It used to warn and build anyway, which cost a working
+# deployment: MSBuild removes the Mods folder before it writes, so it deleted everything
+# it could and then failed on the one file the running game still held, leaving no mod
+# installed at all. There is nothing to gain by trying — the build cannot win that race.
 deploy: wait-for-game ## Wait for the game to close, then build and confirm the deploy
-	@$(UNLOCK) || echo "Proceeding anyway; the build will say if it cannot write."
+	@$(UNLOCK) || { echo "Deploy refused: the deployed files are still held after the wait." >&2; exit 1; }
 	@for attempt in 1 2 3; do \
 		$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG)" || true; \
 		if [[ -f "$(DEPLOYED)" && -f "$(OUTPUT)" ]] \

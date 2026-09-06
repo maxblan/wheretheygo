@@ -52,6 +52,16 @@ namespace TransitArchitect
         // How many of the strongest tiles the combine pass names in the log. Three is
         // enough to tell "the whole map is bright" from "one spot is", and short enough
         // to stay one line.
+        // How far the pedestrian network may be bridged across a gap the game's data
+        // leaves in it (WalkBridging). 50 m stitched Valmare's 582 pieces into 3, and is
+        // about as far as a person walks in a straight line without a pavement; wider,
+        // and the graph starts stepping over canals.
+        public const float WalkBridgeMetres = 50f;
+
+        // Each pass can only join a component to one neighbour, so a chain of fragments
+        // needs several. Ten is far more than a real map has used.
+        public const int WalkBridgePasses = 10;
+
         // How much further than the equity horizon the served-walk search looks, so the
         // buildings beyond it can be told how far they actually are. Purely a reporting
         // range: every "is this served" test still compares against the horizon.

@@ -233,7 +233,9 @@ namespace TransitArchitect
 
             DeferredLog.Info(
                 $"Save state restored: {(routes.Count).ToString(CultureInfo.InvariantCulture)} suggestions, {(trips.Count).ToString(CultureInfo.InvariantCulture)} observed journeys, " +
-                $"{(lineCount).ToString(CultureInfo.InvariantCulture)} lines with {(readings.Count).ToString(CultureInfo.InvariantCulture)} readings");
+                $"{(lineCount).ToString(CultureInfo.InvariantCulture)} lines with {(readings.Count).ToString(CultureInfo.InvariantCulture)} readings " +
+                $"spanning {(LineHistory.GameHours(m_LineHistory.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours " +
+                $"of the {(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} h window");
         }
 
         private static int ReadCount(BinaryReader reader, int limit)
