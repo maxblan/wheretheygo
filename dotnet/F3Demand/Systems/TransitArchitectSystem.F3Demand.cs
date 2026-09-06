@@ -179,7 +179,7 @@ namespace TransitArchitect
             m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
             if (!passStarted)
             {
-                UpdateRouteSummary(tripCount, 0);
+                UpdateRouteList();
             }
 
             DeferredLog.Info(

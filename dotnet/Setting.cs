@@ -14,8 +14,8 @@ namespace TransitArchitect
     // "Advanced". Nothing is hidden — the mod is meant to be usable without ever
     // opening the second tab.
     [FileLocation(nameof(TransitArchitect))]
-    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup, kStatusGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
-    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup, kStatusGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
+    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
+    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
     public sealed class Setting : ModSetting
     {
         // Tabs. The strings are UI ids, not persistence keys (settings files key on
@@ -26,7 +26,6 @@ namespace TransitArchitect
         // Groups of the General tab.
         public const string kPlanningGroup = "Planning";
         public const string kStandardsGroup = "Standards";
-        public const string kStatusGroup = "Status";
 
         // Groups of the Advanced tab.
         public const string kWeightsGroup = "Weights";
@@ -283,13 +282,6 @@ namespace TransitArchitect
             set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
         }
 
-
-        [SettingsUISection(kSection, kStatusGroup)]
-        [SuppressMessage("Performance", "CA1822:Mark members as static",
-            Justification = "The game's settings UI binds to instance properties by "
-                + "reflection; a static member would not appear in the Options page.")]
-        public string RouteSummary => TransitArchitectSystem.RouteSummaryText;
-
         // A get-only string property renders as a read-only field in the options
         // page and is re-evaluated every frame the page is open, so the readout
         // needs no refresh plumbing of its own.
@@ -298,6 +290,7 @@ namespace TransitArchitect
         // from the display-name action rather than the property value, so a getter
         // like this one renders an empty box under the label. The full breakdown
         // goes to the log; this stays a single line.
+        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
         [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
         [SuppressMessage("Performance", "CA1822:Mark members as static",
             Justification = "The game's settings UI binds to instance properties by "
@@ -305,6 +298,7 @@ namespace TransitArchitect
         public string CalibrationStatus => TransitArchitectSystem.CalibrationStatusText;
 
         [SettingsUIButton]
+        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
         [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
         [SuppressMessage("Performance", "CA1822:Mark members as static",
             Justification = "The game's settings UI binds to instance properties by "
@@ -316,6 +310,7 @@ namespace TransitArchitect
 
         [SettingsUIButton]
         [SettingsUIConfirmation]
+        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
         [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
         [SuppressMessage("Performance", "CA1822:Mark members as static",
             Justification = "The game's settings UI binds to instance properties by "
@@ -540,7 +535,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionTabLocaleID(Setting.kAdvancedSection), "Advanced" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Service standards" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kStatusGroup), "Status" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kWeightsGroup), "Weights" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kTuningGroup), "Tuning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kCalibrationGroup), "Calibration" },
@@ -608,8 +602,6 @@ namespace TransitArchitect
                 { m_Setting.GetEnumValueLocaleID(RouteGoal.Coverage), "Maximum coverage" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteSummary)), "Suggestions" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteSummary)), "The current suggestions, best first. The full detail is written to the mod log." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CalibrationStatus)), "Model quality" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CalibrationStatus)), "The mod samples ridership at your served stops while the game runs, then fits the weights to it." },
@@ -673,21 +665,15 @@ namespace TransitArchitect
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Status lines the Options page prints verbatim (see Loc).
-                { "TransitArchitect.Status[Suggestions.One]", "1 suggestion ready — open the Transportation overview to see it." },
-                { "TransitArchitect.Status[Suggestions]", "{0} suggestions ready — open the Transportation overview to see them." },
-                { "TransitArchitect.Status[NoneYet]", "No route suggestions yet." },
-                { "TransitArchitect.Status[NoCorridor]", "No corridor was strong enough to suggest a line." },
-                { "TransitArchitect.Status[NoJourneys]", "No journeys found yet — load a city and let it run." },
-                { "TransitArchitect.Status[NothingUnserved]", "{0} journeys, {1} routed, but no new line would improve enough of what is still unserved." },
                 { "TransitArchitect.Status[Calibration.Waiting]", "Waiting for a city to load." },
                 { "TransitArchitect.Status[Calibration.Collecting]", "Collecting while unpaused: {0} of {1} stops ready, {2} tracked (need {3} samples each)" },
                 { "TransitArchitect.Status[Calibration.Fit]", "R² {0} over {1} stops — suggested: demand {2}, jobs {3}, future {4}" },
-                { "TransitArchitect.Panel[Title]", "Transit Architect" },
                 { "TransitArchitect.Panel[EquityCaption]", "reach a served stop within {0} min at both ends \u00b7 target {1} % \u00b7 Gini {2}" },
                 { "TransitArchitect.Panel[DataBasisCaption]", "of the last {0} h \u00b7 {1} readings" },
                 { "TransitArchitect.Panel[DataBasisNone]", "nothing yet" },
                 { "TransitArchitect.Panel[NoteApply]", "apply" },
                 { "TransitArchitect.Panel[NoteShow]", "show me" },
+                { "TransitArchitect.Panel[NoSuggestions]", "nothing worth adding for this mode right now" },
                 { "TransitArchitect.Panel[SuggestedLines]", "Suggested lines" },
                 { "TransitArchitect.Panel[ColMode]", "Mode" },
                 { "TransitArchitect.Panel[ColLength]", "Length" },

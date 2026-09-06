@@ -64,8 +64,29 @@ access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
 - [x] The walk that coloured a building is shown in that building's own window, through an
       `InfoSectionBase` (author's request 2026-09-06)
 - [x] Suggestions carry a header row and fit on one line each; German singular/plural split
-- [ ] Third in-game run: the figures inside the infoview panel, the building row, the new ramps,
-      the suggestions header
+- [x] Third in-game run (14:25): the figures are inside the infoview panel and the two ramps read
+      apart. Two faults found and fixed — the selected-info section map is REPLACED by its setter (a
+      one-key write blanked every vanilla section) and it is keyed by the C# type name, not the
+      section's `group`
+- [x] The toolbar button is gone (author, 2026-09-06). The infoview menu is the mod's only front door,
+      exactly like every vanilla infoview
+- [x] Suggested lines are drawn while the Transportation Overview is open, not only under our infoview:
+      a list of lines you cannot see on the map is half an answer
+- [x] Suggestions are filtered to the transport tab being looked at, from the game's own
+      `transportationOverview.selectedPassengerType`
+- [x] The Options page lost its two read-only status lines, and calibration moved behind the developer
+      switch: fitting regression weights is not a thing to ask a player to judge
+- [ ] Fourth in-game run: the building row, the per-tab suggestions, the routes drawn from the overview
+
+## 1b. Algorithm faults found in play
+
+- [x] Stops were placed on motorways. Highways were already barred from being GROWN along, but a
+      corridor routed OVER one could still take stops there; `MaterialisePath` now reports which
+      segments of the drawn path are unstoppable and the stop planner refuses them outright
+- [ ] A bright suitability blob on empty ground away from the city (2026-09-06 14:34 screenshot).
+      Not yet explained: the score is a weighted sum of seven measurements and the map shows only the
+      sum. The combine pass now logs the three strongest tiles with their world position and every
+      term, so the next run says which measurement it was
 
 ## 3. Repository hygiene
 

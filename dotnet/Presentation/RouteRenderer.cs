@@ -123,11 +123,13 @@ namespace TransitArchitect
                 return;
             }
 
-            // Draw while OUR infoview is the active one. That used to be "while the
-            // mod's panel is open", back when the mod had a panel of its own; now the
-            // suggestions, the site rings and the map are one view, opened together and
-            // closed together, which is the behaviour every vanilla infoview has.
-            if (!m_OverlaySystem.IsInfoviewActive || m_OverlaySystem.ForeignInfoviewActive)
+            // Draw while our infoview is the active one, and also while the game's
+            // Transportation Overview is open: that panel lists the suggestions, and a
+            // list of lines you cannot see on the map is half an answer. Still
+            // suppressed under somebody else's infoview, whose colours are not ours to
+            // draw over.
+            if (m_OverlaySystem.ForeignInfoviewActive
+                || (!m_OverlaySystem.IsInfoviewActive && !m_OverlaySystem.OverviewOpen))
             {
                 return;
             }

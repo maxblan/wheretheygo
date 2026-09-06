@@ -33,6 +33,22 @@ function useTranslate() {
 
 const bindings = {};
 
+// Bindings the game itself publishes, read the same way as our own. Cached per
+// group+name because Api.bindValue makes a new subscription every call.
+const foreign = {};
+
+function foreignBinding(group, name, fallback) {
+    const key = group + "." + name;
+    if (!foreign[key]) {
+        foreign[key] = Api.bindValue(group, name, fallback);
+    }
+    return foreign[key];
+}
+
+function useForeign(group, name, fallback) {
+    return Api.useValue(foreignBinding(group, name, fallback));
+}
+
 function binding(name, fallback) {
     if (!bindings[name]) {
         bindings[name] = Api.bindValue(GROUP, name, fallback);
@@ -112,27 +128,6 @@ function InfoviewFigures() {
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
 
     return h("div", { className: "ta-figures" }, rows);
-}
-
-// Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their
-// class. infoview-menu-toggle_bYF carries a second rule,
-// `width: calc(400rem * (0.33333 + var(--fontScale) / 1.5))`, which overrides its own
-// square rule — it is the infoview menu BAR, not a square toggle. Borrowing it stretched
-// this button into a 400rem lozenge across the toolbar. ta-toolbar-slot now supplies
-// the whole box itself.
-function ToolbarButton() {
-    const t = useTranslate();
-    const open = useBound("heatmap", false);
-    return h("div", { className: "ta-toolbar-slot" },
-        h("button", {
-            className: "ta-toolbar-button" + (open ? " ta-toolbar-button-on" : ""),
-            title: t("Title", "Transit Architect"),
-            onClick: () => trigger("setHeatmap", !open),
-        },
-            h("img", {
-                className: "ta-toolbar-icon",
-                src: "coui://transitarchitect/TransitArchitect.svg",
-            })));
 }
 
 // ---------------------------------------------------------------------------
@@ -366,22 +361,43 @@ function TransitNote({ parts }) {
             structural ? t("NoteShow", "show me") : t("NoteApply", "apply")));
 }
 
-// Suggestions, under the vanilla list. They are not game entities, so they cannot be
-// rows of that list; a section of our own below it is the honest place for them.
+// The mod's mode names against the game's TransportType, which is what the overview's
+// tab strip is keyed by. Only the two that differ are interesting: a metro is a Subway
+// and a ferry is a Ship.
+const TRANSPORT_TYPE = { Bus: "Bus", Tram: "Tram", Metro: "Subway", Train: "Train", Ferry: "Ship" };
+
+// Suggestions, under the vanilla list and in its shape. They are not game entities, so
+// they cannot be rows of that list; a section of our own below it is the honest place.
+//
+// Filtered to the transport tab the player is on (author's request 2026-09-06): a list
+// mixing trams into BUS LINES is both confusing and too long for the room there is. The
+// tab comes from the game's own binding, so the two cannot disagree about which mode is
+// being looked at.
 //
 // It carries its own header row, unlike the verdict notes above: this IS our table, so
-// nothing stops it having headings, and without them "2.7 km · 8 · 6" is a puzzle.
-// Every cell is one line — the first cut wrapped the reach sentence onto a second line
-// and turned five rows into ten.
+// nothing stops it having headings, and without them "2.7 km · 8 · 6" is a puzzle. Every
+// cell is one line — the first cut wrapped the reach sentence onto a second line and
+// turned five rows into ten.
 function SuggestionsSection() {
     const t = useTranslate();
     const raw = useBound("routeList", "");
     const update = useBound("routeUpdate", "");
     const selected = useBound("selectedRoute", -1);
-    const rows = (raw || "").split("\n").filter(Boolean);
-    if (!rows.length && !update) {
-        return null;
-    }
+    const tab = useForeign("transportationOverview", "selectedPassengerType", "Bus");
+
+    // While this section is mounted the overview is open, and the suggested lines are
+    // drawn on the map whether or not the mod's infoview is on. Looking at the list and
+    // not seeing the line it describes was the whole of the complaint.
+    React.useEffect(() => {
+        trigger("setOverviewOpen", true);
+        return () => trigger("setOverviewOpen", false);
+    }, []);
+
+    // The index is the row's position in the FULL list, because that is what C# keys
+    // its selection and highlight on.
+    const rows = (raw || "").split("\n")
+        .map((row, index) => ({ parts: row.split("|"), index }))
+        .filter((row) => row.parts.length > 1 && TRANSPORT_TYPE[row.parts[0]] === tab);
 
     const wide = pageClasses.cellWide || "";
     const cell = pageClasses.cellDouble || "";
@@ -396,39 +412,44 @@ function SuggestionsSection() {
                 }, t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
                 : null),
 
-        h("div", { className: "ta-suggestion ta-suggestion-head" },
-            h("div", { className: "ta-swatch ta-swatch-blank" }),
-            h("div", { className: wide + " ta-suggestion-name" }, t("ColMode", "Mode")),
-            h("div", { className: cell }, t("ColLength", "Length")),
-            h("div", { className: cell }, t("ColStops", "Stops")),
-            h("div", { className: cell }, t("ColVehicles", "Vehicles")),
-            h("div", { className: cell }, t("ColSchedule", "Runs")),
-            h("div", { className: cell }, t("ColReach", "Unlocks"))),
+        // Says so rather than vanishing: an empty space where a section was reads as a
+        // fault, and "none for this mode" is itself an answer.
+        rows.length === 0
+            ? h("div", { className: "ta-suggestions-empty" },
+                t("NoSuggestions", "nothing worth adding for this mode right now"))
+            : h(React.Fragment, null,
+                h("div", { className: "ta-suggestion ta-suggestion-head" },
+                    h("div", { className: "ta-swatch ta-swatch-blank" }),
+                    h("div", { className: wide + " ta-suggestion-name" }, t("ColMode", "Mode")),
+                    h("div", { className: cell }, t("ColLength", "Length")),
+                    h("div", { className: cell }, t("ColStops", "Stops")),
+                    h("div", { className: cell }, t("ColVehicles", "Vehicles")),
+                    h("div", { className: cell }, t("ColSchedule", "Runs")),
+                    h("div", { className: cell }, t("ColReach", "Unlocks"))),
 
-        rows.map((row, index) => {
-            const parts = row.split("|");
-            const mode = parts[0] || "Bus";
-            return h("div", {
-                key: parts[6] || row,
-                className: "ta-suggestion" + (index === selected ? " ta-suggestion-on" : ""),
-                onClick: () => trigger("selectRoute", index),
-                onMouseEnter: () => trigger("highlightRoute", index),
-                onMouseLeave: () => trigger("highlightRoute", -1),
-            },
-                h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } }),
-                h("div", { className: wide + " ta-suggestion-name" }, t("Mode." + mode, mode)),
-                h("div", { className: cell }, (parts[1] || "?") + " " + t("Km", "km")),
-                h("div", { className: cell }, parts[2] || "?"),
-                h("div", { className: cell }, parts[3] || "?"),
-                // When to run it. The game offers all day, day only or night only per
-                // line, and the recommendation rests on how full this line would be in
-                // each period on its own riders.
-                h("div", { className: cell },
-                    t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
-                // The figure the list is ordered by, so the gap between the first row
-                // and the second is visible rather than implied.
-                h("div", { className: cell + " ta-suggestion-reach" }, (parts[5] || "0") + " %"));
-        }));
+                rows.map(({ parts, index }) => {
+                    const mode = parts[0] || "Bus";
+                    return h("div", {
+                        key: parts[6] || index,
+                        className: "ta-suggestion" + (index === selected ? " ta-suggestion-on" : ""),
+                        onClick: () => trigger("selectRoute", index),
+                        onMouseEnter: () => trigger("highlightRoute", index),
+                        onMouseLeave: () => trigger("highlightRoute", -1),
+                    },
+                        h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } }),
+                        h("div", { className: wide + " ta-suggestion-name" }, t("Mode." + mode, mode)),
+                        h("div", { className: cell }, (parts[1] || "?") + " " + t("Km", "km")),
+                        h("div", { className: cell }, parts[2] || "?"),
+                        h("div", { className: cell }, parts[3] || "?"),
+                        // When to run it. The game offers all day, day only or night
+                        // only per line, and the recommendation rests on how full this
+                        // line would be in each period on its own riders.
+                        h("div", { className: cell },
+                            t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
+                        // The figure the list is ordered by, so the gap between the
+                        // first row and the second is visible rather than implied.
+                        h("div", { className: cell + " ta-suggestion-reach" }, (parts[5] || "0") + " %"));
+                })));
 }
 
 // The walk-to-transit row in the game's own selected-building window, drawn from what
@@ -467,14 +488,27 @@ function extendInfoview(registry) {
     }
 }
 
-// Adds one entry to the game's section map. Assignment, not extend: the export's setter
-// is an Object.assign, so this adds a key and leaves every other section alone.
+// Adds one entry to the game's section map, keyed by the C# type name the section
+// writes — the map reads {"Game.UI.InGame.DescriptionSection": …}, not by the section's
+// `group`.
+//
+// The whole map is read back and copied first. Its setter ASSIGNS rather than merging
+// (`set selectedInfoSectionComponents(e){GAe=e}`), so writing a one-key object took the
+// component of every vanilla section with it and the selected-info panel rendered
+// "Unknown element type" for all of them.
 function registerBuildingSection(registry) {
     try {
         const module = registry && registry.registry ? registry.registry.get(VANILLA.sections) : null;
-        if (module) {
-            module.selectedInfoSectionComponents = { TransitArchitectAccess: BuildingAccessRow };
+        const current = module ? module.selectedInfoSectionComponents : null;
+        if (!current) {
+            console.warn("[TransitArchitect] the selected-info section map is not where it used to be.");
+            return;
         }
+
+        const merged = {};
+        Object.keys(current).forEach((key) => { merged[key] = current[key]; });
+        merged["TransitArchitect.BuildingAccessSection"] = BuildingAccessRow;
+        module.selectedInfoSectionComponents = merged;
     } catch (error) {
         console.warn("[TransitArchitect] the selected-info section map has moved: " + error);
     }
@@ -518,11 +552,11 @@ const register = (moduleRegistry) => {
         return;
     }
 
-    // No window of the mod's own any more. Everything it has to say now lives where the
-    // player is already looking: the figures in the game's infoview panel, the verdicts
-    // and suggestions in the Transportation Overview, one row in the selected-building
+    // No window and no toolbar button of the mod's own. Everything it has to say lives
+    // where the player is already looking: the figures in the game's infoview panel
+    // (reached from the infoview menu like every vanilla one), the verdicts and
+    // suggestions in the Transportation Overview, one row in the selected-building
     // window, and every setting in the Options page.
-    moduleRegistry.append("GameTopLeft", ToolbarButton);
     extendInfoview(moduleRegistry);
     extendOverview(moduleRegistry);
     registerBuildingSection(moduleRegistry);

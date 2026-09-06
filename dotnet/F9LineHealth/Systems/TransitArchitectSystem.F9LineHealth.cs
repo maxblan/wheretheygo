@@ -315,7 +315,7 @@ namespace TransitArchitect
 
             var route = new SuggestedRoute { Network = graph.Network, Mode = mode, Source = graph };
             route.Nodes.AddRange(scratch);
-            graph.MaterialisePath(scratch, route.Path);
+            graph.MaterialisePath(scratch, route.Path, route.PathCannotHostStops);
 
             float length = 0f;
             for (int i = 1; i < route.Path.Count; i++)

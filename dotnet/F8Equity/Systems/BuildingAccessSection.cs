@@ -22,9 +22,15 @@ namespace TransitArchitect
     // missing row rather than a broken panel.
     public sealed partial class BuildingAccessSection : InfoSectionBase
     {
-        public const string SectionGroup = "TransitArchitectAccess";
+        // The game's selected-info panel maps a section to its component by the C#
+        // TYPE NAME the section writes (IJsonWriter.TypeBegin(GetType().FullName)), not
+        // by this group string — its own map reads
+        // {"Game.UI.InGame.DescriptionSection": …}. Getting that wrong shows
+        // "Unknown element type" in place of the section. The .mjs registers under
+        // SectionType, which is that name.
+        public const string SectionType = "TransitArchitect.BuildingAccessSection";
 
-        protected override string group => SectionGroup;
+        protected override string group => "TransitArchitectAccess";
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before any update.
@@ -69,6 +75,11 @@ namespace TransitArchitect
 
         public override void OnWriteProperties(IJsonWriter writer)
         {
+            if (writer is null)
+            {
+                throw new System.ArgumentNullException(nameof(writer));
+            }
+
             writer.PropertyName("walkSeconds");
             writer.Write(m_WalkSeconds);
             writer.PropertyName("served");

@@ -360,7 +360,7 @@ namespace TransitArchitect
                 Source = network,
             };
             route.Nodes.AddRange(nodes);
-            network.MaterialisePath(nodes, route.Path);
+            network.MaterialisePath(nodes, route.Path, route.PathCannotHostStops);
 
             // A shortest path on a uniform grid is a minimal staircase; straightening
             // it leaves the near-straight alignment a tunnel or a crossing actually
@@ -663,7 +663,7 @@ namespace TransitArchitect
             aimedAtInterchange = extended;
             route.Nodes.AddRange(corridor.Nodes);
 
-            network.MaterialisePath(corridor.Nodes, route.Path);
+            network.MaterialisePath(corridor.Nodes, route.Path, route.PathCannotHostStops);
 
             if (extended > 0)
             {
@@ -814,7 +814,7 @@ namespace TransitArchitect
 
             var route = new SuggestedRoute { Network = RouteNetwork.Road, Mode = TransitModes.ModesFor(RouteNetwork.Road)[0], Source = roads };
             route.Nodes.AddRange(scratch);
-            roads.MaterialisePath(scratch, route.Path);
+            roads.MaterialisePath(scratch, route.Path, route.PathCannotHostStops);
             route.Length = PathLength(route.Path);
             route.CapturedFlow = roads.FlowAlong(scratch);
             PlaceStops(route, route.Mode, stops);

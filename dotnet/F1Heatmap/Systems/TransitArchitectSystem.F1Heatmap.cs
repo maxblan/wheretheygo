@@ -613,6 +613,79 @@ namespace TransitArchitect
                 $"scores min={(min).ToString("F3", CultureInfo.InvariantCulture)} max={(max).ToString("F3", CultureInfo.InvariantCulture)}, " +
                 $"{(positive).ToString(CultureInfo.InvariantCulture)}/{(totalCells).ToString(CultureInfo.InvariantCulture)} positive; " +
                 $"source totals residents={(residents).ToString("F0", CultureInfo.InvariantCulture)}, jobs={(jobsTotal).ToString("F0", CultureInfo.InvariantCulture)}");
+
+            LogTopCells(scores, totalCells);
+        }
+
+        // The three brightest tiles on the map, by world position, with the terms that
+        // put them there. "The map is bright somewhere it should not be" is otherwise
+        // unanswerable: the score is a weighted sum of seven measurements and the map
+        // shows only the sum. With this, one line of the log says which measurement it
+        // was, and a position to go and look at.
+        private void LogTopCells(float[] scores, int totalCells)
+        {
+            SuitabilityCell[]? terms = m_RawTerms;
+            if (terms is null || totalCells <= 0 || m_IntensityGrid.x <= 0)
+            {
+                return;
+            }
+
+            // net48: no Span here, and three ints do not need one.
+            var best = new int[Assumptions.TopCellsLogged];
+            int found = 0;
+            for (int i = 0; i < totalCells && i < terms.Length; i++)
+            {
+                if (scores[i] <= 0f)
+                {
+                    continue;
+                }
+
+                int at = found;
+                while (at > 0 && scores[best[at - 1]] < scores[i])
+                {
+                    if (at < Assumptions.TopCellsLogged)
+                    {
+                        best[at] = best[at - 1];
+                    }
+
+                    at--;
+                }
+
+                if (at < Assumptions.TopCellsLogged)
+                {
+                    best[at] = i;
+                    found = math.min(found + 1, Assumptions.TopCellsLogged);
+                }
+            }
+
+            var builder = new System.Text.StringBuilder("Strongest tiles: ");
+            for (int k = 0; k < found; k++)
+            {
+                int index = best[k];
+                int x = index % m_IntensityGrid.x;
+                int y = index / m_IntensityGrid.x;
+                float2 world = m_ScoreWorldMin + new float2((x + 0.5f) * Assumptions.TileSize, (y + 0.5f) * Assumptions.TileSize);
+                SuitabilityCell cell = terms[index];
+                if (k > 0)
+                {
+                    _ = builder.Append("; ");
+                }
+
+                _ = builder.Append('#').Append((k + 1).ToString(CultureInfo.InvariantCulture))
+                    .Append(" at (").Append(world.x.ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(", ").Append(world.y.ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(") score ").Append(scores[index].ToString("F3", CultureInfo.InvariantCulture))
+                    .Append(" [demand ").Append(cell.m_Demand.ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(", jobs ").Append(cell.m_Jobs.ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(", future ").Append(cell.m_Future.ToString("F0", CultureInfo.InvariantCulture))
+                    .Append(", coverage ").Append(cell.m_Coverage.ToString("F2", CultureInfo.InvariantCulture))
+                    .Append(", access ").Append(cell.m_Access.ToString("F2", CultureInfo.InvariantCulture))
+                    .Append(", interchange ").Append(cell.m_Interchange.ToString("F2", CultureInfo.InvariantCulture))
+                    .Append(", crossCoverage ").Append(cell.m_CrossCoverage.ToString("F2", CultureInfo.InvariantCulture))
+                    .Append(']');
+            }
+
+            DeferredLog.Info(builder.ToString());
         }
 
         // Returns the two buffers the combine pass writes through. Handing them back

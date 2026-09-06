@@ -8,6 +8,11 @@ namespace TransitArchitect
     internal sealed class SuggestedRoute
     {
         public readonly List<float2Like> Path = new List<float2Like>();
+
+        // One entry per SEGMENT of Path (segment i runs from Path[i] to Path[i+1]):
+        // true where that stretch is a road no line may call at. Empty when the network
+        // has no road classes, which is every lattice and every water alignment.
+        public readonly List<bool> PathCannotHostStops = new List<bool>();
         public readonly List<float2Like> Stops = new List<float2Like>();
         public ModePreset Mode;
         // Length-weighted MEAN edge flow along the corridor (GraphMath's

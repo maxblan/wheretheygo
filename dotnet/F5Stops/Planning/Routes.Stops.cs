@@ -185,7 +185,13 @@ namespace TransitArchitect
             {
                 float2Like point = PointAlong(route.Path, at[i]);
                 points.Add(point);
-                admissible.Add(context.ScoreAt is null || context.ScoreAt(point, mode) > 0f);
+                // Two independent reasons a candidate cannot hold a stop. The score
+                // oracle rules out ground nothing could stand on (open water for a
+                // ferry, unbuildable land); the path flags rule out ground the game
+                // itself forbids — a motorway a line may drive along but never call on.
+                // The second is not a matter of degree, so it is checked first.
+                admissible.Add(CanHostStop(route, at[i])
+                    && (context.ScoreAt is null || context.ScoreAt(point, mode) > 0f));
                 hubDistance.Add(context.Hubs.Count > 0 && context.Hubs.TryNearest(point.x, point.y, Assumptions.StationCallMetres, out float distanceSq)
                     ? distanceSq
                     : float.MaxValue);
@@ -339,15 +345,30 @@ namespace TransitArchitect
         private static void TrimPath(SuggestedRoute route, float from, float to)
         {
             var trimmed = new List<float2Like> { PointAlong(route.Path, from) };
+            // The unstoppable flags are indexed by segment, so they have to be trimmed
+            // with the path rather than left describing the corridor it used to be. A
+            // Restop after a mode change reads them again.
+            List<bool> flags = route.PathCannotHostStops;
+            bool hadFlags = flags.Count > 0;
+            var trimmedFlags = new List<bool>();
 
             float travelled = 0f;
             for (int i = 1; i < route.Path.Count; i++)
             {
                 float segment = float2Like.Distance(route.Path[i - 1], route.Path[i]);
                 float at = travelled + segment;
+                bool flag = hadFlags && i - 1 < flags.Count && flags[i - 1];
                 if (at > from && at < to)
                 {
                     trimmed.Add(route.Path[i]);
+                    trimmedFlags.Add(flag);
+                }
+                else if (at >= to)
+                {
+                    // The segment the trim ends inside: its flag governs the last kept
+                    // stretch, and there is exactly one of it.
+                    trimmedFlags.Add(flag);
+                    break;
                 }
 
                 travelled = at;
@@ -359,6 +380,21 @@ namespace TransitArchitect
             for (int i = 0; i < trimmed.Count; i++)
             {
                 route.Path.Add(trimmed[i]);
+            }
+
+            flags.Clear();
+            if (hadFlags)
+            {
+                // One flag per segment of the trimmed path. The loop above can fall
+                // short of that when the trim starts inside a segment, so the last flag
+                // is repeated rather than leaving a segment unlabelled — an unlabelled
+                // segment reads as stoppable, which is the wrong way to be wrong.
+                for (int i = 0; i + 1 < route.Path.Count; i++)
+                {
+                    flags.Add(i < trimmedFlags.Count
+                        ? trimmedFlags[i]
+                        : trimmedFlags.Count > 0 && trimmedFlags[trimmedFlags.Count - 1]);
+                }
             }
 
             // Length is quoted to the player and used by the mode floors, so it has to
@@ -373,6 +409,38 @@ namespace TransitArchitect
         }
 
         // Position at `distance` along the polyline.
+        // Whether the stretch of path at `distance` along it may hold a stop. Walks the
+        // same segments PointAlong does, so the two cannot disagree about which segment
+        // a candidate falls in. True when the network reported nothing, which is every
+        // lattice and every water alignment: no road classes, so no motorways.
+        private static bool CanHostStop(SuggestedRoute route, float distance)
+        {
+            List<bool> flags = route.PathCannotHostStops;
+            if (flags.Count == 0)
+            {
+                return true;
+            }
+
+            float travelled = 0f;
+            for (int i = 1; i < route.Path.Count; i++)
+            {
+                float segment = float2Like.Distance(route.Path[i - 1], route.Path[i]);
+                if (segment <= 0f)
+                {
+                    continue;
+                }
+
+                if (travelled + segment >= distance)
+                {
+                    return i - 1 >= flags.Count || !flags[i - 1];
+                }
+
+                travelled += segment;
+            }
+
+            return flags.Count == 0 || !flags[flags.Count - 1];
+        }
+
         private static float2Like PointAlong(List<float2Like> path, float distance)
         {
             float travelled = 0f;

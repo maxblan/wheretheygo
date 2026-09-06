@@ -11,13 +11,6 @@ namespace TransitArchitect
     // instance, and the payloads are the delimited strings ui-module.md describes.
     public sealed partial class TransitArchitectSystem
     {
-        // The Options page prints this verbatim, so it is built here rather than in
-        // PanelPayload: the payload code is compiled by the offline harness with no
-        // game assemblies, and so cannot reach the player's language. The suggestions
-        // themselves are a list in the Transportation overview; this is the one line
-        // that says whether there are any.
-        private static string s_RouteSummary = string.Empty;
-
         private static string s_RouteList = string.Empty;
 
         private static string s_OverviewRows = string.Empty;
@@ -33,12 +26,10 @@ namespace TransitArchitect
         // Which suggestion the panel is pointing at, and which one it has narrowed the
         // map down to. Both are positions in the CURRENT suggestion list, which is only
         // a safe key because both are cleared the moment a new list arrives — see
-        // UpdateRouteSummary.
+        // UpdateRouteList.
         private static int s_HighlightedRoute = -1;
 
         private static int s_SelectedRoute = -1;
-
-        public static string RouteSummaryText => s_RouteSummary;
 
         // One route per line as "mode|km|stops|vehicles|colour|reachPercent", for the
         // panel to render as a colour-keyed list. A compact string avoids hand-rolling a JSON
@@ -55,6 +46,20 @@ namespace TransitArchitect
         public static string RouteUpdateText => s_RouteUpdate;
 
         public static void RequestApplyRouteUpdate() => s_ApplyRouteUpdate = true;
+
+        // Whether the game's Transportation Overview is on screen. The UI module says
+        // so, because the panel's visibility lives entirely on that side —
+        // TransportationOverviewUISystem publishes its lines and its selected tab, but
+        // not whether anyone is looking.
+        //
+        // It matters because the suggested lines are drawn on the map for it: reading a
+        // list of lines and not being able to see where they run is the one thing that
+        // list must not do.
+        private static bool s_OverviewOpen;
+
+        public static void SetOverviewOpen(bool open) => s_OverviewOpen = open;
+
+        public bool OverviewOpen => s_OverviewOpen;
 
         // The Options page's heat-map switch. A static request rather than a direct
         // call, because the settings object outlives the system and is edited from the
@@ -145,51 +150,18 @@ namespace TransitArchitect
             s_OverviewRows = PanelPayload.OverviewRows(m_LineHealth);
         }
 
-        // Why there is nothing to suggest, in the three cases that mean different
-        // things to the player: the mod has not seen the city yet, it has seen it and
-        // found no journeys, or it looked and everything worth carrying is carried.
-        private static string EmptyRouteSummary(int tripCount, int assignedPairs)
-        {
-            if (tripCount < 0)
-            {
-                return Loc.Text("NoCorridor", "No corridor was strong enough to suggest a line.");
-            }
-
-            if (tripCount == 0)
-            {
-                return Loc.Text("NoJourneys", "No journeys found yet — load a city and let it run.");
-            }
-
-            return Loc.Text(
-                "NothingUnserved",
-                "{0} journeys, {1} routed, but no new line would improve enough of what is still unserved.",
-                tripCount.ToString(CultureInfo.InvariantCulture),
-                assignedPairs.ToString(CultureInfo.InvariantCulture));
-        }
-
-        private void UpdateRouteSummary(int tripCount, int assignedPairs)
+        // Replaces the suggestion list the Transportation Overview reads. The Options
+        // page used to carry a sentence counting these; it does not any more, because
+        // the list itself is one click away and a count of a list you can see is noise.
+        private void UpdateRouteList()
         {
             // Both are positions in the list about to be replaced. Nothing may be shown
             // as selected that is not in the list on screen, so they go with it.
             s_HighlightedRoute = -1;
             s_SelectedRoute = -1;
-
-            if (m_Routes.Count == 0)
-            {
-                s_RouteList = string.Empty;
-                s_RouteSummary = EmptyRouteSummary(tripCount, assignedPairs);
-                return;
-            }
-
-            s_RouteList = PanelPayload.RouteRows(m_Routes, m_UnservedTravelWeight);
-            // One key per grammatical number. "{0} Vorschlag/Vorschläge" is what one
-            // key doing both jobs looked like on the page.
-            s_RouteSummary = m_Routes.Count == 1
-                ? Loc.Text("Suggestions.One", "1 suggestion ready — open the Transportation overview to see it.")
-                : Loc.Text(
-                    "Suggestions",
-                    "{0} suggestions ready — open the Transportation overview to see them.",
-                    m_Routes.Count.ToString(CultureInfo.InvariantCulture));
+            s_RouteList = m_Routes.Count == 0
+                ? string.Empty
+                : PanelPayload.RouteRows(m_Routes, m_UnservedTravelWeight);
         }
     }
 }

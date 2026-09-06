@@ -403,7 +403,6 @@ namespace TransitArchitect
             // already guards its own series against a save change; these strings had
             // no such guard and were shown against the next city until its first
             // refresh landed.
-            s_RouteSummary = Loc.Text("NoneYet", "No route suggestions yet.");
             s_RouteList = string.Empty;
             s_DataCoverage = string.Empty;
             s_Equity = string.Empty;

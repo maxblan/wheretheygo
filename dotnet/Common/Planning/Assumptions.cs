@@ -49,6 +49,11 @@ namespace TransitArchitect
         // nodes, fine enough that a corridor still bends around obstacles.
         public const float LatticeSpacing = 128f;
 
+        // How many of the strongest tiles the combine pass names in the log. Three is
+        // enough to tell "the whole map is bright" from "one spot is", and short enough
+        // to stay one line.
+        public const int TopCellsLogged = 3;
+
         public const float TileSize = 32f;
 
         // ---- Walking

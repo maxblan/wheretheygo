@@ -175,7 +175,7 @@ namespace TransitArchitect
             m_LineSetResolved.Clear();
             m_LineSetResolved.AddRange(pass.Resolved);
 
-            UpdateRouteSummary(pass.TripCount, pass.AssignedPairs);
+            UpdateRouteList();
             LogRoutes();
             if (pass.TripCount >= 0)
             {

@@ -209,7 +209,17 @@ namespace TransitArchitect
         // following each edge's centreline rather than cutting the corner.
         public void MaterialisePath(List<int> nodes, List<float2Like> path)
         {
+            MaterialisePath(nodes, path, segmentCannotHostStops: null);
+        }
+
+        // With `segmentCannotHostStops`, also reports which SEGMENTS of the drawn path
+        // lie on an edge no line may call at — one entry per segment, so segment i runs
+        // from path[i] to path[i+1]. A path may legitimately cross a motorway to get
+        // somewhere; what it may not do is stop on it.
+        public void MaterialisePath(List<int> nodes, List<float2Like> path, List<bool>? segmentCannotHostStops)
+        {
             path.Clear();
+            segmentCannotHostStops?.Clear();
             if (Graph is null || nodes is null || nodes.Count == 0)
             {
                 return;
@@ -223,6 +233,9 @@ namespace TransitArchitect
                 int to = nodes[i];
 
                 int edge = FindEdge(from, to);
+                bool noStops = edge >= 0 && EdgeCannotHostStops is not null
+                    && edge < EdgeCannotHostStops.Length && EdgeCannotHostStops[edge];
+
                 // All four shape arrays are written together in Build and left null by
                 // Adopt, so they are all present or all absent.
                 if (edge >= 0 && EdgeShapeCount is not null && EdgeShapeStart is not null
@@ -236,10 +249,12 @@ namespace TransitArchitect
                     {
                         int at = forward ? start + k : start + count - 1 - k;
                         path.Add(new float2Like(EdgeShapeX[at], EdgeShapeZ[at]));
+                        segmentCannotHostStops?.Add(noStops);
                     }
                 }
 
                 path.Add(new float2Like(NodePositionsX[to], NodePositionsZ[to]));
+                segmentCannotHostStops?.Add(noStops);
             }
         }
 

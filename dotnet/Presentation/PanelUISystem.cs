@@ -47,9 +47,9 @@ namespace TransitArchitect
         // state to the panel, the other acts on what the player clicks.
         private void AddTriggerBindings()
         {
-            AddBinding(new TriggerBinding<bool>(Group, "setHeatmap", value =>
+            AddBinding(new TriggerBinding<bool>(Group, "setOverviewOpen", static open =>
             {
-                m_OverlaySystem?.SetInfoviewActive(value);
+                TransitArchitectSystem.SetOverviewOpen(open);
             }));
 
             AddBinding(new TriggerBinding<int>(Group, "applyPlan", static id =>
