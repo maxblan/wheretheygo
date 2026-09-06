@@ -444,7 +444,7 @@ namespace StationSuitabilityOverlay.Tests
             int greedy = SuitabilityScoring.FindTopSites(scores, width, height, 4, 2, greedyIndices, greedyScores, out _);
             AssertEqual(1, greedy, 0, "greedy is stuck with the single 8");
 
-            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 4, 2, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 4, 2, Assumptions.SiteSearchNodeBudget);
             AssertTrue(exact.Optimal, "search closes on a three-candidate field");
             AssertTrue(exact.WeightsExact, "integer weights lose nothing on small integers");
             AssertEqual(2, exact.Count, 0, "both fives are chosen");
@@ -472,7 +472,7 @@ namespace StationSuitabilityOverlay.Tests
                     scores[i] = (state >> 24) < 96 ? (int)((state >> 8) % 50) : 0f;
                 }
 
-                ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, separation, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+                ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, separation, maxSites, Assumptions.SiteSearchNodeBudget);
                 AssertTrue(exact.Optimal, "small fields close within the budget");
                 AssertTrue(exact.WeightsExact, "integer scores scale exactly");
                 AssertTrue(exact.Count <= maxSites, "never more than K sites");
@@ -562,7 +562,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(8f, starved.Scores[0], 0f, "the incumbent is the 8");
             AssertTrue(starved.UpperBound > starved.Value, "the ceiling admits a better set");
 
-            ExactSiteSolution closed = SuitabilityExactSites.Solve(scores, width, height, 4, 2, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution closed = SuitabilityExactSites.Solve(scores, width, height, 4, 2, Assumptions.SiteSearchNodeBudget);
             AssertTrue(closed.Optimal, "closes with the full budget");
             AssertEqual(starved.ScaleShift, closed.ScaleShift, 0, "same field, same scaling");
             AssertTrue(closed.Value <= starved.UpperBound, "the true optimum sits under the starved run's ceiling");
@@ -582,7 +582,7 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             ExactSiteSolution denseStarved = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, 1);
-            ExactSiteSolution denseClosed = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution denseClosed = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, Assumptions.SiteSearchNodeBudget);
             AssertTrue(denseClosed.Optimal, "the full budget closes a 40x40 field");
             AssertSitesFeasible(denseClosed.Indices, denseClosed.Count, denseWidth, 3);
             AssertSitesFeasible(denseStarved.Indices, denseStarved.Count, denseWidth, 3);
@@ -618,7 +618,7 @@ namespace StationSuitabilityOverlay.Tests
             scores[1 + width] = 4f;
             scores[5 + width] = 4f;
             scores[5 + 5 * width] = 1f;
-            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 4, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 4, Assumptions.SiteSearchNodeBudget);
             AssertTrue(exact.Optimal, "closes");
             AssertEqual(4, exact.Count, 0, "all four peaks fit");
             AssertEqual(1 + width, exact.Indices[0], 0, "lowest index among equal scores first");
@@ -626,7 +626,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(10 + width, exact.Indices[2], 0, "then the last equal score");
             AssertEqual(5 + 5 * width, exact.Indices[3], 0, "the lesser peak last");
 
-            ExactSiteSolution empty = SuitabilityExactSites.Solve(new float[width * height], width, height, 3, 4, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution empty = SuitabilityExactSites.Solve(new float[width * height], width, height, 3, 4, Assumptions.SiteSearchNodeBudget);
             AssertEqual(0, empty.Count, 0, "nothing to choose from");
             AssertTrue(empty.Optimal, "an empty field is trivially solved");
             AssertEqual(0, (int)empty.Nodes, 0, "no search on an empty field");
@@ -642,7 +642,7 @@ namespace StationSuitabilityOverlay.Tests
             scores[1 + width] = 1048576f;
             scores[4 + width] = 0.75f;
             scores[7 + width] = 1.0f;
-            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 3, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 3, Assumptions.SiteSearchNodeBudget);
             AssertTrue(exact.WeightsExact, "a 2^20 spread is exact");
             AssertEqual(3, exact.Count, 0, "all three are compatible at separation 3");
             AssertEqual(1048576f, exact.Scores[0], 0f, "ranked by score");
@@ -650,7 +650,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(0.75f, exact.Scores[2], 0f, "then 0.75");
 
             scores[4 + width] = 1e-20f;
-            ExactSiteSolution wide = SuitabilityExactSites.Solve(scores, width, height, 3, 3, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution wide = SuitabilityExactSites.Solve(scores, width, height, 3, 3, Assumptions.SiteSearchNodeBudget);
             AssertTrue(!wide.WeightsExact, "a 1e26 spread floors the tiny score");
             AssertTrue(wide.Optimal, "still closes");
             AssertSitesFeasible(wide.Indices, wide.Count, width, 3);
@@ -664,7 +664,7 @@ namespace StationSuitabilityOverlay.Tests
             WalkGraph graph = LineGraph(3, 72f);
             var nodes = new[] { 0, 1, 2 };
             var scores = new[] { 5f, 8f, 5f };
-            ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 90000, 2, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 90000, 2, Assumptions.SiteSearchNodeBudget);
             AssertTrue(exact.Optimal, "closes");
             AssertEqual(2, exact.Count, 0, "both fives");
             AssertEqual(0, exact.Indices[0], 0, "ranked by score then node index");
@@ -672,7 +672,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // Spacing 60 s: the middle node is exactly a minute away, which does NOT
             // conflict (strictly below), so all three fit.
-            ExactSiteSolution loose = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 60000, 3, SuitabilityExactSites.DefaultNodeBudget);
+            ExactSiteSolution loose = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 60000, 3, Assumptions.SiteSearchNodeBudget);
             AssertEqual(3, loose.Count, 0, "a walk equal to the spacing is allowed");
 
             // Budget of one node: greedy incumbent with a ceiling that holds the optimum.
@@ -768,7 +768,7 @@ namespace StationSuitabilityOverlay.Tests
                     }
                 }
 
-                ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, candidates, scores, n, separation, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+                ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, candidates, scores, n, separation, maxSites, Assumptions.SiteSearchNodeBudget);
                 AssertTrue(exact.Optimal, "small graphs close");
                 long value2 = 0;
                 for (int i = 0; i < exact.Count; i++)
@@ -850,7 +850,7 @@ namespace StationSuitabilityOverlay.Tests
         private static void DirectedTurnClassesAndTimes()
         {
             AssertEqual(DirectedRoadGraph.Straight, DirectedRoadGraph.TurnClassOf(1.0), 0, "dead ahead");
-            AssertEqual(DirectedRoadGraph.Straight, DirectedRoadGraph.TurnClassOf(DirectedRoadGraph.CosGentle), 0, "15° is still straight (boundary inclusive)");
+            AssertEqual(DirectedRoadGraph.Straight, DirectedRoadGraph.TurnClassOf(Assumptions.CosGentle), 0, "15° is still straight (boundary inclusive)");
             AssertEqual(DirectedRoadGraph.Gentle, DirectedRoadGraph.TurnClassOf(0.9), 0, "25° is gentle");
             AssertEqual(DirectedRoadGraph.Turn, DirectedRoadGraph.TurnClassOf(0.0), 0, "90° is a turn");
             AssertEqual(DirectedRoadGraph.Sharp, DirectedRoadGraph.TurnClassOf(-0.8), 0, "143° is sharp");
@@ -1129,7 +1129,7 @@ namespace StationSuitabilityOverlay.Tests
             // 179 journeys a game day on a 400 s headway with 80-seat buses: 358
             // boardings against (4369.07 / 400) runs × 2 directions × 80 seats.
             float day = 262144f / 60f;
-            AssertEqual(day, SuitabilityEquity.MovementSecondsPerGameDay, 1e-3f, "a game day is 262144 ticks at 60 per second");
+            AssertEqual(day, Assumptions.MovementSecondsPerGameDay, 1e-3f, "a game day is 262144 ticks at 60 per second");
             float utilisation = SuitabilityEquity.Utilisation(179f, 400f, 80f);
             AssertEqual(358f / (day / 400f * 2f * 80f), utilisation, 1e-6f, "boardings over seats offered in the day");
             AssertTrue(utilisation is > 0.20f and < 0.21f, "Valmare's best candidate sits near 20 %");
@@ -1190,7 +1190,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(50f, (float)withBoth.Riders[1], 1e-3f, "C->B and C->A ride the feeder");
             AssertTrue(withBoth.WaitSeconds > 0.0 && withBoth.RideSeconds > 0.0, "the realism breakdown is filled");
 
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(solution.Optimal, "three candidates close at once");
             AssertEqual(2, solution.Count, 0, "two lines chosen");
             AssertTrue((solution.Chosen[0] == 0 && solution.Chosen[1] == 1) || (solution.Chosen[0] == 1 && solution.Chosen[1] == 0), "trunk and feeder are the pair");
@@ -1378,7 +1378,7 @@ namespace StationSuitabilityOverlay.Tests
         {
             LineSetProblem problem = FeederProblem();
             problem.UtilisationFloor = 0f;
-            LineSetSolution open = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution open = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             LineSetEvaluation? openEvaluation = open.Evaluation;
             AssertTrue(open.Count == 2 && openEvaluation is not null, "without a ceiling the trunk-and-feeder pair is chosen");
             if (openEvaluation is null)
@@ -1395,7 +1395,7 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             problem.UtilisationCeiling = busiest * 0.99f;
-            LineSetSolution capped = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution capped = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(capped.Infeasible > 0, "the overloaded set was met and refused");
             AssertTrue(capped.TimeSaved < open.TimeSaved, "the ceiling costs time saved");
             LineSetEvaluation? evaluation = capped.Evaluation;
@@ -1409,7 +1409,7 @@ namespace StationSuitabilityOverlay.Tests
         private static void LineSetLocalSearch()
         {
             LineSetProblem problem = FeederProblem();
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(solution.Optimal && solution.Count == 2, "the exact search still closes");
             AssertTrue(solution.GreedyTimeSaved > 0.0, "the greedy build found a feasible set");
             AssertTrue(solution.LocalSearchTimeSaved >= solution.GreedyTimeSaved, "swaps never lose against the greedy build");
@@ -1481,14 +1481,14 @@ namespace StationSuitabilityOverlay.Tests
                 }
             }
 
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(solution.Optimal, "four candidates close");
             AssertEqual((float)best, (float)solution.TimeSaved, 1e-3f, "solver equals brute force");
             AssertTrue(solution.Count == 2, "the duplicate trunk cannot join its twin and the stub carries nobody");
             AssertTrue(solution.Infeasible > 0, "infeasible sets were met and counted");
 
             problem.UtilisationFloor = 10f;
-            LineSetSolution starved = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution starved = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertEqual(0, starved.Count, 0, "an unreachable utilisation floor leaves the empty set");
         }
 
@@ -1508,12 +1508,12 @@ namespace StationSuitabilityOverlay.Tests
                 return coverage;
             };
             problem.EquityFloorShare = 0.8f;
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertEqual(1, solution.Count, 0, "one line");
             AssertEqual(2, solution.Chosen[0], 0, "below the floor the line that serves the most doors wins, whatever it saves");
 
             problem.EquityFloorShare = 0.05f;   // already met by everyone: time saved decides
-            solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+            solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertEqual(0, solution.Chosen[0], 0, "with the floor met the trunk's time saving wins");
         }
 
@@ -1524,7 +1524,7 @@ namespace StationSuitabilityOverlay.Tests
 
         private static void ObservedTripWindowHoldsADay()
         {
-            uint day = LineHistory.FramesPerGameDay;
+            uint day = Assumptions.FramesPerGameDay;
             var window = new ObservedTripWindow(day);
             AssertEqual(1f, window.ScaleFor(day), 0f, "an empty window scales by 1");
             window.Record(TripAt(1000u, 1));
@@ -1545,7 +1545,7 @@ namespace StationSuitabilityOverlay.Tests
             var brief = new ObservedTripWindow(day);
             brief.Record(TripAt(10u, 1));
             brief.Record(TripAt(20u, 1));
-            AssertEqual(ObservedTripWindow.MaxDayScale, brief.ScaleFor(day), 0f, "ten frames of readings cannot be scaled past the cap");
+            AssertEqual(Assumptions.ObservedTripMaxDayScale, brief.ScaleFor(day), 0f, "ten frames of readings cannot be scaled past the cap");
         }
 
         private static void ObservedTripWindowRestartsAndCaps()
@@ -1559,12 +1559,12 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(1, window.CountOf(2), 0, "the new trip is kept");
 
             var full = new ObservedTripWindow(uint.MaxValue);
-            for (int i = 0; i < ObservedTripWindow.Capacity + 5; i++)
+            for (int i = 0; i < Assumptions.ObservedTripCapacity + 5; i++)
             {
                 full.Record(TripAt((uint)i, 1));
             }
 
-            AssertEqual(ObservedTripWindow.Capacity, full.Count, 0, "the cap holds");
+            AssertEqual(Assumptions.ObservedTripCapacity, full.Count, 0, "the cap holds");
             AssertEqual(5, full.DroppedAtCapSinceLastReport, 0, "drops are counted, not hidden");
             full.ClearCounters();
             AssertEqual(0, full.DroppedAtCapSinceLastReport, 0, "counters reset on report");
@@ -1651,7 +1651,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(1, index.Nearest(250f, 0f, 200.0, out _), 0, "150 m to both sides: the lower index wins");
             AssertEqual(3, index.Nearest(260f, 0f, 200.0, out _), 0, "wider reach finds the nearer node 3");
 
-            int snapped = SuitabilityWalkAccess.SnapPoint(index, 0f, 60f, TransitModes.AccessWalkMs, out int walkMs);
+            int snapped = SuitabilityWalkAccess.SnapPoint(index, 0f, 60f, Assumptions.AccessWalkMs, out int walkMs);
             AssertEqual(0, snapped, 0, "60 m off node 0");
             AssertEqual(50000, walkMs, 0, "60 m is 50 s");
         }
@@ -1668,10 +1668,10 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(90f, (float)metres, 0f, "distance to the ground node");
             AssertEqual(-1, index.NearestSite(110f, 0f, 60.0, out _), 0, "no ground node in reach: no site");
 
-            int node = SuitabilityWalkAccess.SnapSite(index, 100f, 0f, TransitModes.AccessWalkMs, out int walkMs);
+            int node = SuitabilityWalkAccess.SnapSite(index, 100f, 0f, Assumptions.AccessWalkMs, out int walkMs);
             AssertEqual(0, node, 0, "the tile over the tunnel node reads node 0, 100 m away");
             AssertEqual(83333, walkMs, 0, "100 m at 1.2 m/s");
-            AssertEqual(1, SuitabilityWalkAccess.SnapPoint(index, 100f, 0f, TransitModes.AccessWalkMs, out walkMs), 0, "a source at the same spot keeps the tunnel node");
+            AssertEqual(1, SuitabilityWalkAccess.SnapPoint(index, 100f, 0f, Assumptions.AccessWalkMs, out walkMs), 0, "a source at the same spot keeps the tunnel node");
             AssertEqual(0, walkMs, 0, "at no walk");
 
             WalkGraph plain = WalkGraph.Build(x, z, new[] { 0, 1 }, new[] { 1, 2 }, new[] { 100f, 100f }, 2);
@@ -1734,9 +1734,9 @@ namespace StationSuitabilityOverlay.Tests
             {
                 Graph = LineGraph(nodes, 72f),
                 TypeCount = 14,
-                AccessMs = TransitModes.AccessWalkMs,
-                TransferMs = TransitModes.TransferWalkMs,
-                CatchmentMs = TransitModes.CatchmentClassesMs,
+                AccessMs = Assumptions.AccessWalkMs,
+                TransferMs = Assumptions.TransferWalkMs,
+                CatchmentMs = Assumptions.CatchmentClassesMs,
             };
         }
 
@@ -1849,10 +1849,10 @@ namespace StationSuitabilityOverlay.Tests
             var expected = new SortedSet<int>();
             foreach (ModePreset mode in Enum.GetValues<ModePreset>())
             {
-                _ = expected.Add(TransitModes.CatchmentMs(mode));
+                _ = expected.Add(Assumptions.CatchmentMs(mode));
             }
 
-            int[] classes = TransitModes.CatchmentClassesMs;
+            int[] classes = Assumptions.CatchmentClassesMs;
             AssertEqual(expected.Count, classes.Length, 0, "one class per distinct horizon");
             int k = 0;
             foreach (int horizon in expected)
@@ -2402,7 +2402,7 @@ namespace StationSuitabilityOverlay.Tests
                 new TransitLine { m_Stops = new[] { 4, 1 }, m_ExpectedWait = wait, m_SpeedMetresPerSecond = 10f },
             };
 
-            return SuitabilityTransit.Build(xs, zs, 5, lines, 100f, SuitabilityTransit.DefaultBoardPenaltySeconds);
+            return SuitabilityTransit.Build(xs, zs, 5, lines, 100f, Assumptions.DefaultBoardPenaltySeconds);
         }
 
         private static void DirectBeatsTransfer()
@@ -2812,7 +2812,7 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             TransitNetwork net = SuitabilityTransit.Build(
-                xs, zs, stops, new List<TransitLine>(), radius, SuitabilityTransit.DefaultBoardPenaltySeconds);
+                xs, zs, stops, new List<TransitLine>(), radius, Assumptions.DefaultBoardPenaltySeconds);
 
             var built = new HashSet<long>();
             for (int e = 0; e < net.Graph.EdgeCount; e++)
@@ -2891,8 +2891,8 @@ namespace StationSuitabilityOverlay.Tests
             FleetFacts facts = RealFacts();
             // Bus: dwell 15 s, cruise 9 m/s, 1.5 m/s² each way: 15 + 3 + 3.
             AssertEqual(21f, facts.DelayPerStopSeconds(ModePreset.Bus), 1e-4f, "bus stop delay");
-            AssertEqual(30f * 60f, TransitModes.MaxRideSecondsFor(ModePreset.Bus), 0f, "bus ride limit");
-            AssertEqual(60f * 60f, TransitModes.MaxRideSecondsFor(ModePreset.Train), 0f, "train ride limit");
+            AssertEqual(30f * 60f, Assumptions.MaxRideSecondsFor(ModePreset.Bus), 0f, "bus ride limit");
+            AssertEqual(60f * 60f, Assumptions.MaxRideSecondsFor(ModePreset.Train), 0f, "train ride limit");
             // 9 km bus with 5 stops: 1000 s driving + 3 × 21 s.
             AssertEqual(1063f, TransitModes.RideSeconds(9000f, 5, 9f, 21f), 1e-3f, "ride seconds count intermediate stops only");
             AssertEqual(35f * 60f * 12f, TransitModes.MaxAlignmentMetresFor(RouteNetwork.Road), 1e-2f, "the road alignment bound is the tram's limit at cruise");
@@ -3342,10 +3342,10 @@ namespace StationSuitabilityOverlay.Tests
                 "a tenth further to reach an interchange is worth it");
 
             AssertTrue(
-                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * SuitabilityGraphMath.MaxViaDetour, maxLength),
+                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * Assumptions.MaxViaDetour, maxLength),
                 "the bound itself is allowed");
             AssertTrue(
-                !SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * (SuitabilityGraphMath.MaxViaDetour + 0.01f), maxLength),
+                !SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * (Assumptions.MaxViaDetour + 0.01f), maxLength),
                 "and a line that goes noticeably out of its way is not");
 
             // A hub two kilometres to one side costs roughly four kilometres of extra
@@ -3380,7 +3380,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // Exactly at the bar counts, and a zero-length corridor is nothing to judge.
             AssertTrue(
-                SuitabilityGraphMath.IsDirectEnough(4000f * SuitabilityGraphMath.MinDirectness, 4000f),
+                SuitabilityGraphMath.IsDirectEnough(4000f * Assumptions.MinDirectness, 4000f),
                 "the bar itself passes");
             AssertTrue(SuitabilityGraphMath.IsDirectEnough(0f, 0f), "nothing to judge");
         }
@@ -3402,7 +3402,7 @@ namespace StationSuitabilityOverlay.Tests
         // simply a small line that is busy some of the time.
         private static void WindowAveragesLineReadings()
         {
-            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
 
             // Six readings a few game hours apart: full, empty, full, empty, ...
             int[] aboard = { 80, 0, 60, 0, 40, 0 };
@@ -3463,7 +3463,7 @@ namespace StationSuitabilityOverlay.Tests
         // says 100/300 = 33%; the honest answer is the mean of 10% and 45%.
         private static void WindowUsageIsPerSample()
         {
-            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
             history.Record(3, new LineObservation
             {
                 m_Frame = 0u,
@@ -3505,9 +3505,9 @@ namespace StationSuitabilityOverlay.Tests
             // 4369 s a day at 300 s and 80 seats both ways = 2330 seats a day, 1553 of
             // them by day (16 h) and 777 by night; 500 riders by day = 1000 boardings /
             // 1553 = 64.4 %, 20 riders by night = 40 / 777 = 5.1 %.
-            float dayUtil = Daytime.UtilisationInPeriod(500f, 300f, 80f, Daytime.DayShareOfDay);
+            float dayUtil = Daytime.UtilisationInPeriod(500f, 300f, 80f, Assumptions.DayShareOfDay);
             AssertTrue(dayUtil is > 0.64f and < 0.65f, $"day utilisation {dayUtil}");
-            float nightUtil = Daytime.UtilisationInPeriod(20f, 300f, 80f, 1f - Daytime.DayShareOfDay);
+            float nightUtil = Daytime.UtilisationInPeriod(20f, 300f, 80f, 1f - Assumptions.DayShareOfDay);
             AssertTrue(nightUtil is > 0.05f and < 0.06f, $"night utilisation {nightUtil}");
             AssertTrue(Daytime.Recommend(dayUtil, nightUtil, 0.15f) == LineSchedule.Day, "empty nights: run by day");
             AssertTrue(Daytime.Recommend(nightUtil, dayUtil, 0.15f) == LineSchedule.Night, "empty days: run by night");
@@ -3521,7 +3521,7 @@ namespace StationSuitabilityOverlay.Tests
 
         private static void PeriodAverages()
         {
-            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
             uint frame = 1000u;
             // Six day readings at 50 %, six night readings at 10 %, two night readings with no vehicles out.
             for (int i = 0; i < 6; i++)
@@ -3550,7 +3550,7 @@ namespace StationSuitabilityOverlay.Tests
         // lines — Record treats an older frame as a rewound clock and clears everything.
         private static void WindowsRoundTripThroughTheSave()
         {
-            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
             uint frame = 1000u;
             for (int i = 0; i < 6; i++)
             {
@@ -3575,7 +3575,7 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertEqual(12, flat.Count, 0, "every sample is exported");
             flat.Sort((a, b) => a.sample.m_Frame.CompareTo(b.sample.m_Frame));
-            var restored = new LineHistory(LineHistory.FramesPerGameDay);
+            var restored = new LineHistory(Assumptions.FramesPerGameDay);
             for (int i = 0; i < flat.Count; i++)
             {
                 restored.Record(flat[i].line, flat[i].sample);
@@ -3588,13 +3588,13 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(before9.m_Passengers, after9.m_Passengers, 0f, "line 9 keeps its passengers");
             AssertEqual(2, restored.TrackedLines, 0, "two lines tracked");
 
-            var window = new ObservedTripWindow(LineHistory.FramesPerGameDay);
+            var window = new ObservedTripWindow(Assumptions.FramesPerGameDay);
             for (int i = 0; i < 5; i++)
             {
                 window.Record(new ObservedTrip { m_Frame = 100u * (uint)(i + 1), m_OriginX = i, m_OriginZ = 1f, m_DestinationX = 2f, m_DestinationZ = 3f, m_Purpose = (byte)(i % 2) });
             }
 
-            var copy = new ObservedTripWindow(LineHistory.FramesPerGameDay);
+            var copy = new ObservedTripWindow(Assumptions.FramesPerGameDay);
             IReadOnlyList<ObservedTrip> trips = window.Trips;
             for (int i = 0; i < trips.Count; i++)
             {
@@ -3611,7 +3611,7 @@ namespace StationSuitabilityOverlay.Tests
         // worse than starting over.
         private static void WindowResetsWhenFramesRewind()
         {
-            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
             history.Record(2, Reading(500000u, 80));
             history.Record(2, Reading(500100u, 80));
             AssertTrue(history.TryAverage(2, out LineAverage loaded), "the first city has history");
@@ -3627,7 +3627,7 @@ namespace StationSuitabilityOverlay.Tests
         // by the network that exists rather than by everything ever built.
         private static void WindowForgetsDeletedLines()
         {
-            var history = new LineHistory(LineHistory.FramesPerGameDay);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
             history.Record(1, Reading(0u, 10));
             history.Record(2, Reading(0u, 20));
             AssertTrue(history.TrackedLines == 2, "both lines tracked");

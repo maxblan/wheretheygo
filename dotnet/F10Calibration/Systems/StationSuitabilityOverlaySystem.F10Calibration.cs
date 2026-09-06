@@ -11,9 +11,6 @@ namespace StationSuitabilityOverlay
     // cadence, fitting, and the options-page requests to apply or reset the fit.
     public sealed partial class StationSuitabilityOverlaySystem
     {
-        private const float RidershipSampleSeconds = 60f;
-
-        private const float RidershipSaveSeconds = 300f;
 
         // Static bridge for the options page. The settings object is constructed
         // before the world exists, so the button properties and the read-only status
@@ -42,7 +39,7 @@ namespace StationSuitabilityOverlay
 
         private void SampleRidership(Setting settings, float now)
         {
-            if (m_RawTerms is null || now - m_LastRidershipSample < RidershipSampleSeconds)
+            if (m_RawTerms is null || now - m_LastRidershipSample < Assumptions.RidershipSampleSeconds)
             {
                 return;
             }
@@ -88,7 +85,7 @@ namespace StationSuitabilityOverlay
             // Setting a property does not touch disk, so the accumulated series
             // would be lost on exit without an occasional explicit save. Collecting
             // for half an hour and losing it would be worse than the write.
-            if (now - m_LastRidershipSave >= RidershipSaveSeconds)
+            if (now - m_LastRidershipSave >= Assumptions.RidershipSaveSeconds)
             {
                 m_LastRidershipSave = now;
                 settings.ApplyAndSave();
@@ -104,7 +101,7 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, TileSize, m_IntensityGrid);
+            int2 cell = SuitabilityInputs.WorldToCell(position, m_ScoreWorldMin, Assumptions.TileSize, m_IntensityGrid);
             int index = cell.x + cell.y * m_IntensityGrid.x;
             if (index < 0 || index >= m_RawTerms.Length)
             {

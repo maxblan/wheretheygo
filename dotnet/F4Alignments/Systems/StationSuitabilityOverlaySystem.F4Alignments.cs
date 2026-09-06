@@ -11,29 +11,6 @@ namespace StationSuitabilityOverlay
     // the candidate pool the mode ladder and the set selection then work through.
     public sealed partial class StationSuitabilityOverlaySystem
     {
-        // What each network's corridor growth is allowed to consider: the share of the
-        // network's own mean edge flow an edge must carry to be eligible, and the
-        // longest corridor that may be grown on it.
-        //
-        // The lattice fractions were once far too high for a lattice to produce a line
-        // at all, which the growth diagnostics finally made visible: at 0.6 the train
-        // floor stood at 256 against a mean edge flow of 426, and 226 of the refused
-        // extensions were refused by that floor alone. Train corridors averaged 414 m
-        // and every one of the fifteen died against the 4000 m minimum for a train.
-        // Metro at 0.4 fared little better — 1684 m average against a 2000 m minimum,
-        // so 15 of 19 were thrown away.
-        //
-        // The demand gate, the length floors and ChooseMode's own multiples of the
-        // network reference all still apply downstream, so these widen what may be
-        // CONSIDERED rather than what may be suggested.
-        private const float RoadFlowFraction = 0.1f;
-
-        // Normalized demand a corridor's next node must have beside it. Corridors must
-        // serve somebody along their length, not merely carry through-traffic — that is
-        // what stopped routes looping into empty land. Loosened from 0.02, where the
-        // gate truncated corridors at the first thin block and made almost every one
-        // too short to suggest.
-        private const float CorridorDemandFloor = 0.005f;
 
         // Each network contributes candidates for the modes it can carry; the merged
         // set is ranked by trips carried and the best kept. Auto-assignment therefore
@@ -65,7 +42,7 @@ namespace StationSuitabilityOverlay
 
             float[]? roadDemand = BuildNodeDemand(m_RoadGraph, gridSize);
 
-            const float demandFloor = CorridorDemandFloor;
+            const float demandFloor = Assumptions.CorridorDemandFloor;
 
             int grownTotal = 0;
             int shortTotal = 0;
@@ -73,7 +50,7 @@ namespace StationSuitabilityOverlay
             var phases = System.Diagnostics.Stopwatch.StartNew();
             StopContext stops = BuildStopContext();
             SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
-                RoadFlowFraction, TransitModes.MaxAlignmentMetresFor(RouteNetwork.Road), roadDemand, demandFloor, forcedMode: null, candidates,
+                Assumptions.RoadFlowFraction, TransitModes.MaxAlignmentMetresFor(RouteNetwork.Road), roadDemand, demandFloor, forcedMode: null, candidates,
                 stops, out int g1, out int s1, out int h1);
 
             // The lattices connect two places rather than following a flow ridge — see
@@ -114,12 +91,12 @@ namespace StationSuitabilityOverlay
                 $"metro pairs tried={(g3).ToString(CultureInfo.InvariantCulture)} tooShort={(s3).ToString(CultureInfo.InvariantCulture)}, " +
                 $"ferry pairs tried={(g4).ToString(CultureInfo.InvariantCulture)} tooShort={(s4).ToString(CultureInfo.InvariantCulture)}, " +
                 $"termini aimed at an interchange={(h1 + h2 + h3 + h4).ToString(CultureInfo.InvariantCulture)} (road {(h1).ToString(CultureInfo.InvariantCulture)}) of {(m_Interchanges.Count).ToString(CultureInfo.InvariantCulture)} served stops, " +
-                $"tooShort = fewer than {(TransitModes.MinStops).ToString(CultureInfo.InvariantCulture)} stops; " +
-                $"ride limits (min): bus {(TransitModes.MaxRideSecondsFor(ModePreset.Bus) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"tram {(TransitModes.MaxRideSecondsFor(ModePreset.Tram) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"metro {(TransitModes.MaxRideSecondsFor(ModePreset.Metro) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"train {(TransitModes.MaxRideSecondsFor(ModePreset.Train) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"ferry {(TransitModes.MaxRideSecondsFor(ModePreset.Ferry) / 60f).ToString("F0", CultureInfo.InvariantCulture)}");
+                $"tooShort = fewer than {(Assumptions.MinStops).ToString(CultureInfo.InvariantCulture)} stops; " +
+                $"ride limits (min): bus {(Assumptions.MaxRideSecondsFor(ModePreset.Bus) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"tram {(Assumptions.MaxRideSecondsFor(ModePreset.Tram) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"metro {(Assumptions.MaxRideSecondsFor(ModePreset.Metro) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"train {(Assumptions.MaxRideSecondsFor(ModePreset.Train) / 60f).ToString("F0", CultureInfo.InvariantCulture)} " +
+                $"ferry {(Assumptions.MaxRideSecondsFor(ModePreset.Ferry) / 60f).ToString("F0", CultureInfo.InvariantCulture)}");
 
             // Corridor flow is all there is to rank by until the routing pass runs, and
             // it decides which candidates are inside the scoring window. Enabled demand

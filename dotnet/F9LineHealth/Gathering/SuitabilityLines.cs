@@ -343,7 +343,7 @@ namespace StationSuitabilityOverlay
                     // fallback when a route segment carries no pathfound duration, and
                     // a train covering ground at a bus's speed made its rides look
                     // three times longer than they are.
-                    m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(line.m_Mode),
+                    m_SpeedMetresPerSecond = Assumptions.CruiseSpeedFor(line.m_Mode),
                 });
             }
 
@@ -423,10 +423,10 @@ namespace StationSuitabilityOverlay
             // how busy this city's transit actually runs.
             float medianUsage = MedianUsage(lines);
             float longWaitMultiple =
-                MedianIntervalRatio(lines) * SuitabilityLineHealth.LongWaitShareAboveMedian;
+                MedianIntervalRatio(lines) * Assumptions.LongWaitShareAboveMedian;
             float emptyThreshold = math.min(
-                SuitabilityLineHealth.EmptyUsage,
-                medianUsage * SuitabilityLineHealth.EmptyShareOfMedian);
+                Assumptions.EmptyUsage,
+                medianUsage * Assumptions.EmptyShareOfMedian);
 
             for (int i = 0; i < lines.Count; i++)
             {
@@ -470,7 +470,7 @@ namespace StationSuitabilityOverlay
                     m_NightUsage = line.m_NightUsage,
                     m_DaySamples = line.m_DaySamples,
                     m_NightSamples = line.m_NightSamples,
-                    m_ScheduleAdvice = Daytime.Advise(line.m_Schedule, line.m_DayUsage, line.m_DaySamples, line.m_NightUsage, line.m_NightSamples, emptyThreshold, LineHistory.MinSamplesForVerdict),
+                    m_ScheduleAdvice = Daytime.Advise(line.m_Schedule, line.m_DayUsage, line.m_DaySamples, line.m_NightUsage, line.m_NightSamples, emptyThreshold, Assumptions.MinReadingsForVerdict),
                 });
             }
 
@@ -499,11 +499,11 @@ namespace StationSuitabilityOverlay
             }
 
             Mod.Log.Info(
-                $"Line health long-wait bar: a line is flagged past {(math.max(SuitabilityLineHealth.LongWaitMultipleOfTarget, longWaitMultiple)).ToString("F2", CultureInfo.InvariantCulture)}x its own target interval " +
+                $"Line health long-wait bar: a line is flagged past {(math.max(Assumptions.LongWaitMultipleOfTarget, longWaitMultiple)).ToString("F2", CultureInfo.InvariantCulture)}x its own target interval " +
                 $"(city median is {(MedianIntervalRatio(lines)).ToString("F2", CultureInfo.InvariantCulture)}x)");
             Mod.Log.Info(
                 $"Line health empty bar: flagged only if the mean is under {((emptyThreshold * 100f)).ToString("F1", CultureInfo.InvariantCulture)}% " +
-                $"AND the peak under {((emptyThreshold * SuitabilityLineHealth.EmptyPeakAllowance * 100f)).ToString("F1", CultureInfo.InvariantCulture)}%");
+                $"AND the peak under {((emptyThreshold * Assumptions.EmptyPeakAllowance * 100f)).ToString("F1", CultureInfo.InvariantCulture)}%");
             Mod.Log.Info(
                 $"Line health reference: medianUsage={(medianUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, " +
                 $"emptyBelow={(emptyThreshold * 100f).ToString("F1", CultureInfo.InvariantCulture)}% of fleet capacity");

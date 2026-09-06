@@ -73,10 +73,10 @@ namespace StationSuitabilityOverlay
             // candidates conflict when the walk between them is shorter than the
             // mode's stop spacing (A2.2) — the same metric the stops are later set by.
             int wanted = Math.Min(settings.SiteCount, m_SiteIndices.Length);
-            int separationMs = Math.Max(1, WalkGraph.WalkMilliseconds(TransitModes.StopSpacingFor(settings.Mode)));
+            int separationMs = Math.Max(1, WalkGraph.WalkMilliseconds(Assumptions.StopSpacingFor(settings.Mode)));
             m_SiteCandidateCount = SuitabilityExactSites.CollectNetworkCandidates(
                 inputs.Graph, access.Result, access.Class, access.SelfType, access.TypeWeight,
-                buildable, worldMin, TileSize, grid, in m_Scored, m_ScoredInvSelf,
+                buildable, worldMin, Assumptions.TileSize, grid, in m_Scored, m_ScoredInvSelf,
                 ref m_SiteCandidateNodes, ref m_SiteCandidateScores);
 
             // Exact selection: the set of at most `wanted` candidates with the largest
@@ -87,14 +87,14 @@ namespace StationSuitabilityOverlay
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(
                 inputs.Graph, m_SiteCandidateNodes, m_SiteCandidateScores, m_SiteCandidateCount,
-                separationMs, wanted, SuitabilityExactSites.DefaultNodeBudget);
+                separationMs, wanted, Assumptions.SiteSearchNodeBudget);
             stopwatch.Stop();
             m_SiteSeparationMs = separationMs;
 
             m_SiteCount = exact.Count;
             for (int i = 0; i < exact.Count; i++)
             {
-                m_SiteIndices[i] = SuitabilityExactSites.TileOfNode(inputs.Graph, exact.Indices[i], worldMin, TileSize, grid);
+                m_SiteIndices[i] = SuitabilityExactSites.TileOfNode(inputs.Graph, exact.Indices[i], worldMin, Assumptions.TileSize, grid);
                 m_SiteScores[i] = exact.Scores[i];
             }
 
@@ -144,10 +144,6 @@ namespace StationSuitabilityOverlay
             }
         }
 
-        // A site set differs if it picked different tiles, or if any score moved by
-        // more than this fraction of its previous value.
-        private const float SiteScoreLogThreshold = 0.05f;
-
         private bool SitesChangedMeaningfully()
         {
             if (m_LoggedSiteIndices is null || m_LoggedSiteScores is null)
@@ -169,7 +165,7 @@ namespace StationSuitabilityOverlay
 
                 float previous = m_LoggedSiteScores[s];
                 float delta = math.abs(m_SiteScores[s] - previous);
-                if (delta > math.max(1f, math.abs(previous) * SiteScoreLogThreshold))
+                if (delta > math.max(1f, math.abs(previous) * Assumptions.SiteScoreLogThreshold))
                 {
                     return true;
                 }
@@ -209,7 +205,7 @@ namespace StationSuitabilityOverlay
                 int index = m_SiteIndices[s];
                 int x = index % m_IntensityGrid.x;
                 int y = index / m_IntensityGrid.x;
-                float2 world = m_ScoreWorldMin + new float2((x + 0.5f) * TileSize, (y + 0.5f) * TileSize);
+                float2 world = m_ScoreWorldMin + new float2((x + 0.5f) * Assumptions.TileSize, (y + 0.5f) * Assumptions.TileSize);
                 if (s > 0)
                 {
                     _ = builder.Append(", ");

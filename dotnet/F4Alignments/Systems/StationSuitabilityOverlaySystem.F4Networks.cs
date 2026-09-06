@@ -97,25 +97,25 @@ namespace StationSuitabilityOverlay
             }
 
             SuitabilityRoads.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds, m_MetroTrackStarts, m_MetroTrackEnds);
-            SuitabilityLattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, tileGrid, origin, TileSize, m_TrackMask);
-            SuitabilityLattice.RasterizeTracks(m_MetroTrackStarts, m_MetroTrackEnds, tileGrid, origin, TileSize, m_MetroTrackMask);
+            SuitabilityLattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, tileGrid, origin, Assumptions.TileSize, m_TrackMask);
+            SuitabilityLattice.RasterizeTracks(m_MetroTrackStarts, m_MetroTrackEnds, tileGrid, origin, Assumptions.TileSize, m_MetroTrackMask);
 
             bool LandTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] != 0;
             bool WaterTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] == 0;
             bool OnTrack(int tile) => m_TrackMask is not null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
             bool OnMetroTrack(int tile) => m_MetroTrackMask is not null && tile < m_MetroTrackMask.Length && m_MetroTrackMask[tile] != 0;
 
-            CompactGraph trainGraph = SuitabilityLattice.Build(tileGrid, origin, TileSize, LandTile,
+            CompactGraph trainGraph = SuitabilityLattice.Build(tileGrid, origin, Assumptions.TileSize, LandTile,
                 tile => SuitabilityLattice.RailCostScale(OnTrack(tile)),
                 out float[] trainX, out float[] trainZ);
             m_TrainNetwork.Adopt(trainGraph, trainX, trainZ, RouteNetwork.Rail);
 
-            CompactGraph metroGraph = SuitabilityLattice.Build(tileGrid, origin, TileSize, LandTile,
+            CompactGraph metroGraph = SuitabilityLattice.Build(tileGrid, origin, Assumptions.TileSize, LandTile,
                 tile => SuitabilityLattice.RailCostScale(OnMetroTrack(tile)),
                 out float[] metroX, out float[] metroZ);
             m_MetroNetwork.Adopt(metroGraph, metroX, metroZ, RouteNetwork.Metro);
 
-            CompactGraph waterGraph = SuitabilityLattice.Build(tileGrid, origin, TileSize, WaterTile,
+            CompactGraph waterGraph = SuitabilityLattice.Build(tileGrid, origin, Assumptions.TileSize, WaterTile,
                 tileCostScale: null, out float[] waterX, out float[] waterZ);
             m_WaterNetwork.Adopt(waterGraph, waterX, waterZ, RouteNetwork.Water);
 
@@ -141,10 +141,6 @@ namespace StationSuitabilityOverlay
             int[] zoneNodes = network.MapZonesToNodes(new int2Like(m_ZoneGrid.x, m_ZoneGrid.y), new float2Like(worldMin.x, worldMin.y));
             _ = network.AssignFlow(flows, zoneNodes, 30000f, out float _);
         }
-
-        // Stops on the road network sit on or beside a road node; further than this
-        // the stop is not on the street it was placed along.
-        private const float StopNodeSnapMetres = 64f;
 
         // Driving time into each stop of a road route from the stop before it, along
         // the fastest DIRECTED path with the street's speed limits and turn costs
@@ -188,15 +184,10 @@ namespace StationSuitabilityOverlay
         // nearest arc within the snap distance and timed from there (RoadLegs).
         private long RoadLegMs(float2Like from, float2Like to)
         {
-            long ms = m_RoadGraph.PointLegMs(from, to, StopNodeSnapMetres, (long)ServedDemand.MaxJourneySeconds * 1000L, out RoadLeg leg);
+            long ms = m_RoadGraph.PointLegMs(from, to, Assumptions.StopNodeSnapMetres, (long)Assumptions.MaxJourneySeconds * 1000L, out RoadLeg leg);
             RememberRoadLeg(from, to, ms, leg);
             return ms;
         }
-
-        // The stop-to-stop legs the last route pass asked the directed graph for, with
-        // the answers it got: what the export hands the pipeline to certify. Bounded,
-        // and reset whenever the graph is rebuilt so no leg outlives its graph.
-        private const int MaxRememberedRoadLegs = 400;
 
         private readonly List<(float2Like from, float2Like to, long ms, RoadLeg leg)> m_RoadLegs = new List<(float2Like, float2Like, long, RoadLeg)>();
 
@@ -212,7 +203,7 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            if (m_RoadLegs.Count >= MaxRememberedRoadLegs)
+            if (m_RoadLegs.Count >= Assumptions.MaxRememberedRoadLegs)
             {
                 m_RoadLegsDropped++;
                 return;
@@ -231,7 +222,7 @@ namespace StationSuitabilityOverlay
                 return SuitabilityRoutes.EstimateVehicles(route.Mode, route.Length, route.Stops.Count, headwaySeconds, delayPerStopSeconds);
             }
 
-            float speed = TransitModes.CruiseSpeedFor(route.Mode);
+            float speed = Assumptions.CruiseSpeedFor(route.Mode);
             double roundTrip = 0.0;
             for (int i = 1; i < route.Stops.Count; i++)
             {

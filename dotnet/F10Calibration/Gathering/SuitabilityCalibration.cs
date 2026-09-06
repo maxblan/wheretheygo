@@ -29,9 +29,6 @@ namespace StationSuitabilityOverlay
     // actually trying to predict.
     internal sealed class SuitabilityCalibration
     {
-        public const int MinSamplesPerStop = 30;
-        public const int MinStops = 8;
-        private const int MaxTrackedStops = 256;
         private const int FeatureCount = SuitabilityScoring.CalibrationFeatureCount;
         // Stamped into the persisted series. Records gathered under another scoring
         // model — before 2026-09-05 the access kernel was a fourth regressor and a
@@ -99,7 +96,7 @@ namespace StationSuitabilityOverlay
                 int ready = 0;
                 foreach (StopRecord record in m_Records.Values)
                 {
-                    if (record.m_Samples >= MinSamplesPerStop)
+                    if (record.m_Samples >= Assumptions.CalibrationMinSamplesPerStop)
                     {
                         ready++;
                     }
@@ -192,7 +189,7 @@ namespace StationSuitabilityOverlay
                 long key = KeyOf(position);
                 if (!m_Records.TryGetValue(key, out StopRecord record))
                 {
-                    if (m_Records.Count >= MaxTrackedStops)
+                    if (m_Records.Count >= Assumptions.CalibrationMaxTrackedStops)
                     {
                         // A bound that truncates silently reads as "covered
                         // everything" when it did not.
@@ -200,7 +197,7 @@ namespace StationSuitabilityOverlay
                         {
                             m_CapReported = true;
                             Mod.Log.Warn(
-                                $"Ridership sampling is at its cap of {MaxTrackedStops.ToString(CultureInfo.InvariantCulture)} stops; " +
+                                $"Ridership sampling is at its cap of {Assumptions.CalibrationMaxTrackedStops.ToString(CultureInfo.InvariantCulture)} stops; " +
                                 "further stops of this mode are not being tracked and cannot influence the fit.");
                         }
 
@@ -282,13 +279,13 @@ namespace StationSuitabilityOverlay
             for (int i = 0; i < keys.Count; i++)
             {
                 StopRecord record = m_Records[keys[i]];
-                if (record.m_Samples >= MinSamplesPerStop)
+                if (record.m_Samples >= Assumptions.CalibrationMinSamplesPerStop)
                 {
                     usable.Add(record);
                 }
             }
 
-            if (usable.Count < MinStops)
+            if (usable.Count < Assumptions.CalibrationMinStops)
             {
                 return false;
             }
@@ -343,11 +340,11 @@ namespace StationSuitabilityOverlay
             _ = builder.Append("Collecting while unpaused: ");
             _ = builder.Append(ReadyStops);
             _ = builder.Append(" of ");
-            _ = builder.Append(MinStops);
+            _ = builder.Append(Assumptions.CalibrationMinStops);
             _ = builder.Append(" stops ready, ");
             _ = builder.Append(m_Records.Count);
             _ = builder.Append(" tracked (need ");
-            _ = builder.Append(MinSamplesPerStop);
+            _ = builder.Append(Assumptions.CalibrationMinSamplesPerStop);
             _ = builder.Append(" samples each)");
             return builder.ToString();
         }
@@ -501,7 +498,7 @@ namespace StationSuitabilityOverlay
                 {
                     malformed++;
                 }
-                else if (m_Records.Count >= MaxTrackedStops)
+                else if (m_Records.Count >= Assumptions.CalibrationMaxTrackedStops)
                 {
                     overCap++;
                 }
@@ -517,7 +514,7 @@ namespace StationSuitabilityOverlay
             {
                 Mod.Log.Warn(
                     $"Ridership data loaded with losses: {malformed.ToString(CultureInfo.InvariantCulture)} record(s) unreadable, " +
-                    $"{overCap.ToString(CultureInfo.InvariantCulture)} past the cap of {MaxTrackedStops.ToString(CultureInfo.InvariantCulture)}. " +
+                    $"{overCap.ToString(CultureInfo.InvariantCulture)} past the cap of {Assumptions.CalibrationMaxTrackedStops.ToString(CultureInfo.InvariantCulture)}. " +
                     $"{m_Records.Count.ToString(CultureInfo.InvariantCulture)} stop(s) restored.");
             }
         }

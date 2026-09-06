@@ -170,18 +170,6 @@ namespace StationSuitabilityOverlay
 
     internal static class SuitabilityTransit
     {
-        // Walking is slow enough that a long connection is worse than a detour by
-        // vehicle, which is what keeps interchanges local.
-        // 1.2 m/s is the planning value (TCQSM 3rd ed. ch. 5; FHWA-RD-98-107), not the
-        // brisk 1.4 the routing used before — register decision, 2026-09-04.
-        public const float WalkSpeed = 1.2f;
-
-        // Flat cost of boarding, on top of the wait. Matches TransportPathfind's
-        // m_StartingCost time component (5), so a change of vehicle costs what the
-        // game itself charges for one. There is no separate transfer penalty in
-        // vanilla — a transfer is simply a second boarding — so modelling boardings
-        // is modelling transfers.
-        public const float DefaultBoardPenaltySeconds = 5f;
 
         // Vanilla's rider wait, from PathUtils.GetTransportStopSpecification.
         public static float ExpectedWait(float vehicleInterval, float observedAverageWait, float stopDwell)
@@ -202,7 +190,7 @@ namespace StationSuitabilityOverlay
         }
 
         // The same network plus one node per journey zone, each joined by a walk edge to
-        // every stop within `zoneReach` (Euclidean, at WalkSpeed). A journey's door-to-
+        // every stop within `zoneReach` (Euclidean, at Assumptions.WalkSpeed). A journey's door-to-
         // door time is then the true minimum over access stops, which makes the time-saved
         // objective monotone in the line set — the property the exact selection's bound
         // rests on. Zone nodes come after the line-stop nodes; see TransitNetwork.ZoneNodeStart.
@@ -306,7 +294,7 @@ namespace StationSuitabilityOverlay
                     float distSq = (dx * dx) + (dz * dz);
                     if (distSq <= reachSq)
                     {
-                        AddEdge(zoneNode, stop, (float)Math.Sqrt(distSq) / WalkSpeed, TransitEdgeKind.Walk, -1);
+                        AddEdge(zoneNode, stop, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed, TransitEdgeKind.Walk, -1);
                     }
                 }
             }
@@ -361,7 +349,7 @@ namespace StationSuitabilityOverlay
                     float dx = stopX[a] - stopX[b];
                     float dz = stopZ[a] - stopZ[b];
                     float distance = (float)Math.Sqrt((dx * dx) + (dz * dz));
-                    addEdge(a, b, distance / WalkSpeed, TransitEdgeKind.Walk, -1);
+                    addEdge(a, b, distance / Assumptions.WalkSpeed, TransitEdgeKind.Walk, -1);
                 }
             }
         }

@@ -13,9 +13,6 @@ namespace StationSuitabilityOverlay
     // the shape and already-built gates. The arithmetic is TransitModes.ChooseMode.
     public sealed partial class StationSuitabilityOverlaySystem
     {
-        // How close a candidate's stops must be to an existing line's for the two to
-        // count as the same alignment.
-        private const float DuplicateLineMatchMetres = 150f;
 
         // The per-line bars a resolved candidate has to clear before the set search may
         // consider it: its shape (at least MinStops calls, a ride within the mode's
@@ -30,11 +27,11 @@ namespace StationSuitabilityOverlay
                 DeferredLog.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {candidate.Network} {candidate.Mode}, corridorFlow={(candidate.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}, " +
                     $"len={(candidate.Length).ToString("F0", CultureInfo.InvariantCulture)}m, {candidate.Stops.Count} stops, ride {(rideSeconds / 60f).ToString("F1", CultureInfo.InvariantCulture)} min — DROPPED, " +
-                    $"{(candidate.Stops.Count < TransitModes.MinStops ? $"fewer than {TransitModes.MinStops.ToString(CultureInfo.InvariantCulture)} stops" : $"over the {(TransitModes.MaxRideSecondsFor(candidate.Mode) / 60f).ToString("F0", CultureInfo.InvariantCulture)} min ride limit for a {candidate.Mode}")}");
+                    $"{(candidate.Stops.Count < Assumptions.MinStops ? $"fewer than {Assumptions.MinStops.ToString(CultureInfo.InvariantCulture)} stops" : $"over the {(Assumptions.MaxRideSecondsFor(candidate.Mode) / 60f).ToString("F0", CultureInfo.InvariantCulture)} min ride limit for a {candidate.Mode}")}");
                 return false;
             }
 
-            if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, DuplicateLineMatchMetres))
+            if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, Assumptions.DuplicateLineMatchMetres))
             {
                 tally.AlreadyBuilt++;
                 DeferredLog.Info(
@@ -53,11 +50,11 @@ namespace StationSuitabilityOverlay
             float[]? legs = RoadRideSeconds(route);
             if (legs is null)
             {
-                return TransitModes.RideSeconds(route.Length, route.Stops.Count, TransitModes.CruiseSpeedFor(route.Mode), delay);
+                return TransitModes.RideSeconds(route.Length, route.Stops.Count, Assumptions.CruiseSpeedFor(route.Mode), delay);
             }
 
             float driving = 0f;
-            float speed = TransitModes.CruiseSpeedFor(route.Mode);
+            float speed = Assumptions.CruiseSpeedFor(route.Mode);
             for (int i = 1; i < legs.Length; i++)
             {
                 driving += legs[i] > 0f ? legs[i] : float2Like.Distance(route.Stops[i - 1], route.Stops[i]) / math.max(1f, speed);
@@ -160,7 +157,7 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            if (requireFit && roadUtilisation > TransitModes.MaxPlannedUtilisation)
+            if (requireFit && roadUtilisation > Assumptions.MaxPlannedUtilisation)
             {
                 DeferredLog.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: streets overloaded as a {onRoad.Mode} ({(roadUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %) — the {candidate.Mode} alignment stands");
@@ -192,7 +189,7 @@ namespace StationSuitabilityOverlay
         // this one: past half its seats alone.
         private void OfferNextUp(Setting settings, SuggestedRoute route, int index, FleetFacts facts, StopContext stops, List<SuggestedRoute> resolved, RoutePass pass, ModePreset? nextUp, float utilisation)
         {
-            if (nextUp is not ModePreset larger || utilisation < TransitModes.MaxPlannedUtilisation * 0.5f)
+            if (nextUp is not ModePreset larger || utilisation < Assumptions.MaxPlannedUtilisation * 0.5f)
             {
                 return;
             }
@@ -215,7 +212,7 @@ namespace StationSuitabilityOverlay
         // the same streets produce them by the dozen.
         private static int DropIdenticalCandidates(List<SuggestedRoute> resolved)
         {
-            const float sameSq = 20f * 20f;
+            const float sameSq = Assumptions.IdenticalCandidateStopMetres * Assumptions.IdenticalCandidateStopMetres;
             int dropped = 0;
             for (int i = resolved.Count - 1; i >= 1; i--)
             {

@@ -13,13 +13,6 @@ namespace StationSuitabilityOverlay
     // refinement went; it is gone with it.)
     internal static class SuitabilityMasks
     {
-        // A tile counts as water when the surface is deeper than this. Shallow
-        // puddles and shoreline wash should not carve up the walkable landmass.
-        private const float WaterDepthThreshold = 0.5f;
-        // Ferry stops want the shoreline, so they accept shallow water and require
-        // proximity to it; this is how far a land tile may be from water and still
-        // count as shoreline.
-        private const float FerryShorelineDepth = 0.1f;
 
         // Fills `buildable` (1 where a stop could go) and `land` (1 where the tile is
         // not water) for a grid of gridSize tiles of tileSize metres starting at worldMin.
@@ -63,7 +56,7 @@ namespace StationSuitabilityOverlay
                     probe.y = height;
                     float depth = waterData.isCreated ? WaterUtils.SampleDepth(ref waterData, probe) : 0f;
 
-                    bool isLand = depth <= WaterDepthThreshold;
+                    bool isLand = depth <= Assumptions.WaterDepthThreshold;
                     bool gentle = normal.y >= minNormalY;
 
                     land[index] = isLand ? (byte)1 : (byte)0;
@@ -71,7 +64,7 @@ namespace StationSuitabilityOverlay
                     // Ferries need water access, so they also keep shallow water; the
                     // shoreline test itself needs neighbours and waits for pass 2.
                     bool placeable = ferry
-                        ? (isLand && gentle) || depth <= FerryShorelineDepth + WaterDepthThreshold
+                        ? (isLand && gentle) || depth <= Assumptions.FerryShorelineDepth + Assumptions.WaterDepthThreshold
                         : isLand && gentle;
                     buildable[index] = placeable ? (byte)1 : (byte)0;
                 }

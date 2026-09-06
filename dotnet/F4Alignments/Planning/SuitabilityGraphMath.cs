@@ -401,7 +401,7 @@ namespace StationSuitabilityOverlay
     // counting.
     //
     // `NodeX`/`NodeZ` are optional. Without them growth has no idea which way it is
-    // heading and will happily staircase across a city; see TurnPenalty.
+    // heading and will happily staircase across a city; see Assumptions.TurnPenalty.
     internal readonly struct CorridorNetwork
     {
         public CorridorNetwork(
@@ -439,70 +439,17 @@ namespace StationSuitabilityOverlay
 
     internal static class SuitabilityGraphMath
     {
-        // How much a corridor prefers to carry straight on.
-        //
-        // Growth picks the best adjacent edge on flow and novelty alone, and on a
-        // lattice — a 128 m grid where flow is spread thin and nearly uniform — the
-        // tiniest difference between two edges steers it. The result wandered across
-        // the whole city in a staircase, which is not an alignment anyone would build
-        // and not something Ramer-Douglas-Peucker can straighten afterwards: the
-        // corridor genuinely went that way.
-        //
-        // A real line continues along the street or the alignment it is on and turns
-        // only for a reason. At 0.6 a right-angle turn keeps 70% of its score and a
-        // reversal 40%, so a genuinely busier direction still wins — this is a
-        // preference, not a constraint.
-        private const float TurnPenalty = 0.6f;
-
-        // How much a corridor prefers to be GOING somewhere.
-        //
-        // The turn penalty is local: it stops a staircase but says nothing about the
-        // shape overall, and a corridor can carry smoothly round a long arc back to
-        // where it started. On a lattice that is exactly what happened — a metro was
-        // proposed as a box around an empty field, and another as a ring around the
-        // whole city.
-        //
-        // The cause is that a lattice is a UNIFORM grid, so the shortest path between
-        // two zones is degenerate: hundreds of staircases cost the same, and which one
-        // Dijkstra picks falls out of the order edges were added. The flow those paths
-        // accumulate forms ridges that are an artifact of the grid rather than of where
-        // anyone travels, and growth follows them faithfully.
-        //
-        // A line connects two places. Every extension is therefore weighed on whether
-        // it takes this end FURTHER from the other one: at 0.7 an extension that curls
-        // back keeps 30% of its score and one heading straight out keeps all of it.
-        private const float SpreadPenalty = 0.7f;
-
-        // A line whose ends are closer together than this share of the distance it
-        // travels is a ring, not a route. The spread bias only helps where growth had
-        // an alternative; on a corridor with nowhere else to go it still comes round,
-        // and this is what catches that.
-        public const float MinDirectness = 0.45f;
 
         // Whether a grown corridor actually gets somewhere.
         public static bool IsDirectEnough(float endToEndMetres, float lengthMetres)
         {
-            return lengthMetres <= 0f || endToEndMetres / lengthMetres >= MinDirectness;
+            return lengthMetres <= 0f || endToEndMetres / lengthMetres >= Assumptions.MinDirectness;
         }
-
-        // How much longer an alignment may become to pass through an interchange.
-        //
-        // A judgement, and stated as one: every rider already on the line pays the
-        // detour in minutes, while only those changing vehicle collect the benefit, so
-        // the bound is about what the majority will tolerate rather than about what the
-        // hub is worth. A quarter again is roughly the point at which a bend stops
-        // reading on a map as "the line goes past the station" and starts reading as
-        // "the line goes out of its way".
-        //
-        // Deliberately NOT scaled by how many modes the hub offers. A better hub is a
-        // reason to prefer one via over another — which is what the ranking does — not
-        // a reason to make the people on board travel further for it.
-        public const float MaxViaDetour = 1.25f;
 
         // Whether bending an alignment through a via point is worth it. `viaMetres` is
         // the whole bent alignment, not the detour alone.
         //
-        // Both bounds matter and they fail differently: past MaxViaDetour the line is
+        // Both bounds matter and they fail differently: past Assumptions.MaxViaDetour the line is
         // no longer the line anyone asked for, and past `maxMetres` it is not a line
         // the mode can hold a headway around at all.
         public static bool IsDetourWorthwhile(float directMetres, float viaMetres, float maxMetres)
@@ -513,18 +460,8 @@ namespace StationSuitabilityOverlay
             }
 
             // No direct path to compare against is not a licence to wander.
-            return directMetres > 0f && viaMetres <= directMetres * MaxViaDetour;
+            return directMetres > 0f && viaMetres <= directMetres * Assumptions.MaxViaDetour;
         }
-        // Consecutive quiet nodes a corridor may cross before giving up. Two is a
-        // park, a river, a rail crossing or an industrial strip — the things that sit
-        // between two busy districts — and not a licence to strike out into open
-        // country, which is what the gate exists to prevent.
-        public const int DefaultLowDemandBridge = 2;
-
-        // How heavily a crossing is outranked by an extension into somewhere with
-        // people. Low enough that a bridge is only ever taken when it is the only
-        // thing on offer.
-        private const float LowDemandBridgePenalty = 0.05f;
 
         // Removes a bridge the corridor never came out of, returning the length to
         // take back off the total.
@@ -662,7 +599,7 @@ namespace StationSuitabilityOverlay
             Corridor result,
             float demandFloor = 0f,
             float seedNoveltyBias = 0f,
-            int maxLowDemandBridge = DefaultLowDemandBridge)
+            int maxLowDemandBridge = Assumptions.DefaultLowDemandBridge)
         {
             result.Clear();
             CompactGraph graph = network.Graph;
@@ -862,7 +799,7 @@ namespace StationSuitabilityOverlay
         }
 
         // How much an extension carries straight on: 1 for continuing in the same
-        // direction, 1 - TurnPenalty for a right angle, less for doubling back.
+        // direction, 1 - Assumptions.TurnPenalty for a right angle, less for doubling back.
         //
         // Without node positions there is no direction to measure and every extension
         // scores the same, which is the behaviour every caller had before positions
@@ -892,11 +829,11 @@ namespace StationSuitabilityOverlay
             // -1 doubling back, 0 a right angle, 1 straight on.
             double cosine = (((inX * outX) + (inZ * outZ)) / inLength) / outLength;
             float straightness = (float)((cosine + 1.0) * 0.5);
-            return 1f - (TurnPenalty * (1f - straightness));
+            return 1f - (Assumptions.TurnPenalty * (1f - straightness));
         }
 
         // How much an extension takes this end of the corridor further from the other
-        // one: 1 for heading straight out, down to 1 - SpreadPenalty for curling back.
+        // one: 1 for heading straight out, down to 1 - Assumptions.SpreadPenalty for curling back.
         //
         // Measured against the edge's own length, so it means the same on a 128 m
         // lattice edge and a 400 m street.
@@ -918,7 +855,7 @@ namespace StationSuitabilityOverlay
             // -1 straight back towards the other end, 1 straight away from it.
             double gain = (after - before) / edgeCost;
             float outward = (float)((Math.Max(-1.0, Math.Min(1.0, gain)) + 1.0) * 0.5);
-            return 1f - (SpreadPenalty * (1f - outward));
+            return 1f - (Assumptions.SpreadPenalty * (1f - outward));
         }
 
         private static double Separation(float dx, float dz)
@@ -1021,7 +958,7 @@ namespace StationSuitabilityOverlay
                 // with people beside it outranks a bridge out of the same junction.
                 if (lowDemand)
                 {
-                    score *= LowDemandBridgePenalty;
+                    score *= Assumptions.LowDemandBridgePenalty;
                 }
                 if (score <= bestScore)
                 {

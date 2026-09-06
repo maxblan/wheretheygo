@@ -11,10 +11,6 @@ namespace StationSuitabilityOverlay
     // System.Math with explicit float casts.
     internal static class SuitabilityScoring
     {
-        // Ceiling on the 3x3 local maxima FindTopSites will consider. A real city
-        // produces far fewer; a noisy score field could produce far more, and a
-        // truncated sweep is biased towards low grid indices, so callers are told.
-        private const int MaxSiteCandidates = 65536;
 
         public static int ClampInt(int value, int min, int max)
         {
@@ -125,7 +121,7 @@ namespace StationSuitabilityOverlay
         // the smaller mode should come to the trunk.
         public static float CoverageShare(float coverage)
         {
-            return Math.Min(coverage, SuitabilityWalkAccess.MaxCoveragePenalty) / SuitabilityWalkAccess.MaxCoveragePenalty;
+            return Math.Min(coverage, Assumptions.MaxCoveragePenalty) / Assumptions.MaxCoveragePenalty;
         }
 
         // The one formula that turns seven raw terms into a score. Two rules the user
@@ -333,7 +329,7 @@ namespace StationSuitabilityOverlay
             // Grown into rather than allocated at the bound: starting at the cap meant
             // half a megabyte of candidate buffer on every recompute, whatever the map
             // actually held.
-            int cap = Math.Min(cells, MaxSiteCandidates);
+            int cap = Math.Min(cells, Assumptions.MaxSiteCandidates);
             candidateIndices = new int[Math.Min(cap, 1024)];
             candidateScores = new float[candidateIndices.Length];
             int candidates = 0;

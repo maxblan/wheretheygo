@@ -10,11 +10,6 @@ namespace StationSuitabilityOverlay
     // the live-city scan; the scan itself is SuitabilityTripObserver.
     public sealed partial class StationSuitabilityOverlaySystem
     {
-        // How often the live city is scanned for shopping and leisure journeys under
-        // way (register A0.1). A citizen stays inside a building for game-hours and a
-        // journey lasts game-minutes, so one scan a second — a few game minutes at
-        // normal speed — sees every stay and most departures.
-        private const float TripObservationSeconds = 1f;
 
         private EntityQuery m_QueuedQuery;
 

@@ -67,16 +67,16 @@ namespace StationSuitabilityOverlay
         // median and each line's own usage are always measured the same way — the
         // "nearly empty" threshold is a fraction of that median, and mixing the two
         // would compare a windowed line against an instantaneous city.
-        public float Usage => m_WindowSamples >= LineHistory.MinSamplesForVerdict
+        public float Usage => m_WindowSamples >= Assumptions.MinReadingsForVerdict
             ? m_WindowUsage
             : (m_Capacity > 0 ? m_Passengers / (float)m_Capacity : 0f);
 
         // The headway a verdict should judge, on the same footing as Usage.
-        public float JudgedInterval => m_WindowSamples >= LineHistory.MinSamplesForVerdict
+        public float JudgedInterval => m_WindowSamples >= Assumptions.MinReadingsForVerdict
             ? m_WindowInterval
             : m_VehicleInterval;
 
-        public bool HasWindow => m_WindowSamples >= LineHistory.MinSamplesForVerdict;
+        public bool HasWindow => m_WindowSamples >= Assumptions.MinReadingsForVerdict;
 
         // What a rider turning up at random waits, in seconds — the cost the transit
         // router charges for boarding this line.
@@ -92,7 +92,7 @@ namespace StationSuitabilityOverlay
         // max(interval / 2, WaitingPassengers.m_AverageWaitingTime), but that second
         // term is deliberately dropped: it is the pathfinder's accumulator in game
         // units, not seconds, and one stranded rider drives it into the thousands —
-        // the same reason SuitabilityLineHealth.LongWait refuses to read it. Passing it
+        // the same reason Assumptions.LongWait refuses to read it. Passing it
         // as seconds let it beat the real headway on some lines and not others, so the
         // router's wait cost was in mixed units.
         public float ExpectedWait => SuitabilityTransit.ExpectedWait(JudgedInterval, 0f, m_StopDuration);

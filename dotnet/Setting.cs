@@ -33,30 +33,23 @@ namespace StationSuitabilityOverlay
         public const int kAccessStep = 10;
         public const int kHighlightMin = 1;
         public const int kHighlightMax = 20;
-        public const int kHighlightDefault = 5;
         // Equity floor (register A1.8/A1.9, decided 2026-09-05): the share of journeys
         // that must have BOTH ends within the walking horizon of a served stop before
         // suggestions may chase efficiency, and the horizon itself.
         public const int kEquityMinutesMin = 5;
         public const int kEquityMinutesMax = 20;
-        public const int kEquityMinutesDefault = 10;
         public const int kEquityFloorMin = 50;
         public const int kEquityFloorMax = 100;
-        public const int kEquityFloorDefault = 80;
         // Utilisation floor (A4.1/A6.4): peak-hour boardings over peak-hour seats a
         // suggested line has to reach.
         public const int kUtilisationMin = 5;
         public const int kUtilisationMax = 60;
-        public const int kUtilisationDefault = 15;
         public const int kSlopeMin = 3;
         public const int kSlopeMax = 45;
-        public const int kSlopeDefault = 15;
         public const int kSiteCountMin = 1;
         public const int kSiteCountMax = 20;
-        public const int kSiteCountDefault = 8;
         public const int kRouteCountMin = 1;
         public const int kRouteCountMax = 12;
-        public const int kRouteCountDefault = 5;
 
         // ModePreset and RouteGoal live in TransitMode.cs, beside everything that is
         // true of a mode — see the note there for why they are not nested here.
@@ -313,15 +306,15 @@ namespace StationSuitabilityOverlay
         public override void SetDefaults()
         {
             m_Mode = ModePreset.Bus;
-            m_HighlightShare = kHighlightDefault;
-            m_MaxSlope = kSlopeDefault;
-            m_EquityWalkMinutes = kEquityMinutesDefault;
-            m_EquityFloorPercent = kEquityFloorDefault;
-            m_UtilisationFloorPercent = kUtilisationDefault;
-            m_SiteCount = kSiteCountDefault;
+            m_HighlightShare = Assumptions.HighlightShareDefaultPercent;
+            m_MaxSlope = Assumptions.MaxSlopeDefaultDegrees;
+            m_EquityWalkMinutes = Assumptions.EquityWalkMinutesDefault;
+            m_EquityFloorPercent = Assumptions.EquityFloorDefaultPercent;
+            m_UtilisationFloorPercent = Assumptions.UtilisationFloorDefaultPercent;
+            m_SiteCount = Assumptions.SiteCountDefault;
             m_RidershipData = string.Empty;
             m_Objective = RouteGoal.Balanced;
-            m_RouteCount = kRouteCountDefault;
+            m_RouteCount = Assumptions.RouteCountDefault;
             m_ShowRoutes = true;
             ApplyPreset(m_Mode);
         }
@@ -408,13 +401,13 @@ namespace StationSuitabilityOverlay
             (int catchment, int access) = PresetRadii(m_Mode);
             m_CatchmentRadius = m_CatchmentRadius == 0 ? catchment : ClampInt(m_CatchmentRadius, kCatchmentMin, kCatchmentMax);
             m_AccessRadius = m_AccessRadius == 0 ? access : ClampInt(m_AccessRadius, kAccessMin, kAccessMax);
-            m_HighlightShare = m_HighlightShare == 0 ? kHighlightDefault : ClampInt(m_HighlightShare, kHighlightMin, kHighlightMax);
-            m_MaxSlope = m_MaxSlope == 0 ? kSlopeDefault : ClampInt(m_MaxSlope, kSlopeMin, kSlopeMax);
-            m_EquityWalkMinutes = m_EquityWalkMinutes == 0 ? kEquityMinutesDefault : ClampInt(m_EquityWalkMinutes, kEquityMinutesMin, kEquityMinutesMax);
-            m_EquityFloorPercent = m_EquityFloorPercent == 0 ? kEquityFloorDefault : ClampInt(m_EquityFloorPercent, kEquityFloorMin, kEquityFloorMax);
-            m_UtilisationFloorPercent = m_UtilisationFloorPercent == 0 ? kUtilisationDefault : ClampInt(m_UtilisationFloorPercent, kUtilisationMin, kUtilisationMax);
-            m_SiteCount = m_SiteCount == 0 ? kSiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
-            m_RouteCount = m_RouteCount == 0 ? kRouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
+            m_HighlightShare = m_HighlightShare == 0 ? Assumptions.HighlightShareDefaultPercent : ClampInt(m_HighlightShare, kHighlightMin, kHighlightMax);
+            m_MaxSlope = m_MaxSlope == 0 ? Assumptions.MaxSlopeDefaultDegrees : ClampInt(m_MaxSlope, kSlopeMin, kSlopeMax);
+            m_EquityWalkMinutes = m_EquityWalkMinutes == 0 ? Assumptions.EquityWalkMinutesDefault : ClampInt(m_EquityWalkMinutes, kEquityMinutesMin, kEquityMinutesMax);
+            m_EquityFloorPercent = m_EquityFloorPercent == 0 ? Assumptions.EquityFloorDefaultPercent : ClampInt(m_EquityFloorPercent, kEquityFloorMin, kEquityFloorMax);
+            m_UtilisationFloorPercent = m_UtilisationFloorPercent == 0 ? Assumptions.UtilisationFloorDefaultPercent : ClampInt(m_UtilisationFloorPercent, kUtilisationMin, kUtilisationMax);
+            m_SiteCount = m_SiteCount == 0 ? Assumptions.SiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
+            m_RouteCount = m_RouteCount == 0 ? Assumptions.RouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
             m_Objective = ValidObjective(m_Objective);
             float[] preset = PresetWeights(m_Mode);
             m_W5 = m_W5 < 0f ? preset[4] : ClampWeight(m_W5);

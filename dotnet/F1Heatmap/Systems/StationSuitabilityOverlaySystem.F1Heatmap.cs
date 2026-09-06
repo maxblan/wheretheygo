@@ -184,7 +184,7 @@ namespace StationSuitabilityOverlay
 
             popDeps.Complete();
             float2 worldMin = -mapSize * 0.5f;
-            int2 gridSize = SuitabilityInputs.GridDims(mapSize, TileSize);
+            int2 gridSize = SuitabilityInputs.GridDims(mapSize, Assumptions.TileSize);
 
             EnsureMasks(settings, gridSize, worldMin);
             EnsureCollectionsCurrent(settings);
@@ -202,7 +202,7 @@ namespace StationSuitabilityOverlay
             WalkAccessInputs inputs = BuildAccessInputs(m_WalkGraph);
             // The task must not see a mask rebuilt under it, so it gets its own copy.
             var buildable = (byte[])mask.Clone();
-            int cls = SuitabilityWalkAccess.ClassOf(inputs.CatchmentMs, TransitModes.CatchmentMs(settings.Mode));
+            int cls = SuitabilityWalkAccess.ClassOf(inputs.CatchmentMs, Assumptions.CatchmentMs(settings.Mode));
             var selfType = (int)SuitabilityInputs.TransportTypeOf(settings.Mode);
             float[] typeWeight = TypeWeights();
             int width = gridSize.x;
@@ -215,7 +215,7 @@ namespace StationSuitabilityOverlay
             var box = new AccessBox();
             m_PendingBox = box;
             m_PendingAccess = System.Threading.Tasks.Task.Run(
-                () => box.m_Output = SuitabilityWalkAccess.Run(inputs, width, height, minX, minZ, TileSize, buildable, cls, selfType, typeWeight),
+                () => box.m_Output = SuitabilityWalkAccess.Run(inputs, width, height, minX, minZ, Assumptions.TileSize, buildable, cls, selfType, typeWeight),
                 System.Threading.CancellationToken.None);
             m_PendingInputs = inputs;
             CaptureExportInputs(inputs, gridSize, worldMin, buildable, settings.Mode, cls, selfType, typeWeight);
@@ -246,9 +246,9 @@ namespace StationSuitabilityOverlay
                 StopZ = new float[m_AllStopPositions.Count],
                 StopType = m_AllStopTypes.ToArray(),
                 TypeCount = (int)TransportType.Count,
-                AccessMs = TransitModes.AccessWalkMs,
-                TransferMs = TransitModes.TransferWalkMs,
-                CatchmentMs = TransitModes.CatchmentClassesMs,
+                AccessMs = Assumptions.AccessWalkMs,
+                TransferMs = Assumptions.TransferWalkMs,
+                CatchmentMs = Assumptions.CatchmentClassesMs,
             };
             for (int i = 0; i < m_AllStopPositions.Count; i++)
             {
@@ -324,7 +324,7 @@ namespace StationSuitabilityOverlay
                 $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, " +
                 $"walk network {(output.Result.Demand.Length > 0 ? m_AccessInputs?.Graph.NodeCount ?? 0 : 0).ToString(CultureInfo.InvariantCulture)} nodes " +
                 $"({(m_EdgesWithoutPavement).ToString(CultureInfo.InvariantCulture)} edges without a pedestrian lane skipped), " +
-                $"{(output.TilesOnNetwork).ToString(CultureInfo.InvariantCulture)} tiles within {(TransitModes.AccessWalkMs / 1000).ToString(CultureInfo.InvariantCulture)} s of a node, " +
+                $"{(output.TilesOnNetwork).ToString(CultureInfo.InvariantCulture)} tiles within {(Assumptions.AccessWalkMs / 1000).ToString(CultureInfo.InvariantCulture)} s of a node, " +
                 $"homes={(m_PendingHomeCount).ToString(CultureInfo.InvariantCulture)} ({(m_HouseholdsWithoutHome).ToString(CultureInfo.InvariantCulture)} households without a home skipped), " +
                 $"jobSites={(m_PendingJobSiteCount).ToString(CultureInfo.InvariantCulture)}, zonedCells={(m_PendingZonedCount).ToString(CultureInfo.InvariantCulture)}, " +
                 $"servedStops={(m_PendingStopCount).ToString(CultureInfo.InvariantCulture)} (orphans ignored={(m_PendingOrphanCount).ToString(CultureInfo.InvariantCulture)}), " +
@@ -372,7 +372,7 @@ namespace StationSuitabilityOverlay
                 settings.MaxSlope,
                 gridSize,
                 worldMin,
-                TileSize,
+                Assumptions.TileSize,
                 buildable,
                 land);
 
@@ -548,7 +548,7 @@ namespace StationSuitabilityOverlay
                 scores,
                 totalCells,
                 settings.HighlightShare / 100f,
-                SuitabilityHeatmap.IntensityGamma,
+                Assumptions.IntensityGamma,
                 m_LayerIntensities[(int)SuitabilityLayer.Score],
                 scoreScratch);
 
@@ -663,7 +663,7 @@ namespace StationSuitabilityOverlay
 
             return SuitabilityHeatmap.NodeDemand(
                 network, m_RawTerms, m_DemandCap, m_JobsCap,
-                new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y), TileSize, new int2Like(gridSize.x, gridSize.y));
+                new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y), Assumptions.TileSize, new int2Like(gridSize.x, gridSize.y));
         }
 
         private float ScoreAtWorld(float2 point, int2 gridSize)
@@ -673,7 +673,7 @@ namespace StationSuitabilityOverlay
                 return 0f;
             }
 
-            int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+            int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, Assumptions.TileSize, gridSize);
             int index = cell.x + cell.y * gridSize.x;
             if (index < 0 || index >= m_Scores.Length)
             {
@@ -702,14 +702,14 @@ namespace StationSuitabilityOverlay
                 return baseScore;
             }
 
-            int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+            int2 cell = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, Assumptions.TileSize, gridSize);
             int index = cell.x + (cell.y * gridSize.x);
             if (index < 0 || index >= access.TileNode.Length || access.TileNode[index] < 0)
             {
                 return 0f;
             }
 
-            int cls = SuitabilityWalkAccess.ClassOf(inputs.CatchmentMs, TransitModes.CatchmentMs(mode));
+            int cls = SuitabilityWalkAccess.ClassOf(inputs.CatchmentMs, Assumptions.CatchmentMs(mode));
             if (cls < 0)
             {
                 return baseScore;
@@ -732,7 +732,7 @@ namespace StationSuitabilityOverlay
                 return 0f;
             }
 
-            int2 centre = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, TileSize, gridSize);
+            int2 centre = SuitabilityInputs.WorldToCell(point, m_ScoreWorldMin, Assumptions.TileSize, gridSize);
             int span = 2;
             bool touchesLand = false;
             float best = 0f;
@@ -783,7 +783,7 @@ namespace StationSuitabilityOverlay
             // stop-derived terms, which vary over the catchment radius rather than over
             // the 160 m this window spans, so it cannot reorder the cells within it.
             return ScoreForMode(
-                SuitabilityInputs.CellCentre(bestCell, m_ScoreWorldMin, TileSize),
+                SuitabilityInputs.CellCentre(bestCell, m_ScoreWorldMin, Assumptions.TileSize),
                 gridSize, ModePreset.Ferry);
         }
     }

@@ -61,11 +61,6 @@ namespace StationSuitabilityOverlay
         // scaled into [2^ScaleBits/2, 2^ScaleBits) with ScaleBits chosen from K.
         private const int MaxScaledBits = 62;
 
-        // Nodes the search may expand before it settles for best-found plus bound.
-        // Sized so a real city (some 700 candidates, K ≤ 20) closes with room to spare
-        // while a pathological field still returns within a fraction of a second.
-        public const long DefaultNodeBudget = 2_000_000;
-
         public static ExactSiteSolution Solve(
             float[] scores,
             int width,

@@ -29,7 +29,7 @@ namespace StationSuitabilityOverlay
         // A game day of line readings. Judging a line on the single reading a refresh
         // happens to land on condemned a one-boat ferry as empty whenever its boat was
         // mid-crossing; the window is what a verdict rests on instead.
-        private readonly LineHistory m_LineHistory = new LineHistory(LineHistory.FramesPerGameDay);
+        private readonly LineHistory m_LineHistory = new LineHistory(Assumptions.FramesPerGameDay);
 
         private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
 
@@ -63,7 +63,7 @@ namespace StationSuitabilityOverlay
                         continue;
                     }
 
-                    if (float2Like.DistanceSq(m_TransitStops[index], new float2Like(position.x, position.y)) > StopMatchRadiusSq)
+                    if (float2Like.DistanceSq(m_TransitStops[index], new float2Like(position.x, position.y)) > Assumptions.StopMatchRadiusSq)
                     {
                         continue;
                     }
@@ -184,7 +184,7 @@ namespace StationSuitabilityOverlay
                 $"Line window: frame={(frame).ToString(CultureInfo.InvariantCulture)} (advanced={advanced}), " +
                 $"tracking {(m_LineHistory.TrackedLines).ToString(CultureInfo.InvariantCulture)} lines over " +
                 $"{(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} game hours, " +
-                $"{(LineHistory.MinSamplesForVerdict).ToString(CultureInfo.InvariantCulture)} readings needed before a verdict uses it, " +
+                $"{(Assumptions.MinReadingsForVerdict).ToString(CultureInfo.InvariantCulture)} readings needed before a verdict uses it, " +
                 $"evicted={(m_LineHistory.EvictedSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
                 $"droppedAtCap={(m_LineHistory.DroppedAtCapSinceLastReport).ToString(CultureInfo.InvariantCulture)}");
             m_LineHistory.ClearCounters();
@@ -294,9 +294,9 @@ namespace StationSuitabilityOverlay
             }
 
             var scratch = new List<int>();
-            int from = graph.NearestNode(m_TransitStops[firstStop], ReplanSnapMetres);
-            int to = graph.NearestNode(m_TransitStops[lastStop], ReplanSnapMetres);
-            if (from < 0 || to < 0 || !graph.TracePath(from, to, ReplanMaxPathMetres, scratch))
+            int from = graph.NearestNode(m_TransitStops[firstStop], Assumptions.ReplanSnapMetres);
+            int to = graph.NearestNode(m_TransitStops[lastStop], Assumptions.ReplanSnapMetres);
+            if (from < 0 || to < 0 || !graph.TracePath(from, to, Assumptions.ReplanMaxPathMetres, scratch))
             {
                 DeferredLog.Info(
                     $"Improved route for \"{health.m_Name}\": no {graph.Network} path between its endpoints " +
@@ -329,25 +329,5 @@ namespace StationSuitabilityOverlay
                 $"{(route.Vehicles).ToString(CultureInfo.InvariantCulture)} vehicles (was {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}), corridorFlow={(route.CapturedFlow).ToString("F0", CultureInfo.InvariantCulture)}");
         }
 
-        // How far an existing line's endpoint may be from a node when re-planning it,
-        // and how long the replacement path may be.
-        private const float ReplanSnapMetres = 600f;
-
-        private const float ReplanMaxPathMetres = 60000f;
-
-        // Candidates transfer-scored per requested route. Four networks each grow up
-        // to RouteCount * 4, so this covers all of them rather than only the network
-        // whose corridors happen to carry the most flow per edge.
-        //
-        // It has to rise with that budget. Candidates enter scoring sorted by corridor
-        // flow, and enabled demand does not follow flow at all — the best candidate in
-        // one refresh carried a corridor flow of 63 and unlocked more journeys than
-        // anything else in the run. A scoring window narrower than the candidate set
-        // would drop exactly that kind of line, unscored, to the bottom of a ranking
-        // led by the number it never got.
-        // How close a sampled stop entity has to be to a collected line's stop to be
-        // the same stop. Generous, because the two come from different game components
-        // and their positions need not agree exactly.
-        private const float StopMatchRadiusSq = 40f * 40f;
     }
 }

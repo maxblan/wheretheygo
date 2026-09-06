@@ -37,7 +37,7 @@ namespace StationSuitabilityOverlay
         }
 
         // The window of journeys seen; the save state writes and restores it.
-        public ObservedTripWindow Window { get; } = new ObservedTripWindow(LineHistory.FramesPerGameDay);
+        public ObservedTripWindow Window { get; } = new ObservedTripWindow(Assumptions.FramesPerGameDay);
 
         // What the last Drain handed over, and how the scans since have cost the frame.
         public int LastDemandCount => m_ObservedLastDemand;
@@ -392,7 +392,7 @@ namespace StationSuitabilityOverlay
         // queue, each observed journey weighted so the window reads as one day.
         public void Drain(NativeQueue<Trip> trips)
         {
-            float scale = Window.ScaleFor(LineHistory.FramesPerGameDay);
+            float scale = Window.ScaleFor(Assumptions.FramesPerGameDay);
             m_ObservedLastDemand = Window.Count;
             m_ObservedScaleLastDemand = scale;
             for (int i = 0; i < Window.Count; i++)

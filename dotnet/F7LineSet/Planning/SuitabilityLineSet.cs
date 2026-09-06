@@ -137,7 +137,6 @@ namespace StationSuitabilityOverlay
     // checked on the set itself, since riders move between lines of a set.
     internal static class SuitabilityLineSet
     {
-        public const long DefaultNodeBudget = 20_000;
 
         // One search per origin DOOR rather than per pair, capped at the largest
         // door-to-door time the door's pairs can still improve on. Doors are not nodes
@@ -239,7 +238,7 @@ namespace StationSuitabilityOverlay
                         if (distSq <= reachSq)
                         {
                             stops.Add(stop);
-                            costs.Add(Math.Max(0.01f, (float)Math.Sqrt(distSq) / SuitabilityTransit.WalkSpeed));
+                            costs.Add(Math.Max(0.01f, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed));
                         }
                     }
                 }
@@ -406,7 +405,7 @@ namespace StationSuitabilityOverlay
         {
             float dx = problem.PairDx[pair] - problem.PairOx[pair];
             float dz = problem.PairDz[pair] - problem.PairOz[pair];
-            return (float)Math.Sqrt((dx * dx) + (dz * dz)) / SuitabilityTransit.WalkSpeed;
+            return (float)Math.Sqrt((dx * dx) + (dz * dz)) / Assumptions.WalkSpeed;
         }
 
         // Walks the retained shortest itinerary back from the alighting stop to the
@@ -542,7 +541,7 @@ namespace StationSuitabilityOverlay
                 return 0f;
             }
 
-            double boardings = riders * TransitModes.RidesPerJourney;
+            double boardings = riders * Assumptions.RidesPerJourney;
             double seats = problem.MovementSecondsPerDay / line.HeadwaySeconds * 2.0 * line.VehicleCapacity;
             return (float)(boardings / seats);
         }

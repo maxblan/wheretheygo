@@ -176,7 +176,7 @@ namespace StationSuitabilityOverlay
                 routes.Add(route);
             }
 
-            int tripCount = ReadCount(r, ObservedTripWindow.Capacity);
+            int tripCount = ReadCount(r, Assumptions.ObservedTripCapacity);
             var trips = new List<ObservedTrip>(tripCount);
             for (int i = 0; i < tripCount; i++)
             {
@@ -281,7 +281,7 @@ namespace StationSuitabilityOverlay
             m_LastRoutePassStart = UnityEngine.Time.realtimeSinceStartup;
             UpdateRouteSummary(-1, -1);
             LogRoutes();
-            DeferredLog.Info($"Suggestions restored from the save: {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)}; the next route pass is due in {RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s");
+            DeferredLog.Info($"Suggestions restored from the save: {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)}; the next route pass is due in {Assumptions.RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s");
         }
     }
 }

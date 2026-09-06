@@ -9,25 +9,6 @@ namespace StationSuitabilityOverlay
     // shape and duplicate gates. Stop placement is the F5 half of this class.
     internal static partial class SuitabilityRoutes
     {
-        // Fraction of a corridor's demand a single line is taken to satisfy. Below 1
-        // so a genuinely enormous corridor can still justify a second line.
-        private const float CaptureFraction = 0.85f;
-        // How far novelty suppression spreads once a corridor is chosen, in graph
-        // hops, and how hard it bites at the corridor itself.
-        private const int NoveltyHops = 3;
-        private const float NoveltyFactor = 0.15f;
-
-        // Corners closer than this to the straight line between their neighbours are
-        // lattice artefacts rather than real alignment.
-        private const float SimplifyTolerance = 120f;
-        // How far a line's endpoint may be from a road node when re-tracing it, and how
-        // long the re-traced path may be.
-        private const float RetraceSnapMetres = 600f;
-        private const float RetraceMaxPathMetres = 30000f;
-        private const float MinPlannedHeadwaySeconds = 30f;
-        // Share of a candidate's stops that must already have service on the same
-        // alignment before it counts as a line the player has already built.
-        private const float DuplicateStopShare = 0.75f;
 
         // Grows corridors on ONE network and appends them as candidates. Each
         // network carries its own mode family, because the alignment a mode can use
@@ -162,8 +143,8 @@ namespace StationSuitabilityOverlay
                     wandered++;
                 }
 
-                SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, CaptureFraction);
-                SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, NoveltyHops, NoveltyFactor);
+                SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, Assumptions.CaptureFraction);
+                SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, Assumptions.NoveltyHops, Assumptions.NoveltyFactor);
             }
 
             // Why the corridors on this network came out the length they did. A route
@@ -178,7 +159,7 @@ namespace StationSuitabilityOverlay
                 $"meanEdgeFlow={(meanFlow).ToString("F0", CultureInfo.InvariantCulture)}, flowFloor={(flowFloor).ToString("F0", CultureInfo.InvariantCulture)}, " +
                 $"{(unstoppable).ToString(CultureInfo.InvariantCulture)} edge(s) excluded as unable to host a stop, " +
                 $"{(wandered).ToString(CultureInfo.InvariantCulture)} discarded for coming back on themselves " +
-                $"(ends must be {(SuitabilityGraphMath.MinDirectness * 100f).ToString("F0", CultureInfo.InvariantCulture)}% of the length apart); " +
+                $"(ends must be {(Assumptions.MinDirectness * 100f).ToString("F0", CultureInfo.InvariantCulture)}% of the length apart); " +
                 $"extensions refused — alreadyUsed={(blocked.m_Used).ToString(CultureInfo.InvariantCulture)}, " +
                 $"belowFlowFloor={(blocked.m_Flow).ToString(CultureInfo.InvariantCulture)}, " +
                 $"wouldRevisit={(blocked.m_Visited).ToString(CultureInfo.InvariantCulture)}, " +
@@ -331,7 +312,7 @@ namespace StationSuitabilityOverlay
                 DeferredLog.Info(
                     $"  {forcedMode} alignments also offered bent through an interchange: {(bent).ToString(CultureInfo.InvariantCulture)} " +
                     $"of {(considered).ToString(CultureInfo.InvariantCulture)} traced, within " +
-                    $"{(SuitabilityGraphMath.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment; the set selection decides between the two");
+                    $"{(Assumptions.MaxViaDetour).ToString("F2", CultureInfo.InvariantCulture)}x the direct alignment; the set selection decides between the two");
             }
         }
 
@@ -384,12 +365,12 @@ namespace StationSuitabilityOverlay
             // A shortest path on a uniform grid is a minimal staircase; straightening
             // it leaves the near-straight alignment a tunnel or a crossing actually
             // takes.
-            Simplify(route.Path, SimplifyTolerance);
+            Simplify(route.Path, Assumptions.SimplifyTolerance);
             route.Length = PathLength(route.Path);
             route.CapturedFlow = network.FlowAlong(nodes);
 
             PlaceStops(route, mode, stops);
-            if (route.Stops.Count < TransitModes.MinStops)
+            if (route.Stops.Count < Assumptions.MinStops)
             {
                 tooShort++;
                 return null;
@@ -397,25 +378,6 @@ namespace StationSuitabilityOverlay
 
             return route;
         }
-
-        // How far off an alignment an interchange may sit and still be worth bending
-        // towards. Generous on purpose: the real bound is the detour
-        // (SuitabilityGraphMath.IsDetourWorthwhile), and it scales with the line, which
-        // this cannot. Reaching a hub 2 km to one side costs about 4 km of extra
-        // running, so a quarter-again detour only pays for it on a line already 16 km
-        // long — short lines rule out far hubs on their own, without a second constant
-        // that would have to be kept in step with the first.
-        private const float ViaReachMetres = 2000f;
-
-        // How far the lattice node standing in for the hub may be from the hub itself.
-        // The lattice has a 128 m pitch, so the nearest node to a station is not the
-        // station; past a transfer walk it is not an interchange either.
-        private const float ViaSnapMetres = 250f;
-
-        // Every this many nodes along the alignment, look sideways for a hub. At the
-        // 128 m lattice pitch that is a look every half kilometre, which cannot miss
-        // anything inside a 2 km reach.
-        private const int ViaSampleStride = 4;
 
         // Bends an alignment through an interchange it passes near, by re-tracing it as
         // two legs through that hub.
@@ -454,7 +416,7 @@ namespace StationSuitabilityOverlay
             float bestOffsetSq = float.MaxValue;
             bool found = false;
 
-            for (int i = 0; i < path.Count; i += ViaSampleStride)
+            for (int i = 0; i < path.Count; i += Assumptions.ViaSampleStride)
             {
                 int node = path[i];
                 if (node < 0 || node >= network.NodePositionsX.Length)
@@ -464,7 +426,7 @@ namespace StationSuitabilityOverlay
 
                 float x = network.NodePositionsX[node];
                 float z = network.NodePositionsZ[node];
-                if (!hubs.TryFindNear(mode, x, z, ViaReachMetres, out float hubX, out float hubZ, out int modes)
+                if (!hubs.TryFindNear(mode, x, z, Assumptions.ViaReachMetres, out float hubX, out float hubZ, out int modes)
                     || modes <= 0)
                 {
                     continue;
@@ -490,7 +452,7 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            int via = network.NearestNode(new float2Like(bestX, bestZ), ViaSnapMetres);
+            int via = network.NearestNode(new float2Like(bestX, bestZ), Assumptions.ViaSnapMetres);
             if (via < 0 || via == from || via == to || path.Contains(via))
             {
                 // Already on the line, or no node near enough to stand for the hub.
@@ -611,7 +573,7 @@ namespace StationSuitabilityOverlay
         // places. Zones are 256 m across, so anything inside that is the same pair.
         private static bool AlreadyConnecting(List<float2Like> froms, List<float2Like> tos, float2Like from, float2Like to)
         {
-            float sameSq = SuitabilityZones.ZoneSize * SuitabilityZones.ZoneSize;
+            float sameSq = Assumptions.ZoneSize * Assumptions.ZoneSize;
             for (int i = 0; i < froms.Count; i++)
             {
                 bool sameWay = float2Like.DistanceSq(froms[i], from) <= sameSq && float2Like.DistanceSq(tos[i], to) <= sameSq;
@@ -710,7 +672,7 @@ namespace StationSuitabilityOverlay
 
             if (route.Mode is not (ModePreset.Bus or ModePreset.Tram))
             {
-                Simplify(route.Path, SimplifyTolerance);
+                Simplify(route.Path, Assumptions.SimplifyTolerance);
             }
 
             if (!SuitabilityGraphMath.IsDirectEnough(EndToEnd(route.Path), route.Length))
@@ -719,7 +681,7 @@ namespace StationSuitabilityOverlay
             }
 
             PlaceStops(route, route.Mode, stops);
-            if (route.Stops.Count < TransitModes.MinStops)
+            if (route.Stops.Count < Assumptions.MinStops)
             {
                 shorterThanAnyMode = true;
                 return null;
@@ -727,8 +689,6 @@ namespace StationSuitabilityOverlay
 
             return route;
         }
-
-        private const float InterchangeReachMetres = 500f;
 
         // Extends a grown corridor's ends onto the road node nearest a usable
         // interchange, when one is within reach. Returns how many ends moved.
@@ -791,7 +751,7 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            if (!network.TracePath(terminus, target, InterchangeReachMetres, trace) || trace.Count < 2)
+            if (!network.TracePath(terminus, target, Assumptions.InterchangeReachMetres, trace) || trace.Count < 2)
             {
                 return false;
             }
@@ -830,7 +790,7 @@ namespace StationSuitabilityOverlay
         // its length at cruise speed — the estimate for alignments without streets.
         public static int EstimateVehicles(ModePreset mode, float lengthMetres, int stops, float headwaySeconds, float delayPerStopSeconds)
         {
-            float speed = TransitModes.CruiseSpeedFor(mode);
+            float speed = Assumptions.CruiseSpeedFor(mode);
             // Out and back.
             return EstimateVehiclesFromRoundTrip((lengthMetres * 2f) / Math.Max(1f, speed), stops, headwaySeconds, delayPerStopSeconds);
         }
@@ -841,7 +801,7 @@ namespace StationSuitabilityOverlay
         {
             float roundTrip = drivingSeconds + (stops * 2 * delayPerStopSeconds);
             // ToEven is what Unity's math.round (Math.Round without an argument) did here.
-            return Math.Max(1, (int)Math.Round(roundTrip / Math.Max(MinPlannedHeadwaySeconds, headwaySeconds), MidpointRounding.ToEven));
+            return Math.Max(1, (int)Math.Round(roundTrip / Math.Max(Assumptions.MinPlannedHeadwaySeconds, headwaySeconds), MidpointRounding.ToEven));
         }
 
         // Re-traces a corridor on the ROAD network between the same endpoints.
@@ -863,9 +823,9 @@ namespace StationSuitabilityOverlay
                 return null;
             }
 
-            int fromNode = roads.NearestNode(from, RetraceSnapMetres);
-            int toNode = roads.NearestNode(to, RetraceSnapMetres);
-            if (fromNode < 0 || toNode < 0 || !roads.TracePath(fromNode, toNode, RetraceMaxPathMetres, scratch))
+            int fromNode = roads.NearestNode(from, Assumptions.RetraceSnapMetres);
+            int toNode = roads.NearestNode(to, Assumptions.RetraceSnapMetres);
+            if (fromNode < 0 || toNode < 0 || !roads.TracePath(fromNode, toNode, Assumptions.RetraceMaxPathMetres, scratch))
             {
                 return null;
             }
@@ -876,7 +836,7 @@ namespace StationSuitabilityOverlay
             route.Length = PathLength(route.Path);
             route.CapturedFlow = roads.FlowAlong(scratch);
             PlaceStops(route, route.Mode, stops);
-            return route.Stops.Count >= TransitModes.MinStops ? route : null;
+            return route.Stops.Count >= Assumptions.MinStops ? route : null;
         }
 
         // A line's shape after its stops are placed: at least MinStops calls, and an
@@ -886,8 +846,8 @@ namespace StationSuitabilityOverlay
         public static bool KeepsItsShape(SuggestedRoute route, float rideSeconds)
         {
             return route is not null
-                && route.Stops.Count >= TransitModes.MinStops
-                && rideSeconds <= TransitModes.MaxRideSecondsFor(route.Mode);
+                && route.Stops.Count >= Assumptions.MinStops
+                && rideSeconds <= Assumptions.MaxRideSecondsFor(route.Mode);
         }
 
         // True when this candidate essentially retraces a line that already exists.
@@ -926,7 +886,7 @@ namespace StationSuitabilityOverlay
                 }
 
                 // Most of the suggestion already has service on the same alignment.
-                if (matched >= (int)Math.Ceiling(route.Stops.Count * DuplicateStopShare))
+                if (matched >= (int)Math.Ceiling(route.Stops.Count * Assumptions.DuplicateStopShare))
                 {
                     return true;
                 }

@@ -11,9 +11,6 @@ namespace StationSuitabilityOverlay
     // express a tunnel or a boat crossing.
     internal static class SuitabilityLattice
     {
-        // Lattice pitch. Coarse enough that a city-sized map stays a few thousand
-        // nodes, fine enough that a corridor still bends around obstacles.
-        public const float Spacing = 128f;
 
         // Builds a lattice over the tiles the mask admits. `costScale` is applied per
         // edge according to the midpoint's tile, which is how "prefer existing
@@ -27,8 +24,8 @@ namespace StationSuitabilityOverlay
             out float[] nodeX,
             out float[] nodeZ)
         {
-            int cols = Math.Max(1, (int)Math.Floor(tileGrid.x * tileSize / Spacing));
-            int rows = Math.Max(1, (int)Math.Floor(tileGrid.y * tileSize / Spacing));
+            int cols = Math.Max(1, (int)Math.Floor(tileGrid.x * tileSize / Assumptions.LatticeSpacing));
+            int rows = Math.Max(1, (int)Math.Floor(tileGrid.y * tileSize / Assumptions.LatticeSpacing));
 
             var index = new int[cols * rows];
             for (int i = 0; i < index.Length; i++)
@@ -43,7 +40,7 @@ namespace StationSuitabilityOverlay
             {
                 for (int gx = 0; gx < cols; gx++)
                 {
-                    float2Like world = worldMin + new float2Like((gx + 0.5f) * Spacing, (gy + 0.5f) * Spacing);
+                    float2Like world = worldMin + new float2Like((gx + 0.5f) * Assumptions.LatticeSpacing, (gy + 0.5f) * Assumptions.LatticeSpacing);
                     int tile = TileOf(world, worldMin, tileSize, tileGrid);
                     if (tile < 0 || !tilePassable(tile))
                     {
@@ -59,7 +56,7 @@ namespace StationSuitabilityOverlay
             var edgeA = new List<int>();
             var edgeB = new List<int>();
             var edgeCost = new List<float>();
-            float diagonal = Spacing * 1.41421356f;
+            float diagonal = Assumptions.LatticeSpacing * 1.41421356f;
             var build = new LatticeBuild(index, cols, rows, xs, zs, edgeA, edgeB, edgeCost, worldMin, tileSize, tileGrid, tileCostScale);
 
             for (int gy = 0; gy < rows; gy++)
@@ -73,8 +70,8 @@ namespace StationSuitabilityOverlay
                     }
 
                     // Only forward neighbours, so each edge is added once.
-                    TryLink(in build, gx + 1, gy, from, Spacing);
-                    TryLink(in build, gx, gy + 1, from, Spacing);
+                    TryLink(in build, gx + 1, gy, from, Assumptions.LatticeSpacing);
+                    TryLink(in build, gx, gy + 1, from, Assumptions.LatticeSpacing);
                     TryLink(in build, gx + 1, gy + 1, from, diagonal);
                     TryLink(in build, gx + 1, gy - 1, from, diagonal);
                 }

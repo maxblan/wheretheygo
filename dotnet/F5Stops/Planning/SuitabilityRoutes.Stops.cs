@@ -94,22 +94,7 @@ namespace StationSuitabilityOverlay
     // back onto the route.
     internal static partial class SuitabilityRoutes
     {
-        // A line passing this close to an existing served stop calls AT it rather than
-        // beside it. Any player would put the stop at the station; doing otherwise
-        // leaves two stops a short walk apart and no reason for either.
-        private const float StationCallMetres = 150f;
 
-        // Candidate stop positions along an alignment are this far apart; the stop plan
-        // decides which of them are called at. Fine enough that a door is never more
-        // than half a step from the position that would serve it best.
-        private const float CandidateStepMetres = 50f;
-
-        // Hard floor between consecutive stops: half the mode's nominal spacing
-        // (register A5.1, decided 2026-09-05).
-        private const float MinGapShareOfSpacing = 0.5f;
-        // Two stops closer than this are the same stop: the along-line search can land
-        // consecutive placements on nearly the same spot.
-        private const float MinStopSeparationMetres = 20f;
         // Re-places stops after a mode change, since spacing, access horizon and the
         // delay a stop costs are all mode-specific.
         public static void Restop(SuggestedRoute route, ModePreset mode, StopContext stops)
@@ -119,8 +104,8 @@ namespace StationSuitabilityOverlay
         }
 
         // Places the stops of a route by the stop plan (SuitabilityStopPlan, register
-        // A5.1/A5.4): candidates every CandidateStepMetres along the polyline, the
-        // termini and every interchange within StationCallMetres forced, anything the
+        // A5.1/A5.4): candidates every Assumptions.CandidateStepMetres along the polyline, the
+        // termini and every interchange within Assumptions.StationCallMetres forced, anything the
         // score oracle says cannot hold a stop (open water for a ferry, unbuildable
         // ground) excluded; every journey door within the mode's access horizon is a
         // potential boarder, the corridor flow at a candidate its through-riders. The
@@ -180,13 +165,13 @@ namespace StationSuitabilityOverlay
 
         private static StopPlanProblem? BuildStopPlan(SuggestedRoute route, ModePreset mode, float total, StopContext context)
         {
-            float spacing = TransitModes.StopSpacingFor(mode);
-            float horizon = TransitModes.CatchmentMs(mode) / 1000f;
-            float reach = horizon * SuitabilityTransit.WalkSpeed;
+            float spacing = Assumptions.StopSpacingFor(mode);
+            float horizon = Assumptions.CatchmentMs(mode) / 1000f;
+            float reach = horizon * Assumptions.WalkSpeed;
 
             // Candidate positions: every step along the line, the far end always.
             var at = new List<float>();
-            for (float offset = 0f; offset < total - (CandidateStepMetres * 0.5f); offset += CandidateStepMetres)
+            for (float offset = 0f; offset < total - (Assumptions.CandidateStepMetres * 0.5f); offset += Assumptions.CandidateStepMetres)
             {
                 at.Add(offset);
             }
@@ -201,7 +186,7 @@ namespace StationSuitabilityOverlay
                 float2Like point = PointAlong(route.Path, at[i]);
                 points.Add(point);
                 admissible.Add(context.ScoreAt is null || context.ScoreAt(point, mode) > 0f);
-                hubDistance.Add(context.Hubs.Count > 0 && context.Hubs.TryNearest(point.x, point.y, StationCallMetres, out float distanceSq)
+                hubDistance.Add(context.Hubs.Count > 0 && context.Hubs.TryNearest(point.x, point.y, Assumptions.StationCallMetres, out float distanceSq)
                     ? distanceSq
                     : float.MaxValue);
             }
@@ -239,7 +224,7 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            float minGap = spacing * MinGapShareOfSpacing;
+            float minGap = spacing * Assumptions.MinGapShareOfSpacing;
             float previousForced = float.NegativeInfinity;
             for (int i = 0; i < mustCall.Length; i++)
             {
@@ -279,7 +264,7 @@ namespace StationSuitabilityOverlay
                 MinGapMetres = minGap,
                 DelaySecondsPerStop = context.Facts.DelayPerStopSeconds(mode),
                 AccessHorizonSeconds = horizon,
-                WalkMetresPerSecond = SuitabilityTransit.WalkSpeed,
+                WalkMetresPerSecond = Assumptions.WalkSpeed,
                 PathOffset = at[first],
             };
             for (int k = 0; k < keep.Count; k++)
@@ -413,7 +398,7 @@ namespace StationSuitabilityOverlay
 
         private static bool AddStop(SuggestedRoute route, float2Like placed)
         {
-            float minSeparationSq = MinStopSeparationMetres * MinStopSeparationMetres;
+            float minSeparationSq = Assumptions.MinStopSeparationMetres * Assumptions.MinStopSeparationMetres;
             for (int i = 0; i < route.Stops.Count; i++)
             {
                 if (float2Like.DistanceSq(route.Stops[i], placed) < minSeparationSq)

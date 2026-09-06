@@ -60,7 +60,7 @@ namespace StationSuitabilityOverlay
         public float StopDurationFor(ModePreset mode)
         {
             float duration = Of(mode)?.StopDurationSeconds ?? 0f;
-            return duration > 0f ? duration : TransitModes.DefaultStopDurationSeconds;
+            return duration > 0f ? duration : Assumptions.DefaultStopDurationSeconds;
         }
 
         // What one intermediate stop costs everyone riding through it: the dwell plus
@@ -73,11 +73,11 @@ namespace StationSuitabilityOverlay
         public float DelayPerStopSeconds(ModePreset mode)
         {
             ModeFacts? facts = Of(mode);
-            float speed = TransitModes.CruiseSpeedFor(mode);
-            float acceleration = facts is not null && facts.Acceleration > 0f ? facts.Acceleration : TransitModes.DefaultAcceleration;
-            float braking = facts is not null && facts.Braking > 0f ? facts.Braking : TransitModes.DefaultAcceleration;
+            float speed = Assumptions.CruiseSpeedFor(mode);
+            float acceleration = facts is not null && facts.Acceleration > 0f ? facts.Acceleration : Assumptions.DefaultAcceleration;
+            float braking = facts is not null && facts.Braking > 0f ? facts.Braking : Assumptions.DefaultAcceleration;
             float physics = StopDurationFor(mode) + (speed / (2f * acceleration)) + (speed / (2f * braking));
-            return Math.Max(physics, TransitModes.DefaultStopDurationSeconds);
+            return Math.Max(physics, Assumptions.DefaultStopDurationSeconds);
         }
     }
 
@@ -114,7 +114,7 @@ namespace StationSuitabilityOverlay
                 anyVehicle = true;
                 mode = option;
                 utilisation = SuitabilityEquity.Utilisation(ridersPerDay, facts.HeadwayFor(option), capacity);
-                if (utilisation <= MaxPlannedUtilisation)
+                if (utilisation <= Assumptions.MaxPlannedUtilisation)
                 {
                     return true;
                 }

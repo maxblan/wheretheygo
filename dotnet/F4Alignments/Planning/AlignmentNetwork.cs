@@ -15,10 +15,6 @@ namespace StationSuitabilityOverlay
     // and far faster, and keeps the cost model under our control.
     internal sealed class AlignmentNetwork
     {
-        // Nodes further apart than this from a zone centre are not considered that
-        // zone's access point — a zone with no road near its middle simply does not
-        // participate in the assignment.
-        private const float ZoneSnapRadius = SuitabilityZones.ZoneSize;
 
         public RouteNetwork Network;
         public CompactGraph? Graph;
@@ -432,7 +428,7 @@ namespace StationSuitabilityOverlay
                 (buckets[zone] ?? (buckets[zone] = new List<int>())).Add(n);
             }
 
-            float snapSq = ZoneSnapRadius * ZoneSnapRadius;
+            float snapSq = Assumptions.ZoneSnapRadius * Assumptions.ZoneSnapRadius;
             for (int zone = 0; zone < zoneCount; zone++)
             {
                 float2Like centre = SuitabilityZones.ZoneCentre(zone, worldMin, zoneGrid);
@@ -509,7 +505,7 @@ namespace StationSuitabilityOverlay
 
                 // Metres of cap become milliseconds at the planning cruise speed of a
                 // bus, so the ceiling keeps its meaning of "not one line's journey".
-                long maxMs = (long)(maxCost / TransitModes.CruiseSpeedFor(ModePreset.Bus) * 1000f);
+                long maxMs = (long)(maxCost / Assumptions.CruiseSpeedFor(ModePreset.Bus) * 1000f);
                 return SuitabilityDirectedRoads.AssignFlow(Directed, m_DirectedWorkspace, directedFlows, zoneNodes, maxMs, EdgeFlow, ArcFlow, out assignedWeight);
             }
 

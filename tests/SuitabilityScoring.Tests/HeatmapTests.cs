@@ -18,9 +18,9 @@ namespace StationSuitabilityOverlay.Tests
             float capDemand = SuitabilityHeatmap.TermCap(terms, 4, CapTerm.Demand, scratch, percentileScratch);
             float capJobs = SuitabilityHeatmap.TermCap(terms, 4, CapTerm.Jobs, scratch, percentileScratch);
             float capFuture = SuitabilityHeatmap.TermCap(terms, 4, CapTerm.Future, scratch, percentileScratch);
-            AssertTrue(capDemand == SuitabilityScoring.PositivePercentile(new[] { 10f, 20f, 5f, 0f }, 4, SuitabilityHeatmap.TermCapPercentile, new float[4]), "the demand cap is the positive percentile of the demand term");
-            AssertTrue(capJobs == SuitabilityScoring.PositivePercentile(new[] { 4f, 0f, 8f, 0f }, 4, SuitabilityHeatmap.TermCapPercentile, new float[4]), "the jobs cap likewise");
-            AssertTrue(capFuture == SuitabilityScoring.PositivePercentile(new[] { 2f, 0f, 0f, 0f }, 4, SuitabilityHeatmap.TermCapPercentile, new float[4]), "and the future cap");
+            AssertTrue(capDemand == SuitabilityScoring.PositivePercentile(new[] { 10f, 20f, 5f, 0f }, 4, Assumptions.TermCapPercentile, new float[4]), "the demand cap is the positive percentile of the demand term");
+            AssertTrue(capJobs == SuitabilityScoring.PositivePercentile(new[] { 4f, 0f, 8f, 0f }, 4, Assumptions.TermCapPercentile, new float[4]), "the jobs cap likewise");
+            AssertTrue(capFuture == SuitabilityScoring.PositivePercentile(new[] { 2f, 0f, 0f, 0f }, 4, Assumptions.TermCapPercentile, new float[4]), "and the future cap");
             AssertTrue(capDemand > 0f && capJobs > 0f && capFuture > 0f, "every term has a positive member here");
 
             var weights = new CombineWeights(1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f / capDemand, 1f / capJobs, 1f / capFuture);

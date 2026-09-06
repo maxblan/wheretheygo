@@ -61,19 +61,19 @@ namespace StationSuitabilityOverlay.Tests
             {
                 new TransitLine { m_Stops = new[] { 0, 1 }, m_RideSeconds = new[] { 0f, 300f }, m_ExpectedWait = 60f, m_SpeedMetresPerSecond = 10f },
             };
-            TransitNetwork network = SuitabilityTransit.Build(xs, zs, xs.Length, lines, ServedDemand.TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
+            TransitNetwork network = SuitabilityTransit.Build(xs, zs, xs.Length, lines, Assumptions.TransferWalkRadius, Assumptions.DefaultBoardPenaltySeconds);
             var workspace = new DijkstraWorkspace(network.Graph.NodeCount);
-            workspace.Run(network.Graph, 0, ServedDemand.MaxJourneySeconds);
+            workspace.Run(network.Graph, 0, Assumptions.MaxJourneySeconds);
             AssertTrue(SuitabilityTransit.Inspect(network, workspace, 0, 1, -1, out int boardings, out _, out float ride) && boardings == 1, "the line carries stop 0 to stop 1");
 
             AssertTrue(served.TryDiscount(network, workspace, flows, out DiscountReport report), "mapped and paired, so the discount runs");
             AssertTrue(report.ServedPairs == 2 && report.PairCount == 3, $"two of three pairs are carried: {report.ServedPairs.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(report.CeilingSeconds == ServedDemand.MaxJourneySeconds, "under twenty carried pairs the ceiling is the fixed hour");
+            AssertTrue(report.CeilingSeconds == Assumptions.MaxJourneySeconds, "under twenty carried pairs the ceiling is the fixed hour");
             AssertTrue(report.WeightBefore == 14f, "the carried journeys weighed 14 before");
             float direct = ride + ServedDemand.WalkSeconds(0f) + ServedDemand.WalkSeconds(0f);
             float viaWalk = ride + ServedDemand.WalkSeconds((256f * 256f) + (256f * 256f)) + ServedDemand.WalkSeconds(0f);
-            AssertTrue(flows[0].m_Weight == 10f * SuitabilityScoring.Saturate(direct / ServedDemand.MaxJourneySeconds), "a carried journey keeps door-to-door / ceiling of its weight");
-            AssertTrue(flows[3].m_Weight == 4f * SuitabilityScoring.Saturate(viaWalk / ServedDemand.MaxJourneySeconds), "the walk from the zone centre to its stop is charged");
+            AssertTrue(flows[0].m_Weight == 10f * SuitabilityScoring.Saturate(direct / Assumptions.MaxJourneySeconds), "a carried journey keeps door-to-door / ceiling of its weight");
+            AssertTrue(flows[3].m_Weight == 4f * SuitabilityScoring.Saturate(viaWalk / Assumptions.MaxJourneySeconds), "the walk from the zone centre to its stop is charged");
             AssertTrue(flows[1].m_Weight == 7f && flows[2].m_Weight == 3f && flows[4].m_Weight == 2f, "journeys the network cannot carry keep their weight");
             AssertTrue(report.WeightAfter == flows[0].m_Weight + flows[3].m_Weight, "the report sums what the carried journeys kept");
             AssertTrue(ServedDemand.RemainingWeight(flows) == flows[0].m_Weight + 7f + 3f + flows[3].m_Weight + 2f, "remaining weight is the sum over every flow");

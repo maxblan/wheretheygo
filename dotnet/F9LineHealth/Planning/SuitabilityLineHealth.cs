@@ -76,56 +76,6 @@ namespace StationSuitabilityOverlay
     // eyeballed in game.
     internal static class SuitabilityLineHealth
     {
-        // Above this share of capacity a line is effectively full.
-        public const float FullUsage = 0.85f;
-        // Below this it is not carrying enough to justify itself. Usage is an
-        // INSTANTANEOUS snapshot of passengers against fleet capacity, and a healthy
-        // line sits well under half full most of the time — at 0.15 this flagged 18 of
-        // 19 lines on a working city, which is noise rather than advice.
-        public const float EmptyUsage = 0.06f;
-        // A line is only "empty" if it is far below what this city's lines normally
-        // carry. Without the relative test a fixed threshold flags most of a healthy
-        // network, because usage is an instantaneous snapshot.
-        public const float EmptyShareOfMedian = 0.35f;
-        // How far above the empty threshold a line's BUSIEST reading may sit and still
-        // count as empty. A line that never reaches three times the bar even at its
-        // peak is genuinely carrying nobody; one that does has a demand pattern, and
-        // the answer to that is a timetable, not a demolition.
-        public const float EmptyPeakAllowance = 3f;
-        // A line is running too infrequently when it is at least this many times its
-        // OWN target interval. The player sets the target; the game sizes the fleet
-        // from it. Two times means the line is achieving less than half the frequency
-        // it is being paid for, which is a fact about this line rather than a
-        // comparison against some other mode's timetable.
-        //
-        // An absolute threshold could not do this job. At a flat 150 s, a train with a
-        // 180 s target running at 356 s (2.0x) was flagged for "long waits" while a
-        // ferry with a 90 s target running at 293 s (3.3x) was called healthy — the
-        // line furthest from its own timetable was the one reported as fine. A 42 s
-        // bus and a 180 s train cannot share one bar.
-        public const float LongWaitMultipleOfTarget = 2f;
-
-        // ...and at least this much worse than what this city's lines normally manage.
-        //
-        // The absolute part alone is not a threshold, it is a coin flip: every line in
-        // a working city sits somewhere around twice its target, because the game only
-        // adds vehicles in whole units and the player's target is an aspiration. On a
-        // six-line network with ratios of 1.8, 1.8, 2.1, 2.2, 2.3 and 3.3, a flat 2x
-        // bar flagged four of the six — the same noise the fixed 150 s bar produced,
-        // and the reason EmptyShareOfMedian exists a few lines above. Taking the
-        // stricter of the two leaves the genuine outlier and nothing else.
-        public const float LongWaitShareAboveMedian = 1.5f;
-
-        // Below this the wait is not worth mentioning however badly the line is
-        // missing its target: doubling a 20 s headway is not a problem a player needs
-        // telling about.
-        //
-        // NOT from WaitingPassengers.m_TypicalWaitingTime: that is an accumulator the
-        // game keeps for its pathfinder — max(ongoing/waiting, concluded/boarded),
-        // quantised to 5 — so a single stranded rider drives it to thousands. Read as
-        // seconds it reported 45-minute waits on a line running every two minutes, and
-        // flagged 8 of 18 lines on that basis.
-        public const float LongWait = 60f;
 
         // `requireVehicles` and `notEnoughVehicles` come straight from
         // TransportLineFlags — the game already decides when a line is short of
@@ -152,7 +102,7 @@ namespace StationSuitabilityOverlay
                 return LineVerdict.Overcrowded;
             }
 
-            if (usage >= FullUsage)
+            if (usage >= Assumptions.FullUsage)
             {
                 // Already running the fleet the interval calls for, so the vehicles
                 // themselves are the ceiling: a bigger mode is the only way up.
@@ -175,7 +125,7 @@ namespace StationSuitabilityOverlay
             // — a ferry carrying twelve people at that moment, peaking at 12% against a
             // city median of 7%, was being recommended for removal on a mean of 3%.
             // A line is only empty if it is empty even at its best.
-            if (usage <= emptyThreshold && peakUsage <= emptyThreshold * EmptyPeakAllowance)
+            if (usage <= emptyThreshold && peakUsage <= emptyThreshold * Assumptions.EmptyPeakAllowance)
             {
                 return LineVerdict.NearlyEmpty;
             }
@@ -189,8 +139,8 @@ namespace StationSuitabilityOverlay
             // holding every mode to one stopwatch. A target of zero means the game has
             // not given us one, and then there is nothing to be late against.
             bool missesItsTarget = targetInterval > 0f
-                && achievedInterval >= targetInterval * Math.Max(LongWaitMultipleOfTarget, longWaitMultiple);
-            if (missesItsTarget && achievedInterval * 0.5f >= LongWait)
+                && achievedInterval >= targetInterval * Math.Max(Assumptions.LongWaitMultipleOfTarget, longWaitMultiple);
+            if (missesItsTarget && achievedInterval * 0.5f >= Assumptions.LongWait)
             {
                 return LineVerdict.LongWaits;
             }
@@ -296,7 +246,7 @@ namespace StationSuitabilityOverlay
             // headway, and one making far more stops than its mode wants.
             float maxLength = TransitModes.MaxSensibleLength(mode);
             float spacing = health.m_Stops > 1 ? lengthMetres / (health.m_Stops - 1) : lengthMetres;
-            float wantedSpacing = TransitModes.StopSpacingFor(mode);
+            float wantedSpacing = Assumptions.StopSpacingFor(mode);
 
             if (lengthMetres > maxLength)
             {

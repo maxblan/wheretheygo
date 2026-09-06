@@ -31,14 +31,6 @@ namespace StationSuitabilityOverlay
     // must not drain while the game is paused nor shrink when it is fast-forwarded.
     internal sealed class ObservedTripWindow
     {
-        // Backstop against a player leaving the game running for days at speed; far
-        // above what a day of a large city produces.
-        public const int Capacity = 200_000;
-
-        // The per-day scale stops growing once the window is shorter than this
-        // fraction of a day, so six minutes of readings cannot be multiplied into a
-        // full day's demand. Reported by ScaleFor; the caller logs it.
-        public const int MaxDayScale = 4;
 
         private readonly uint m_WindowFrames;
         private readonly List<ObservedTrip> m_Trips = new List<ObservedTrip>();
@@ -48,7 +40,7 @@ namespace StationSuitabilityOverlay
 
         public ObservedTripWindow(uint windowFrames)
         {
-            m_WindowFrames = windowFrames == 0u ? LineHistory.FramesPerGameDay : windowFrames;
+            m_WindowFrames = windowFrames == 0u ? Assumptions.FramesPerGameDay : windowFrames;
         }
 
         public int Count => m_Trips.Count;
@@ -90,7 +82,7 @@ namespace StationSuitabilityOverlay
                 Clear();
             }
 
-            if (m_Trips.Count >= Capacity)
+            if (m_Trips.Count >= Assumptions.ObservedTripCapacity)
             {
                 m_Dropped++;
                 return;
@@ -121,7 +113,7 @@ namespace StationSuitabilityOverlay
 
         // Weight per observed trip so the window reads as one day's demand: a full
         // window weighs 1 per trip; a shorter one is scaled up by day/span, capped at
-        // MaxDayScale. With fewer than two trips there is no span, so 1.
+        // Assumptions.ObservedTripMaxDayScale. With fewer than two trips there is no span, so 1.
         public float ScaleFor(uint dayFrames)
         {
             uint span = SpanFrames;
@@ -131,7 +123,7 @@ namespace StationSuitabilityOverlay
             }
 
             double scale = (double)dayFrames / span;
-            return (float)Math.Max(1.0, Math.Min(MaxDayScale, scale));
+            return (float)Math.Max(1.0, Math.Min(Assumptions.ObservedTripMaxDayScale, scale));
         }
     }
 }

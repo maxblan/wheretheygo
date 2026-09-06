@@ -23,13 +23,6 @@ namespace StationSuitabilityOverlay
         public const int Sharp = 3;
         public const int UTurn = 4;
 
-        // cos 15°, cos 45°, cos 120°, cos 165°: the class boundaries, as the exact
-        // double literals the specification names.
-        public const double CosGentle = 0.9659258262890683;
-        public const double CosTurn = 0.7071067811865476;
-        public const double CosSharp = -0.5;
-        public const double CosUTurn = -0.9659258262890683;
-
         public int NodeCount;
         public float[] NodeX = Array.Empty<float>();
         public float[] NodeZ = Array.Empty<float>();
@@ -109,22 +102,22 @@ namespace StationSuitabilityOverlay
 
         public static int TurnClassOf(double dot)
         {
-            if (dot >= CosGentle)
+            if (dot >= Assumptions.CosGentle)
             {
                 return Straight;
             }
 
-            if (dot >= CosTurn)
+            if (dot >= Assumptions.CosTurn)
             {
                 return Gentle;
             }
 
-            if (dot >= CosSharp)
+            if (dot >= Assumptions.CosSharp)
             {
                 return Turn;
             }
 
-            return dot >= CosUTurn ? Sharp : UTurn;
+            return dot >= Assumptions.CosUTurn ? Sharp : UTurn;
         }
 
         // Where a point sits on the street network: the undirected edge (by the arc

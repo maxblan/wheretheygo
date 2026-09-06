@@ -10,31 +10,6 @@ namespace StationSuitabilityOverlay
     // system logs what TryDiscount reports.
     internal sealed class ServedDemand
     {
-        // How far a rider will walk to reach or change service.
-        // How long a rider will walk to change vehicle: three minutes at the planning
-        // walking speed (register A1.11; the literature gives transfer TIME weights,
-        // no distance threshold — TCQSM Exhibit 4-5). Metres follow from the speed.
-        public const float TransferWalkSeconds = TransitModes.TransferWalkMs / 1000f;
-
-        public const float TransferWalkRadius = SuitabilityTransit.WalkSpeed * TransferWalkSeconds;
-
-        // How far a zone's centre may be from a stop for that stop to serve it. A zone
-        // is 256 m across, so its centre is further from a stop than its edges are, and
-        // the plain transfer radius left most zones unserved.
-        public const float ZoneStopReachMetres = TransferWalkRadius * 2f;
-
-        // Journeys longer than this are not realistically made by transit. Also the
-        // routing cap, and the fallback ceiling for the served-demand discount when
-        // the network carries too little for a median to mean anything.
-        public const float MaxJourneySeconds = 3600f;
-
-        // A journey taking this many times the city's typical transit journey is not
-        // carried in any useful sense, so it keeps its whole weight.
-        public const float ServedCeilingMultiple = 3f;
-
-        // Below this many carried journeys the median is noise, and the fixed hour is
-        // the more honest reference.
-        public const int MinPairsForServedMedian = 20;
 
         private int[]? m_ZoneStops;
         private float[]? m_ZoneStopDistSq;
@@ -87,7 +62,7 @@ namespace StationSuitabilityOverlay
                 m_ZoneCentreZ = new float[zoneCount];
             }
 
-            float radiusSq = ZoneStopReachMetres * ZoneStopReachMetres;
+            float radiusSq = Assumptions.ZoneStopReachMetres * Assumptions.ZoneStopReachMetres;
             for (int zone = 0; zone < zoneCount; zone++)
             {
                 float2Like centre = SuitabilityZones.ZoneCentre(zone, worldMin, zoneGrid);
@@ -201,7 +176,7 @@ namespace StationSuitabilityOverlay
                 if (origin != currentOrigin)
                 {
                     currentOrigin = origin;
-                    workspace.Run(network.Graph, origin, MaxJourneySeconds);
+                    workspace.Run(network.Graph, origin, Assumptions.MaxJourneySeconds);
                 }
 
                 if (!SuitabilityTransit.Inspect(network, workspace, origin, destination,
@@ -230,8 +205,8 @@ namespace StationSuitabilityOverlay
 
             Array.Copy(servedSeconds, medianScratch, servedPairs);
             float ceiling = SuitabilityTransit.ServedCeiling(
-                medianScratch, servedPairs, ServedCeilingMultiple,
-                MaxJourneySeconds, MinPairsForServedMedian, out float medianSeconds);
+                medianScratch, servedPairs, Assumptions.ServedCeilingMultiple,
+                Assumptions.MaxJourneySeconds, Assumptions.MinPairsForServedMedian, out float medianSeconds);
 
             // Second pass: how much of each carried journey the network absorbs. One it
             // handles in a fraction of the city's typical transit journey drops out
@@ -311,7 +286,7 @@ namespace StationSuitabilityOverlay
         // the one it already uses between stops.
         public static float WalkSeconds(float distanceSq)
         {
-            return (float)Math.Sqrt(distanceSq) / SuitabilityTransit.WalkSpeed;
+            return (float)Math.Sqrt(distanceSq) / Assumptions.WalkSpeed;
         }
     }
 

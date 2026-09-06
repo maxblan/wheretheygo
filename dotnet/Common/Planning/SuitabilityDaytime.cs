@@ -25,19 +25,11 @@ namespace StationSuitabilityOverlay
     // separately.
     internal static class Daytime
     {
-        public const float NightStart = 11f / 12f;
-        public const float NightEnd = 0.25f;
-
-        // 16 of 24 hours are day.
-        public const float DayShareOfDay = 16f / 24f;
-
-        public const float EveningShiftOffset = 0.33f;
-        public const float NightShiftOffset = 0.67f;
 
         public static bool IsNight(float timeOfDay)
         {
             float t = Frac(timeOfDay);
-            return t is < NightEnd or >= NightStart;
+            return t is < Assumptions.NightEnd or >= Assumptions.NightStart;
         }
 
         public static float Frac(float value)
@@ -50,7 +42,7 @@ namespace StationSuitabilityOverlay
         // working hours (EconomyParameterData.m_WorkDayStart/End as day fractions).
         public static float CommuteDayShare(byte shift, float workDayStart, float workDayEnd)
         {
-            float offset = shift == 1 ? EveningShiftOffset : shift == 2 ? NightShiftOffset : 0f;
+            float offset = shift == 1 ? Assumptions.EveningShiftOffset : shift == 2 ? Assumptions.NightShiftOffset : 0f;
             float outbound = Frac(workDayStart + offset);
             float homeward = Frac(workDayEnd + offset);
             return (IsNight(outbound) ? 0f : 0.5f) + (IsNight(homeward) ? 0f : 0.5f);
@@ -65,8 +57,8 @@ namespace StationSuitabilityOverlay
                 return 0f;
             }
 
-            float boardings = ridersInPeriod * TransitModes.RidesPerJourney;
-            float seats = SuitabilityEquity.MovementSecondsPerGameDay * periodShareOfDay / headwaySeconds * 2f * vehicleCapacity;
+            float boardings = ridersInPeriod * Assumptions.RidesPerJourney;
+            float seats = Assumptions.MovementSecondsPerGameDay * periodShareOfDay / headwaySeconds * 2f * vehicleCapacity;
             return boardings / seats;
         }
 

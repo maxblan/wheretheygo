@@ -56,19 +56,6 @@ namespace StationSuitabilityOverlay
     // clock would drain the window while the player sat in the pause menu.
     internal sealed class LineHistory
     {
-        // Game.Simulation.TimeSystem.kTicksPerDay. One simulation frame is one tick,
-        // so a game day is this many frames whatever speed the player is running at.
-        public const uint FramesPerGameDay = 262144u;
-
-        // Enough readings that one outlier cannot carry a verdict on its own. Below
-        // this the caller is told to fall back to the instantaneous reading rather
-        // than be handed a mean of two samples dressed up as a day's evidence.
-        public const int MinSamplesForVerdict = 4;
-
-        // Per line, so a player who leaves the game running overnight at high speed
-        // cannot grow these without bound. At the default sampling cadence this is
-        // far more than a day holds; it is a backstop, not a tuning knob.
-        private const int MaxSamplesPerLine = 512;
 
         private readonly Dictionary<int, List<LineObservation>> m_ByLine =
             new Dictionary<int, List<LineObservation>>();
@@ -79,7 +66,7 @@ namespace StationSuitabilityOverlay
 
         public LineHistory(uint windowFrames)
         {
-            m_WindowFrames = windowFrames == 0u ? FramesPerGameDay : windowFrames;
+            m_WindowFrames = windowFrames == 0u ? Assumptions.FramesPerGameDay : windowFrames;
         }
 
         public uint WindowFrames => m_WindowFrames;
@@ -140,7 +127,7 @@ namespace StationSuitabilityOverlay
             }
 
             samples.Add(observation);
-            if (samples.Count > MaxSamplesPerLine)
+            if (samples.Count > Assumptions.LineReadingsCap)
             {
                 samples.RemoveAt(0);
                 m_Dropped++;
@@ -275,7 +262,7 @@ namespace StationSuitabilityOverlay
         // of 24 h" rather than implying a full day of evidence.
         public static float GameHours(uint frames)
         {
-            return frames / (float)FramesPerGameDay * 24f;
+            return frames / (float)Assumptions.FramesPerGameDay * 24f;
         }
 
         private void Evict(List<LineObservation> samples)

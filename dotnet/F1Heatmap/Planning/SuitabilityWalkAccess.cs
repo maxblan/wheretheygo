@@ -54,7 +54,7 @@ namespace StationSuitabilityOverlay
         // Build so no edge is free; an access walk of 0 m stays 0 ms.
         public static int WalkMilliseconds(double metres)
         {
-            double ms = metres / (double)SuitabilityTransit.WalkSpeed * 1000.0;
+            double ms = metres / (double)Assumptions.WalkSpeed * 1000.0;
             return (int)Math.Round(ms, MidpointRounding.ToEven);
         }
 
@@ -482,9 +482,6 @@ namespace StationSuitabilityOverlay
 
     internal static class SuitabilityWalkAccess
     {
-        // Ceiling on the same-mode coverage term: three fully covering stops is as
-        // "already served" as a tile gets.
-        public const float MaxCoveragePenalty = 1.5f;
 
         // One compute, start to finish, with no Unity type in sight — which is what
         // lets the game run it on a worker thread and the offline pipeline run the
@@ -514,7 +511,7 @@ namespace StationSuitabilityOverlay
                 return output;
             }
 
-            double accessMetres = inputs.AccessMs / 1000.0 * SuitabilityTransit.WalkSpeed;
+            double accessMetres = inputs.AccessMs / 1000.0 * Assumptions.WalkSpeed;
             output.Index = new WalkNodeIndex(inputs.Graph, Math.Max(32.0, accessMetres));
             TileTerms(output.Result, output.Index, width, height, worldMinX, worldMinZ, tileSize, buildable,
                 inputs.AccessMs, cls, selfType, typeWeight, output.Terms, output.TileNode, output.TileWalkMs);
@@ -577,7 +574,7 @@ namespace StationSuitabilityOverlay
                 return result;
             }
 
-            double accessMetres = inputs.AccessMs / 1000.0 * SuitabilityTransit.WalkSpeed;
+            double accessMetres = inputs.AccessMs / 1000.0 * Assumptions.WalkSpeed;
             var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMetres));
             var dijkstra = new IntDijkstra(graph.NodeCount);
             long horizon = inputs.CatchmentMs[classes - 1];
@@ -610,7 +607,7 @@ namespace StationSuitabilityOverlay
         // metres between a building's centre and the pavement.
         public static int SnapPoint(WalkNodeIndex index, float x, float z, int accessMs, out int walkMs)
         {
-            double accessMetres = accessMs / 1000.0 * SuitabilityTransit.WalkSpeed;
+            double accessMetres = accessMs / 1000.0 * Assumptions.WalkSpeed;
             int node = index.Nearest(x, z, accessMetres, out double metres);
             return WithinAccess(node, metres, accessMs, out walkMs);
         }
@@ -619,7 +616,7 @@ namespace StationSuitabilityOverlay
         // nearest node on the ground (WalkGraph.Siteable), under the same access rule.
         public static int SnapSite(WalkNodeIndex index, float x, float z, int accessMs, out int walkMs)
         {
-            double accessMetres = accessMs / 1000.0 * SuitabilityTransit.WalkSpeed;
+            double accessMetres = accessMs / 1000.0 * Assumptions.WalkSpeed;
             int node = index.NearestSite(x, z, accessMetres, out double metres);
             return WithinAccess(node, metres, accessMs, out walkMs);
         }

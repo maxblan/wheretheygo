@@ -90,8 +90,8 @@ namespace StationSuitabilityOverlay
                 m_WorkDayLogged = true;
                 DeferredLog.Info(
                     $"Work day from EconomyParameterData: {(start * 24f).ToString("F1", CultureInfo.InvariantCulture)}h to {(end * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
-                    $"evening shift +{(Daytime.EveningShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h, night shift +{(Daytime.NightShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
-                    $"night is {(Daytime.NightStart * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00–{(Daytime.NightEnd * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00 (TransportLineSystem); " +
+                    $"evening shift +{(Assumptions.EveningShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h, night shift +{(Assumptions.NightShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
+                    $"night is {(Assumptions.NightStart * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00–{(Assumptions.NightEnd * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00 (TransportLineSystem); " +
                     $"day-shift rides by day {(Daytime.CommuteDayShare(0, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, evening {(Daytime.CommuteDayShare(1, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, night {(Daytime.CommuteDayShare(2, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %");
             }
         }
@@ -106,7 +106,7 @@ namespace StationSuitabilityOverlay
             // What the refresh costs the frame, phase by phase: the one part of the
             // route pipeline still on the main thread, so its budget is logged.
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            m_ZoneGrid = SuitabilityInputs.GridDims(mapSize, SuitabilityZones.ZoneSize);
+            m_ZoneGrid = SuitabilityInputs.GridDims(mapSize, Assumptions.ZoneSize);
 
             int tripCount;
             float totalWeight;
@@ -166,7 +166,7 @@ namespace StationSuitabilityOverlay
 
             bool passStarted = false;
             bool passDue = m_Routes.Count == 0 || objectiveChanged
-                || UnityEngine.Time.realtimeSinceStartup - m_LastRoutePassStart >= RoutePassIntervalSeconds;
+                || UnityEngine.Time.realtimeSinceStartup - m_LastRoutePassStart >= Assumptions.RoutePassIntervalSeconds;
             if (m_RoadGraph.Graph is not null && m_ZoneNodes is not null && passDue)
             {
 
@@ -185,7 +185,7 @@ namespace StationSuitabilityOverlay
             DeferredLog.Info(
                 $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)} (observed shopping/leisure {(m_TripObserver.LastDemandCount).ToString(CultureInfo.InvariantCulture)} ×{(m_TripObserver.LastScale).ToString("F2", CultureInfo.InvariantCulture)} over {(LineHistory.GameHours(m_TripObserver.Window.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours), " +
                 $"weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}, " +
-                $"route pass {(passStarted ? "started on the worker" : passDue ? "not started (no network)" : $"not due (every {RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s)")}; " +
+                $"route pass {(passStarted ? "started on the worker" : passDue ? "not started (no network)" : $"not due (every {Assumptions.RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s)")}; " +
                 $"main thread {(clock.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms (extract {(extractMs).ToString(CultureInfo.InvariantCulture)}, model {(modelMs).ToString(CultureInfo.InvariantCulture)}, " +
                 $"networks {(networksMs).ToString(CultureInfo.InvariantCulture)}, assign {(clock.ElapsedMilliseconds - extractMs - modelMs - networksMs).ToString(CultureInfo.InvariantCulture)}); " +
                 $"trip observation since the last refresh: {(m_TripObserver.ScanCount).ToString(CultureInfo.InvariantCulture)} scans, " +
@@ -242,11 +242,11 @@ namespace StationSuitabilityOverlay
             }
 
             m_Interchanges = SuitabilityTransit.BuildInterchangeMap(
-                xs, zs, stopModes, m_TransitStops.Count, ServedDemand.TransferWalkRadius);
+                xs, zs, stopModes, m_TransitStops.Count, Assumptions.TransferWalkRadius);
 
             List<TransitLine> transitLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
             m_TransitNetwork = SuitabilityTransit.Build(xs, zs, m_TransitStops.Count, transitLines,
-                ServedDemand.TransferWalkRadius, SuitabilityTransit.DefaultBoardPenaltySeconds);
+                Assumptions.TransferWalkRadius, Assumptions.DefaultBoardPenaltySeconds);
             m_TransitWorkspace ??= new DijkstraWorkspace(0);
             m_TransitWorkspace.Resize(m_TransitNetwork.Graph.NodeCount);
 
@@ -300,7 +300,7 @@ namespace StationSuitabilityOverlay
             DeferredLog.Info(
                 $"Served-demand discount: {(report.ServedPairs).ToString(CultureInfo.InvariantCulture)} of {(report.PairCount).ToString(CultureInfo.InvariantCulture)} routable pairs already carried, " +
                 $"median carried journey {(report.MedianSeconds).ToString("F0", CultureInfo.InvariantCulture)}s -> ceiling {(report.CeilingSeconds).ToString("F0", CultureInfo.InvariantCulture)}s " +
-                $"({(report.CeilingSeconds >= ServedDemand.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median, or a slow network" : $"{ServedDemand.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median")}); " +
+                $"({(report.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median, or a slow network" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median")}); " +
                 $"weight {(report.WeightBefore).ToString("F0", CultureInfo.InvariantCulture)} -> {(report.WeightAfter).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"({((report.WeightBefore > 0f ? (1f - report.WeightAfter / report.WeightBefore) * 100f : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% absorbed by existing lines)");
         }
@@ -322,13 +322,13 @@ namespace StationSuitabilityOverlay
 
             SuitabilityZones.RasterizeDesireLines(
                 m_ZoneFlows, new float2Like(worldMin.x, worldMin.y), new int2Like(m_ZoneGrid.x, m_ZoneGrid.y),
-                new int2Like(gridSize.x, gridSize.y), TileSize, m_DemandRaster);
+                new int2Like(gridSize.x, gridSize.y), Assumptions.TileSize, m_DemandRaster);
 
             byte[] layer = m_LayerIntensities[(int)SuitabilityLayer.TravelDemand];
             if (layer is not null && layer.Length == cells && m_ScoreScratch is not null && m_ScoreScratch.Length >= cells)
             {
                 SuitabilityScoring.NormalizeIntensities(
-                    m_DemandRaster, cells, settings.HighlightShare / 100f, SuitabilityHeatmap.IntensityGamma, layer, m_ScoreScratch);
+                    m_DemandRaster, cells, settings.HighlightShare / 100f, Assumptions.IntensityGamma, layer, m_ScoreScratch);
                 m_Infoview.InvalidateExpandedCache();
             }
         }

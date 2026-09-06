@@ -17,11 +17,6 @@ namespace StationSuitabilityOverlay
     // SuitabilityScoring.Combine; this is the grid around it.
     internal static class SuitabilityHeatmap
     {
-        // Demand, jobs and future demand are raw sums with unbounded scale; each is
-        // normalized against this percentile of its own positive values so all five
-        // weighted terms are comparable 0..1 quantities.
-        public const float TermCapPercentile = 0.98f;
-        public const float IntensityGamma = 0.6f;
 
         // The per-term intensity layers, null where a layer is not registered as an
         // infomode and therefore cannot be drawn.
@@ -61,7 +56,7 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            return SuitabilityScoring.PositivePercentile(scratch, totalCells, TermCapPercentile, percentileScratch);
+            return SuitabilityScoring.PositivePercentile(scratch, totalCells, Assumptions.TermCapPercentile, percentileScratch);
         }
 
         // Every tile's score under `weights` (SuitabilityScoring.Combine), zero where
@@ -137,7 +132,6 @@ namespace StationSuitabilityOverlay
         // reads as discrete markers rather than a gradient.
         public static void PaintSites(byte[] layer, int[] siteTiles, int count, int width, int height)
         {
-            const int radius = 2;
             for (int s = 0; s < count; s++)
             {
                 int index = siteTiles[s];
@@ -145,7 +139,7 @@ namespace StationSuitabilityOverlay
                 int cy = index / width;
                 byte intensity = (byte)Math.Max(55, Math.Min(255, 255 - (s * (200 / Math.Max(1, count)))));
 
-                for (int dy = -radius; dy <= radius; dy++)
+                for (int dy = -Assumptions.SiteMarkerRadiusTiles; dy <= Assumptions.SiteMarkerRadiusTiles; dy++)
                 {
                     int y = cy + dy;
                     if (y < 0 || y >= height)
@@ -153,7 +147,7 @@ namespace StationSuitabilityOverlay
                         continue;
                     }
 
-                    for (int dx = -radius; dx <= radius; dx++)
+                    for (int dx = -Assumptions.SiteMarkerRadiusTiles; dx <= Assumptions.SiteMarkerRadiusTiles; dx++)
                     {
                         int x = cx + dx;
                         if (x < 0 || x >= width)
@@ -161,7 +155,7 @@ namespace StationSuitabilityOverlay
                             continue;
                         }
 
-                        if ((dx * dx) + (dy * dy) > radius * radius)
+                        if ((dx * dx) + (dy * dy) > Assumptions.SiteMarkerRadiusTiles * Assumptions.SiteMarkerRadiusTiles)
                         {
                             continue;
                         }

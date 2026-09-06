@@ -329,7 +329,7 @@ namespace StationSuitabilityOverlay.Tests
                     hubModes[i] = 1 + rng.Next(31);
                 }
 
-                float transferRadius = SuitabilityTransit.WalkSpeed * (TransitModes.TransferWalkMs / 1000f);
+                float transferRadius = Assumptions.WalkSpeed * (Assumptions.TransferWalkMs / 1000f);
                 InterchangeMap hubs = SuitabilityTransit.BuildInterchangeMap(hubX, hubZ, hubModes, 6, transferRadius);
                 Stops = new StopContext { Ends = ends, EndWeights = endWeights, Facts = Facts, Hubs = hubs, ScoreAt = ScoreAt };
             }
@@ -367,7 +367,7 @@ namespace StationSuitabilityOverlay.Tests
 
         private static void AssertRouteWellFormed(SuggestedRoute route, string label)
         {
-            AssertTrue(route.Stops.Count >= TransitModes.MinStops, $"{label}: a candidate has at least {TransitModes.MinStops.ToString(CultureInfo.InvariantCulture)} stops");
+            AssertTrue(route.Stops.Count >= Assumptions.MinStops, $"{label}: a candidate has at least {Assumptions.MinStops.ToString(CultureInfo.InvariantCulture)} stops");
             AssertTrue(route.Path.Count >= 2 && route.Nodes.Count >= 2, $"{label}: path and node walk exist");
             AssertTrue(route.Length > 0f && route.StopPlan is not null && route.StopPlanChosen.Length <= route.StopPlan.CandidateCount, $"{label}: a stop plan was solved");
             float along = 0f;
@@ -470,10 +470,10 @@ namespace StationSuitabilityOverlay.Tests
             SuitabilityRoutes.Restop(copy, ModePreset.Tram, city.Stops);
             AssertTrue(copy.Mode == ModePreset.Tram && copy.Stops.Count == 10 && first.Stops.Count == 12, "the tram's wider spacing places fewer stops on the same alignment");
             AssertBits(0x4589BB0Du, copy.Length, "the trimmed length is unchanged when both termini stay");
-            float ride = TransitModes.RideSeconds(copy.Length, copy.Stops.Count, TransitModes.CruiseSpeedFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode));
+            float ride = TransitModes.RideSeconds(copy.Length, copy.Stops.Count, Assumptions.CruiseSpeedFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode));
             AssertBits(0x43FBA411u, ride, "ride seconds");
             AssertTrue(SuitabilityRoutes.KeepsItsShape(copy, ride), "within the tram's ride limit");
-            AssertTrue(!SuitabilityRoutes.KeepsItsShape(copy, TransitModes.MaxRideSecondsFor(ModePreset.Tram) + 1f), "over the limit the shape gate fails");
+            AssertTrue(!SuitabilityRoutes.KeepsItsShape(copy, Assumptions.MaxRideSecondsFor(ModePreset.Tram) + 1f), "over the limit the shape gate fails");
             AssertTrue(SuitabilityRoutes.EstimateVehicles(copy.Mode, copy.Length, copy.Stops.Count, city.Facts.HeadwayFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode)) == 4, "fleet from length at cruise speed");
             AssertTrue(SuitabilityRoutes.EstimateVehiclesFromRoundTrip(1234.5f, copy.Stops.Count, 300f, 20f) == 5, "fleet from a measured round trip");
         }

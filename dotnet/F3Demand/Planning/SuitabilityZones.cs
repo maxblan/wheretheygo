@@ -27,9 +27,6 @@ namespace StationSuitabilityOverlay
 
     internal static class SuitabilityZones
     {
-        // Zones are much coarser than the score grid: they exist to make the flow
-        // assignment tractable, not to be looked at.
-        public const float ZoneSize = 256f;
 
         // Collapses trips into zone-to-zone flows. Returns the total trip weight so
         // the caller can sanity-check the extraction against the city's population.
@@ -106,7 +103,7 @@ namespace StationSuitabilityOverlay
 
         public static int ZoneOf(float2Like position, float2Like worldMin, int2Like zoneGrid)
         {
-            float2Like rel = (position - worldMin) / ZoneSize;
+            float2Like rel = (position - worldMin) / Assumptions.ZoneSize;
             int x = (int)Math.Floor(rel.x);
             int y = (int)Math.Floor(rel.y);
             if (x < 0 || x >= zoneGrid.x || y < 0 || y >= zoneGrid.y)
@@ -121,7 +118,7 @@ namespace StationSuitabilityOverlay
         {
             int x = zone % zoneGrid.x;
             int y = zone / zoneGrid.x;
-            return worldMin + new float2Like((x + 0.5f) * ZoneSize, (y + 0.5f) * ZoneSize);
+            return worldMin + new float2Like((x + 0.5f) * Assumptions.ZoneSize, (y + 0.5f) * Assumptions.ZoneSize);
         }
 
         // Paints straight desire lines between zone pairs into the tile raster, so

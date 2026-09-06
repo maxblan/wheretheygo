@@ -25,27 +25,6 @@ namespace StationSuitabilityOverlay
     [UpdateBefore(typeof(TerrainRenderSystem))]
     public sealed partial class StationSuitabilityOverlaySystem : GameSystemBase
     {
-        private const float TileSize = 32f;
-
-        private const float DebounceSeconds = 0.3f;
-
-        private const float PeriodicRefreshSeconds = 10f;
-
-        // Road, workplace and zoning collections are cached and rebuilt from change
-        // detection; this is the backstop for inputs that change with no
-        // Created/Updated tag.
-        private const float CollectionRefreshSeconds = 60f;
-
-        // Terrain barely ever changes, and the mask costs a full-grid sampling pass
-        // plus a flood fill, so it is refreshed far less often than the scores.
-        private const float MaskRefreshSeconds = 120f;
-
-        // Travel demand extraction walks every citizen and runs many shortest-path
-        // searches, so it is far slower than the per-tile scoring.
-        // Also the cadence at which each line is sampled into the rolling window, so
-        // shortening it both gets the first suggestions up sooner and doubles the
-        // number of readings a day's verdict rests on.
-        private const float DemandRefreshSeconds = 30f;
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
 
@@ -487,7 +466,7 @@ namespace StationSuitabilityOverlay
                     m_RoadCacheDirty = true;
                 }
 
-                ScheduleRecompute(DebounceSeconds);
+                ScheduleRecompute(Assumptions.DebounceSeconds);
             }
             m_LastComputeSettings = computeSettings;
 
@@ -497,16 +476,16 @@ namespace StationSuitabilityOverlay
             if (stopCount != m_LastStopCount)
             {
                 m_LastStopCount = stopCount;
-                ScheduleRecompute(DebounceSeconds);
+                ScheduleRecompute(Assumptions.DebounceSeconds);
             }
             else if (!m_StopChangedQuery.IsEmptyIgnoreFilter)
             {
-                ScheduleRecompute(DebounceSeconds);
+                ScheduleRecompute(Assumptions.DebounceSeconds);
             }
 
             float now = UnityEngine.Time.realtimeSinceStartup;
             if (!m_JobPending && !m_RecomputeRequested && m_RawTerms is not null
-                && now - m_LastComputeFinish >= PeriodicRefreshSeconds)
+                && now - m_LastComputeFinish >= Assumptions.PeriodicRefreshSeconds)
             {
                 ScheduleRecompute(0f);
             }
@@ -532,14 +511,14 @@ namespace StationSuitabilityOverlay
             // panel then showed line verdicts and "1 Messung" beside them, which is
             // exactly as broken as it sounds. Reading six lines is cheap; the route
             // pipeline below is what stays gated.
-            if (now - m_LastLineSample >= DemandRefreshSeconds && !m_RoutesPending)
+            if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds && !m_RoutesPending)
             {
                 m_LastLineSample = now;
                 RefreshLineHealth();
             }
 
             // Also ungated on `active`: a journey not seen is demand not counted.
-            if (now - m_LastTripObservation >= TripObservationSeconds)
+            if (now - m_LastTripObservation >= Assumptions.TripObservationSeconds)
             {
                 m_LastTripObservation = now;
                 ObserveTrips();
@@ -584,7 +563,7 @@ namespace StationSuitabilityOverlay
             }
 
             bool objectiveChanged = settings.Objective != m_LastObjective || settings.RouteCount != m_LastRouteCount;
-            bool due = now - m_LastDemandRefresh >= DemandRefreshSeconds;
+            bool due = now - m_LastDemandRefresh >= Assumptions.DemandRefreshSeconds;
             if (!objectiveChanged && !due && m_ZoneFlows.Count > 0)
             {
                 return;
@@ -601,7 +580,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            float2 mapSize = new float2(m_IntensityGrid.x, m_IntensityGrid.y) * TileSize;
+            float2 mapSize = new float2(m_IntensityGrid.x, m_IntensityGrid.y) * Assumptions.TileSize;
             UpdateTravelDemand(settings, m_IntensityGrid, m_ScoreWorldMin, mapSize, objectiveChanged);
             LogRoutes();
         }
@@ -630,14 +609,14 @@ namespace StationSuitabilityOverlay
             // Measured from the last actual REBUILD, not the last compute. Stamping
             // this per compute would keep pushing the deadline out every ten seconds
             // and the backstop would never fire at all.
-            if (now - m_LastCollectionRebuild >= CollectionRefreshSeconds)
+            if (now - m_LastCollectionRebuild >= Assumptions.CollectionRefreshSeconds)
             {
                 m_RoadCacheDirty = true;
                 m_WorkplaceCacheDirty = true;
                 m_ZoneCacheDirty = true;
             }
 
-            if (now - m_LastMaskRefresh >= MaskRefreshSeconds)
+            if (now - m_LastMaskRefresh >= Assumptions.MaskRefreshSeconds)
             {
                 m_MaskDirty = true;
             }
@@ -663,7 +642,7 @@ namespace StationSuitabilityOverlay
         private int2 GetGridSize()
         {
             float2 playable = m_TerrainSystem is not null ? m_TerrainSystem.playableArea : new float2(0f, 0f);
-            return SuitabilityInputs.GridDims(playable, TileSize);
+            return SuitabilityInputs.GridDims(playable, Assumptions.TileSize);
         }
     }
 }

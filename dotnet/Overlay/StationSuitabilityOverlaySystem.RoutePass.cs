@@ -33,12 +33,6 @@ namespace StationSuitabilityOverlay
 
         private float m_RoutePassStarted;
 
-        // A route pass is started at most this often unless the objective or the line
-        // count changed or there are no suggestions yet. The demand refresh itself
-        // stays at DemandRefreshSeconds for the panel; the pass is the expensive part
-        // and its inputs move slowly.
-        private const float RoutePassIntervalSeconds = 300f;
-
         private float m_LastRoutePassStart = float.NegativeInfinity;
 
         private sealed class RoutePass

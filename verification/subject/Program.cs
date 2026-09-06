@@ -104,7 +104,7 @@ namespace StationSuitabilityOverlay.Verification
         // nothing to do with the mod.
         private static float WalkSeconds(float distSq)
         {
-            return (float)Math.Sqrt(distSq) / SuitabilityTransit.WalkSpeed;
+            return (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed;
         }
 
         // ------------------------------------------------------------- S2 sites
@@ -129,7 +129,7 @@ namespace StationSuitabilityOverlay.Verification
             }
 
             ExactSiteSolution exact = SuitabilityExactSites.Solve(
-                scores, width, height, separation, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+                scores, width, height, separation, maxSites, Assumptions.SiteSearchNodeBudget);
 
             return new Dictionary<string, object?>
             {
@@ -159,7 +159,7 @@ namespace StationSuitabilityOverlay.Verification
                 F32Array(data.GetProperty("edge_metres_b32")), data.GetProperty("edge_a").GetArrayLength());
             int accessMs = data.GetProperty("access_ms").GetInt32();
             int horizonMs = data.GetProperty("horizon_ms").GetInt32();
-            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMs / 1000.0 * SuitabilityTransit.WalkSpeed));
+            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMs / 1000.0 * Assumptions.WalkSpeed));
 
             float[] sx = F32Array(data.GetProperty("stop_x_b32"));
             float[] sz = F32Array(data.GetProperty("stop_z_b32"));
@@ -288,7 +288,7 @@ namespace StationSuitabilityOverlay.Verification
             int maxSites = data.GetProperty("max_sites").GetInt32();
 
             ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(
-                graph, candidates, scores, candidates.Length, separationMs, maxSites, SuitabilityExactSites.DefaultNodeBudget);
+                graph, candidates, scores, candidates.Length, separationMs, maxSites, Assumptions.SiteSearchNodeBudget);
             // The greedy baseline under the same conflicts: a budget of zero search
             // nodes leaves the solver with exactly its greedy incumbent.
             ExactSiteSolution greedy = SuitabilityExactSites.SolveOnNetwork(
@@ -787,11 +787,11 @@ namespace StationSuitabilityOverlay.Verification
             if (budgetSeconds > 0.0)
             {
                 using var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds));
-                solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget, budget.Token);
+                solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget, budget.Token);
             }
             else
             {
-                solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget);
+                solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             }
 
             long elapsedMs = clock.ElapsedMilliseconds;
@@ -831,7 +831,7 @@ namespace StationSuitabilityOverlay.Verification
                 F32Array(equity.GetProperty("edge_metres_b32")), equity.GetProperty("edge_a").GetArrayLength());
             int accessMs = equity.GetProperty("access_ms").GetInt32();
             int horizonMs = equity.GetProperty("horizon_ms").GetInt32();
-            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMs / 1000.0 * SuitabilityTransit.WalkSpeed));
+            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMs / 1000.0 * Assumptions.WalkSpeed));
             var dijkstra = new IntDijkstra(graph.NodeCount);
 
             float[] sx = F32Array(equity.GetProperty("stop_x_b32"));

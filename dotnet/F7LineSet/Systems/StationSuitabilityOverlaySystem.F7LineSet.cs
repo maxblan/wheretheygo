@@ -13,10 +13,6 @@ namespace StationSuitabilityOverlay
     // utilisation and schedule. The optimisation itself is SuitabilityLineSet.
     public sealed partial class StationSuitabilityOverlaySystem
     {
-        // Wall-clock budget for the line-set search on the worker. Past it the search
-        // keeps the best set found and reports the open bound as the ceiling
-        // (SuitabilityLineSet.Solve); the log says which regime the result is in.
-        private const int LineSetTimeBudgetSeconds = 15;
 
         // The walk to and from the candidate's own stops, and what each journey costs
         // on the network as it stands. A line earns credit for a journey only by being
@@ -73,9 +69,9 @@ namespace StationSuitabilityOverlay
                 LineSetProblem problem = BuildLineSetProblem(settings, resolved, settings.RouteCount, pass);
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 LineSetSolution solution;
-                using (var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(LineSetTimeBudgetSeconds)))
+                using (var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(Assumptions.LineSetTimeBudgetSeconds)))
                 {
-                    solution = SuitabilityLineSet.Solve(problem, SuitabilityLineSet.DefaultNodeBudget, budget.Token);
+                    solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget, budget.Token);
                 }
 
                 stopwatch.Stop();
@@ -156,15 +152,15 @@ namespace StationSuitabilityOverlay
                 BaseStopX = new float[m_TransitStops.Count],
                 BaseStopZ = new float[m_TransitStops.Count],
                 BaseLines = SuitabilityLines.ToTransitLines(m_ExistingLines),
-                WalkRadius = ServedDemand.TransferWalkRadius,
-                BoardPenaltySeconds = SuitabilityTransit.DefaultBoardPenaltySeconds,
-                MaxTravelSeconds = ServedDemand.MaxJourneySeconds,
-                ZoneReachMetres = ServedDemand.ZoneStopReachMetres,
+                WalkRadius = Assumptions.TransferWalkRadius,
+                BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
+                MaxTravelSeconds = Assumptions.MaxJourneySeconds,
+                ZoneReachMetres = Assumptions.ZoneStopReachMetres,
                 MaxLines = maxLines,
                 UtilisationFloor = settings.UtilisationFloorPercent / 100f,
-                UtilisationCeiling = TransitModes.MaxPlannedUtilisation,
-                MovementSecondsPerDay = SuitabilityEquity.MovementSecondsPerGameDay,
-                DuplicateShare = DuplicateRiderShare,
+                UtilisationCeiling = Assumptions.MaxPlannedUtilisation,
+                MovementSecondsPerDay = Assumptions.MovementSecondsPerGameDay,
+                DuplicateShare = Assumptions.DuplicateRiderShare,
                 EquityFloorShare = settings.EquityFloorPercent / 100f,
             };
             for (int i = 0; i < m_TransitStops.Count; i++)
@@ -182,7 +178,7 @@ namespace StationSuitabilityOverlay
                     StopX = new float[route.Stops.Count],
                     StopZ = new float[route.Stops.Count],
                     ExpectedWait = facts.ExpectedWaitFor(route.Mode),
-                    SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(route.Mode),
+                    SpeedMetresPerSecond = Assumptions.CruiseSpeedFor(route.Mode),
                     RideSeconds = RoadRideSeconds(route),
                     HeadwaySeconds = facts.HeadwayFor(route.Mode),
                     VehicleCapacity = facts.CapacityFor(route.Mode),
@@ -288,10 +284,6 @@ namespace StationSuitabilityOverlay
                 m_JourneyWeight, m_Journeys.Count).Share;
         }
 
-        // Riders of a line may already have an equally fast route without it: above this
-        // share of them the line duplicates the set it sits in (register A4.3).
-        private const float DuplicateRiderShare = 0.5f;
-
         private void AdoptLineSet(Setting settings, List<SuggestedRoute> resolved, LineSetProblem problem, LineSetSolution solution, long elapsedMs, RoutePass pass)
         {
             var order = new List<int>();
@@ -309,8 +301,8 @@ namespace StationSuitabilityOverlay
                 {
                     route.EnabledDemand = (float)evaluation.Riders[order[k]];
                     LineCandidate line = problem.Candidates[order[k]];
-                    route.DayUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByDay[order[k]], line.HeadwaySeconds, line.VehicleCapacity, Daytime.DayShareOfDay);
-                    route.NightUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByNight[order[k]], line.HeadwaySeconds, line.VehicleCapacity, 1f - Daytime.DayShareOfDay);
+                    route.DayUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByDay[order[k]], line.HeadwaySeconds, line.VehicleCapacity, Assumptions.DayShareOfDay);
+                    route.NightUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByNight[order[k]], line.HeadwaySeconds, line.VehicleCapacity, 1f - Assumptions.DayShareOfDay);
                     route.Schedule = Daytime.Recommend(route.DayUtilisation, route.NightUtilisation, problem.UtilisationFloor);
                 }
 
@@ -336,10 +328,10 @@ namespace StationSuitabilityOverlay
                 $"time saved {(solution.TimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day " +
                 $"{(solution.Optimal ? "(proven optimal" : $"(best found, NOT proven optimal; ceiling {(solution.UpperBoundTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)}")} " +
                 $"under equity floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} % (set reaches {(solution.Coverage * 100f).ToString("F1", CultureInfo.InvariantCulture)} %), " +
-                $"utilisation floor {settings.UtilisationFloorPercent.ToString(CultureInfo.InvariantCulture)} % and ceiling {(TransitModes.MaxPlannedUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, duplicate share {(DuplicateRiderShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} %), " +
+                $"utilisation floor {settings.UtilisationFloorPercent.ToString(CultureInfo.InvariantCulture)} % and ceiling {(Assumptions.MaxPlannedUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, duplicate share {(Assumptions.DuplicateRiderShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} %), " +
                 $"greedy {(solution.GreedyTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h, after swaps {(solution.LocalSearchTimeSaved / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h, " +
                 $"{(solution.Nodes).ToString(CultureInfo.InvariantCulture)} search nodes, {(solution.Evaluations).ToString(CultureInfo.InvariantCulture)} set evaluations, {(solution.Infeasible).ToString(CultureInfo.InvariantCulture)} infeasible sets met, " +
-                $"{(elapsedMs).ToString(CultureInfo.InvariantCulture)} ms of a {(LineSetTimeBudgetSeconds).ToString(CultureInfo.InvariantCulture)} s budget{realism}");
+                $"{(elapsedMs).ToString(CultureInfo.InvariantCulture)} ms of a {(Assumptions.LineSetTimeBudgetSeconds).ToString(CultureInfo.InvariantCulture)} s budget{realism}");
         }
 
         // Treats an accepted suggestion as though the player had built it, so the next
@@ -358,7 +350,7 @@ namespace StationSuitabilityOverlay
                 m_Stops = stops,
                 m_ExpectedWait = ReadFleetFacts().ExpectedWaitFor(route.Mode),
                 m_RideSeconds = RoadRideSeconds(route),
-                m_SpeedMetresPerSecond = TransitModes.CruiseSpeedFor(route.Mode),
+                m_SpeedMetresPerSecond = Assumptions.CruiseSpeedFor(route.Mode),
             });
         }
     }

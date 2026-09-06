@@ -17,9 +17,6 @@ namespace StationSuitabilityOverlay
     // by. Everything numeric happens on the network; this file only gathers.
     internal static class SuitabilityRoads
     {
-        // Bow below which an edge is drawn as a straight chord.
-        private const float StraightEnough = 3f;
-        private const int MaxCurveSamples = 8;
 
         // Walks road edges and their endpoint nodes into index arrays and hands them
         // to the network (AlignmentNetwork.AdoptRoads). Node adjacency comes from the
@@ -343,14 +340,14 @@ namespace StationSuitabilityOverlay
             float2 chordMid = new float2((start.x + end.x) * 0.5f, (start.z + end.z) * 0.5f);
             float bow = math.distance(new float2(middle.x, middle.z), chordMid);
 
-            if (bow < StraightEnough)
+            if (bow < Assumptions.StraightEnough)
             {
                 return 0;
             }
 
             // One sample per ~8 m of bow, so a gentle bend gets a couple of points and
             // a hairpin gets enough to read as a curve.
-            int count = math.clamp((int)math.round(bow / 8f), 1, MaxCurveSamples);
+            int count = math.clamp((int)math.round(bow / 8f), 1, Assumptions.MaxCurveSamples);
             for (int i = 1; i <= count; i++)
             {
                 float3 point = MathUtils.Position(curve.m_Bezier, i / (float)(count + 1));

@@ -13,13 +13,6 @@ namespace StationSuitabilityOverlay
     // Anything this reports is a bug in the mod, not a property of the city.
     internal static class SuitabilitySanity
     {
-        // Share of the city's longest journey below which a line cannot plausibly be
-        // what unlocks a large part of its travel, whatever the transfer model credits
-        // it with. A share rather than a distance because a city's scale is the whole
-        // point of the test — see the sanity check that reads it.
-        public const float ShortLineShareOfCity = 0.25f;
-
-        public const float ImplausibleDemandShare = 0.15f;
 
         // Returns the number of complaints; each one is handed to `complain` as it is
         // found, so the caller decides where they go.
@@ -94,15 +87,15 @@ namespace StationSuitabilityOverlay
                 // its city and still caught.
                 if (totalZoneWeight > 0f
                     && longestJourneyMetres > 0f
-                    && route.Length < longestJourneyMetres * ShortLineShareOfCity
-                    && route.EnabledDemand > totalZoneWeight * ImplausibleDemandShare)
+                    && route.Length < longestJourneyMetres * Assumptions.ShortLineShareOfCity
+                    && route.EnabledDemand > totalZoneWeight * Assumptions.ImplausibleDemandShare)
                 {
                     Complain($"{label} is only {(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m yet is credited with enabling {((route.EnabledDemand / totalZoneWeight) * 100f).ToString("F0", CultureInfo.InvariantCulture)}% of the city's travel — a line this short cannot carry that, so the zone-to-stop remap is attaching journeys it does not serve");
                 }
 
-                if (route.Stops.Count < TransitModes.MinStops)
+                if (route.Stops.Count < Assumptions.MinStops)
                 {
-                    Complain($"{label} has {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops, under the {(TransitModes.MinStops).ToString(CultureInfo.InvariantCulture)} a line needs — the shape gate was not applied after stop placement");
+                    Complain($"{label} has {(route.Stops.Count).ToString(CultureInfo.InvariantCulture)} stops, under the {(Assumptions.MinStops).ToString(CultureInfo.InvariantCulture)} a line needs — the shape gate was not applied after stop placement");
                 }
 
                 if (route.Stops.Count < 2)
@@ -121,7 +114,7 @@ namespace StationSuitabilityOverlay
                 if (route.Stops.Count >= 2)
                 {
                     float spacing = route.Length / (route.Stops.Count - 1);
-                    float want = TransitModes.StopSpacingFor(route.Mode);
+                    float want = Assumptions.StopSpacingFor(route.Mode);
                     if (spacing > want * 2.5f || spacing < want * 0.4f)
                     {
                         Complain($"{label} averages {(spacing).ToString("F0", CultureInfo.InvariantCulture)}m between stops but {route.Mode} spacing is {(want).ToString("F0", CultureInfo.InvariantCulture)}m — the stops were probably placed for another mode");
@@ -141,8 +134,6 @@ namespace StationSuitabilityOverlay
     // list went 0, 0, 0, 1, 1, 2 routes with entirely different termini each time.
     internal sealed class SuggestionChurn
     {
-        // How far a suggestion's termini may move and still count as the same corridor.
-        public const float SameEndsRadiusSq = 200f * 200f;
 
         // Where last refresh's suggestions ran between, so churn can be measured.
         private readonly List<RouteEnds> m_PreviousRouteEnds = new List<RouteEnds>();
@@ -173,8 +164,8 @@ namespace StationSuitabilityOverlay
                     RouteEnds previous = m_PreviousRouteEnds[j];
                     // Same corridor if both ends land near where they were. The stops
                     // themselves shift a little between refreshes as scores move.
-                    if (float2Like.DistanceSq(previous.m_From, from) <= SameEndsRadiusSq
-                        && float2Like.DistanceSq(previous.m_To, to) <= SameEndsRadiusSq)
+                    if (float2Like.DistanceSq(previous.m_From, from) <= Assumptions.ChurnSameEndsRadiusSq
+                        && float2Like.DistanceSq(previous.m_To, to) <= Assumptions.ChurnSameEndsRadiusSq)
                     {
                         held++;
                         break;
@@ -218,8 +209,8 @@ namespace StationSuitabilityOverlay
                 SuggestedRoute route = routes[i];
                 RouteEnds logged = m_LoggedRouteEnds[i];
                 if (route.Stops.Count < 2
-                    || float2Like.DistanceSq(logged.m_From, route.Stops[0]) > SameEndsRadiusSq
-                    || float2Like.DistanceSq(logged.m_To, route.Stops[route.Stops.Count - 1]) > SameEndsRadiusSq)
+                    || float2Like.DistanceSq(logged.m_From, route.Stops[0]) > Assumptions.ChurnSameEndsRadiusSq
+                    || float2Like.DistanceSq(logged.m_To, route.Stops[route.Stops.Count - 1]) > Assumptions.ChurnSameEndsRadiusSq)
                 {
                     Refresh();
                     return true;
