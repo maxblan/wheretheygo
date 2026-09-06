@@ -53,14 +53,31 @@ function h(tag, props, ...children) {
     return React.createElement(tag, props, ...children);
 }
 
+// A checkbox in the shape the game uses, rather than an On/Off pill: the vanilla
+// Options page next door is full of these, and a green button saying "An" was the one
+// control on screen that announced itself as somebody's mod.
 function Toggle({ label, value, onToggle }) {
     const t = useTranslate();
     return h("div", { className: "ta-row" },
         h("div", { className: "ta-label" }, label),
         h("button", {
             className: "ta-toggle" + (value ? " ta-toggle-on" : ""),
+            title: value ? t("On", "On") : t("Off", "Off"),
             onClick: () => onToggle(!value),
-        }, value ? t("On", "On") : t("Off", "Off")));
+        }, value ? "\u2713" : ""));
+}
+
+function Readout({ label, value, caption, filled, dim, extra }) {
+    return h("div", { className: "ta-readout" },
+        h("div", { className: "ta-readout-label" }, label),
+        h("div", { className: "ta-readout-value" }, value),
+        filled === undefined ? null : h("div", { className: "ta-readout-track" },
+            h("div", {
+                className: "ta-readout-fill" + (dim ? " ta-readout-fill-short" : ""),
+                style: { width: Math.max(0, Math.min(100, filled)) + "%" },
+            })),
+        caption ? h("div", { className: "ta-readout-caption" }, caption) : null,
+        extra || null);
 }
 
 function DataCoverage({ raw }) {
@@ -73,10 +90,10 @@ function DataCoverage({ raw }) {
     const windowHours = parts[2] || "24";
     const observedTrips = parseInt(parts[3], 10) || 0;
     const observedHours = parts[4] || "0";
-    // Shopping and leisure journeys are watched, not read from the save, so the
-    // panel says how many it has seen and over how long — the reader can then
-    // judge how much of the demand picture is filled in.
-    const observedLine = h("div", { className: "ta-coverage-value" },
+    // Shopping and leisure journeys are watched, not read from the save, so the panel
+    // says how many it has seen and over how long — the reader can then judge how much
+    // of the demand picture is filled in.
+    const observed = h("div", { className: "ta-readout-caption" },
         (observedTrips
             ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
             : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
@@ -84,60 +101,57 @@ function DataCoverage({ raw }) {
             .replace("{1}", observedHours));
 
     if (!readings) {
-        return h("div", { className: "ta-coverage" },
-            h("div", { className: "ta-coverage-label" }, t("DataBasis", "Data collected")),
-            h("div", { className: "ta-coverage-empty" },
-                t("DataBasisEmpty", "no lines to watch yet — readings start with your first one")),
-            observedLine);
+        return h(Readout, {
+            label: t("DataBasis", "Data collected"),
+            value: t("DataBasisNone", "nothing yet"),
+            caption: t("DataBasisEmpty", "readings start with your first line"),
+            extra: observed,
+        });
     }
 
-    // Bar rather than only a number: the point is how much of the window is filled,
-    // and a fraction is read faster as a length than as two figures to divide.
-    const filled = Math.max(0, Math.min(100, (parseFloat(hours) / parseFloat(windowHours)) * 100));
-    return h("div", { className: "ta-coverage" },
-        h("div", { className: "ta-coverage-label" }, t("DataBasis", "Data collected")),
-        h("div", { className: "ta-coverage-value" },
-            t("DataBasisValue", "{0} h of {1} h · {2} readings")
-                .replace("{0}", hours)
-                .replace("{1}", windowHours)
-                .replace("{2}", String(readings))),
-        h("div", { className: "ta-coverage-track" },
-            h("div", { className: "ta-coverage-fill", style: { width: filled + "%" } })),
-        observedLine);
+    return h(Readout, {
+        label: t("DataBasis", "Data collected"),
+        value: hours + " h",
+        caption: t("DataBasisCaption", "of the last {0} h · {1} readings")
+            .replace("{0}", windowHours)
+            .replace("{1}", String(readings)),
+        filled: (parseFloat(hours) / parseFloat(windowHours)) * 100,
+        extra: observed,
+    });
 }
 
-// The equity floor's own readout: what share of the city's journeys the served
-// network reaches at both ends, against the target the player set, and how unequal
-// the walk to service is. Payload: "share|minutes|target|gini" or "" before the
-// first measurement.
 function Equity({ raw }) {
     const t = useTranslate();
     const parts = (raw || "").split("|");
     if (parts.length < 4) {
-        return h("div", { className: "ta-coverage" },
-            h("div", { className: "ta-coverage-label" }, t("Equity", "Served journeys")),
-            h("div", { className: "ta-coverage-empty" }, t("EquityEmpty", "not measured yet")));
+        return h(Readout, {
+            label: t("Equity", "Served journeys"),
+            value: t("EquityEmpty", "not measured yet"),
+        });
     }
+
     const share = parseFloat(parts[0]);
     const target = parseFloat(parts[2]);
-    const filled = Math.max(0, Math.min(100, share));
-    return h("div", { className: "ta-coverage" },
-        h("div", { className: "ta-coverage-label" }, t("Equity", "Served journeys")),
-        h("div", { className: "ta-coverage-value" },
-            t("EquityValue", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) · Gini of access walk {3}")
-                .replace("{0}", parts[0]).replace("{1}", parts[1]).replace("{2}", parts[2]).replace("{3}", parts[3])),
-        h("div", { className: "ta-coverage-track" },
-            h("div", { className: "ta-coverage-fill", style: { width: filled + "%", opacity: share >= target ? 1 : 0.6 } })));
+    return h(Readout, {
+        label: t("Equity", "Served journeys"),
+        value: parts[0] + " %",
+        caption: t("EquityCaption", "reach a served stop within {0} min at both ends · target {1} % · Gini {2}")
+            .replace("{0}", parts[1])
+            .replace("{1}", parts[2])
+            .replace("{2}", parts[3]),
+        filled: share,
+        dim: share < target,
+    });
 }
 
 // What is left of the mod's own window (author's decision 6a, 2026-09-06): the two
-// figures that describe the whole city, and the switch for the heat map. Every knob
-// moved to the Options page, and the two lists moved into the game's Transportation
-// Overview, so nothing here duplicates a place the player would look first.
+// figures that describe the whole city, and the switch for the map. Every knob moved to
+// the Options page, and the two lists moved into the game's Transportation Overview, so
+// nothing here duplicates a place the player would look first.
 //
 // No legend of its own any more. The infomodes derive from GradientInfomodeBasePrefab,
-// so the game draws its own gradient legend for them, which is the one a player
-// already knows.
+// so the game draws its own gradient legend for them, which is the one a player already
+// knows.
 function Panel() {
     const t = useTranslate();
     const visible = useBound("visible", false);
@@ -151,29 +165,36 @@ function Panel() {
         return null;
     }
 
+    // The title bar carries the two things a game panel's title bar carries: fold and
+    // close. Written as buttons with symbols rather than a dash appended to the title,
+    // which is what the first cut did and what read as a typo.
+    const header = h("div", { className: "ta-header" },
+        h("div", { className: "ta-title" }, t("Title", "Transit Architect")),
+        h("button", {
+            className: "ta-icon",
+            title: t(collapsed ? "Expand" : "Collapse", collapsed ? "Expand" : "Collapse"),
+            onClick: () => setCollapsed(!collapsed),
+        }, collapsed ? "\u25be" : "\u25b4"),
+        h("button", {
+            className: "ta-icon",
+            title: t("Close", "Close"),
+            onClick: () => trigger("toggle"),
+        }, "\u2715"));
+
     if (collapsed) {
-        return h("div", { className: "ta-panel ta-panel-collapsed" },
-            h("button", {
-                className: "ta-header",
-                onClick: () => setCollapsed(false),
-            }, t("Title", "Transit Architect") + "  +"));
+        return h("div", { className: "ta-panel ta-panel-collapsed" }, header);
     }
 
     return h("div", { className: "ta-panel" },
-        h("button", {
-            className: "ta-header",
-            onClick: () => setCollapsed(true),
-        }, t("Title", "Transit Architect") + "  -"),
-
+        header,
         h("div", { className: "ta-body" },
-            h("div", { className: "ta-column" },
-                h(Equity, { raw: equity }),
-                h(DataCoverage, { raw: dataCoverage }),
-                h(Toggle, {
-                    label: t("Heatmap", "Suitability heat map"),
-                    value: heatmap,
-                    onToggle: (next) => trigger("setHeatmap", next),
-                }))));
+            h(Equity, { raw: equity }),
+            h(DataCoverage, { raw: dataCoverage }),
+            h(Toggle, {
+                label: t("Heatmap", "Suitability map"),
+                value: heatmap,
+                onToggle: (next) => trigger("setHeatmap", next),
+            })));
 }
 
 // Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their
@@ -327,11 +348,12 @@ const VERDICT_COLORS = {
     Healthy: "rgb(80, 190, 120)",
 };
 
-// What the extra cell says. Deliberately short: a verdict is a sentence, a column is
-// a glance, and the sentence is one hover away.
+// What the note's action reads. Short and imperative: it is the thing to do, and the
+// reason for it is the sentence beside it.
 function cellText(t, parts) {
     const verdict = parts[2];
     const argument = parts[3] || "";
+    const veh = t("Vehicles", "veh");
     switch (verdict) {
         case "Healthy": return "";
         case "ModeUp":
@@ -340,33 +362,53 @@ function cellText(t, parts) {
         case "Remove": return t("Cell.Remove", "remove");
         case "Schedule": return t("Schedule." + argument, SCHEDULE_FALLBACKS[argument] || argument);
         case "FleetShort":
-        case "FleetUp": return "+" + argument;
-        case "FleetDown": return "\u2212" + argument.replace(/^-/, "");
+        case "FleetUp": return "+" + argument + " " + veh;
+        case "FleetDown": return "\u2212" + argument.replace(/^-/, "") + " " + veh;
         default: return "";
     }
 }
 
-function TransitCell({ parts }) {
+// Verdicts whose sentence says something the action does not. For the others the
+// action already IS the sentence ("+2 veh", "run it by day only"), and repeating it
+// beside itself is what the first cut of this did.
+const EXPLAINED = { ModeUp: true, ModeDown: true, SplitRoute: true, Remove: true, FleetShort: true };
+
+function TransitNote({ parts }) {
     const t = useTranslate();
     const id = parseInt(parts[1], 10);
     const verdict = parts[2];
     const text = cellText(t, parts);
     const structural = verdict === "ModeUp" || verdict === "SplitRoute" || verdict === "Remove";
 
-    // The worked-out plan for whichever line was asked about last. Shown on that row
+    // The worked-out plan for whichever line was asked about last. Shown on that line
     // rather than in a panel of our own, so the answer appears where the question was
-    // asked; every other row shows the short reason instead.
+    // asked; every other line shows the short reason instead.
     const plan = useBound("improvePlan", "");
     const planFor = useBound("improvedLine", -1);
     const planDrawn = useBound("improvedRouteDrawn", false);
     const mine = planFor === id && plan !== "";
 
-    const title = t("Verdict." + verdict + (parts[3] ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
+    // Nothing to say about a healthy line, and nothing is exactly what a player wants
+    // to read about one.
+    if (!text) {
+        return null;
+    }
+
+    const reason = t("Verdict." + verdict + (parts[3] ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
         .replace("{0}", verdict === "ModeUp" || verdict === "ModeDown"
             ? t("Mode." + parts[3], parts[3])
             : verdict === "Schedule"
                 ? t("Schedule." + parts[3], SCHEDULE_FALLBACKS[parts[3]] || parts[3])
                 : (parts[3] || "").replace(/^-/, ""));
+
+    // The figure the verdict was reached on, so the line says what it rests on without
+    // being asked; a dash means no route pass has measured this line yet.
+    const load = parts[4] && parts[4] !== "-"
+        ? t("CellLoad", "{0}% full at the recommended fleet").replace("{0}", parts[4])
+        : "";
+    const why = EXPLAINED[verdict]
+        ? (load ? reason + " \u00b7 " + load : reason)
+        : (load || reason);
 
     // A click does the part of the plan the game can apply by itself \u2014 a fleet or a
     // schedule change, both of which the player could make in the line panel. A verdict
@@ -382,27 +424,18 @@ function TransitCell({ parts }) {
         }
     };
 
-    // The figure the verdict was reached on, so the row says what it rests on without
-    // being asked; a dash means no route pass has measured this line yet.
-    const load = parts[4] && parts[4] !== "-"
-        ? " \u00b7 " + t("CellLoad", "{0}% full at the recommended fleet").replace("{0}", parts[4])
-        : "";
-    const hint = mine
-        ? describePlan(t, plan) + (planDrawn ? " \u00b7 " + t("PlanDrawn", "the re-traced route is on the map") : "")
-        : title + load;
-
-    return h("div", {
-        className: (pageClasses.cellDouble || "") + " ta-cell",
-        onClick: text ? act : null,
-    },
+    return h("div", { className: "ta-note", onClick: act },
         h("div", {
-            className: "ta-cell-dot",
+            className: "ta-note-dot",
             style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
         }),
-        h("div", { className: "ta-cell-text" }, text),
-        // No header cell exists to label this column (the vanilla header is private),
-        // so the row carries its own explanation.
-        text ? h("div", { className: "ta-cell-hint" + (mine ? " ta-cell-plan" : "") }, hint) : null);
+        h("div", { className: "ta-note-action" }, text),
+        h("div", { className: "ta-note-reason" },
+            mine
+                ? describePlan(t, plan) + (planDrawn ? " \u00b7 " + t("PlanDrawn", "the re-traced route is on the map") : "")
+                : why),
+        h("div", { className: "ta-note-do" },
+            structural ? t("NoteShow", "show me") : t("NoteApply", "apply")));
 }
 
 // Suggestions, under the vanilla list and in its shape. They are not game entities,
@@ -452,9 +485,12 @@ function SuggestionsSection() {
         }));
 }
 
-// Wraps a vanilla line row so our cell sits BESIDE it rather than under it: a
-// sibling returned from the extension would land outside the row and become its own
-// entry in the list.
+// Wraps a vanilla line row so our note sits UNDER it. Beside it does not work: the
+// overview's header row is a private const inside the game's page module, so an added
+// column can carry a value but never a heading — and worse, taking width from the row
+// pulled every vanilla column out from under its own heading by however wide our text
+// happened to be. Stacked, the vanilla row keeps every pixel and every alignment it
+// had, and the note reads as a remark about the line above it.
 function extendOverview(registry) {
     pageClasses = readVanilla(registry, VANILLA.pageStyle, "classes") || {};
 
@@ -468,15 +504,15 @@ function extendOverview(registry) {
             }
 
             return h("div", { className: "ta-overview-row" },
-                h("div", { className: "ta-overview-vanilla" }, h(Original, props)),
-                h(TransitCell, { parts }));
+                h(Original, props),
+                h(TransitNote, { parts }));
         });
     }
 
     if (readVanilla(registry, VANILLA.page, "TransportationOverviewPage")) {
         registry.extend(VANILLA.page, "TransportationOverviewPage", (Original) => (props) =>
             h("div", { className: "ta-overview-page" },
-                h(Original, props),
+                h("div", { className: "ta-overview-body" }, h(Original, props)),
                 h(SuggestionsSection, null)));
     }
 }

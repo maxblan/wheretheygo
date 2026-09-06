@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Globalization;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
@@ -10,7 +11,12 @@ namespace TransitArchitect
     // instance, and the payloads are the delimited strings ui-module.md describes.
     public sealed partial class TransitArchitectSystem
     {
-        private static string s_RouteSummary = "No route suggestions yet.";
+        // The Options page prints this verbatim, so it is built here rather than in
+        // PanelPayload: the payload code is compiled by the offline harness with no
+        // game assemblies, and so cannot reach the player's language. The suggestions
+        // themselves are a list in the Transportation overview; this is the one line
+        // that says whether there are any.
+        private static string s_RouteSummary = string.Empty;
 
         private static string s_RouteList = string.Empty;
 
@@ -49,6 +55,25 @@ namespace TransitArchitect
         public static string RouteUpdateText => s_RouteUpdate;
 
         public static void RequestApplyRouteUpdate() => s_ApplyRouteUpdate = true;
+
+        // The Options page's heat-map switch. A static request rather than a direct
+        // call, because the settings object outlives the system and is edited from the
+        // main menu, where there is no city and no system to talk to.
+        private static int s_InfoviewRequest = -1;
+
+        public static void RequestInfoview(bool on) => s_InfoviewRequest = on ? 1 : 0;
+
+        private void HandleInfoviewRequest()
+        {
+            if (s_InfoviewRequest < 0)
+            {
+                return;
+            }
+
+            bool on = s_InfoviewRequest == 1;
+            s_InfoviewRequest = -1;
+            SetInfoviewActive(on);
+        }
 
         // One row per existing line for the vanilla transport overview.
         public static string OverviewRowsText => s_OverviewRows;
@@ -123,6 +148,28 @@ namespace TransitArchitect
             s_OverviewRows = PanelPayload.OverviewRows(m_LineHealth);
         }
 
+        // Why there is nothing to suggest, in the three cases that mean different
+        // things to the player: the mod has not seen the city yet, it has seen it and
+        // found no journeys, or it looked and everything worth carrying is carried.
+        private static string EmptyRouteSummary(int tripCount, int assignedPairs)
+        {
+            if (tripCount < 0)
+            {
+                return Loc.Text("NoCorridor", "No corridor was strong enough to suggest a line.");
+            }
+
+            if (tripCount == 0)
+            {
+                return Loc.Text("NoJourneys", "No journeys found yet — load a city and let it run.");
+            }
+
+            return Loc.Text(
+                "NothingUnserved",
+                "{0} journeys, {1} routed, but no new line would improve enough of what is still unserved.",
+                tripCount.ToString(CultureInfo.InvariantCulture),
+                assignedPairs.ToString(CultureInfo.InvariantCulture));
+        }
+
         private void UpdateRouteSummary(int tripCount, int assignedPairs)
         {
             // Both are positions in the list about to be replaced. Nothing may be shown
@@ -133,12 +180,15 @@ namespace TransitArchitect
             if (m_Routes.Count == 0)
             {
                 s_RouteList = string.Empty;
-                s_RouteSummary = PanelPayload.EmptyRouteSummary(tripCount, assignedPairs);
+                s_RouteSummary = EmptyRouteSummary(tripCount, assignedPairs);
                 return;
             }
 
             s_RouteList = PanelPayload.RouteRows(m_Routes, m_UnservedTravelWeight);
-            s_RouteSummary = PanelPayload.RouteSummary(m_Routes);
+            s_RouteSummary = Loc.Text(
+                "Suggestions",
+                "{0} suggestion(s) ready — open the Transportation overview to see them.",
+                m_Routes.Count.ToString(CultureInfo.InvariantCulture));
         }
     }
 }

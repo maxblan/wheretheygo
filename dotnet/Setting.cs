@@ -14,8 +14,8 @@ namespace TransitArchitect
     // "Advanced". Nothing is hidden — the mod is meant to be usable without ever
     // opening the second tab.
     [FileLocation(nameof(TransitArchitect))]
-    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup, kStatusGroup, kPresetGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
-    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup, kStatusGroup, kPresetGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
+    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup, kStatusGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
+    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup, kStatusGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
     public sealed class Setting : ModSetting
     {
         // Tabs. The strings are UI ids, not persistence keys (settings files key on
@@ -29,7 +29,6 @@ namespace TransitArchitect
         public const string kStatusGroup = "Status";
 
         // Groups of the Advanced tab.
-        public const string kPresetGroup = "Preset";
         public const string kWeightsGroup = "Weights";
         public const string kTuningGroup = "Tuning";
         public const string kCalibrationGroup = "Calibration";
@@ -38,6 +37,20 @@ namespace TransitArchitect
         // property setters and ClampAll all reference these.
         public const float kWeightMin = 0f;
         public const float kWeightMax = 2f;
+
+        // The weight sliders are shown as whole percents, and their bounds have to be
+        // given in that same scaled space. Game.UI.Menu.AutomaticSettings.AddFloatSlider
+        // (decompiled 2026-09-06) reads the property through
+        // `value * scalarMultiplier` but passes `min`/`max` through untouched, so a bar
+        // running 0..2 against a value of 100 sat at the far right for every weight —
+        // seven sliders that all looked identical whatever they held.
+        public const float kWeightScale = 100f;
+
+        public const float kWeightSliderMin = kWeightMin * kWeightScale;
+
+        public const float kWeightSliderMax = kWeightMax * kWeightScale;
+
+        public const float kWeightSliderStep = 5f;
         public const int kCatchmentMin = 150;
         public const int kCatchmentMax = 1000;
         public const int kCatchmentStep = 25;
@@ -86,6 +99,8 @@ namespace TransitArchitect
         private RouteGoal m_Objective;
         private int m_RouteCount;
         private bool m_ShowRoutes = true;
+        private bool m_ShowHeatmap = true;
+        private bool m_DeveloperTools;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -100,7 +115,7 @@ namespace TransitArchitect
         }
 
         [SettingsUIButton]
-        [SettingsUISection(kAdvancedSection, kPresetGroup)]
+        [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public bool ApplyPresetWeights
         {
             set => ApplyPreset(m_Mode);
@@ -109,7 +124,7 @@ namespace TransitArchitect
         // The W1..W4 property names are the persistence keys of already-shipped
         // settings files; renaming them would silently drop users' saved weights.
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W1
         {
@@ -117,7 +132,7 @@ namespace TransitArchitect
             set => m_W1 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W2
         {
@@ -125,7 +140,7 @@ namespace TransitArchitect
             set => m_W2 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W3
         {
@@ -133,7 +148,7 @@ namespace TransitArchitect
             set => m_W3 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W4
         {
@@ -141,7 +156,7 @@ namespace TransitArchitect
             set => m_W4 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W5
         {
@@ -149,7 +164,7 @@ namespace TransitArchitect
             set => m_W5 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W6
         {
@@ -157,7 +172,7 @@ namespace TransitArchitect
             set => m_W6 = ClampWeight(value);
         }
 
-        [SettingsUISlider(min = kWeightMin, max = kWeightMax, step = 0.05f, scalarMultiplier = 100f, unit = Unit.kFloatTwoFractions)]
+        [SettingsUISlider(min = kWeightSliderMin, max = kWeightSliderMax, step = kWeightSliderStep, scalarMultiplier = kWeightScale, unit = Unit.kPercentage)]
         [SettingsUISection(kAdvancedSection, kWeightsGroup)]
         public float W7
         {
@@ -227,6 +242,20 @@ namespace TransitArchitect
         {
             get => m_SiteCount;
             set => m_SiteCount = ClampInt(value, kSiteCountMin, kSiteCountMax);
+        }
+
+        // The suitability map itself. The game's infoview menu switches it too — this is
+        // the same switch in the place a player looks for settings, and it is persisted
+        // so a city opens the way it was left.
+        [SettingsUISection(kSection, kPlanningGroup)]
+        public bool ShowHeatmap
+        {
+            get => m_ShowHeatmap;
+            set
+            {
+                m_ShowHeatmap = value;
+                TransitArchitectSystem.RequestInfoview(value);
+            }
         }
 
         [SettingsUISection(kSection, kPlanningGroup)]
@@ -301,9 +330,11 @@ namespace TransitArchitect
         // not a preference.
         // Writes the offline verification pipeline a canonical instance of the current
         // city. Read-only: it exports what the mod already computed and changes
-        // nothing. See verification/README.md.
+        // nothing. See verification/README.md. Hidden unless the developer switch is
+        // on: it is the mod's own test harness, not a thing to hand a player.
         [SettingsUIButton]
         [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
+        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
         [SuppressMessage("Performance", "CA1822:Mark members as static",
             Justification = "The game's settings UI binds to instance properties by "
                 + "reflection; a static member would not appear in the Options page.")]
@@ -311,6 +342,23 @@ namespace TransitArchitect
         {
             set => TransitArchitectSystem.RequestVerificationExport();
         }
+
+        // Shows the mod's own diagnostics in this page. Off for everyone who is not
+        // working on the mod.
+        [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
+        public bool DeveloperTools
+        {
+            get => m_DeveloperTools;
+            set => m_DeveloperTools = value;
+        }
+
+        // The settings UI calls this by name through SettingsUIHideByCondition; it is
+        // not dead code, and it cannot be static for the same reason the read-only
+        // string properties cannot be.
+        [SuppressMessage("Performance", "CA1822:Mark members as static",
+            Justification = "The game's settings UI resolves the condition on the "
+                + "instance by reflection.")]
+        public bool DeveloperToolsOff() => !m_DeveloperTools;
 
         [SettingsUIHidden]
         public string RidershipData
@@ -322,6 +370,8 @@ namespace TransitArchitect
         public override void SetDefaults()
         {
             m_Mode = ModePreset.Bus;
+            m_ShowHeatmap = true;
+            m_DeveloperTools = false;
             m_HighlightShare = Assumptions.HighlightShareDefaultPercent;
             m_MaxSlope = Assumptions.MaxSlopeDefaultDegrees;
             m_EquityWalkMinutes = Assumptions.EquityWalkMinutesDefault;
@@ -491,7 +541,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Service standards" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStatusGroup), "Status" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPresetGroup), "Preset" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kWeightsGroup), "Weights" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kTuningGroup), "Tuning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kCalibrationGroup), "Calibration" },
@@ -530,7 +579,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.UtilisationFloorPercent)), "Minimum utilisation" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.UtilisationFloorPercent)), "Peak-hour boardings over peak-hour seats a suggested line must reach. Lines that would run emptier are not suggested." },
                 { "TransitArchitect.Panel[Equity]", "Served journeys" },
-                { "TransitArchitect.Panel[EquityValue]", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) \u00b7 Gini of access walk {3}" },
                 { "TransitArchitect.Panel[EquityEmpty]", "not measured yet" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CatchmentRadius)), "Catchment radius" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CatchmentRadius)), "Walking distance a stop serves. Residents, jobs and existing stops within this radius affect the score. Typical: 300-400 m for bus, 600-800 m for metro." },
@@ -543,6 +591,10 @@ namespace TransitArchitect
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.SiteCount)), "Recommended sites" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.SiteCount)), "How many discrete candidate sites the Recommended sites layer marks." },
 
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Show the suitability map" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Opens the mod's own infoview: a green-to-red map of where a new stop of the chosen mode would do the most good. The game's infoview menu holds the same switch." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.DeveloperTools)), "Developer tools" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.DeveloperTools)), "Shows the mod's own diagnostics in this page, including the verification export. Nothing here affects a normal game." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowRoutes)), "Show suggested routes" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowRoutes)), "Draw the suggested lines and their stops on the map while this infoview is open." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Objective)), "Route objective" },
@@ -565,12 +617,12 @@ namespace TransitArchitect
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Write this city's scoring inputs and results to ModsData/TransitArchitect/verification as canonical JSON, for the offline verification pipeline. Read-only: it exports what the mod already computed and changes nothing. The files are written after the next recalculation; the mod log names the folder." },
 
                 { "TransitArchitect.Infomode", "Station Suitability" },
-                { "Infoviews.INFOVIEW[TransitArchitect]", "Station Suitability" },
-                { "Infoviews.INFOVIEW_TOOLTIP[TransitArchitect]", "Shows how suitable each location is for a new transit stop." },
+                { "Infoviews.INFOVIEW[TransitArchitect]", "Transit Architect" },
+                { "Infoviews.INFOVIEW_TOOLTIP[TransitArchitect]", "Where a new stop would do the most good, and how far each building is from the service you already run." },
 
                 { "Infoviews.INFOMODE[TransitArchitect]", "Station Suitability" },
                 { "Infoviews.INFOMODE_TOOLTIP[TransitArchitect]", "Combined score. Green-yellow-red heatmap of station placement quality; how many tiles count as “best” is the Highlight share option." },
-                { "Infoviews.INFOMODE[TransitArchitectTransitAccess]", "Transit access (buildings)" },
+                { "Infoviews.INFOMODE[TransitArchitectTransitAccess]", "Walk to transit (buildings)" },
                 { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectTransitAccess]", "Colours every building by the walk from its door to the nearest stop your lines actually serve: green is a short walk, red is at or beyond the walking horizon set under Service standards." },
                 { "Infoviews.INFOMODE[TransitArchitectSites]", "Recommended sites" },
                 { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectSites]", "The best distinct candidate locations, spaced at least one catchment apart and ranked by walk-distance score." },
@@ -616,8 +668,25 @@ namespace TransitArchitect
                 // Control panel strings. The panel resolves these itself through cs2/l10n with
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
+                // Status lines the Options page prints verbatim (see Loc).
+                { "TransitArchitect.Status[Suggestions]", "{0} suggestion(s) ready — open the Transportation overview to see them." },
+                { "TransitArchitect.Status[NoneYet]", "No route suggestions yet." },
+                { "TransitArchitect.Status[NoCorridor]", "No corridor was strong enough to suggest a line." },
+                { "TransitArchitect.Status[NoJourneys]", "No journeys found yet — load a city and let it run." },
+                { "TransitArchitect.Status[NothingUnserved]", "{0} journeys, {1} routed, but no new line would improve enough of what is still unserved." },
+                { "TransitArchitect.Status[Calibration.Waiting]", "Waiting for a city to load." },
+                { "TransitArchitect.Status[Calibration.Collecting]", "Collecting while unpaused: {0} of {1} stops ready, {2} tracked (need {3} samples each)" },
+                { "TransitArchitect.Status[Calibration.Fit]", "R² {0} over {1} stops — suggested: demand {2}, jobs {3}, future {4}" },
                 { "TransitArchitect.Panel[Title]", "Transit Architect" },
-                { "TransitArchitect.Panel[Heatmap]", "Suitability heat map" },
+                { "TransitArchitect.Panel[Heatmap]", "Suitability map" },
+                { "TransitArchitect.Panel[Close]", "Close" },
+                { "TransitArchitect.Panel[Collapse]", "Collapse" },
+                { "TransitArchitect.Panel[Expand]", "Expand" },
+                { "TransitArchitect.Panel[EquityCaption]", "reach a served stop within {0} min at both ends \u00b7 target {1} % \u00b7 Gini {2}" },
+                { "TransitArchitect.Panel[DataBasisCaption]", "of the last {0} h \u00b7 {1} readings" },
+                { "TransitArchitect.Panel[DataBasisNone]", "nothing yet" },
+                { "TransitArchitect.Panel[NoteApply]", "apply" },
+                { "TransitArchitect.Panel[NoteShow]", "show me" },
                 { "TransitArchitect.Panel[On]", "On" },
                 { "TransitArchitect.Panel[Off]", "Off" },
                 { "TransitArchitect.Panel[SuggestedLines]", "Suggested lines" },
@@ -630,8 +699,7 @@ namespace TransitArchitect
                 { "TransitArchitect.Panel[Schedule.Day]", "by day only (06:00\u201322:00)" },
                 { "TransitArchitect.Panel[Schedule.Night]", "by night only (22:00\u201306:00)" },
                 { "TransitArchitect.Panel[DataBasis]", "Data collected" },
-                { "TransitArchitect.Panel[DataBasisValue]", "{0} h of {1} h \u00b7 {2} readings" },
-                { "TransitArchitect.Panel[DataBasisEmpty]", "no lines to watch yet \u2014 readings start with your first one" },
+                { "TransitArchitect.Panel[DataBasisEmpty]", "readings start with your first line" },
                 { "TransitArchitect.Panel[ObservedTrips]", "{0} shopping/leisure journeys seen over {1} h" },
                 { "TransitArchitect.Panel[ObservedTripsEmpty]", "no shopping/leisure journeys seen yet" },
                 { "TransitArchitect.Panel[Mode.Bus]", "Bus" },

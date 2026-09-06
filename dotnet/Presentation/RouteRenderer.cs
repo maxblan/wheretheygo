@@ -63,6 +63,14 @@ namespace TransitArchitect
 
         private const float SiteMarkerMinOpacity = 0.45f;
 
+        // Deliberately NOT a mode colour. A recommended site and a suggested line's stop
+        // are two different answers, and drawing both in the mode's blue made them read
+        // as one thing on the map. Gold belongs to neither Bus (38,140,255), Tram
+        // (255,115,26), Metro, Train nor Ferry.
+        private static readonly Color SiteMarkerColor = new Color(1f, 0.84f, 0.36f, 1f);
+
+        private static readonly Color SiteMarkerCoreColor = new Color(0.06f, 0.08f, 0.11f, 0.85f);
+
         private const float TerrainOffset = 4f;
 
 
@@ -149,7 +157,7 @@ namespace TransitArchitect
             // bare terrain there is nothing to read them against.
             if (anySites)
             {
-                DrawSiteMarkers(buffer, ref heightData, settings.Mode);
+                DrawSiteMarkers(buffer, ref heightData);
             }
 
             if (anyProposal)
@@ -272,10 +280,9 @@ namespace TransitArchitect
         // One ring per recommended site, best first. Two circles rather than one: the
         // mode colour outside and a dark core inside, so a marker reads as a target on
         // top of the heat map instead of as another blob of it.
-        private void DrawSiteMarkers(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, ModePreset mode)
+        private void DrawSiteMarkers(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData)
         {
-            Color color = ColorFor(mode);
-            var core = new Color(0.06f, 0.08f, 0.11f, 0.85f);
+            Color color = SiteMarkerColor;
             int count = m_OverlaySystem.SiteCount;
             for (int rank = 0; rank < count; rank++)
             {
@@ -293,7 +300,7 @@ namespace TransitArchitect
                 float height = TerrainUtils.SampleHeight(ref heightData, flat);
                 var position = new float3(flat.x, height + TerrainOffset, flat.z);
                 buffer.DrawCircle(color, position, diameter);
-                buffer.DrawCircle(core, position, diameter * SiteMarkerCoreShare);
+                buffer.DrawCircle(SiteMarkerCoreColor, position, diameter * SiteMarkerCoreShare);
             }
         }
 

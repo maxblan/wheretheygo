@@ -316,37 +316,30 @@ namespace TransitArchitect
             return true;
         }
 
-        // One line, because the options page renders this as a single read-only
-        // field. The full breakdown is logged instead.
+        // One line, because the options page renders this as a single read-only field,
+        // and in the player's language, because the page prints it verbatim. The full
+        // breakdown is logged instead.
         public string BuildSummary()
         {
-            var builder = new StringBuilder();
-
             if (m_HasFit)
             {
-                _ = builder.Append("R² ");
-                _ = builder.Append(m_RSquared.ToString("F2", CultureInfo.InvariantCulture));
-                _ = builder.Append(" over ");
-                _ = builder.Append(m_FittedStops);
-                _ = builder.Append(" stops — suggested: demand ");
-                _ = builder.Append(m_Fitted[0].ToString("F2", CultureInfo.InvariantCulture));
-                _ = builder.Append(", jobs ");
-                _ = builder.Append(m_Fitted[1].ToString("F2", CultureInfo.InvariantCulture));
-                _ = builder.Append(", future ");
-                _ = builder.Append(m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
-                return builder.ToString();
+                return Loc.Text(
+                    "Calibration.Fit",
+                    "R² {0} over {1} stops — suggested: demand {2}, jobs {3}, future {4}",
+                    m_RSquared.ToString("F2", CultureInfo.InvariantCulture),
+                    m_FittedStops.ToString(CultureInfo.InvariantCulture),
+                    m_Fitted[0].ToString("F2", CultureInfo.InvariantCulture),
+                    m_Fitted[1].ToString("F2", CultureInfo.InvariantCulture),
+                    m_Fitted[2].ToString("F2", CultureInfo.InvariantCulture));
             }
 
-            _ = builder.Append("Collecting while unpaused: ");
-            _ = builder.Append(ReadyStops);
-            _ = builder.Append(" of ");
-            _ = builder.Append(Assumptions.CalibrationMinStops);
-            _ = builder.Append(" stops ready, ");
-            _ = builder.Append(m_Records.Count);
-            _ = builder.Append(" tracked (need ");
-            _ = builder.Append(Assumptions.CalibrationMinSamplesPerStop);
-            _ = builder.Append(" samples each)");
-            return builder.ToString();
+            return Loc.Text(
+                "Calibration.Collecting",
+                "Collecting while unpaused: {0} of {1} stops ready, {2} tracked (need {3} samples each)",
+                ReadyStops.ToString(CultureInfo.InvariantCulture),
+                Assumptions.CalibrationMinStops.ToString(CultureInfo.InvariantCulture),
+                m_Records.Count.ToString(CultureInfo.InvariantCulture),
+                Assumptions.CalibrationMinSamplesPerStop.ToString(CultureInfo.InvariantCulture));
         }
 
         // Compact CSV so the whole series survives in the settings file. One record

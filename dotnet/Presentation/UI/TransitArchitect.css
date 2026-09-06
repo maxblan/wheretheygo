@@ -1,26 +1,31 @@
-/* Control panel styling.
+/* Transit Architect styling.
  *
- * cohtml notes that shaped this file: CSS `gap` is not supported, so spacing uses
- * margins; 1rem is about one design pixel, so sizes are written in rem to scale
- * with the game's UI scale setting the same way vanilla panels do. */
+ * Two rules shaped this file. cohtml supports no CSS `gap`, so spacing is margins;
+ * and 1rem is about one design pixel, so every size is in rem and scales with the
+ * game's UI scale exactly as a vanilla panel does.
+ *
+ * Colours are written out rather than taken from the game's CSS variables. Those are
+ * declared on a game panel root, and everything here is either appended beside that
+ * subtree or injected into a component whose ancestors are not ours — cohtml drops the
+ * whole declaration when a custom variable does not resolve, which once left the
+ * toolbar button with no width at all. The values below are read off the vanilla
+ * panels so the result matches them without depending on them. */
+
+/* ---------------------------------------------------------------------------
+   The mod's own window: two city-wide figures and the map switch. */
 
 .ta-panel {
-    /* Right-hand side on purpose: the vanilla infoview legend occupies the top-left
-       and grew tall enough with ten layers to sit underneath this panel. */
+    /* Right-hand side on purpose: the vanilla infoview legend owns the top-left. */
     position: absolute;
     top: 60rem;
     right: 60rem;
-    width: 620rem;
-    /* The scroll list can only fill its column if some ancestor has a DEFINITE
-       height to divide up. Without this the panel was sized by its content, flex-grow
-       had nothing to resolve against, and the list fell back to its own min-height
-       with dead panel below it. */
+    /* Sized to its content, with a ceiling. The old fixed 620rem was twice as wide as
+       anything in it once the lists moved into the game's own overview. */
+    width: 300rem;
     max-height: 78vh;
     display: flex;
     flex-direction: column;
-    padding: 8rem;
-    background-color: rgba(12, 18, 26, 0.92);
-    border: 1rem solid rgba(120, 170, 220, 0.35);
+    background-color: rgba(11, 19, 28, 0.94);
     border-radius: 4rem;
     color: #dfe8f2;
     font-size: 12rem;
@@ -29,63 +34,135 @@
 }
 
 .ta-panel-collapsed {
-    width: 180rem;
+    width: 300rem;
 }
 
+/* A title bar in the shape the game uses: name on the left, controls on the right. */
 .ta-header {
-    display: block;
-    width: 100%;
-    padding: 5rem 6rem;
-    margin-bottom: 6rem;
-    background-color: rgba(40, 70, 100, 0.75);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 4rem 4rem 4rem 10rem;
+    background-color: rgba(28, 45, 66, 0.95);
+    border-radius: 4rem 4rem 0 0;
+}
+
+.ta-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #ffffff;
+    font-size: 13rem;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ta-icon {
+    flex: 0 0 auto;
+    width: 22rem;
+    height: 22rem;
+    margin-left: 2rem;
+    padding: 0;
+    background-color: transparent;
     border: none;
     border-radius: 3rem;
-    color: #eaf2fb;
+    color: #a8bccf;
     font-size: 13rem;
-    text-align: left;
+    text-align: center;
     cursor: pointer;
 }
 
-.ta-header:hover {
-    background-color: rgba(60, 100, 140, 0.85);
+.ta-icon:hover {
+    background-color: rgba(120, 170, 220, 0.25);
+    color: #ffffff;
 }
 
+.ta-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 8rem 10rem 10rem 10rem;
+}
+
+/* One figure: quiet label, the number large, the bar it fills, the qualification
+   underneath. */
+.ta-readout {
+    margin-bottom: 12rem;
+}
+
+.ta-readout-label {
+    color: #8fa6bb;
+    font-size: 10rem;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+}
+
+.ta-readout-value {
+    color: #ffffff;
+    font-size: 20rem;
+}
+
+.ta-readout-track {
+    height: 5rem;
+    margin: 4rem 0 3rem 0;
+    background-color: rgba(255, 255, 255, 0.12);
+    border-radius: 3rem;
+    overflow: hidden;
+}
+
+.ta-readout-fill {
+    height: 100%;
+    background-color: rgb(74, 157, 224);
+    border-radius: 3rem;
+}
+
+/* Below target. Amber rather than a dimmed blue: "not there yet" is a state worth
+   naming, and opacity alone read as a rendering accident. */
+.ta-readout-fill-short {
+    background-color: rgb(232, 160, 54);
+}
+
+.ta-readout-caption {
+    color: #93a8bd;
+    font-size: 10rem;
+}
+
+/* The map switch, as close to a vanilla checkbox row as a plain button gets. */
 .ta-row {
-    margin-bottom: 8rem;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
 }
 
 .ta-label {
-    margin-bottom: 2rem;
-    color: #a8bccf;
-    font-size: 11rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #dfe8f2;
+    font-size: 12rem;
 }
 
-/* Button strip standing in for a dropdown. */
-/* Stepper standing in for a range input. */
-/* The map is narrowed to this one. Stated on the row as well as on the map, because
-   the map going quiet is otherwise unexplained. */
-.ta-swatch {
-    width: 14rem;
-    height: 6rem;
-    margin-right: 6rem;
-    border-radius: 2rem;
-}
-
-/* What the list is ordered by, under the row it belongs to. */
 .ta-toggle {
-    width: 60rem;
-    padding: 3rem 0;
-    background-color: rgba(45, 60, 78, 0.9);
-    border: 1rem solid rgba(120, 150, 180, 0.3);
+    flex: 0 0 auto;
+    width: 20rem;
+    height: 20rem;
+    padding: 0;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1rem solid rgba(160, 190, 220, 0.5);
     border-radius: 3rem;
-    color: #c8d6e4;
-    font-size: 11rem;
+    color: #ffffff;
+    font-size: 12rem;
+    text-align: center;
     cursor: pointer;
 }
 
+.ta-toggle:hover {
+    background-color: rgba(120, 170, 220, 0.3);
+}
+
 .ta-toggle-on {
-    background-color: rgba(70, 160, 110, 0.95);
-    border-color: rgba(150, 230, 190, 0.8);
+    background-color: rgb(74, 157, 224);
+    border-color: rgb(140, 200, 245);
     color: #ffffff;
 }
 
@@ -144,89 +221,6 @@
     height: 27rem;
 }
 
-/* Deliberately NOT hiding [class*="infoview-menu"]: that matched the vanilla
-   Infoansicht toggle too, so opening this panel made the game's own infoview button
-   disappear. Our row in the infoview menu is removed by HideInfoviewMenuEntry in the
-   module instead — it cannot be done from C#, because ToolSystem.SetInfoview only
-   activates a view's infomodes while ToolSystem.activeInfoview is non-null, and that
-   getter returns null for any prefab flagged invalid or hidden. */
-
-/* How much of the rolling window has actually been observed. Sits above the controls
-   because it qualifies every number below it. No `gap` — cohtml does not support it. */
-.ta-coverage {
-    margin-bottom: 8rem;
-    padding-bottom: 6rem;
-    border-bottom: 1rem solid rgba(255, 255, 255, 0.12);
-}
-
-.ta-coverage-label {
-    color: #9fb6cc;
-    font-size: 10rem;
-    text-transform: uppercase;
-}
-
-.ta-coverage-value {
-    color: #dce8f2;
-    font-size: 11rem;
-    margin-top: 2rem;
-}
-
-.ta-coverage-empty {
-    color: #708698;
-    font-size: 10rem;
-    margin-top: 2rem;
-}
-
-.ta-coverage-track {
-    margin-top: 4rem;
-    height: 4rem;
-    background-color: rgba(255, 255, 255, 0.12);
-}
-
-.ta-coverage-fill {
-    height: 4rem;
-    background-color: #4a9de0;
-}
-
-.ta-body {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    /* Takes the panel's remaining height below the header. min-height 0 is what lets
-       a flex child be SHORTER than its content, which is the prerequisite for the
-       scroll box below to scroll instead of growing the panel. */
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-.ta-column {
-    width: 300rem;
-    margin-right: 10rem;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-
-.ta-column:last-child {
-    margin-right: 0;
-}
-
-.ta-improve {
-    margin-top: 2rem;
-    margin-left: 14rem;
-    padding: 2rem 6rem;
-    background-color: rgba(45, 70, 100, 0.9);
-    border: 1rem solid rgba(120, 170, 220, 0.35);
-    border-radius: 3rem;
-    color: #dceaf8;
-    font-size: 10rem;
-    cursor: pointer;
-}
-
-.ta-improve:hover {
-    background-color: rgba(70, 110, 160, 0.95);
-}
-
 
 /* ---------------------------------------------------------------------------
    Inside the game's Transportation Overview.
@@ -237,80 +231,94 @@
    ARE borrowed come through the page's own module.scss at runtime, read in
    extendOverview, which is why nothing here sets a column width. */
 
-/* One vanilla row plus our cell. The vanilla row keeps every pixel it had — it is
-   the flex child that grows — and the cell takes only what it needs at the end. */
+/* A vanilla row and our note, stacked. The row is left entirely alone — it keeps its
+   full width, so every one of its columns still lines up with the page's header. */
 .ta-overview-row {
     display: flex;
-    flex-direction: row;
-    align-items: center;
+    flex-direction: column;
 }
 
-.ta-overview-vanilla {
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
+/* The vanilla page keeps whatever height it had; the suggestions below it are what
+   gives way. Without this the added section pushed the panel off the bottom of the
+   screen. */
 .ta-overview-page {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    max-height: 100%;
 }
 
-/* The verdict cell. A coloured dot carries the severity at a glance, the short text
-   says what to do, and the sentence underneath says why. Clickable throughout,
-   because the whole cell is the button. */
-.ta-cell {
+.ta-overview-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* The verdict, as a remark under the line it is about: severity dot, the thing to do,
+   why, and the word that says clicking will do it. */
+.ta-note {
     display: flex;
     flex-direction: row;
-    align-items: center;
+    align-items: flex-start;
+    padding: 2rem 10rem 5rem 34rem;
     cursor: pointer;
-    padding-left: 4rem;
-    padding-right: 4rem;
 }
 
-.ta-cell:hover {
-    background-color: rgba(120, 170, 220, 0.18);
+.ta-note:hover {
+    background-color: rgba(120, 170, 220, 0.16);
 }
 
-.ta-cell-dot {
-    width: 8rem;
-    height: 8rem;
-    border-radius: 4rem;
-    margin-right: 5rem;
+.ta-note-dot {
     flex: 0 0 auto;
+    width: 7rem;
+    height: 7rem;
+    border-radius: 4rem;
+    margin-right: 6rem;
 }
 
-.ta-cell-text {
-    color: #dceaf8;
+.ta-note-action {
+    flex: 0 0 auto;
+    margin-right: 8rem;
+    color: #ffffff;
     font-size: 12rem;
     white-space: nowrap;
 }
 
-/* The column has no header — the overview's header row is a private const inside the
-   game's page module — so the explanation rides along in the row itself, quietly. */
-.ta-cell-hint {
+/* Wraps rather than truncating. The worked-out plan is a full sentence, and an
+   ellipsis in the middle of "split it — 5.9 km is more than the largest…" hides the
+   half that says why. */
+.ta-note-reason {
+    flex: 1 1 auto;
+    min-width: 0;
     color: #9fb6cc;
-    font-size: 10rem;
-    margin-left: 6rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 240rem;
+    font-size: 11rem;
+    white-space: normal;
 }
 
-/* The worked-out plan is a sentence, not a label, so the row it belongs to gives it
-   room and lets it wrap instead of cutting it off at an ellipsis. */
-.ta-cell-plan {
-    white-space: normal;
-    max-width: 420rem;
-    color: #dceaf8;
+/* Says the row is a button without drawing one. Only visible on hover, so a list of
+   ten lines is not a wall of call-to-action. */
+.ta-note-do {
+    flex: 0 0 auto;
+    margin-left: 8rem;
+    color: transparent;
+    font-size: 10rem;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.ta-note:hover .ta-note-do {
+    color: #6fb3ec;
 }
 
 /* Suggestions, under the vanilla list. They are not game entities, so they cannot be
    rows of it; a section below it in the same panel is the honest place. */
 .ta-suggestions {
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
+    max-height: 180rem;
+    overflow-y: auto;
     padding: 6rem 10rem 10rem 10rem;
     border-top: 1rem solid rgba(120, 170, 220, 0.25);
 }
@@ -358,4 +366,27 @@
 
 .ta-suggestion-reach {
     color: #9fb6cc;
+}
+
+.ta-swatch {
+    flex: 0 0 auto;
+    width: 8rem;
+    height: 8rem;
+    border-radius: 2rem;
+    margin-right: 6rem;
+}
+
+.ta-improve {
+    margin-left: 10rem;
+    padding: 2rem 6rem;
+    background-color: rgba(45, 70, 100, 0.9);
+    border: 1rem solid rgba(120, 170, 220, 0.35);
+    border-radius: 3rem;
+    color: #dceaf8;
+    font-size: 10rem;
+    cursor: pointer;
+}
+
+.ta-improve:hover {
+    background-color: rgba(70, 110, 160, 0.95);
 }

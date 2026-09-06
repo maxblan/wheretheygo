@@ -5,6 +5,7 @@ using Colossal.Logging;
 using Colossal.UI;
 using Game;
 using Game.Modding;
+using Game.Rendering;
 using Game.SceneFlow;
 
 namespace TransitArchitect
@@ -63,18 +64,25 @@ namespace TransitArchitect
             // consumes it into the terrain material).
             updateSystem.UpdateAt<TransitArchitectSystem>(SystemUpdatePhase.PreCulling);
 
-            // Route polylines go through OverlayRenderSystem, which drains and
-            // clears its buffer during the Rendering phase — that runs BEFORE
-            // PreCulling, so drawing from the overlay system above would always be a
-            // frame late. Hence a second system in the right phase.
-            updateSystem.UpdateAt<RouteRenderer>(SystemUpdatePhase.Rendering);
+            // BOTH of these are ordered against a named game system, not merely put in
+            // the right phase. Game.UpdateSystem keeps its own list sorted by
+            // (phase, registration index) and IGNORES [UpdateBefore]/[UpdateAfter]
+            // entirely (decompiled 2026-09-06: UpdateSystem.Register/Refresh/SystemData.
+            // CompareTo). A mod registers after every game system, so UpdateAt alone puts
+            // a system LAST in its phase — which is why the building colours never
+            // appeared: ObjectColorSystem reset them to grey and BatchDataSystem had
+            // already uploaded that by the time we wrote ours. The two-type overloads
+            // below are the game's own answer to this, and the only one that works.
 
-            // Also Rendering, and deliberately so: it writes Game.Objects.Color between
-            // Game.Rendering.ObjectColorSystem (which writes it every frame an infoview
-            // is open) and Game.Rendering.BatchDataSystem (which reads it). The
-            // UpdateAfter/UpdateBefore attributes on the class place it there; the phase
-            // has to match or the attributes have nothing to order against.
-            updateSystem.UpdateAt<BuildingAccessColorSystem>(SystemUpdatePhase.Rendering);
+            // Route polylines go through OverlayRenderSystem, which drains and clears
+            // its buffer when it updates. Drawing after that is a frame late, every
+            // frame.
+            updateSystem.UpdateBefore<RouteRenderer, OverlayRenderSystem>(SystemUpdatePhase.Rendering);
+
+            // Buildings coloured by walk time to transit: written into Game.Objects.
+            // Color after ObjectColorSystem has had its say and before BatchDataSystem
+            // reads it (both are Rendering, in that order).
+            updateSystem.UpdateAfter<BuildingAccessColorSystem, ObjectColorSystem>(SystemUpdatePhase.Rendering);
 
             // Bindings for the in-game control panel. The panel's own code ships as
             // TransitArchitect.mjs beside the DLL, which the game loads by

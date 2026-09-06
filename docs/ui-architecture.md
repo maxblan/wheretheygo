@@ -249,3 +249,36 @@ long as the system writing it is ordered after `ObjectColorSystem` and before `B
 a runtime-created notification icon prefab is the wrong path, because
 `NotificationIconRenderSystem` packs every registered icon into one `Texture2DArray` and takes its
 format from the last prefab it walks.
+
+## What the first in-game run found (2026-09-06, five screenshots)
+
+Everything below was wrong in the build that shipped that afternoon, and is fixed. The
+two root causes were worth the decompiler.
+
+**`[UpdateBefore]` and `[UpdateAfter]` do nothing in this game.** `Game.UpdateSystem`
+keeps its own list and sorts it by `(phase, registration index)` — see `Register`,
+`Refresh` and `SystemData.CompareTo`. The attributes are never read. A mod registers
+after every game system, so `UpdateAt<T>(phase)` puts `T` **last** in that phase. That
+is why the buildings stayed grey: `ObjectColorSystem` reset every building to
+`default(Color)` and `BatchDataSystem` uploaded that before our system ever ran. The
+game's own answer is the two-type overload, `UpdateAfter<Ours, Theirs>(phase)`, which
+threads our system in beside a named one through `m_RefMap`. `RouteRenderer` had the
+same bug in the other direction and drew a frame late, every frame; it is now
+`UpdateBefore<RouteRenderer, OverlayRenderSystem>`.
+
+**A settings slider compares the scaled value against unscaled bounds.**
+`Game.UI.Menu.AutomaticSettings.AddFloatSlider` reads the property as
+`value * scalarMultiplier` but passes `min`/`max` straight through. With
+`scalarMultiplier = 100` and `min/max = 0..2`, all seven weight sliders drew a full bar
+whatever they held. Bounds now live in the scaled space (`kWeightSliderMin/Max`).
+
+Two smaller findings, both about how much of the screen the mod was claiming:
+
+- An extra **column** in the Transportation Overview cannot work. The header row is a
+  private const in the page module, so it gets no heading — and taking width from the
+  row pulled every vanilla column out from under its own heading, by however wide our
+  text happened to be. The verdict is now a **note under the row**, which leaves the
+  vanilla row untouched.
+- A terrain infomode whose low colour has any alpha at all paints the **whole map**: a
+  tile scores zero wherever it is off the walk network, which was 198 091 of 200 704
+  tiles on Valmare. Every terrain ramp's low end is now fully transparent.

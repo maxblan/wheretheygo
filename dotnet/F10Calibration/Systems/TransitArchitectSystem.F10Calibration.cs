@@ -15,7 +15,7 @@ namespace TransitArchitect
         // Static bridge for the options page. The settings object is constructed
         // before the world exists, so the button properties and the read-only status
         // text talk to the system through these.
-        private static string s_CalibrationStatus = "Waiting for a city to load.";
+        private static string s_CalibrationStatus = string.Empty;
         // The one-shot report that the game moved the overlay internals, shown above the
         // calibration status because the options page has one read-only field for both.
         private static string s_PipelineStatus = string.Empty;
@@ -24,8 +24,18 @@ namespace TransitArchitect
 
         private static bool s_ResetCalibrationRequested;
 
-        public static string CalibrationStatusText =>
-            string.IsNullOrEmpty(s_PipelineStatus) ? s_CalibrationStatus : s_PipelineStatus + "\n" + s_CalibrationStatus;
+        public static string CalibrationStatusText
+        {
+            get
+            {
+                string status = string.IsNullOrEmpty(s_CalibrationStatus)
+                    ? Loc.Text("Calibration.Waiting", "Waiting for a city to load.")
+                    : s_CalibrationStatus;
+                // A pipeline fault is a developer's message and stays in English on
+                // purpose; it names types and files, not things a player can act on.
+                return string.IsNullOrEmpty(s_PipelineStatus) ? status : s_PipelineStatus + "\n" + status;
+            }
+        }
 
         public static void RequestApplyFittedWeights() => s_ApplyFitRequested = true;
 

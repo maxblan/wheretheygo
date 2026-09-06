@@ -11,22 +11,6 @@ namespace TransitArchitect
     internal static class PanelPayload
     {
         // The summary when there is nothing to list: no journeys yet, no corridor, or
-        // journeys that no new line would improve.
-        public static string EmptyRouteSummary(int tripCount, int assignedPairs)
-        {
-            if (tripCount < 0)
-            {
-                return "No corridor was strong enough to suggest a line.";
-            }
-
-            if (tripCount == 0)
-            {
-                return "No journeys found yet — load a city and let it run.";
-            }
-
-            return $"{(tripCount).ToString(CultureInfo.InvariantCulture)} journeys, {(assignedPairs).ToString(CultureInfo.InvariantCulture)} routed, but no new line would improve enough of what is still unserved.";
-        }
-
         // One route per line as "mode|km|stops|vehicles|colour|reach|key|schedule|dayUtil|nightUtil",
         // for the panel to render as a colour-keyed list. A compact string avoids
         // hand-rolling a JSON writer for what is at most a dozen rows. The colour travels
@@ -76,36 +60,6 @@ namespace TransitArchitect
                 _ = list.Append((r.NightUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
             }
             return list.ToString();
-        }
-
-        // The one-line summary the options page shows.
-        public static string RouteSummary(List<SuggestedRoute> routes)
-        {
-            var builder = new StringBuilder();
-            _ = builder.Append(routes.Count);
-            _ = builder.Append(" suggested: ");
-            for (int i = 0; i < routes.Count; i++)
-            {
-                if (i > 0)
-                {
-                    _ = builder.Append("; ");
-                }
-
-                SuggestedRoute route = routes[i];
-                _ = builder.Append('#');
-                _ = builder.Append(i + 1);
-                _ = builder.Append(' ');
-                _ = builder.Append(route.Mode);
-                _ = builder.Append(' ');
-                _ = builder.Append((route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture));
-                _ = builder.Append("km, ");
-                _ = builder.Append(route.Stops.Count);
-                _ = builder.Append(" stops, ");
-                _ = builder.Append(route.Vehicles);
-                _ = builder.Append(" veh");
-            }
-
-            return builder.ToString();
         }
 
         // Two routes are the same suggestion when they run between the same places.

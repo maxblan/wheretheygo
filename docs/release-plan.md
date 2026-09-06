@@ -45,15 +45,23 @@ access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
 - [x] The `MutationObserver` hack is deleted; our infoview row now simply belongs in the game's menu
 - [x] Localisation EN and DE for every key the module uses; the two files carry identical key sets (18a)
 - [x] Payload contracts kept (`|`-delimited rows, `AddUpdateBinding`) and the purity rule held
-- [~] Site markers with rank (11a): drawn as rings sized and faded by rank. **Not clickable** — the
-      overlay buffer draws geometry only and a click needs a tool of its own
-- [ ] Mod icon and thumbnail in the game's style (19a)
-- [ ] Choose the notification icon prefab from the names the next run logs (`s_LineNotificationIconName` is empty, so the markers are off)
-- [ ] Verify the whole reshuffle in the running game: the overview cell, the suggestions section, the
-      building colours, the site rings, the two locales
+- [x] Site markers with rank (11a): rings sized and faded by rank, in a gold that is no
+      mode's colour. **Not clickable** — the overlay buffer draws geometry only and a click
+      needs a tool of its own
+- [x] Mod icon and thumbnail in the game's style (19a) — the toolbar button and infoview icon ship; the Steam thumbnail is block 3
+- [x] First in-game run reviewed and every finding fixed (2026-09-06 13:17 screenshots): system
+      ordering, the slider bars, the overview column, the terrain alpha, the untranslated status
+      lines, the panel chrome. See docs/ui-architecture.md for the two root causes
+- [ ] Choose the notification icon prefab from the names the run logged (`s_LineNotificationIconName`
+      is empty, so the rebuild markers are off). The save offers 160; "Passenger Transport" is the
+      likely one
+- [ ] Second in-game run: verify the note rows, the suggestions section, the building colours (the
+      log now says in one line whether it is colouring and why not), the site rings, both locales
 
 ## 3. Repository hygiene
 
+- [x] The stale `Mods/StationSuitabilityOverlay` deployment is deleted — it was loading beside the
+      renamed mod, so the game ran two copies of it at once (2026-09-06)
 - [ ] Remove or relocate `example-mods/` (three third-party mods) — keep only a note of what was learnt from them
 - [ ] `PublishConfiguration.xml`: description still describes the v1 heat map (Bus 350 m / Metro 600 m, road density); rewrite for v3
 - [ ] Thumbnail.png reviewed

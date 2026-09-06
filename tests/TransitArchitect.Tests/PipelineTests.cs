@@ -164,11 +164,6 @@ namespace TransitArchitect.Tests
             AssertTrue(PanelPayload.RouteRows(new List<SuggestedRoute> { route }, 0f).Split('|')[5] == "0.0", "no unserved travel means no reach");
             AssertTrue(PanelPayload.RouteKeyOf(MakeRoute(ModePreset.Bus, new float2Like(1f, 1f))) == "empty", "a route without two stops has no key");
 
-            AssertTrue(PanelPayload.RouteSummary(new List<SuggestedRoute> { route }) == "1 suggested: #1 Bus " + (route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture) + "km, 3 stops, 2 veh", "the options-page summary");
-            AssertTrue(PanelPayload.EmptyRouteSummary(-1, -1) == "No corridor was strong enough to suggest a line."
-                && PanelPayload.EmptyRouteSummary(0, 0) == "No journeys found yet — load a city and let it run."
-                && PanelPayload.EmptyRouteSummary(12, 7) == "12 journeys, 7 routed, but no new line would improve enough of what is still unserved.", "the three empty summaries");
-
             var health = new LineHealth
             {
                 m_Id = 77,

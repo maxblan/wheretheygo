@@ -32,8 +32,11 @@ namespace TransitArchitect
     // The value comes from the mod's own 32 m tile grid (TransitArchitectSystem's
     // access field), sampled at the building's position — no per-entity storage and no
     // structural change, and the grid is rebuilt only when the equity pass runs.
-    [UpdateAfter(typeof(ObjectColorSystem))]
-    [UpdateBefore(typeof(BatchDataSystem))]
+    //
+    // NO [UpdateAfter]/[UpdateBefore] here, deliberately. Game.UpdateSystem sorts its
+    // own list by (phase, registration index) and never reads those attributes, so they
+    // are documentation that does not run. The real ordering is
+    // UpdateAfter<BuildingAccessColorSystem, ObjectColorSystem> in Mod.cs.
     public sealed partial class BuildingAccessColorSystem : GameSystemBase
     {
         private EntityQuery m_BuildingQuery;
@@ -98,11 +101,23 @@ namespace TransitArchitect
                 return;
             }
 
+            // Only while the player has THIS infomode ticked. The index is zero
+            // whenever it is off, which is also what keeps the buildings vanilla under
+            // somebody else's infoview.
             int index = m_Overlay.TransitAccessInfomodeIndex;
-            if (index <= 0 || index > byte.MaxValue || !TryTakeField())
+            if (index is <= 0 or > byte.MaxValue)
             {
+                Report(index <= 0 ? "the transit-access infomode is off" : "the infomode index does not fit a byte");
                 return;
             }
+
+            if (!TryTakeField())
+            {
+                Report("no walk-time field has been measured yet");
+                return;
+            }
+
+            Report(reason: null);
 
             var job = new ColorBuildingsJob
             {
@@ -115,6 +130,29 @@ namespace TransitArchitect
                 m_ColorType = SystemAPI.GetComponentTypeHandle<Color>(),
             };
             Dependency = job.ScheduleParallel(m_BuildingQuery, Dependency);
+        }
+
+        // Says once why the buildings are not being coloured, and once when they start.
+        // Silent afterwards: this runs every frame an infoview is open.
+        private string? m_Reported = "not started";
+
+        private void Report(string? reason)
+        {
+            string state = reason ?? "colouring";
+            if (string.Equals(m_Reported, state, System.StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            m_Reported = state;
+            if (reason is null)
+            {
+                DeferredLog.Info("Colouring buildings by walk time to transit.");
+            }
+            else
+            {
+                DeferredLog.Info($"Buildings left in their vanilla colours: {reason}.");
+            }
         }
 
         // Copies the overlay system's field when it has changed. False while the mod
