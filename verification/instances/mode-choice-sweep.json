@@ -48,56 +48,78 @@
    {
     "network": "Road",
     "riders_b32": 1120403456,
+    "riders_day_b32": 1117126656,
+    "riders_night_b32": 1103626240,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
     "riders_b32": 1157234688,
+    "riders_day_b32": 1153138688,
+    "riders_night_b32": 1140457472,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
     "riders_b32": 1167867904,
+    "riders_day_b32": 1164599296,
+    "riders_night_b32": 1151090688,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
     "riders_b32": 1203982336,
+    "riders_day_b32": 1200782336,
+    "riders_night_b32": 1187205120,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Road",
     "riders_b32": 1157234688,
+    "riders_day_b32": 1153138688,
+    "riders_night_b32": 1140457472,
     "round_trip_b32": 1161527296
    },
    {
     "network": "Rail",
     "riders_b32": 1167867904,
+    "riders_day_b32": 1164599296,
+    "riders_night_b32": 1151090688,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Rail",
     "riders_b32": 1189765120,
+    "riders_day_b32": 1185925120,
+    "riders_night_b32": 1172987904,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Rail",
     "riders_b32": 1315859240,
+    "riders_day_b32": 1311952990,
+    "riders_night_b32": 1299082024,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Metro",
     "riders_b32": 1167867904,
+    "riders_day_b32": 1164599296,
+    "riders_night_b32": 1151090688,
     "round_trip_b32": 1157234688
    },
    {
     "network": "Water",
     "riders_b32": 1092616192,
+    "riders_day_b32": 1089470464,
+    "riders_night_b32": 1075838976,
     "round_trip_b32": 1148846080
    },
    {
     "network": "Water",
     "riders_b32": 1167867904,
+    "riders_day_b32": 1164599296,
+    "riders_night_b32": 1151090688,
     "round_trip_b32": 1148846080
    }
   ]
@@ -105,7 +127,7 @@
  "expect": {
   "pass": true
  },
- "hash": "5fb026f3cc9b1a018d14d69da175dab07dd83ed8c496502e09d83daaa0b5d0ce",
+ "hash": "810aeb2f0481ec619b8f1f9ff7e174a8aec17cb2c7e729d7e119a12e1447dae3",
  "kind": "mode_choice",
  "name": "mode-choice-sweep",
  "schema_version": 1

@@ -799,6 +799,74 @@
     "stops": 20,
     "target_interval_b32": 1140457472,
     "vehicles": 2
+   },
+   {
+    "capacity": 720,
+    "game_interval_b32": 1134996139,
+    "id": 12,
+    "loop_metres_b32": 1169915904,
+    "mode": "Tram",
+    "name": "L12",
+    "not_enough_vehicles": false,
+    "passengers": 620,
+    "require_vehicles": false,
+    "riders_b32": 3212836864,
+    "riders_day_b32": 0,
+    "riders_night_b32": 0,
+    "round_trip_b32": 1148846080,
+    "sample_capacity": [
+     720,
+     720,
+     720,
+     720,
+     720,
+     720
+    ],
+    "sample_frame": [
+     3730,
+     6460,
+     9190,
+     11920,
+     14650,
+     17380
+    ],
+    "sample_interval_b32": [
+     1134996139,
+     1134996139,
+     1134996139,
+     1134996139,
+     1134996139,
+     1134996139
+    ],
+    "sample_passengers": [
+     600,
+     620,
+     600,
+     610,
+     600,
+     620
+    ],
+    "sample_time_of_day_b32": [
+     1056964608,
+     1056964608,
+     1056964608,
+     1056964608,
+     1056964608,
+     1056964608
+    ],
+    "sample_vehicles": [
+     3,
+     3,
+     3,
+     3,
+     3,
+     3
+    ],
+    "schedule": "DayAndNight",
+    "stop_duration_b32": 1097859072,
+    "stops": 20,
+    "target_interval_b32": 1134996139,
+    "vehicles": 3
    }
   ],
   "median_usage_b32": null,
@@ -820,6 +888,7 @@
    "1": "FleetUp",
    "10": "FleetUp",
    "11": "Healthy",
+   "12": "FleetUp",
    "2": "ModeUp",
    "3": "ModeDown",
    "4": "SplitRoute",
@@ -830,7 +899,7 @@
    "9": "Schedule"
   }
  },
- "hash": "bb0d6d41b30d7bd671f3651a7c92c59478ea74a305198ffea3cf7ec23de12970",
+ "hash": "9900d6c47dc38c037a2464820c32ae4947d088497b5429d77040a1976b67de8b",
  "kind": "line_health",
  "name": "line-health-city",
  "schema_version": 1

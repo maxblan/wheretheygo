@@ -152,7 +152,7 @@ namespace TransitArchitect
             onRoad.Group = candidate.Group;
             onRoad.DemandScored = true;
             PrepareFleet(onRoad, facts);
-            onRoad.EnabledDemand = RidersAlone(settings, onRoad, pass);
+            WeighAlone(settings, onRoad, pass);
             if (!SettleMode(settings, onRoad, index, facts, stops, pass, out float roadUtilisation, out ModePreset? roadNextUp))
             {
                 return false;
@@ -198,8 +198,8 @@ namespace TransitArchitect
             SuggestedRoute variant = route.CopyFor(larger);
             Routes.Restop(variant, larger, stops);
             PrepareFleet(variant, facts);
-            variant.EnabledDemand = RidersAlone(settings, variant, pass);
-            if (TransitModes.ChooseMode(variant.Network, variant.EnabledDemand, facts, m => RoundTripSecondsOf(variant, m, facts), out ModePreset settled, out FleetPlan fleet) && settled == larger)
+            WeighAlone(settings, variant, pass);
+            if (TransitModes.ChooseMode(variant.Network, variant.EnabledDemand, variant.EnabledDemandDay, variant.EnabledDemandNight, facts, m => RoundTripSecondsOf(variant, m, facts), out ModePreset settled, out FleetPlan fleet) && settled == larger)
             {
                 ApplyFleet(variant, fleet, facts);
             }
@@ -303,7 +303,7 @@ namespace TransitArchitect
             nextUp = null;
             utilisation = 0f;
             float RoundTripFor(ModePreset m) => RoundTripSecondsOf(route, m, facts);
-            if (!TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out ModePreset mode, out FleetPlan fleet))
+            if (!TransitModes.ChooseMode(route.Network, route.EnabledDemand, route.EnabledDemandDay, route.EnabledDemandNight, facts, RoundTripFor, out ModePreset mode, out FleetPlan fleet))
             {
                 DeferredLog.Info(
                     $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {route.Network}, riders/day={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)} — DROPPED, no vehicle of any {route.Network} mode is installed");
@@ -314,14 +314,14 @@ namespace TransitArchitect
             {
                 Routes.Restop(route, mode, stops);
                 PrepareFleet(route, facts);
-                route.EnabledDemand = RidersAlone(settings, route, pass);
-                if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out ModePreset again, out fleet) && again != mode)
+                WeighAlone(settings, route, pass);
+                if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, route.EnabledDemandDay, route.EnabledDemandNight, facts, RoundTripFor, out ModePreset again, out fleet) && again != mode)
                 {
                     mode = again;
                     Routes.Restop(route, mode, stops);
                     PrepareFleet(route, facts);
-                    route.EnabledDemand = RidersAlone(settings, route, pass);
-                    _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out _, out fleet);
+                    WeighAlone(settings, route, pass);
+                    _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, route.EnabledDemandDay, route.EnabledDemandNight, facts, RoundTripFor, out _, out fleet);
                 }
             }
 
@@ -343,23 +343,30 @@ namespace TransitArchitect
                 $"  candidate {(index).ToString(CultureInfo.InvariantCulture)}: {route.Network} -> {mode}{(route.BentThroughHub ? " via an interchange" : string.Empty)}, " +
                 $"riders/day alone={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, fleet {(fleet.Vehicles).ToString(CultureInfo.InvariantCulture)} of [{(fleet.Min).ToString(CultureInfo.InvariantCulture)}, {(fleet.Max == int.MaxValue ? "?" : fleet.Max.ToString(CultureInfo.InvariantCulture))}] " +
                 $"(round trip {(route.RoundTripSeconds).ToString("F0", CultureInfo.InvariantCulture)} s -> interval {(fleet.HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)} s), " +
-                $"utilisation alone={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
+                $"utilisation alone={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % (day {(fleet.DayUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, night {(fleet.NightUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %), " +
                 $"{route.Stops.Count} stops, len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m");
             return true;
         }
 
         // The journey weight that would ride this line on its own against the existing
-        // network (the same evaluation WeighCandidatesAlone makes for the pool).
-        private float RidersAlone(Setting settings, SuggestedRoute route, RoutePass pass)
+        // network (the same evaluation WeighCandidatesAlone makes for the pool), split by
+        // period for the fleet rule's period ceiling.
+        private void WeighAlone(Setting settings, SuggestedRoute route, RoutePass pass)
         {
+            route.EnabledDemand = 0f;
+            route.EnabledDemandDay = 0f;
+            route.EnabledDemandNight = 0f;
             if (route.Stops.Count < 2)
             {
-                return 0f;
+                return;
             }
 
             LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute> { route }, 1, pass);
             float[] before = pass.Baseline ??= LineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
-            return (float)LineSet.Evaluate(probe, s_OnlyCandidate, 1, before).Riders[0];
+            LineSetEvaluation alone = LineSet.Evaluate(probe, s_OnlyCandidate, 1, before);
+            route.EnabledDemand = (float)alone.Riders[0];
+            route.EnabledDemandDay = (float)alone.RidersByDay[0];
+            route.EnabledDemandNight = (float)alone.RidersByNight[0];
         }
 
         private static readonly int[] s_OnlyCandidate = { 0 };

@@ -137,7 +137,17 @@ namespace TransitArchitect
         public float HeadwaySeconds;
         public int Min;
         public int Max;
+        // Boardings over seats a day, and over the seats offered in each period (A6.10):
+        // the fleet is sized so that no period is over the ceiling.
         public float Utilisation;
+        public float DayUtilisation;
+        public float NightUtilisation;
+
+        // Over the ceiling in the day as a whole or in either period.
+        public readonly bool Overloads(float ceiling)
+        {
+            return Utilisation > ceiling || DayUtilisation > ceiling || NightUtilisation > ceiling;
+        }
     }
 
     // F6 — the fleet arithmetic the game defines and the mode choice built on it
@@ -232,15 +242,27 @@ namespace TransitArchitect
         // v ≥ riders·T / (ceiling·D·capacity), taken as ⌈(riders·T) / ((ceiling·D)·capacity)⌉
         // in double in exactly that bracketing (D = the game day's movement seconds), at
         // least one vehicle.
-        public static int FleetForDemand(float ridersPerDay, float roundTripSeconds, float capacityPerVehicle, float ceiling)
+        public static int FleetForDemand(float ridersPerDay, float roundTripSeconds, double capacityPerVehicle, float ceiling)
         {
-            if (ridersPerDay <= 0f || roundTripSeconds <= 0f || capacityPerVehicle <= 0f || ceiling <= 0f)
+            if (ridersPerDay <= 0f || roundTripSeconds <= 0f || capacityPerVehicle <= 0.0 || ceiling <= 0f)
             {
                 return 1;
             }
 
             double needed = ((double)ridersPerDay * roundTripSeconds) / (((double)ceiling * Assumptions.MovementSecondsPerGameDay) * capacityPerVehicle);
             return Math.Max(1, (int)Math.Ceiling(needed));
+        }
+
+        // The fleet the day AND each period need under the ceiling (A6.10, user decision
+        // 2026-09-06 question 3a): a period's seats are the vehicle's seats scaled by the
+        // period's share of the day (Daytime.UtilisationInPeriod), so the busier period
+        // binds. The largest of the three requirements.
+        public static int FleetForDemandByPeriod(float ridersPerDay, float ridersByDay, float ridersByNight, float roundTripSeconds, float capacityPerVehicle, float ceiling)
+        {
+            int whole = FleetForDemand(ridersPerDay, roundTripSeconds, capacityPerVehicle, ceiling);
+            int day = FleetForDemand(ridersByDay, roundTripSeconds, (double)capacityPerVehicle * Assumptions.DayShareOfDay, ceiling);
+            int night = FleetForDemand(ridersByNight, roundTripSeconds, (double)capacityPerVehicle * (1f - Assumptions.DayShareOfDay), ceiling);
+            return Math.Max(whole, Math.Max(day, night));
         }
 
         public static int Clamp(int vehicles, int min, int max)
@@ -251,9 +273,9 @@ namespace TransitArchitect
         // The fleet for a line's daily boardings within the game's span, with the
         // interval that fleet yields and the utilisation the boardings give at it
         // (Equity.Utilisation on the derived interval).
-        public static FleetPlan PlanFleet(float ridersPerDay, float roundTripSeconds, float capacityPerVehicle, int min, int max, float ceiling)
+        public static FleetPlan PlanFleet(float ridersPerDay, float ridersByDay, float ridersByNight, float roundTripSeconds, float capacityPerVehicle, int min, int max, float ceiling)
         {
-            int vehicles = Clamp(FleetForDemand(ridersPerDay, roundTripSeconds, capacityPerVehicle, ceiling), min, max);
+            int vehicles = Clamp(FleetForDemandByPeriod(ridersPerDay, ridersByDay, ridersByNight, roundTripSeconds, capacityPerVehicle, ceiling), min, max);
             float headway = GameInterval(roundTripSeconds, vehicles);
             return new FleetPlan
             {
@@ -262,13 +284,16 @@ namespace TransitArchitect
                 Min = min,
                 Max = max,
                 Utilisation = Equity.Utilisation(ridersPerDay, headway, capacityPerVehicle),
+                DayUtilisation = Daytime.UtilisationInPeriod(ridersByDay, headway, capacityPerVehicle, Assumptions.DayShareOfDay),
+                NightUtilisation = Daytime.UtilisationInPeriod(ridersByNight, headway, capacityPerVehicle, 1f - Assumptions.DayShareOfDay),
             };
         }
 
         // Picks the smallest mode the network can carry whose largest allowed fleet
         // the riders do not overload: for each rung, the fleet is sized to the riders
-        // (PlanFleet) and clamped to the game's span for the mode's round trip; the
-        // first rung whose utilisation at that fleet stays under the ceiling wins, the
+        // (PlanFleet, the busier period binding) and clamped to the game's span for the
+        // mode's round trip; the first rung whose utilisation at that fleet stays under
+        // the ceiling in the day and in both periods wins, the
         // largest rung when every one is overloaded. Whether the riders also reach the
         // utilisation FLOOR is the set selection's question, asked on the set's riders
         // — a feeder alone rarely fills anything and still belongs in the set beside
@@ -278,6 +303,8 @@ namespace TransitArchitect
         public static bool ChooseMode(
             RouteNetwork network,
             float ridersPerDay,
+            float ridersByDay,
+            float ridersByNight,
             FleetFacts facts,
             Func<ModePreset, float> roundTripOf,
             out ModePreset mode,
@@ -300,8 +327,8 @@ namespace TransitArchitect
                 mode = option;
                 float roundTrip = roundTripOf(option);
                 facts.FleetSpanFor(option, roundTrip, out int min, out int max);
-                fleet = PlanFleet(ridersPerDay, roundTrip, capacity, min, max, Assumptions.MaxPlannedUtilisation);
-                if (fleet.Utilisation <= Assumptions.MaxPlannedUtilisation)
+                fleet = PlanFleet(ridersPerDay, ridersByDay, ridersByNight, roundTrip, capacity, min, max, Assumptions.MaxPlannedUtilisation);
+                if (!fleet.Overloads(Assumptions.MaxPlannedUtilisation))
                 {
                     return true;
                 }

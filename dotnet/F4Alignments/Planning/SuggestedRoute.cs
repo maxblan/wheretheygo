@@ -19,6 +19,9 @@ namespace TransitArchitect
         // magnitude larger than CapturedFlow and the two must never be compared,
         // combined, or substituted for one another.
         public float EnabledDemand;
+        // The same riders split by period (Daytime), for the fleet rule's period ceiling.
+        public float EnabledDemandDay;
+        public float EnabledDemandNight;
         // Whether EnabledDemand was ever measured. A candidate past the transfer
         // scoring window is left at zero without being routed, and a zero that was
         // never measured is not evidence of anything — it must not be read as "this
@@ -72,6 +75,8 @@ namespace TransitArchitect
                 Mode = mode,
                 CapturedFlow = CapturedFlow,
                 EnabledDemand = EnabledDemand,
+                EnabledDemandDay = EnabledDemandDay,
+                EnabledDemandNight = EnabledDemandNight,
                 DemandScored = DemandScored,
                 Length = Length,
                 Network = Network,

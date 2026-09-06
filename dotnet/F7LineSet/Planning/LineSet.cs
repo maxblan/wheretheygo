@@ -560,16 +560,21 @@ namespace TransitArchitect
 
         // The fleet a candidate runs for the riders a set hands it: sized to the ceiling
         // within the game's span (TransitModes.PlanFleet; A6.8).
-        public static FleetPlan FleetFor(LineSetProblem problem, int candidate, double riders)
+        public static FleetPlan FleetFor(LineSetProblem problem, int candidate, double riders, double ridersByDay, double ridersByNight)
         {
             LineCandidate line = problem.Candidates[candidate];
             float ceiling = problem.UtilisationCeiling > 0f ? problem.UtilisationCeiling : Assumptions.MaxPlannedUtilisation;
-            return TransitModes.PlanFleet((float)riders, line.RoundTripSeconds, line.VehicleCapacity, line.FleetMin, line.FleetMax, ceiling);
+            return TransitModes.PlanFleet((float)riders, (float)ridersByDay, (float)ridersByNight, line.RoundTripSeconds, line.VehicleCapacity, line.FleetMin, line.FleetMax, ceiling);
+        }
+
+        public static FleetPlan FleetFor(LineSetProblem problem, int candidate, LineSetEvaluation evaluation)
+        {
+            return FleetFor(problem, candidate, evaluation.Riders[candidate], evaluation.RidersByDay[candidate], evaluation.RidersByNight[candidate]);
         }
 
         // Boardings per game day over seats offered per game day, for one candidate given
         // the journey weight riding it in a set, at the fleet that weight is sized to.
-        public static float Utilisation(LineSetProblem problem, int candidate, double riders)
+        public static float Utilisation(LineSetProblem problem, int candidate, LineSetEvaluation evaluation)
         {
             LineCandidate line = problem.Candidates[candidate];
             if (line.RoundTripSeconds <= 0f || line.VehicleCapacity <= 0f || problem.MovementSecondsPerDay <= 0f)
@@ -577,7 +582,7 @@ namespace TransitArchitect
                 return 0f;
             }
 
-            return FleetFor(problem, candidate, riders).Utilisation;
+            return FleetFor(problem, candidate, evaluation).Utilisation;
         }
 
         public static LineSetSolution Solve(LineSetProblem problem, long nodeBudget)
@@ -921,9 +926,18 @@ namespace TransitArchitect
 
                 for (int k = 0; k < count; k++)
                 {
-                    float utilisation = Utilisation(m_Problem, chosen[k], evaluation.Riders[chosen[k]]);
-                    if ((m_Problem.UtilisationFloor > 0f && utilisation < m_Problem.UtilisationFloor)
-                        || (m_Problem.UtilisationCeiling > 0f && utilisation > m_Problem.UtilisationCeiling))
+                    LineCandidate line = m_Problem.Candidates[chosen[k]];
+                    if (line.RoundTripSeconds <= 0f || line.VehicleCapacity <= 0f)
+                    {
+                        continue;
+                    }
+
+                    // The floor on the day's boardings, the ceiling on the day AND on each
+                    // period (A6.10): a fleet sized to the busier period is never over it
+                    // unless the span's top is too few vehicles.
+                    FleetPlan fleet = FleetFor(m_Problem, chosen[k], evaluation);
+                    if ((m_Problem.UtilisationFloor > 0f && fleet.Utilisation < m_Problem.UtilisationFloor)
+                        || (m_Problem.UtilisationCeiling > 0f && fleet.Overloads(m_Problem.UtilisationCeiling)))
                     {
                         return false;
                     }

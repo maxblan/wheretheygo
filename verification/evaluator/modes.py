@@ -18,12 +18,17 @@ def check(instance: dict, solution: dict) -> dict:
     all_ok = True
     for spec, subject in zip(data["rows"], solution["rows"]):
         rt = bits_to_f32(spec["round_trip_b32"])
-        ok, mode, vehicles, lo, hi, headway, util = fleet.choose_mode(
-            spec["network"], bits_to_f32(spec["riders_b32"]), facts, policy, lambda _m: rt)
+        riders = bits_to_f32(spec["riders_b32"])
+        # No split in the instance means no period information: only the whole day binds.
+        day = bits_to_f32(spec["riders_day_b32"]) if "riders_day_b32" in spec else 0.0
+        night = bits_to_f32(spec["riders_night_b32"]) if "riders_night_b32" in spec else 0.0
+        ok, mode, vehicles, lo, hi, headway, util, uday, unight = fleet.choose_mode(
+            spec["network"], riders, day, night, facts, policy, lambda _m: rt)
         expected = (ok, mode, vehicles, lo, 0 if hi is None else hi, f32_bits(headway), f32_bits(util),
-                    f32_bits(fleet.delay_per_stop(facts, mode)))
+                    f32_bits(uday), f32_bits(unight), f32_bits(fleet.delay_per_stop(facts, mode)))
         got = (subject["ok"], subject["mode"], subject["fleet"], subject["fleet_min"], subject["fleet_max"],
-               subject["headway_b32"], subject["utilisation_b32"], subject["delay_per_stop_b32"])
+               subject["headway_b32"], subject["utilisation_b32"], subject["day_utilisation_b32"],
+               subject["night_utilisation_b32"], subject["delay_per_stop_b32"])
         match = expected == got
         rows.append({"expected": list(expected), "subject": list(got), "match": match})
         all_ok = all_ok and match

@@ -531,7 +531,12 @@ namespace TransitArchitect.Verification
             {
                 var network = (RouteNetwork)Enum.Parse(typeof(RouteNetwork), row.GetProperty("network").GetString() ?? "Road");
                 float roundTrip = F32(row.GetProperty("round_trip_b32"));
-                bool ok = TransitModes.ChooseMode(network, F32(row.GetProperty("riders_b32")), facts, _ => roundTrip, out ModePreset mode, out FleetPlan fleet);
+                float riders = F32(row.GetProperty("riders_b32"));
+                // No split in the instance means no period information: only the whole
+                // day binds (the period requirement of zero riders is one vehicle).
+                float ridersDay = row.TryGetProperty("riders_day_b32", out JsonElement rd) ? F32(rd) : 0f;
+                float ridersNight = row.TryGetProperty("riders_night_b32", out JsonElement rn) ? F32(rn) : 0f;
+                bool ok = TransitModes.ChooseMode(network, riders, ridersDay, ridersNight, facts, _ => roundTrip, out ModePreset mode, out FleetPlan fleet);
                 rows.Add(new Dictionary<string, object?>
                 {
                     ["ok"] = ok,
@@ -541,6 +546,8 @@ namespace TransitArchitect.Verification
                     ["fleet_max"] = fleet.Max == int.MaxValue ? 0 : fleet.Max,
                     ["headway_b32"] = B32(fleet.HeadwaySeconds),
                     ["utilisation_b32"] = B32(fleet.Utilisation),
+                    ["day_utilisation_b32"] = B32(fleet.DayUtilisation),
+                    ["night_utilisation_b32"] = B32(fleet.NightUtilisation),
                     ["delay_per_stop_b32"] = B32(facts.DelayPerStopSeconds(mode)),
                 });
             }

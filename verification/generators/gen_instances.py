@@ -513,12 +513,14 @@ def fleet_facts():
 
 def mode_choice_sweep():
     """The capacity ladder (S6 v3): the fleet is sized to the riders within the span
-    the slider allows for a 1000 s round trip (bus 1..13); riders climb from one bus
-    to six, then past the largest bus fleet to the tram, then overload every road
+    the slider allows for a 1000 s round trip (bus 1..13); three quarters of the riders
+    travel by day, so the day period binds the fleet (A6.10); riders climb from one bus
+    to seven, then past the largest bus fleet to the tram, then overload every road
     mode; the metro and train lattices carry their own mode; a network with no
     vehicle installed yields no mode; a mode without a line prefab has an unbounded
     span."""
-    rows = [{"network": n, "riders_b32": f32_bits(r), "round_trip_b32": f32_bits(t)} for n, r, t in [
+    rows = [{"network": n, "riders_b32": f32_bits(r), "riders_day_b32": f32_bits(0.75 * r), "riders_night_b32": f32_bits(0.25 * r),
+             "round_trip_b32": f32_bits(t)} for n, r, t in [
         ("Road", 100.0, 1000.0), ("Road", 2000.0, 1000.0), ("Road", 5000.0, 1000.0), ("Road", 100000.0, 1000.0),
         ("Road", 2000.0, 3000.0), ("Rail", 5000.0, 1000.0), ("Rail", 30000.0, 1000.0), ("Rail", 1e9, 1000.0),
         ("Metro", 5000.0, 2000.0), ("Water", 10.0, 1000.0), ("Water", 5000.0, 1000.0)]]
@@ -561,7 +563,7 @@ def _health_line(id_, mode, vehicles, per_vehicle, round_trip, stops, aboard, id
 
 
 def line_health_city():
-    """Eleven lines, one per verdict plus a thin window and a guard case, on the harness's facts (bus
+    """Twelve lines, one per verdict plus a thin window and two guard cases, on the harness's facts (bus
     80 seats, 300 s prefab interval, slider span 1..13 for a 1000 s round trip):
       1 FleetUp   3 buses, planning load 205 -> 4 buses at 70 %
       2 ModeUp    load 1200 needs 22 buses of 13 allowed -> 8 trams
@@ -575,6 +577,8 @@ def line_health_city():
       10 thin     two readings: judged on the last one (200 aboard -> FleetUp)
       11 Healthy  day-only line with zero routed demand: both periods under the floor is
                   not a schedule question, the schedule stays
+      12 FleetUp  a tram of 3 whose load (620) would need 12 buses: no mode down (A6.9,
+                  the smaller mode may not need more vehicles than run today), 4 trams
     No game answers: subject and evaluator must agree exactly; the verdicts are
     expected by id."""
     lines = [
@@ -589,6 +593,7 @@ def line_health_city():
         _health_line(9, "Bus", 2, 80, 1000.0, 20, [100, 105, 100, 104, 100, 102], riders=300.0, riders_day=298.0, riders_night=2.0),
         _health_line(10, "Bus", 2, 80, 1000.0, 20, [10, 200]),
         _health_line(11, "Bus", 2, 80, 1000.0, 20, [100, 105, 100, 104, 100, 102], riders=0.0, schedule="Day"),
+        _health_line(12, "Tram", 3, 240, 1000.0, 20, [600, 620, 600, 610, 600, 620]),
     ]
     inst = {
         "kind": "line_health", "name": "line-health-city",
@@ -601,7 +606,7 @@ def line_health_city():
         },
         "expect": {"subject_exact": True, "verdict_by_id": {
             "1": "FleetUp", "2": "ModeUp", "3": "ModeDown", "4": "SplitRoute", "5": "FleetShort",
-            "6": "FleetDown", "7": "Healthy", "8": "Remove", "9": "Schedule", "10": "FleetUp", "11": "Healthy"}},
+            "6": "FleetDown", "7": "Healthy", "8": "Remove", "9": "Schedule", "10": "FleetUp", "11": "Healthy", "12": "FleetUp"}},
     }
     inst["data"].update(fleet_facts())
     return inst

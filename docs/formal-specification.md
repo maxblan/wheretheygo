@@ -358,22 +358,33 @@ The player sets a vehicle COUNT. The game turns it into an interval and back:
   the mode has no line prefab (I₀ = 0). The mod reads the policy once per save
   (`Fleet.ReadVehicleCountPolicy`) and logs it.
 
-**Fleet rule (A6.8).** For B boardings' worth of riders a day (journeys, each riding
-twice), round trip T, one vehicle's seats c and the ceiling u = 1 (`MaxPlannedUtilisation`):
-`utilisation(v) = fl32((B·2) / (((D / interval(T, v))·2)·c))` in double with D = 4369.07 s
-(`Equity.Utilisation`, the one utilisation formula of the mod); the fleet is
-**v* = clamp(v_demand, min, max)** with
-`v_demand = max(1, ⌈(B·T) / ((u·D)·c)⌉)` (double, in exactly that bracketing;
-`TransitModes.FleetForDemand`), the interval the line runs is `interval(T, v*)` and the
-utilisation reported is `utilisation(v*)`. v_demand is the least fleet whose seats a day
-the boardings do not fill past u (Lean `Verify.LineHealth.fleetFor_minimal` on the exact
-rule); the clamp leaves a fitting fleet unchanged and puts a load past the span at the
-span's top, where `utilisation(max) > u` says the mode is too small.
+**Fleet rule (A6.8, A6.10).** For B boardings' worth of riders a day (journeys, each
+riding twice), round trip T, one vehicle's seats c and the ceiling u = 1
+(`MaxPlannedUtilisation`): `utilisation(v) = fl32((B·2) / (((D / interval(T, v))·2)·c))`
+in double with D = 4369.07 s (`Equity.Utilisation`, the one utilisation formula of the
+mod). The riders also come split by period (B_day, B_night; §7d), and a period offers
+only its share of the day's seats, so **the busier period binds** (A6.10, user decision
+2026-09-06): with
+`v(B, c) = max(1, ⌈(B·T) / ((u·D)·c)⌉)` (double, in exactly that bracketing;
+`TransitModes.FleetForDemand`),
+
+  v_demand = max( v(B, c), v(B_day, c·16/24), v(B_night, c·8/24) )
+
+(`FleetForDemandByPeriod`; a zero rider count in a period asks for one vehicle, so a
+caller with no period information gets the whole-day rule back). The fleet is
+**v* = clamp(v_demand, min, max)**, the interval the line runs is `interval(T, v*)`, and
+the plan reports `utilisation(v*)` alongside the two period utilisations
+(`Daytime.UtilisationInPeriod`). A plan **overloads** when any of the three exceeds u
+(`FleetPlan.Overloads`). Each of the three v terms is the least fleet whose seats in its
+period the boardings do not fill past u (Lean `Verify.LineHealth.fleetFor_minimal` on the
+exact rule), so their maximum is the least fleet that satisfies all three; the clamp
+leaves a fitting fleet unchanged and puts a load past the span at the span's top, where
+the overload says the mode is too small.
 
 **Ladder (`ChooseMode`).** For the network's ladder — Road: Bus, Tram; Train lattice:
 Train; Metro lattice: Metro; Water: Ferry (two rail lattices since 2026-09-05 evening,
 A4.5 v2) — the mode is the first rung with a vehicle installed whose fleet plan on the
-candidate's own riders keeps `utilisation(v*) ≤ u`; the largest installed rung when
+candidate's own riders does not overload (day, night and the day as a whole); the largest installed rung when
 every one is overloaded; no mode when the network has no vehicle. Each rung is judged on
 the round trip the candidate would take AS THAT MODE: the directed street legs out and
 back where the streets have them (the return may take other streets), the loop at the
@@ -875,6 +886,16 @@ Instance kind `line_health`. The existing lines are judged and planned from what
 game exposes and what the routing attributes to them; the verdict is a classification
 of the plan, the plan the exact minimum of the fleet rule within the game's span.
 
+**Which lines are judged (A8.10).** Only lines with at least two stops INSIDE THE CITY.
+A stop is outside when `Game.Objects.OutsideConnection` sits on it or up its `Owner`
+chain. A line with fewer than two city stops can carry no journey the demand model knows
+(outside connections are outside the model — user decision 2026-09-04, reaffirmed
+2026-09-06), so it is neither judged, nor read into the window, nor routed over, and its
+stops are not served stops for §7c. A regional line that also calls at city stations keeps
+all of its stops. The ignored lines are named in the log. Valmare's three train lines were
+exactly this case: 6–16 % occupancy from travellers the model never sees, and 0 routed
+riders.
+
 **Readings (A8.5).** Every `ReadingIntervalFrames` = ⌊262 144 / 96⌋ = 2 730 simulation
 frames (15 game minutes), one `LineObservation` per line: passengers aboard the fleet,
 fleet capacity (seats of every unit incl. carriages), vehicles out, the game's
@@ -919,12 +940,15 @@ installed is judged on:
 - the span `[min_m, max_m]` = §5's span(m, T_m);
 - the required fleet `req_m = max(v_load, v_demand)` with
   `v_load = max(1, ⌈fl32(L / fl32(0.7·c_m))⌉)` (`TargetLoad` 0.7 on the planning load,
-  A8.3) and, when a route pass has attributed riders B to the line,
-  `v_demand = max(1, ⌈(B·T_m) / ((1·D)·c_m)⌉)` (§5), else 1.
+  A8.3) and, when a route pass has attributed riders B to the line, the period-aware
+  `v_demand = FleetForDemandByPeriod(B, B_day, B_night, T_m, c_m, 1)` (§5), else 1.
 
-The chosen rung is the first with `req_m ≤ max_m`; when none fits, the largest
-installed rung with `split` set; when no rung has a vehicle, the line's own mode with
-c = its own seats and span [1, ∞). Then **v* = clamp(req, min, max)**,
+The chosen rung is the first with `req_m ≤ max_m` **that does not need more vehicles than
+run today when it sits BELOW the line's own mode** (A6.9, user decision 2026-09-06: a
+rung below only qualifies while `req_m ≤ vehicles running`; without that guard five of
+Valmare's six trams were told to become six to twelve buses, because the bus span reaches
+that far); when none fits, the largest installed rung with `split` set; when no rung has a
+vehicle, the line's own mode with c = its own seats and span [1, ∞). Then **v* = clamp(req, min, max)**,
 `interval* = interval(T, v*)`, `utilisation* = utilisation(B, interval*, c)` (−1 without
 demand), the period utilisations §7d on B_day / B_night at interval*, and the schedule
 advice `Advise(schedule, u_day, u_night, floor)` = the line's own schedule when both

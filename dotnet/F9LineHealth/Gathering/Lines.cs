@@ -73,6 +73,7 @@ namespace TransitArchitect
             lines.Clear();
             stopPositions.Clear();
             stopIndices.Clear();
+            var ignored = new List<string>();
 
             ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
             {
@@ -93,6 +94,20 @@ namespace TransitArchitect
                     return;
                 }
 
+                // Outside connections are outside the mod's model (user decision
+                // 2026-09-04, reaffirmed 2026-09-06), so a line that cannot carry a
+                // single journey BETWEEN TWO PLACES IN THE CITY carries only travellers
+                // the demand model never sees: it is neither judged nor routed over.
+                // Counted rather than "calls at one at all", so a regional train that
+                // also serves three city stations keeps them. Valmare's three train
+                // lines had no city stop at all.
+                int cityStops = CityStopCount(entityManager, waypoints);
+                if (cityStops < 2)
+                {
+                    ignored.Add($"{line.m_Name} ({cityStops.ToString(CultureInfo.InvariantCulture)} of {line.m_StopIndices.Count.ToString(CultureInfo.InvariantCulture)} stops in the city)");
+                    return;
+                }
+
                 ReadVehicles(entityManager, lineEntity, out line.m_Vehicles, out line.m_Passengers, out line.m_Capacity);
 
                 float dwell = lineData.m_StopDuration;
@@ -110,6 +125,52 @@ namespace TransitArchitect
 
                 lines.Add(line);
             });
+
+            if (ignored.Count > 0)
+            {
+                DeferredLog.Info(
+                    $"Lines ignored — fewer than two stops inside the city, so they carry only outside connections the demand model does not see: {string.Join("; ", ignored)}");
+            }
+        }
+
+        // How many of the line's stops are in the city rather than on an outside
+        // connection. A stop belongs to an outside connection when
+        // Game.Objects.OutsideConnection sits on it or anywhere up its Owner chain
+        // (the stop is owned by the station building, which the game marks).
+        private static int CityStopCount(EntityManager entityManager, DynamicBuffer<RouteWaypoint> waypoints)
+        {
+            int cityStops = 0;
+            for (int w = 0; w < waypoints.Length; w++)
+            {
+                if (!entityManager.TryGetComponent(waypoints[w].m_Waypoint, out Connected connected)
+                    || !entityManager.HasComponent<Game.Routes.TransportStop>(connected.m_Connected))
+                {
+                    continue;
+                }
+
+                if (!IsOutsideConnection(entityManager, connected.m_Connected))
+                {
+                    cityStops++;
+                }
+            }
+
+            return cityStops;
+        }
+
+        private static bool IsOutsideConnection(EntityManager entityManager, Entity stop)
+        {
+            Entity owner = stop;
+            for (int depth = 0; depth < 4 && owner != Entity.Null; depth++)
+            {
+                if (entityManager.HasComponent<Game.Objects.OutsideConnection>(owner))
+                {
+                    return true;
+                }
+
+                owner = entityManager.TryGetComponent(owner, out Game.Common.Owner next) ? next.m_Owner : Entity.Null;
+            }
+
+            return false;
         }
 
         // One reading of every line — the counts the rolling window keeps (register
@@ -119,6 +180,11 @@ namespace TransitArchitect
             liveLineIds.Clear();
             ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
             {
+                if (CityStopCount(entityManager, waypoints) < 2)
+                {
+                    return;
+                }
+
                 int id = IdentityOf(lineEntity);
                 _ = liveLineIds.Add(id);
                 ReadVehicles(entityManager, lineEntity, out int vehicles, out int passengers, out int capacity);

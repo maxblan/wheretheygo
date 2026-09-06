@@ -329,7 +329,7 @@ namespace TransitArchitect
             problem.Facts.FleetSpanFor(mode, rung.RoundTripSeconds, out rung.Min, out rung.Max);
             int forLoad = TransitModes.FleetForLoad(line.PlanningLoad, rung.Capacity, problem.TargetLoad);
             int forDemand = line.HasDemand
-                ? TransitModes.FleetForDemand(line.m_RidersPerDay, rung.RoundTripSeconds, rung.Capacity, problem.UtilisationCeiling)
+                ? TransitModes.FleetForDemandByPeriod(line.m_RidersPerDay, line.m_RidersByDay, line.m_RidersByNight, rung.RoundTripSeconds, rung.Capacity, problem.UtilisationCeiling)
                 : 1;
             rung.Required = Math.Max(forLoad, forDemand);
             return rung;
@@ -338,8 +338,11 @@ namespace TransitArchitect
         // Climbs the network's ladder (A6.x for existing lines too, A8.2): the first
         // mode whose largest allowed fleet carries what the line needs; the largest
         // installed mode when none does (`split` then), the line's own mode when the
-        // ladder has no vehicle at all. `smallest` is the first installed rung, the
-        // one the utilisation floor is asked of.
+        // ladder has no vehicle at all. A rung BELOW the line's mode only qualifies when
+        // it needs no more vehicles than run today (A6.9, user decision 2026-09-06
+        // question 1a): five trams were being told to become six to twelve buses because
+        // the bus span reached that far. `smallest` is the first installed rung, the one
+        // the utilisation floor is asked of.
         public static Rung ClimbLadder(ExistingLine line, LineHealthProblem problem, out Rung smallest, out bool split, out int currentIndex, out int chosenIndex)
         {
             ModePreset[] ladder = TransitModes.ModesFor(TransitModes.NetworkOf(line.m_Mode));
@@ -365,7 +368,8 @@ namespace TransitArchitect
 
                 chosen = rung;
                 chosenIndex = i;
-                if (rung.Required <= rung.Max)
+                bool noMoreVehiclesThanToday = i >= currentIndex || rung.Required <= line.m_Vehicles;
+                if (rung.Required <= rung.Max && noMoreVehiclesThanToday)
                 {
                     return chosen;
                 }

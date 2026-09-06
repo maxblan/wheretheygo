@@ -129,7 +129,7 @@ def assess(line: dict, win: dict, facts: dict, policy: dict, floor: float, ceili
             fleet.round_trip(line["loop"], line["stops"], f32.r(fleet.CRUISE[mode]), fleet.delay_per_stop(facts, mode))
         lo, hi = fleet.fleet_span(policy, facts[mode]["prefab_interval"], rt)
         for_load = fleet.fleet_for_load(float(load), cap, target_load)
-        for_demand = fleet.fleet_for_demand(line["riders"], rt, cap, ceiling) if has_demand else 1
+        for_demand = fleet.fleet_for_demand_by_period(line["riders"], line["riders_day"], line["riders_night"], rt, cap, ceiling) if has_demand else 1
         return {"mode": mode, "cap": cap, "rt": rt, "lo": lo, "hi": hi, "required": max(for_load, for_demand)}
 
     ladder = fleet.LADDER[fleet.NETWORK_OF[line["mode"]]]
@@ -142,7 +142,8 @@ def assess(line: dict, win: dict, facts: dict, policy: dict, floor: float, ceili
         if smallest is None:
             smallest = r
         chosen, chosen_index = r, i
-        if r["hi"] is None or r["required"] <= r["hi"]:
+        no_more_than_today = i >= current or r["required"] <= line["vehicles"]
+        if (r["hi"] is None or r["required"] <= r["hi"]) and no_more_than_today:
             break
     else:
         if chosen is None:

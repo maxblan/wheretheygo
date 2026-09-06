@@ -50,6 +50,7 @@ def parse(instance: dict) -> dict:
         "dx": [bits_to_f32(b) for b in d["pair_dx_b32"]],
         "dz": [bits_to_f32(b) for b in d["pair_dz_b32"]],
         "w": [bits_to_f32(b) for b in d["pair_w_b32"]],
+        "day_share": ([bits_to_f32(b) for b in d["pair_day_share_b32"]] if d.get("pair_day_share_b32") else None),
         "base_x": [bits_to_f32(b) for b in d["base_stop_x_b32"]],
         "base_z": [bits_to_f32(b) for b in d["base_stop_z_b32"]],
         "base_lines": [transit.Line(stops=list(l["stops"]), wait=bits_to_f32(l["expected_wait_b32"]),
@@ -170,18 +171,24 @@ def evaluate(p: dict, chosen: list[int], before: list[Fraction] | None) -> dict:
     after: list[Fraction] = []
     saved = Fraction(0)
     riders = [Fraction(0)] * len(p["candidates"])
+    riders_day = [Fraction(0)] * len(p["candidates"])
+    riders_night = [Fraction(0)] * len(p["candidates"])
     tie_affected = False
     for i in range(p["pairs"]):
         a, s, tie, used = results[i]
         after.append(a)
         saved += s
         tie_affected = tie_affected or tie
+        share = Fraction(p["day_share"][i]) if p["day_share"] is not None else Fraction(1)
         for l in used:
             # Lines after the base ones sit in `chosen` order (mod: Riders[chosen[k]]).
             k = l - line_offset
             if 0 <= k < len(chosen):
                 riders[chosen[k]] += Fraction(p["w"][i])
-    return {"after": after, "saved": saved, "riders": riders, "tie_affected": tie_affected}
+                riders_day[chosen[k]] += Fraction(p["w"][i]) * share
+                riders_night[chosen[k]] += Fraction(p["w"][i]) * (1 - share)
+    return {"after": after, "saved": saved, "riders": riders, "riders_day": riders_day,
+            "riders_night": riders_night, "tie_affected": tie_affected}
 
 
 def itinerary_lines(net: transit.Network, dist, source: int, dest: int, zone_start: int) -> list[frozenset]:
@@ -212,18 +219,22 @@ def itinerary_lines(net: transit.Network, dist, source: int, dest: int, zone_sta
     return results or [frozenset()]
 
 
-def utilisation(p: dict, c: int, riders: Fraction) -> Fraction:
-    """Boardings over the seats of the fleet the set's riders call for within the
-    game's span (spec §6.3 F1 v3, A6.8): the mod's own double/binary32 arithmetic
-    re-derived in evaluator.fleet, on the riders rounded to binary32 as the mod
-    hands them over."""
+def fleet_plan(p: dict, c: int, ev: dict):
+    """The fleet the set's riders call for within the game's span (spec §6.3 F1 v3,
+    A6.8/A6.10): the mod's own double/binary32 arithmetic re-derived in
+    evaluator.fleet, on the riders rounded to binary32 as the mod hands them over."""
+    cand = p["candidates"][c]
+    ceiling = p["utilisation_ceiling"] if p["utilisation_ceiling"] > 0 else 1.0
+    return ev_fleet.plan_fleet(f32.r(float(ev["riders"][c])), f32.r(float(ev["riders_day"][c])),
+                               f32.r(float(ev["riders_night"][c])), cand["round_trip"], cand["capacity"],
+                               cand["fleet_min"], cand["fleet_max"], ceiling)
+
+
+def utilisation(p: dict, c: int, ev: dict) -> Fraction:
     cand = p["candidates"][c]
     if cand["round_trip"] <= 0 or cand["capacity"] <= 0 or p["day"] <= 0:
         return Fraction(0)
-    ceiling = p["utilisation_ceiling"] if p["utilisation_ceiling"] > 0 else 1.0
-    _v, _h, u = ev_fleet.plan_fleet(f32.r(float(riders)), cand["round_trip"], cand["capacity"],
-                                    cand["fleet_min"], cand["fleet_max"], ceiling)
-    return Fraction(u)
+    return Fraction(fleet_plan(p, c, ev)[2])
 
 
 _COVERAGE_CACHE: dict = {}
@@ -275,11 +286,14 @@ def feasible(p: dict, chosen: list[int], ev: dict, before: list[Fraction]) -> tu
     if len(groups) != len(set(groups)):
         return False, "two variants of one alignment"
     for c in chosen:
-        u = utilisation(p, c, ev["riders"][c])
-        if p["utilisation_floor"] > 0 and u < Fraction(p["utilisation_floor"]):
+        cand = p["candidates"][c]
+        if cand["round_trip"] <= 0 or cand["capacity"] <= 0:
+            continue
+        plan = fleet_plan(p, c, ev)
+        if p["utilisation_floor"] > 0 and plan[2] < p["utilisation_floor"]:
             return False, f"line {c} below the utilisation floor"
-        if p["utilisation_ceiling"] > 0 and u > Fraction(p["utilisation_ceiling"]):
-            return False, f"line {c} above the utilisation ceiling"
+        if p["utilisation_ceiling"] > 0 and ev_fleet.overloads(plan, p["utilisation_ceiling"]):
+            return False, f"line {c} above the utilisation ceiling (day or night)"
     if p["duplicate_share"] > 0 and len(chosen) >= 2:
         for c in chosen:
             rest = [x for x in chosen if x != c]

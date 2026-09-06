@@ -150,6 +150,8 @@ namespace TransitArchitect
                 stopwatch.Restart();
                 LineSetEvaluation alone = LineSet.Evaluate(probe, new[] { c }, 1, before);
                 usable[c].EnabledDemand = (float)alone.Riders[c];
+                usable[c].EnabledDemandDay = (float)alone.RidersByDay[c];
+                usable[c].EnabledDemandNight = (float)alone.RidersByNight[c];
                 usable[c].DemandScored = true;
                 DeferredLog.Info(
                     $"  candidate alone: {usable[c].Network} {usable[c].Mode}, {usable[c].Stops.Count} stops, " +
@@ -329,17 +331,20 @@ namespace TransitArchitect
             for (int k = 0; k < order.Count; k++)
             {
                 SuggestedRoute route = resolved[order[k]];
+                float utilisation = 0f;
                 if (evaluation is not null)
                 {
                     // The fleet the set's own riders call for, within the game's span;
                     // the interval it yields prices the periods.
                     route.EnabledDemand = (float)evaluation.Riders[order[k]];
-                    LineCandidate line = problem.Candidates[order[k]];
-                    FleetPlan fleet = LineSet.FleetFor(problem, order[k], evaluation.Riders[order[k]]);
+                    route.EnabledDemandDay = (float)evaluation.RidersByDay[order[k]];
+                    route.EnabledDemandNight = (float)evaluation.RidersByNight[order[k]];
+                    FleetPlan fleet = LineSet.FleetFor(problem, order[k], evaluation);
                     route.Vehicles = fleet.Vehicles;
                     route.HeadwaySeconds = fleet.HeadwaySeconds;
-                    route.DayUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByDay[order[k]], fleet.HeadwaySeconds, line.VehicleCapacity, Assumptions.DayShareOfDay);
-                    route.NightUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByNight[order[k]], fleet.HeadwaySeconds, line.VehicleCapacity, 1f - Assumptions.DayShareOfDay);
+                    route.DayUtilisation = fleet.DayUtilisation;
+                    route.NightUtilisation = fleet.NightUtilisation;
+                    utilisation = fleet.Utilisation;
                     route.Schedule = Daytime.Recommend(route.DayUtilisation, route.NightUtilisation, problem.UtilisationFloor);
                 }
 
@@ -350,7 +355,7 @@ namespace TransitArchitect
                     $"(plan: {(route.StopPlan?.CandidateCount ?? 0).ToString(CultureInfo.InvariantCulture)} candidates, {(route.StopPlan?.EndCount ?? 0).ToString(CultureInfo.InvariantCulture)} doors in reach, " +
                     $"gain {(route.StopPlanGain / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h vs delay {(route.StopPlanDelay / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h a day), " +
                     $"len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, riders/day in the set={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"utilisation={(LineSet.Utilisation(problem, order[k], route.EnabledDemand) * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
+                    $"utilisation={(utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
                     $"alone={(solution.StandaloneTimeSaved[order[k]] / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} veh of [{(route.FleetMin).ToString(CultureInfo.InvariantCulture)}, {(route.FleetMax == int.MaxValue ? "?" : route.FleetMax.ToString(CultureInfo.InvariantCulture))}] at {(route.HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)} s, " +
                     $"schedule {route.Schedule} (day {(route.DayUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, night {(route.NightUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of the period's seats)");
             }

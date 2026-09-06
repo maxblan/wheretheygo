@@ -107,6 +107,17 @@ def fleet_for_demand(riders: float, round_trip: float, capacity: float, ceiling:
     return max(1, math.ceil(needed))
 
 
+DAY_SHARE = f32.r(16.0 / 24.0)
+
+
+def fleet_for_demand_by_period(riders: float, day: float, night: float, round_trip: float, capacity: float, ceiling: float) -> int:
+    """The busier period binds (A6.10): the largest of the whole-day, day and night requirements."""
+    whole = fleet_for_demand(riders, round_trip, capacity, ceiling)
+    d = fleet_for_demand(day, round_trip, capacity * DAY_SHARE, ceiling)
+    n = fleet_for_demand(night, round_trip, capacity * f32.sub(1.0, DAY_SHARE), ceiling)
+    return max(whole, d, n)
+
+
 def utilisation(riders: float, headway: float, capacity: float) -> float:
     if headway <= 0.0 or capacity <= 0.0:
         return 0.0
@@ -121,11 +132,17 @@ def utilisation_in_period(riders: float, headway: float, capacity: float, share:
     return utilisation(riders, headway, capacity * share)
 
 
-def plan_fleet(riders: float, round_trip: float, capacity: float, lo: int, hi: int | None, ceiling: float) -> tuple[int, float, float]:
-    """(vehicles, headway, utilisation) for `riders` a day within the span."""
-    v = clamp(fleet_for_demand(riders, round_trip, capacity, ceiling), lo, hi)
+def plan_fleet(riders: float, day: float, night: float, round_trip: float, capacity: float, lo: int, hi: int | None, ceiling: float):
+    """(vehicles, headway, utilisation, day_utilisation, night_utilisation) within the span."""
+    v = clamp(fleet_for_demand_by_period(riders, day, night, round_trip, capacity, ceiling), lo, hi)
     h = game_interval(round_trip, v)
-    return v, h, utilisation(riders, h, capacity)
+    return (v, h, utilisation(riders, h, capacity),
+            utilisation_in_period(day, h, capacity, DAY_SHARE),
+            utilisation_in_period(night, h, capacity, f32.sub(1.0, DAY_SHARE)))
+
+
+def overloads(plan, ceiling: float) -> bool:
+    return plan[2] > ceiling or plan[3] > ceiling or plan[4] > ceiling
 
 
 def stop_duration(facts: dict, mode: str) -> float:
@@ -146,10 +163,10 @@ def round_trip(loop_metres: float, loop_stops: int, cruise: float, delay: float)
     return f32.add(f32.div(loop_metres, max(1.0, cruise)), f32.mul(float(max(0, loop_stops)), delay))
 
 
-def choose_mode(network: str, riders: float, facts: dict, policy: dict, round_trip_of, ceiling: float = 1.0):
-    """The ladder (§5 v3): (ok, mode, vehicles, lo, hi, headway, utilisation)."""
+def choose_mode(network: str, riders: float, day: float, night: float, facts: dict, policy: dict, round_trip_of, ceiling: float = 1.0):
+    """The ladder (§5 v3): (ok, mode, vehicles, lo, hi, headway, utilisation, day_util, night_util)."""
     ladder = LADDER[network]
-    mode, plan, any_vehicle = ladder[0], (0, 0.0, 0.0), False
+    mode, plan, any_vehicle = ladder[0], (0, 0.0, 0.0, 0.0, 0.0), False
     lo, hi = 1, None
     for option in ladder:
         cap = facts[option]["capacity"]
@@ -159,7 +176,7 @@ def choose_mode(network: str, riders: float, facts: dict, policy: dict, round_tr
         mode = option
         rt = round_trip_of(option)
         lo, hi = fleet_span(policy, facts[option]["prefab_interval"], rt)
-        plan = plan_fleet(riders, rt, cap, lo, hi, ceiling)
-        if plan[2] <= ceiling:
-            return True, mode, plan[0], lo, hi, plan[1], plan[2]
-    return any_vehicle, mode, plan[0], lo, hi, plan[1], plan[2]
+        plan = plan_fleet(riders, day, night, rt, cap, lo, hi, ceiling)
+        if not overloads(plan, ceiling):
+            return True, mode, plan[0], lo, hi, plan[1], plan[2], plan[3], plan[4]
+    return any_vehicle, mode, plan[0], lo, hi, plan[1], plan[2], plan[3], plan[4]

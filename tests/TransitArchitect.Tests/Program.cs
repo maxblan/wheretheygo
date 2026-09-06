@@ -1390,7 +1390,7 @@ namespace TransitArchitect.Tests
             float busiest = 0f;
             for (int k = 0; k < open.Count; k++)
             {
-                busiest = Math.Max(busiest, LineSet.Utilisation(problem, open.Chosen[k], openEvaluation.Riders[open.Chosen[k]]));
+                busiest = Math.Max(busiest, LineSet.Utilisation(problem, open.Chosen[k], openEvaluation));
             }
 
             problem.UtilisationCeiling = busiest * 0.99f;
@@ -1400,7 +1400,7 @@ namespace TransitArchitect.Tests
             LineSetEvaluation? evaluation = capped.Evaluation;
             for (int k = 0; k < capped.Count; k++)
             {
-                AssertTrue(evaluation is not null && LineSet.Utilisation(problem, capped.Chosen[k], evaluation.Riders[capped.Chosen[k]]) <= problem.UtilisationCeiling,
+                AssertTrue(evaluation is not null && LineSet.Utilisation(problem, capped.Chosen[k], evaluation) <= problem.UtilisationCeiling,
                     "every chosen line stays under the ceiling");
             }
         }
@@ -1447,7 +1447,7 @@ namespace TransitArchitect.Tests
                 bool feasible = true;
                 foreach (int c in chosen)
                 {
-                    feasible &= LineSet.Utilisation(problem, c, evaluation.Riders[c]) >= problem.UtilisationFloor;
+                    feasible &= LineSet.Utilisation(problem, c, evaluation) >= problem.UtilisationFloor;
                 }
 
                 if (feasible && chosen.Count >= 2)
@@ -2740,13 +2740,29 @@ namespace TransitArchitect.Tests
             AssertEqual(1, TransitModes.FleetForLoad(56f, 80f, 0.7f), 0, "56 fit one");
             // 2000 riders a day, 1000 s round trip, 80 seats, ceiling 1: 2000·1000 / (4369.07·80) = 5.72 -> 6.
             AssertEqual(6, TransitModes.FleetForDemand(2000f, 1000f, 80f, 1f), 0, "the smallest fleet under the ceiling");
-            FleetPlan plan = TransitModes.PlanFleet(2000f, 1000f, 80f, 1, 13, 1f);
+            // Riders with no period split known (0/0): only the whole day binds.
+            FleetPlan plan = TransitModes.PlanFleet(2000f, 0f, 0f, 1000f, 80f, 1, 13, 1f);
             AssertTrue(plan.Vehicles == 6 && plan.Utilisation <= 1f && plan.Utilisation > 0.9f, $"six buses at {(1000f / 6f).ToString("F0", CultureInfo.InvariantCulture)} s carry 2000 riders at {(plan.Utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %");
             AssertEqual(plan.Utilisation, Equity.Utilisation(2000f, plan.HeadwaySeconds, 80f), 0f, "the plan's utilisation is the one formula at the plan's interval");
-            FleetPlan clamped = TransitModes.PlanFleet(2000f, 1000f, 80f, 1, 3, 1f);
+            FleetPlan clamped = TransitModes.PlanFleet(2000f, 0f, 0f, 1000f, 80f, 1, 3, 1f);
             AssertTrue(clamped.Vehicles == 3 && clamped.Utilisation > 1f, "clamped to the span, the ceiling is exceeded and says so");
-            FleetPlan minimal = TransitModes.PlanFleet(5f, 1000f, 80f, 2, 13, 1f);
+            FleetPlan minimal = TransitModes.PlanFleet(5f, 0f, 0f, 1000f, 80f, 2, 13, 1f);
             AssertTrue(minimal.Vehicles == 2, "never below the span's minimum");
+
+            // The busier period binds (A6.10): the same 2000 riders all travelling by day
+            // fill 16 of 24 hours' seats, so six buses would be over the ceiling in the
+            // day; nine are needed. Spread over the periods in proportion to their
+            // length, the day asks for nothing extra and six remain.
+            FleetPlan byDay = TransitModes.PlanFleet(2000f, 2000f, 0f, 1000f, 80f, 1, 13, 1f);
+            AssertTrue(byDay.Vehicles == 9 && byDay.DayUtilisation <= 1f && !byDay.Overloads(1f),
+                $"a day-only load needs nine buses, got {byDay.Vehicles.ToString(CultureInfo.InvariantCulture)} at day {byDay.DayUtilisation}");
+            AssertEqual(0f, byDay.NightUtilisation, 0f, "nobody travels at night");
+            FleetPlan spread = TransitModes.PlanFleet(2000f, 2000f * Assumptions.DayShareOfDay, 2000f * (1f - Assumptions.DayShareOfDay), 1000f, 80f, 1, 13, 1f);
+            AssertTrue(spread.Vehicles == 6, $"demand in proportion to the periods asks for nothing extra, got {spread.Vehicles.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(!spread.Overloads(1f), "and no period is over the ceiling");
+            FleetPlan pinched = TransitModes.PlanFleet(2000f, 2000f, 0f, 1000f, 80f, 1, 6, 1f);
+            AssertTrue(pinched.Vehicles == 6 && pinched.Overloads(1f) && pinched.Utilisation <= 1f,
+                "a span that cannot serve the peak period reports the overload through the period, not the daily mean");
             AssertEqual(1000f, TransitModes.RoundTripSeconds(9000f, 20, 9f, 0f), 1e-3f, "a 9 km loop at 9 m/s without dwell");
             AssertEqual(1300f, TransitModes.RoundTripSeconds(9000f, 20, 9f, 15f), 1e-3f, "plus the dwell at every one of twenty calls");
         }
@@ -2921,7 +2937,9 @@ namespace TransitArchitect.Tests
             AssertTrue(judged.m_ScheduleAdvice == LineSchedule.DayAndNight, $"demand in both periods extends a day-only line, got {judged.m_ScheduleAdvice}");
 
             // Demand can ask for more than the readings: 2000 riders a day on a bus with
-            // a light planning load still need six buses under the ceiling.
+            // a light planning load need six buses over the day as a whole — and seven
+            // once 1400 of them travel in the day period, which holds only 16 of 24
+            // hours' seats (A6.10, the busier period binds).
             ExistingLine demanded = HealthLine(5, ModePreset.Bus, 2, 80, 1000f, 20);
             demanded.m_RidersPerDay = 2000f;
             demanded.m_RidersByDay = 1400f;
@@ -2929,8 +2947,12 @@ namespace TransitArchitect.Tests
             problem = HealthProblem(demanded);
             Readings(problem, demanded, new[] { 20, 25, 20, 25, 20, 25 });
             judged = Judged(problem, 5);
-            AssertTrue(judged.m_Verdict == LineVerdict.FleetUp && judged.m_RecommendedFleet == 6, $"expected six buses for the demand, got {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(judged.m_Utilisation <= 1f, "the fleet keeps the demand under the ceiling");
+            AssertTrue(judged.m_Verdict == LineVerdict.FleetUp && judged.m_RecommendedFleet == 7, $"expected seven buses for a day-heavy demand, got {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(judged.m_Utilisation <= 1f && judged.m_DayUtilisation <= 1f && judged.m_NightUtilisation <= 1f, "no period is over the ceiling");
+            demanded.m_RidersByDay = 2000f * Assumptions.DayShareOfDay;
+            demanded.m_RidersByNight = 2000f * (1f - Assumptions.DayShareOfDay);
+            judged = Judged(problem, 5);
+            AssertTrue(judged.m_RecommendedFleet == 6, $"spread in proportion to the periods, six suffice, got {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
         }
 
         // The relative bar is measured against the upper median, so it can never mark
@@ -3078,30 +3100,41 @@ namespace TransitArchitect.Tests
         {
             FleetFacts facts = RealFacts();
             static float RoundTrip(ModePreset mode) => 1000f;
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100f, facts, RoundTrip, out ModePreset mode, out FleetPlan fleet) && mode == ModePreset.Bus,
+            // Riders without a period split (0/0) exercise the whole-day rule; the last
+            // case below adds a day-only load to show the period binding the choice.
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100f, 0f, 0f, facts, RoundTrip, out ModePreset mode, out FleetPlan fleet) && mode == ModePreset.Bus,
                 "a hundred riders a day fit a bus");
             AssertTrue(fleet.Vehicles == 1 && fleet.Min == 1 && fleet.Max == 13, $"one bus of the 1..13 the slider allows, got {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)} of [{fleet.Min.ToString(CultureInfo.InvariantCulture)}, {fleet.Max.ToString(CultureInfo.InvariantCulture)}]");
             AssertTrue(fleet.Utilisation is > 0.28f and < 0.29f, $"bus utilisation {fleet.Utilisation}");
             // 2000 riders: 4000 boardings; six buses at 167 s offer 4194 seats a day.
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 2000f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Bus && fleet.Vehicles == 6,
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 2000f, 0f, 0f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Bus && fleet.Vehicles == 6,
                 $"two thousand riders fit six buses within the span, got {mode} × {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)}");
             AssertTrue(fleet.Utilisation is > 0.9f and <= 1f, $"six-bus utilisation {fleet.Utilisation}");
             // 5000 riders: 22 buses would be needed, 13 are allowed -> tram (240 seats).
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 5000f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram,
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 5000f, 0f, 0f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram,
                 $"past the largest bus fleet the tram takes over, got {mode}");
             AssertTrue(fleet.Vehicles == 5 && fleet.Utilisation <= 1f, $"five trams, got {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)} at {fleet.Utilisation}");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100000f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram && fleet.Utilisation > 1f,
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 100000f, 0f, 0f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram && fleet.Utilisation > 1f,
                 "when every road mode is overloaded the largest is still named, over the ceiling");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Metro, 5000f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Metro,
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Metro, 5000f, 0f, 0f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Metro,
                 "the metro lattice carries metros");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 30000f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Train,
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Rail, 30000f, 0f, 0f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Train,
                 "the train lattice carries trains");
-            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Water, 10f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Ferry, "water carries ferries only");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Water, 10f, 0f, 0f, facts, RoundTrip, out mode, out _) && mode == ModePreset.Ferry, "water carries ferries only");
 
             var none = new FleetFacts(new ModeFacts[TransitModes.All.Length]);
-            AssertTrue(!TransitModes.ChooseMode(RouteNetwork.Road, 100f, none, RoundTrip, out _, out _), "no vehicle installed, no mode");
+            AssertTrue(!TransitModes.ChooseMode(RouteNetwork.Road, 100f, 0f, 0f, none, RoundTrip, out _, out _), "no vehicle installed, no mode");
             AssertTrue(TransitModes.NetworkOf(ModePreset.Tram) == RouteNetwork.Road && TransitModes.NetworkOf(ModePreset.Train) == RouteNetwork.Rail
                 && TransitModes.NetworkOf(ModePreset.Metro) == RouteNetwork.Metro && TransitModes.NetworkOf(ModePreset.Ferry) == RouteNetwork.Water, "NetworkOf inverts ModesFor");
+
+            // The same 3500 riders fit thirteen buses spread over the day, but not when
+            // they all travel by day: the day period then needs more than the span holds
+            // and the ladder climbs to the tram (A6.10).
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 3500f, 0f, 0f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Bus,
+                $"3500 riders across the day still fit buses, got {mode}");
+            AssertTrue(TransitModes.ChooseMode(RouteNetwork.Road, 3500f, 3500f, 0f, facts, RoundTrip, out mode, out fleet) && mode == ModePreset.Tram,
+                $"the same riders all by day overload the largest bus fleet in the day period, got {mode} × {fleet.Vehicles.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(!fleet.Overloads(1f), "and the tram fleet clears the ceiling in both periods");
         }
 
         private static void StopDelayAndRideLimits()
