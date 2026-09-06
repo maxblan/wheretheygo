@@ -185,16 +185,33 @@ namespace TransitArchitect
             {
                 float2Like point = PointAlong(route.Path, at[i]);
                 points.Add(point);
+                float hubSq = context.Hubs.Count > 0
+                    && context.Hubs.TryNearest(point.x, point.y, Assumptions.StationCallMetres, out float distanceSq)
+                    ? distanceSq
+                    : float.MaxValue;
+                hubDistance.Add(hubSq);
+
+                // An existing station makes a candidate admissible on its own. The
+                // station IS the demand: the ground around a terminus is often empty —
+                // that is why it is a terminus — and scoring it on its neighbours alone
+                // said "nothing here". Corridors were being extended onto an interchange
+                // (55 of 93 ends on Valmare) and then trimmed straight back off it,
+                // because the trim runs over the ADMISSIBLE candidates and the forced
+                // call is only looked for between them. The line then ended a couple of
+                // hundred metres short of the station it was aimed at.
+                //
+                // Not on water. There the score oracle is not measuring demand, it is
+                // measuring whether the point is land at all (ShorelineScoreAt), and
+                // overriding it would put a pier mid-crossing.
+                bool atStation = hubSq < float.MaxValue && route.Network != RouteNetwork.Water;
+
                 // Two independent reasons a candidate cannot hold a stop. The score
                 // oracle rules out ground nothing could stand on (open water for a
                 // ferry, unbuildable land); the path flags rule out ground the game
                 // itself forbids — a motorway a line may drive along but never call on.
                 // The second is not a matter of degree, so it is checked first.
                 admissible.Add(CanHostStop(route, at[i])
-                    && (context.ScoreAt is null || context.ScoreAt(point, mode) > 0f));
-                hubDistance.Add(context.Hubs.Count > 0 && context.Hubs.TryNearest(point.x, point.y, Assumptions.StationCallMetres, out float distanceSq)
-                    ? distanceSq
-                    : float.MaxValue);
+                    && (atStation || context.ScoreAt is null || context.ScoreAt(point, mode) > 0f));
             }
 
             // Termini: the first and last positions that can hold a stop.

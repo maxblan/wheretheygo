@@ -111,9 +111,13 @@ access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
 - [x] Walk times are searched to 4x the equity horizon so a building beyond it is told how far it
       actually is. Every "is this served" test still compares against the horizon, so the coverage
       figure is unchanged
-- [ ] A suggested line ends at its last positive-scoring stop rather than at a nearby existing
-      station. Explainable (corridor growth stops where the score does, and the trim follows), but a
-      terminus that ends 200 m short of an interchange is worth snapping to it
+- [x] A suggested line ended short of a nearby station. My first explanation was wrong: the corridor
+      IS extended onto an interchange (`AimEndsAtInterchange`, 55 of 93 ends on Valmare) — and then
+      `PlaceStops` trimmed the extension straight back off, because the trim runs over the ADMISSIBLE
+      candidates and admissibility needed a positive suitability score, which empty ground under a
+      terminus never has. A candidate within 150 m of a served stop is now admissible on its own
+      (A5.6, spec §5.1). Pinned by "F5 a station at the end keeps the terminus that reaches it", which
+      fails with the old rule at exactly the reported symptom: the line ends at 600 m, 500 m short
 
 ## 3. Repository hygiene
 

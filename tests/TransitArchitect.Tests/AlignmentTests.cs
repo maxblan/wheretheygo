@@ -460,6 +460,66 @@ namespace TransitArchitect.Tests
             }
         }
 
+        // A line aimed at an existing station has to reach it. The ground under a
+        // terminus is usually empty — that is why it is a terminus — so the suitability
+        // score there is zero, and the trim used to cut the alignment back to the last
+        // candidate that scored. The station itself is the demand, and this pins that.
+        private static void AStationKeepsTheTerminus()
+        {
+            var ends = new List<float2Like>();
+            var weights = new List<float>();
+            for (float x = 0f; x <= 600f; x += 100f)
+            {
+                ends.Add(new float2Like(x, 30f));
+                weights.Add(5f);
+            }
+
+            var byMode = new ModeFacts[5];
+            byMode[(int)ModePreset.Bus] = new ModeFacts { Capacity = 80f, PrefabIntervalSeconds = 45f, StopDurationSeconds = 5f, Acceleration = 4f, Braking = 5f };
+            var facts = new FleetFacts(byMode);
+
+            // Positive out to 600 m and nothing beyond it, with a tram station standing
+            // at 1100 m — 500 m past the last ground worth calling at.
+            StopContext Context(bool withStation)
+            {
+                return new StopContext
+                {
+                    Ends = ends.ToArray(),
+                    EndWeights = weights.ToArray(),
+                    Facts = facts,
+                    Hubs = withStation
+                        ? TransitRouting.BuildInterchangeMap(
+                            new[] { 1100f }, new[] { 0f }, new[] { TransitModes.ModeBit(ModePreset.Tram) }, 1, 300f)
+                        : default,
+                    ScoreAt = static (point, _) => point.x <= 600f ? 1f : 0f,
+                };
+            }
+
+            SuggestedRoute Alignment()
+            {
+                var route = new SuggestedRoute { Network = RouteNetwork.Road, Mode = ModePreset.Bus };
+                for (float x = 0f; x <= 1200f; x += 50f)
+                {
+                    route.Path.Add(new float2Like(x, 0f));
+                }
+
+                return route;
+            }
+
+            SuggestedRoute bare = Alignment();
+            Routes.PlaceStops(bare, ModePreset.Bus, Context(withStation: false));
+            AssertTrue(bare.Stops.Count >= Assumptions.MinStops, "the plain alignment still holds a line");
+            AssertTrue(bare.Stops[bare.Stops.Count - 1].x <= 600f + Assumptions.CandidateStepMetres,
+                $"without a station the line ends where the score does, got {bare.Stops[bare.Stops.Count - 1].x.ToString("F0", CultureInfo.InvariantCulture)} m");
+
+            SuggestedRoute aimed = Alignment();
+            Routes.PlaceStops(aimed, ModePreset.Bus, Context(withStation: true));
+            float terminus = aimed.Stops[aimed.Stops.Count - 1].x;
+            AssertTrue(Math.Abs(terminus - 1100f) <= Assumptions.StationCallMetres,
+                $"the station pulls the terminus onto itself, got {terminus.ToString("F0", CultureInfo.InvariantCulture)} m");
+            AssertTrue(aimed.Length > bare.Length, "and the alignment is kept out to it rather than trimmed back");
+        }
+
         private static void RestopAndFleetArePinned()
         {
             var city = new SyntheticCity();

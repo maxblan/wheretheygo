@@ -289,9 +289,15 @@ cruise speed, a/b the vehicle prefab's acceleration and braking), and the journe
 weight):
 
 1. **Candidates** (`Routes.BuildStopPlan`): positions every 50 m along P
-   plus the far end; a position is *admissible* iff the score oracle is positive
-   there (for ferries: shoreline; for rail/road: a scored tile). The first and last
-   admissible positions are the termini. Within every maximal run of candidates that
+   plus the far end; a position is *admissible* iff it can physically host a stop
+   (not a road the game forbids calling on) **and** either the score oracle is
+   positive there (for ferries: shoreline; for rail/road: a scored tile) **or** it
+   lies within 150 m of an existing served stop, off water. The station clause is
+   what lets a line reach a terminus: the ground under one is usually empty, so the
+   oracle reads zero there, and without it the trim cut the alignment back off the
+   very interchange `Routes.AimEndsAtInterchange` had aimed it at. On water the
+   oracle is not measuring demand but whether the point is land, so the clause does
+   not apply. The first and last admissible positions are the termini. Within every maximal run of candidates that
    lie within 150 m of an interchange, the nearest one is *forced*; forced calls
    closer than the gap floor to an earlier forced call lose the flag. Inadmissible
    positions between the termini are dropped; arc lengths are measured from the

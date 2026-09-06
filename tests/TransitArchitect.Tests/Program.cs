@@ -156,6 +156,7 @@ namespace TransitArchitect.Tests
             Run("Lattice: nodes on passable tiles only, eight neighbours linked once, track priced cheaper, tracks marked with a halo", LatticeBuildsAndPricesTrack);
             Run("F4 corridors on the synthetic city: counts, the first corridor and its stop plan are pinned", CorridorsOnSyntheticCityArePinned);
             Run("F4 lattice traces: direct and hub-bent variants share a group; counts pinned", LatticeTracesArePinned);
+            Run("F5 a station at the end keeps the terminus that reaches it", AStationKeepsTheTerminus);
             Run("F5 re-stopping for a mode, the shape gate and the fleet arithmetic are pinned", RestopAndFleetArePinned);
             Run("F4 re-trace on the streets and the already-built rule are pinned", RetraceAndDuplicatesArePinned);
             Run("AlignmentNetwork helpers: trace, nearest node, flow along and near a path are pinned", NetworkHelpersArePinned);
