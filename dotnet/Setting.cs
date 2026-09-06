@@ -7,9 +7,9 @@ using Game.UI;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
-    [FileLocation(nameof(StationSuitabilityOverlay))]
+    [FileLocation(nameof(TransitArchitect))]
     [SettingsUIGroupOrder(kPresetGroup, kWeightsGroup, kTuningGroup, kRoutesGroup, kCalibrationGroup)]
     [SettingsUIShowGroupName(kPresetGroup, kWeightsGroup, kTuningGroup, kRoutesGroup, kCalibrationGroup)]
     public sealed class Setting : ModSetting
@@ -243,7 +243,7 @@ namespace StationSuitabilityOverlay
         [SuppressMessage("Performance", "CA1822:Mark members as static",
             Justification = "The game's settings UI binds to instance properties by "
                 + "reflection; a static member would not appear in the Options page.")]
-        public string RouteSummary => StationSuitabilityOverlaySystem.RouteSummaryText;
+        public string RouteSummary => TransitArchitectSystem.RouteSummaryText;
 
         // A get-only string property renders as a read-only field in the options
         // page and is re-evaluated every frame the page is open, so the readout
@@ -257,7 +257,7 @@ namespace StationSuitabilityOverlay
         [SuppressMessage("Performance", "CA1822:Mark members as static",
             Justification = "The game's settings UI binds to instance properties by "
                 + "reflection; a static member would not appear in the Options page.")]
-        public string CalibrationStatus => StationSuitabilityOverlaySystem.CalibrationStatusText;
+        public string CalibrationStatus => TransitArchitectSystem.CalibrationStatusText;
 
         [SettingsUIButton]
         [SettingsUISection(kSection, kCalibrationGroup)]
@@ -266,7 +266,7 @@ namespace StationSuitabilityOverlay
                 + "reflection; a static member would not appear in the Options page.")]
         public bool ApplyFittedWeights
         {
-            set => StationSuitabilityOverlaySystem.RequestApplyFittedWeights();
+            set => TransitArchitectSystem.RequestApplyFittedWeights();
         }
 
         [SettingsUIButton]
@@ -277,7 +277,7 @@ namespace StationSuitabilityOverlay
                 + "reflection; a static member would not appear in the Options page.")]
         public bool ResetRidershipData
         {
-            set => StationSuitabilityOverlaySystem.RequestResetCalibration();
+            set => TransitArchitectSystem.RequestResetCalibration();
         }
 
         // Accumulated ridership aggregates, persisted through the normal settings
@@ -293,7 +293,7 @@ namespace StationSuitabilityOverlay
                 + "reflection; a static member would not appear in the Options page.")]
         public bool ExportVerificationInstance
         {
-            set => StationSuitabilityOverlaySystem.RequestVerificationExport();
+            set => TransitArchitectSystem.RequestVerificationExport();
         }
 
         [SettingsUIHidden]
@@ -469,7 +469,7 @@ namespace StationSuitabilityOverlay
         {
             var entries = new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                { m_Setting.GetSettingsLocaleID(), "Station Suitability Overlay" },
+                { m_Setting.GetSettingsLocaleID(), "Transit Architect" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Main" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPresetGroup), "Preset" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kWeightsGroup), "Weights" },
@@ -509,9 +509,9 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.EquityFloorPercent)), "Until this share of the city's journeys is served, suggestions are ranked by how many journeys they newly serve; above it, by the travel they enable." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.UtilisationFloorPercent)), "Minimum utilisation" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.UtilisationFloorPercent)), "Peak-hour boardings over peak-hour seats a suggested line must reach. Lines that would run emptier are not suggested." },
-                { "StationSuitabilityOverlay.Panel[Equity]", "Served journeys" },
-                { "StationSuitabilityOverlay.Panel[EquityValue]", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) \u00b7 Gini of access walk {3}" },
-                { "StationSuitabilityOverlay.Panel[EquityEmpty]", "not measured yet" },
+                { "TransitArchitect.Panel[Equity]", "Served journeys" },
+                { "TransitArchitect.Panel[EquityValue]", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) \u00b7 Gini of access walk {3}" },
+                { "TransitArchitect.Panel[EquityEmpty]", "not measured yet" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CatchmentRadius)), "Catchment radius" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CatchmentRadius)), "Walking distance a stop serves. Residents, jobs and existing stops within this radius affect the score. Typical: 300-400 m for bus, 600-800 m for metro." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AccessRadius)), "Road access radius" },
@@ -543,38 +543,38 @@ namespace StationSuitabilityOverlay
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Reset collected samples" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ResetRidershipData)), "Discard all collected ridership samples and start over. Useful after reshaping your network." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ExportVerificationInstance)), "Export verification instance" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Write this city's scoring inputs and results to ModsData/StationSuitabilityOverlay/verification as canonical JSON, for the offline verification pipeline. Read-only: it exports what the mod already computed and changes nothing. The files are written after the next recalculation; the mod log names the folder." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Write this city's scoring inputs and results to ModsData/TransitArchitect/verification as canonical JSON, for the offline verification pipeline. Read-only: it exports what the mod already computed and changes nothing. The files are written after the next recalculation; the mod log names the folder." },
 
-                { "StationSuitabilityOverlay.Infomode", "Station Suitability" },
-                { "Infoviews.INFOVIEW[StationSuitabilityOverlay]", "Station Suitability" },
-                { "Infoviews.INFOVIEW_TOOLTIP[StationSuitabilityOverlay]", "Shows how suitable each location is for a new transit stop." },
+                { "TransitArchitect.Infomode", "Station Suitability" },
+                { "Infoviews.INFOVIEW[TransitArchitect]", "Station Suitability" },
+                { "Infoviews.INFOVIEW_TOOLTIP[TransitArchitect]", "Shows how suitable each location is for a new transit stop." },
 
-                { "Infoviews.INFOMODE[StationSuitabilityOverlay]", "Station Suitability" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityOverlay]", "Combined score. Green-yellow-red heatmap of station placement quality; how many tiles count as “best” is the Highlight share option." },
-                { "Infoviews.INFOMODE[StationSuitabilitySites]", "Recommended sites" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilitySites]", "The best distinct candidate locations, spaced at least one catchment apart and ranked by walk-distance score." },
-                { "Infoviews.INFOMODE[StationSuitabilityDemand]", "Demand (residents)" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityDemand]", "Residents reachable within the catchment radius, on the same landmass." },
-                { "Infoviews.INFOMODE[StationSuitabilityJobs]", "Jobs" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityJobs]", "Workplace capacity reachable within the catchment radius." },
-                { "Infoviews.INFOMODE[StationSuitabilityCoverage]", "Existing coverage" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityCoverage]", "How well existing stops of the selected mode already serve each tile." },
-                { "Infoviews.INFOMODE[StationSuitabilityAccess]", "Accessibility" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityAccess]", "Walking time from each tile to the nearest pavement a stop could stand on." },
-                { "Infoviews.INFOMODE[StationSuitabilityFuture]", "Future demand (zoned)" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityFuture]", "Land that is zoned but not yet built on." },
-                { "Infoviews.INFOMODE[StationSuitabilityInterchange]", "Interchange potential" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityInterchange]", "Where a stop of this mode would sit within transfer distance of another mode's service, weighted by how much capacity that mode carries." },
-                { "Infoviews.INFOMODE[StationSuitabilityTravelDemand]", "Travel demand" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityTravelDemand]", "Where people actually want to travel, from real home-to-work and home-to-school journeys. Shows the demand your network does not already carry." },
-                { "Infoviews.INFOMODE[StationSuitabilityCrossCoverage]", "Cross-mode overlap" },
-                { "Infoviews.INFOMODE_TOOLTIP[StationSuitabilityCrossCoverage]", "Where another mode already serves the same riders but is too far away to transfer to." },
+                { "Infoviews.INFOMODE[TransitArchitect]", "Station Suitability" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitect]", "Combined score. Green-yellow-red heatmap of station placement quality; how many tiles count as “best” is the Highlight share option." },
+                { "Infoviews.INFOMODE[TransitArchitectSites]", "Recommended sites" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectSites]", "The best distinct candidate locations, spaced at least one catchment apart and ranked by walk-distance score." },
+                { "Infoviews.INFOMODE[TransitArchitectDemand]", "Demand (residents)" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectDemand]", "Residents reachable within the catchment radius, on the same landmass." },
+                { "Infoviews.INFOMODE[TransitArchitectJobs]", "Jobs" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectJobs]", "Workplace capacity reachable within the catchment radius." },
+                { "Infoviews.INFOMODE[TransitArchitectCoverage]", "Existing coverage" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectCoverage]", "How well existing stops of the selected mode already serve each tile." },
+                { "Infoviews.INFOMODE[TransitArchitectAccess]", "Accessibility" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectAccess]", "Walking time from each tile to the nearest pavement a stop could stand on." },
+                { "Infoviews.INFOMODE[TransitArchitectFuture]", "Future demand (zoned)" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectFuture]", "Land that is zoned but not yet built on." },
+                { "Infoviews.INFOMODE[TransitArchitectInterchange]", "Interchange potential" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectInterchange]", "Where a stop of this mode would sit within transfer distance of another mode's service, weighted by how much capacity that mode carries." },
+                { "Infoviews.INFOMODE[TransitArchitectTravelDemand]", "Travel demand" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectTravelDemand]", "Where people actually want to travel, from real home-to-work and home-to-school journeys. Shows the demand your network does not already carry." },
+                { "Infoviews.INFOMODE[TransitArchitectCrossCoverage]", "Cross-mode overlap" },
+                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectCrossCoverage]", "Where another mode already serves the same riders but is too far away to transfer to." },
 
                 // The infoview panel composes gradient legend label keys as
                 // Infoviews.LABEL[<labelId>].
-                { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Low]", "Low" },
-                { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.Medium]", "Medium" },
-                { "Infoviews.LABEL[StationSuitabilityOverlay.Legend.High]", "High" },
+                { "Infoviews.LABEL[TransitArchitect.Legend.Low]", "Low" },
+                { "Infoviews.LABEL[TransitArchitect.Legend.Medium]", "Medium" },
+                { "Infoviews.LABEL[TransitArchitect.Legend.High]", "High" },
             };
 
             foreach (KeyValuePair<string, string> panel in PanelEntries())
@@ -587,7 +587,7 @@ namespace StationSuitabilityOverlay
 
         // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
         // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by StationSuitabilityOverlay.mjs.
+        // game's Options UI, these by TransitArchitect.mjs.
         private static Dictionary<string, string> PanelEntries()
         {
             return new Dictionary<string, string>(StringComparer.Ordinal)
@@ -595,83 +595,83 @@ namespace StationSuitabilityOverlay
                 // Control panel strings. The panel resolves these itself through cs2/l10n with
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
-                { "StationSuitabilityOverlay.Panel[Title]", "Station Suitability" },
-                { "StationSuitabilityOverlay.Panel[Mode]", "Mode" },
-                { "StationSuitabilityOverlay.Panel[Objective]", "Objective" },
-                { "StationSuitabilityOverlay.Panel[Tuning]", "Tuning" },
-                { "StationSuitabilityOverlay.Panel[RoutePlanning]", "Route planning" },
-                { "StationSuitabilityOverlay.Panel[ApplyPreset]", "Apply preset weights for this mode" },
-                { "StationSuitabilityOverlay.Panel[Heatmap]", "Suitability heat map" },
-                { "StationSuitabilityOverlay.Panel[ShowRoutes]", "Show routes" },
-                { "StationSuitabilityOverlay.Panel[On]", "On" },
-                { "StationSuitabilityOverlay.Panel[Off]", "Off" },
-                { "StationSuitabilityOverlay.Panel[Legend]", "Station suitability" },
-                { "StationSuitabilityOverlay.Panel[LegendLow]", "Low" },
-                { "StationSuitabilityOverlay.Panel[LegendHigh]", "High" },
-                { "StationSuitabilityOverlay.Panel[SuggestedLines]", "Suggested lines" },
-                { "StationSuitabilityOverlay.Panel[Km]", "km" },
-                { "StationSuitabilityOverlay.Panel[Stops]", "stops" },
-                { "StationSuitabilityOverlay.Panel[Vehicles]", "veh" },
-                { "StationSuitabilityOverlay.Panel[Reach]", "unlocks {0}% of unserved travel" },
-                { "StationSuitabilityOverlay.Panel[RouteUpdate]", "{0} new suggestions ready \u2014 apply" },
-                { "StationSuitabilityOverlay.Panel[RouteSchedule]", "run {0} \u00b7 {1}% full by day, {2}% by night" },
-                { "StationSuitabilityOverlay.Panel[HealthSchedule]", "runs {0} \u00b7 {1}% full by day, {2}% by night" },
-                { "StationSuitabilityOverlay.Panel[HealthPlan]", "plan: {0} \u00d7 {1}{2} \u00b7 planning load {3} aboard" },
-                { "StationSuitabilityOverlay.Panel[HealthPlanSpan]", " (game allows {0}\u2013{1})" },
-                { "StationSuitabilityOverlay.Panel[HealthDemand]", " \u00b7 {0} riders/day, {1}% of seats" },
-                { "StationSuitabilityOverlay.Panel[HealthDemandNone]", " \u00b7 demand known after the first route pass" },
-                { "StationSuitabilityOverlay.Panel[HealthScheduleAdvice]", " \u2192 switch to {0}" },
-                { "StationSuitabilityOverlay.Panel[Schedule.DayAndNight]", "all day" },
-                { "StationSuitabilityOverlay.Panel[Schedule.Day]", "by day only (06:00\u201322:00)" },
-                { "StationSuitabilityOverlay.Panel[Schedule.Night]", "by night only (22:00\u201306:00)" },
-                { "StationSuitabilityOverlay.Panel[LineHealth]", "Line health" },
-                { "StationSuitabilityOverlay.Panel[SuggestImprovement]", "Suggest improvement" },
-                { "StationSuitabilityOverlay.Panel[ImprovedPlan]", "Improved plan" },
-                { "StationSuitabilityOverlay.Panel[ImprovedPlanHint]", "The white dashed line on the map is the re-traced route." },
-                { "StationSuitabilityOverlay.Panel[Meta]", "{0}% full, {1} veh, {2} stops" },
-                { "StationSuitabilityOverlay.Panel[DataBasis]", "Data collected" },
-                { "StationSuitabilityOverlay.Panel[DataBasisValue]", "{0} h of {1} h \u00b7 {2} readings" },
-                { "StationSuitabilityOverlay.Panel[DataBasisEmpty]", "no lines to watch yet \u2014 readings start with your first one" },
-                { "StationSuitabilityOverlay.Panel[ObservedTrips]", "{0} shopping/leisure journeys seen over {1} h" },
-                { "StationSuitabilityOverlay.Panel[ObservedTripsEmpty]", "no shopping/leisure journeys seen yet" },
-                { "StationSuitabilityOverlay.Panel[Basis]", "average over {0} h, {1} readings, peak {2}%" },
-                { "StationSuitabilityOverlay.Panel[BasisSingle]", "single reading so far" },
-                { "StationSuitabilityOverlay.Panel[Mode.Bus]", "Bus" },
-                { "StationSuitabilityOverlay.Panel[Mode.Tram]", "Tram" },
-                { "StationSuitabilityOverlay.Panel[Mode.Metro]", "Metro" },
-                { "StationSuitabilityOverlay.Panel[Mode.Train]", "Train" },
-                { "StationSuitabilityOverlay.Panel[Mode.Ferry]", "Ferry" },
-                { "StationSuitabilityOverlay.Panel[Objective.Ridership]", "Ridership" },
-                { "StationSuitabilityOverlay.Panel[Objective.Balanced]", "Balanced" },
-                { "StationSuitabilityOverlay.Panel[Objective.Coverage]", "Coverage" },
-                { "StationSuitabilityOverlay.Panel[Slider.catchment]", "Catchment" },
-                { "StationSuitabilityOverlay.Panel[Slider.access]", "Road access" },
-                { "StationSuitabilityOverlay.Panel[Slider.highlight]", "Highlight" },
-                { "StationSuitabilityOverlay.Panel[Slider.slope]", "Max slope" },
-                { "StationSuitabilityOverlay.Panel[Slider.sites]", "Sites" },
-                { "StationSuitabilityOverlay.Panel[Slider.routes]", "Routes" },
-                { "StationSuitabilityOverlay.Panel[Verdict.Healthy]", "healthy" },
-                { "StationSuitabilityOverlay.Panel[Verdict.FleetShort]", "fleet short — the game cannot supply the vehicles it wants" },
-                { "StationSuitabilityOverlay.Panel[Verdict.FleetShort.Arg]", "fleet short — the game wants {0} more vehicle(s) than it can supply" },
-                { "StationSuitabilityOverlay.Panel[Verdict.ModeUp]", "too big for its mode" },
-                { "StationSuitabilityOverlay.Panel[Verdict.ModeUp.Arg]", "too big for its mode — upgrade to {0}" },
-                { "StationSuitabilityOverlay.Panel[Verdict.SplitRoute]", "beyond the largest fleet of any mode — split the route" },
-                { "StationSuitabilityOverlay.Panel[Verdict.Remove]", "empty and unjustified even as the smallest service — reroute or remove" },
-                { "StationSuitabilityOverlay.Panel[Verdict.ModeDown]", "a smaller vehicle would do" },
-                { "StationSuitabilityOverlay.Panel[Verdict.ModeDown.Arg]", "a smaller vehicle would do — run it as {0}" },
-                { "StationSuitabilityOverlay.Panel[Verdict.FleetUp]", "add vehicles" },
-                { "StationSuitabilityOverlay.Panel[Verdict.FleetUp.Arg]", "add {0} vehicle(s)" },
-                { "StationSuitabilityOverlay.Panel[Verdict.FleetDown]", "remove vehicles" },
-                { "StationSuitabilityOverlay.Panel[Verdict.FleetDown.Arg]", "remove {0} vehicle(s)" },
-                { "StationSuitabilityOverlay.Panel[Verdict.Schedule]", "change the schedule" },
-                { "StationSuitabilityOverlay.Panel[Verdict.Schedule.Arg]", "run it {0}" },
-                { "StationSuitabilityOverlay.Panel[Plan.Fleet]", "run it as {0} with {1} vehicle(s)" },
-                { "StationSuitabilityOverlay.Panel[Plan.Delta]", " ({0})" },
-                { "StationSuitabilityOverlay.Panel[Plan.Interval]", ", i.e. an interval of about {0} s" },
-                { "StationSuitabilityOverlay.Panel[Plan.Span]", ", the game allows {0} to {1}" },
-                { "StationSuitabilityOverlay.Panel[Plan.Split]", "; split it — {0} km is more than the largest {1} fleet can carry" },
-                { "StationSuitabilityOverlay.Panel[Plan.Reroute]", "; or reroute it through denser ground — the suggestions list shows where demand is unserved" },
-                { "StationSuitabilityOverlay.Panel[Plan.Fine]", "; the route shape looks reasonable" },
+                { "TransitArchitect.Panel[Title]", "Transit Architect" },
+                { "TransitArchitect.Panel[Mode]", "Mode" },
+                { "TransitArchitect.Panel[Objective]", "Objective" },
+                { "TransitArchitect.Panel[Tuning]", "Tuning" },
+                { "TransitArchitect.Panel[RoutePlanning]", "Route planning" },
+                { "TransitArchitect.Panel[ApplyPreset]", "Apply preset weights for this mode" },
+                { "TransitArchitect.Panel[Heatmap]", "Suitability heat map" },
+                { "TransitArchitect.Panel[ShowRoutes]", "Show routes" },
+                { "TransitArchitect.Panel[On]", "On" },
+                { "TransitArchitect.Panel[Off]", "Off" },
+                { "TransitArchitect.Panel[Legend]", "Station suitability" },
+                { "TransitArchitect.Panel[LegendLow]", "Low" },
+                { "TransitArchitect.Panel[LegendHigh]", "High" },
+                { "TransitArchitect.Panel[SuggestedLines]", "Suggested lines" },
+                { "TransitArchitect.Panel[Km]", "km" },
+                { "TransitArchitect.Panel[Stops]", "stops" },
+                { "TransitArchitect.Panel[Vehicles]", "veh" },
+                { "TransitArchitect.Panel[Reach]", "unlocks {0}% of unserved travel" },
+                { "TransitArchitect.Panel[RouteUpdate]", "{0} new suggestions ready \u2014 apply" },
+                { "TransitArchitect.Panel[RouteSchedule]", "run {0} \u00b7 {1}% full by day, {2}% by night" },
+                { "TransitArchitect.Panel[HealthSchedule]", "runs {0} \u00b7 {1}% full by day, {2}% by night" },
+                { "TransitArchitect.Panel[HealthPlan]", "plan: {0} \u00d7 {1}{2} \u00b7 planning load {3} aboard" },
+                { "TransitArchitect.Panel[HealthPlanSpan]", " (game allows {0}\u2013{1})" },
+                { "TransitArchitect.Panel[HealthDemand]", " \u00b7 {0} riders/day, {1}% of seats" },
+                { "TransitArchitect.Panel[HealthDemandNone]", " \u00b7 demand known after the first route pass" },
+                { "TransitArchitect.Panel[HealthScheduleAdvice]", " \u2192 switch to {0}" },
+                { "TransitArchitect.Panel[Schedule.DayAndNight]", "all day" },
+                { "TransitArchitect.Panel[Schedule.Day]", "by day only (06:00\u201322:00)" },
+                { "TransitArchitect.Panel[Schedule.Night]", "by night only (22:00\u201306:00)" },
+                { "TransitArchitect.Panel[LineHealth]", "Line health" },
+                { "TransitArchitect.Panel[SuggestImprovement]", "Suggest improvement" },
+                { "TransitArchitect.Panel[ImprovedPlan]", "Improved plan" },
+                { "TransitArchitect.Panel[ImprovedPlanHint]", "The white dashed line on the map is the re-traced route." },
+                { "TransitArchitect.Panel[Meta]", "{0}% full, {1} veh, {2} stops" },
+                { "TransitArchitect.Panel[DataBasis]", "Data collected" },
+                { "TransitArchitect.Panel[DataBasisValue]", "{0} h of {1} h \u00b7 {2} readings" },
+                { "TransitArchitect.Panel[DataBasisEmpty]", "no lines to watch yet \u2014 readings start with your first one" },
+                { "TransitArchitect.Panel[ObservedTrips]", "{0} shopping/leisure journeys seen over {1} h" },
+                { "TransitArchitect.Panel[ObservedTripsEmpty]", "no shopping/leisure journeys seen yet" },
+                { "TransitArchitect.Panel[Basis]", "average over {0} h, {1} readings, peak {2}%" },
+                { "TransitArchitect.Panel[BasisSingle]", "single reading so far" },
+                { "TransitArchitect.Panel[Mode.Bus]", "Bus" },
+                { "TransitArchitect.Panel[Mode.Tram]", "Tram" },
+                { "TransitArchitect.Panel[Mode.Metro]", "Metro" },
+                { "TransitArchitect.Panel[Mode.Train]", "Train" },
+                { "TransitArchitect.Panel[Mode.Ferry]", "Ferry" },
+                { "TransitArchitect.Panel[Objective.Ridership]", "Ridership" },
+                { "TransitArchitect.Panel[Objective.Balanced]", "Balanced" },
+                { "TransitArchitect.Panel[Objective.Coverage]", "Coverage" },
+                { "TransitArchitect.Panel[Slider.catchment]", "Catchment" },
+                { "TransitArchitect.Panel[Slider.access]", "Road access" },
+                { "TransitArchitect.Panel[Slider.highlight]", "Highlight" },
+                { "TransitArchitect.Panel[Slider.slope]", "Max slope" },
+                { "TransitArchitect.Panel[Slider.sites]", "Sites" },
+                { "TransitArchitect.Panel[Slider.routes]", "Routes" },
+                { "TransitArchitect.Panel[Verdict.Healthy]", "healthy" },
+                { "TransitArchitect.Panel[Verdict.FleetShort]", "fleet short — the game cannot supply the vehicles it wants" },
+                { "TransitArchitect.Panel[Verdict.FleetShort.Arg]", "fleet short — the game wants {0} more vehicle(s) than it can supply" },
+                { "TransitArchitect.Panel[Verdict.ModeUp]", "too big for its mode" },
+                { "TransitArchitect.Panel[Verdict.ModeUp.Arg]", "too big for its mode — upgrade to {0}" },
+                { "TransitArchitect.Panel[Verdict.SplitRoute]", "beyond the largest fleet of any mode — split the route" },
+                { "TransitArchitect.Panel[Verdict.Remove]", "empty and unjustified even as the smallest service — reroute or remove" },
+                { "TransitArchitect.Panel[Verdict.ModeDown]", "a smaller vehicle would do" },
+                { "TransitArchitect.Panel[Verdict.ModeDown.Arg]", "a smaller vehicle would do — run it as {0}" },
+                { "TransitArchitect.Panel[Verdict.FleetUp]", "add vehicles" },
+                { "TransitArchitect.Panel[Verdict.FleetUp.Arg]", "add {0} vehicle(s)" },
+                { "TransitArchitect.Panel[Verdict.FleetDown]", "remove vehicles" },
+                { "TransitArchitect.Panel[Verdict.FleetDown.Arg]", "remove {0} vehicle(s)" },
+                { "TransitArchitect.Panel[Verdict.Schedule]", "change the schedule" },
+                { "TransitArchitect.Panel[Verdict.Schedule.Arg]", "run it {0}" },
+                { "TransitArchitect.Panel[Plan.Fleet]", "run it as {0} with {1} vehicle(s)" },
+                { "TransitArchitect.Panel[Plan.Delta]", " ({0})" },
+                { "TransitArchitect.Panel[Plan.Interval]", ", i.e. an interval of about {0} s" },
+                { "TransitArchitect.Panel[Plan.Span]", ", the game allows {0} to {1}" },
+                { "TransitArchitect.Panel[Plan.Split]", "; split it — {0} km is more than the largest {1} fleet can carry" },
+                { "TransitArchitect.Panel[Plan.Reroute]", "; or reroute it through denser ground — the suggestions list shows where demand is unserved" },
+                { "TransitArchitect.Panel[Plan.Fine]", "; the route shape looks reasonable" },
             };
         }
 

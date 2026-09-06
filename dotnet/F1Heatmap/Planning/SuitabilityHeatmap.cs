@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The heat map's per-term caps (formal-specification.md §7.3).
     internal enum CapTerm

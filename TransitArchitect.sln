@@ -4,7 +4,7 @@ VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "dotnet", "dotnet", "{71E6E750-85FD-B5BC-4321-E01377EC6231}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StationSuitabilityOverlay", "dotnet\StationSuitabilityOverlay.csproj", "{3C6BB9EE-0C35-01D5-CF4D-2FAC63CFDCB3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TransitArchitect", "dotnet\TransitArchitect.csproj", "{3C6BB9EE-0C35-01D5-CF4D-2FAC63CFDCB3}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

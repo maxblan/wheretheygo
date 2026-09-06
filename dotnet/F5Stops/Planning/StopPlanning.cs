@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Where along a fixed alignment a line calls (register A5.1, A5.2, A5.4, decided
     // 2026-09-05): a stop is made exactly where the walking time it saves the
@@ -51,7 +51,7 @@ namespace StationSuitabilityOverlay
         public double Value => Gain - Delay;
     }
 
-    internal static class SuitabilityStopPlan
+    internal static class StopPlanning
     {
         public static StopPlanSolution Solve(StopPlanProblem problem)
         {

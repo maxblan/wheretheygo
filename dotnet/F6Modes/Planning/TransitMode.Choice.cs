@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // What the game's own prefabs say about one mode's vehicles and lines: seats per
     // vehicle (carriages included), the line prefab's default interval and stop
@@ -250,7 +250,7 @@ namespace StationSuitabilityOverlay
 
         // The fleet for a line's daily boardings within the game's span, with the
         // interval that fleet yields and the utilisation the boardings give at it
-        // (SuitabilityEquity.Utilisation on the derived interval).
+        // (Equity.Utilisation on the derived interval).
         public static FleetPlan PlanFleet(float ridersPerDay, float roundTripSeconds, float capacityPerVehicle, int min, int max, float ceiling)
         {
             int vehicles = Clamp(FleetForDemand(ridersPerDay, roundTripSeconds, capacityPerVehicle, ceiling), min, max);
@@ -261,7 +261,7 @@ namespace StationSuitabilityOverlay
                 HeadwaySeconds = headway,
                 Min = min,
                 Max = max,
-                Utilisation = SuitabilityEquity.Utilisation(ridersPerDay, headway, capacityPerVehicle),
+                Utilisation = Equity.Utilisation(ridersPerDay, headway, capacityPerVehicle),
             };
         }
 

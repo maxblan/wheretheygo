@@ -2,13 +2,13 @@
 using System.Globalization;
 using System.Text;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The delimited-string payloads the panel module reads (ui-module.md): `|` between
     // fields, newline between rows, and anything a player typed sanitised of both
     // before it gets here. The .mjs indexes by position, so every row grows at the
     // END and the old indices never move; the harness pins the field counts.
-    internal static class SuitabilityPanelPayload
+    internal static class PanelPayload
     {
         // The summary when there is nothing to list: no journeys yet, no corridor, or
         // journeys that no new line would improve.
@@ -145,7 +145,7 @@ namespace StationSuitabilityOverlay
                 _ = builder.Append('|');
                 // Token plus argument, never a finished sentence: the panel is the only
                 // place that knows the player's language.
-                _ = builder.Append(SuitabilityLineHealth.VerdictArgument(health));
+                _ = builder.Append(LineHealthRules.VerdictArgument(health));
                 _ = builder.Append('|');
                 _ = builder.Append((health.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture));
                 _ = builder.Append('|');

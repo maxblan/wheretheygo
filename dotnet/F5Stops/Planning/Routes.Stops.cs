@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // What every stop plan of one route pass shares: the journeys' doors (two ends per
     // journey, each with the journey's weight), the game's fleet facts, the score
@@ -89,10 +89,10 @@ namespace StationSuitabilityOverlay
         }
     }
 
-    // F5 — where a line calls. The alignment is fixed; this half of SuitabilityRoutes
-    // turns it into a stop plan problem (SuitabilityStopPlan) and reads the answer
+    // F5 — where a line calls. The alignment is fixed; this half of Routes
+    // turns it into a stop plan problem (StopPlanning) and reads the answer
     // back onto the route.
-    internal static partial class SuitabilityRoutes
+    internal static partial class Routes
     {
 
         // Re-places stops after a mode change, since spacing, access horizon and the
@@ -103,7 +103,7 @@ namespace StationSuitabilityOverlay
             PlaceStops(route, mode, stops);
         }
 
-        // Places the stops of a route by the stop plan (SuitabilityStopPlan, register
+        // Places the stops of a route by the stop plan (StopPlanning, register
         // A5.1/A5.4): candidates every Assumptions.CandidateStepMetres along the polyline, the
         // termini and every interchange within Assumptions.StationCallMetres forced, anything the
         // score oracle says cannot hold a stop (open water for a ferry, unbuildable
@@ -132,7 +132,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+            StopPlanSolution plan = StopPlanning.Solve(problem);
             route.StopPlan = problem;
             route.StopPlanChosen = plan.Chosen;
             route.StopPlanGain = plan.Gain;

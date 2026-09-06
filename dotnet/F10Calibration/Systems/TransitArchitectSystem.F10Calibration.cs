@@ -5,11 +5,11 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
-    // Ridership calibration: sampling the served stops into SuitabilityCalibration on a
+    // Ridership calibration: sampling the served stops into Calibration on a
     // cadence, fitting, and the options-page requests to apply or reset the fit.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
 
         // Static bridge for the options page. The settings object is constructed
@@ -31,7 +31,7 @@ namespace StationSuitabilityOverlay
 
         public static void RequestResetCalibration() => s_ResetCalibrationRequested = true;
 
-        private readonly SuitabilityCalibration m_Calibration = new SuitabilityCalibration();
+        private readonly Calibration m_Calibration = new Calibration();
 
         private float m_LastRidershipSample;
 

@@ -5,13 +5,13 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // F7 — the line-set selection on the game side: every candidate weighed alone,
     // the set problem built from the journeys and the existing network, the exact
     // search run under its time budget, and the chosen set adopted with its riders,
-    // utilisation and schedule. The optimisation itself is SuitabilityLineSet.
-    public sealed partial class StationSuitabilityOverlaySystem
+    // utilisation and schedule. The optimisation itself is LineSet.
+    public sealed partial class TransitArchitectSystem
     {
 
         // The walk to and from the candidate's own stops, and what each journey costs
@@ -72,7 +72,7 @@ namespace StationSuitabilityOverlay
                 LineSetSolution solution;
                 using (var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(Assumptions.LineSetTimeBudgetSeconds)))
                 {
-                    solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget, budget.Token);
+                    solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget, budget.Token);
                 }
 
                 stopwatch.Stop();
@@ -104,12 +104,12 @@ namespace StationSuitabilityOverlay
 
             LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute>(), 0, pass);
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            LineSetEvaluation baseline = SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null);
+            LineSetEvaluation baseline = LineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null);
             pass.BaselineEvaluation = baseline;
             pass.Baseline = baseline.After;
             DeferredLog.Info(
                 $"Baseline door-to-door times for {(probe.PairCount).ToString(CultureInfo.InvariantCulture)} pairs from " +
-                $"{(SuitabilityLineSet.GeometryOf(probe).ZoneCount).ToString(CultureInfo.InvariantCulture)} zones over {(probe.BaseLines.Count).ToString(CultureInfo.InvariantCulture)} existing lines in {(stopwatch.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms");
+                $"{(LineSet.GeometryOf(probe).ZoneCount).ToString(CultureInfo.InvariantCulture)} zones over {(probe.BaseLines.Count).ToString(CultureInfo.InvariantCulture)} existing lines in {(stopwatch.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms");
             for (int i = 0; i < probe.BaseLines.Count && i < m_ExistingLines.Count; i++)
             {
                 DeferredLog.Info(
@@ -148,7 +148,7 @@ namespace StationSuitabilityOverlay
             for (int c = 0; c < usable.Count; c++)
             {
                 stopwatch.Restart();
-                LineSetEvaluation alone = SuitabilityLineSet.Evaluate(probe, new[] { c }, 1, before);
+                LineSetEvaluation alone = LineSet.Evaluate(probe, new[] { c }, 1, before);
                 usable[c].EnabledDemand = (float)alone.Riders[c];
                 usable[c].DemandScored = true;
                 DeferredLog.Info(
@@ -178,7 +178,7 @@ namespace StationSuitabilityOverlay
                 BaseStopCount = m_TransitStops.Count,
                 BaseStopX = new float[m_TransitStops.Count],
                 BaseStopZ = new float[m_TransitStops.Count],
-                BaseLines = SuitabilityLines.ToTransitLines(m_ExistingLines),
+                BaseLines = Lines.ToTransitLines(m_ExistingLines),
                 WalkRadius = Assumptions.TransferWalkRadius,
                 BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
                 MaxTravelSeconds = Assumptions.MaxJourneySeconds,
@@ -202,7 +202,7 @@ namespace StationSuitabilityOverlay
                 SuggestedRoute route = candidates[c];
                 // The wait the router charges is half the interval of the fleet the route
                 // carries (PrepareFleet / SettleMode); the set's own riders re-size the
-                // fleet for feasibility (SuitabilityLineSet.FleetFor), not the wait.
+                // fleet for feasibility (LineSet.FleetFor), not the wait.
                 var line = new LineCandidate
                 {
                     StopX = new float[route.Stops.Count],
@@ -287,7 +287,7 @@ namespace StationSuitabilityOverlay
                 PairWeight = weight.ToArray(),
                 PairDayShare = dayShare,
             };
-            table.Geometry = SuitabilityLineSet.GeometryOf(table);
+            table.Geometry = LineSet.GeometryOf(table);
             return table;
         }
 
@@ -309,8 +309,8 @@ namespace StationSuitabilityOverlay
             }
 
             SnapStops(stops, access.Index, inputs.AccessMs, out int[] nodes, out int[] stopAccess);
-            int[] merged = SuitabilityEquity.WithStops(inputs.Graph, dijkstra, m_ServedWalkMs, nodes, stopAccess, nodes.Length, m_EquityHorizonMs);
-            return SuitabilityEquity.Coverage(
+            int[] merged = Equity.WithStops(inputs.Graph, dijkstra, m_ServedWalkMs, nodes, stopAccess, nodes.Length, m_EquityHorizonMs);
+            return Equity.Coverage(
                 merged, m_EquityHorizonMs,
                 m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
                 m_JourneyWeight, m_Journeys.Count).Share;
@@ -335,7 +335,7 @@ namespace StationSuitabilityOverlay
                     // the interval it yields prices the periods.
                     route.EnabledDemand = (float)evaluation.Riders[order[k]];
                     LineCandidate line = problem.Candidates[order[k]];
-                    FleetPlan fleet = SuitabilityLineSet.FleetFor(problem, order[k], evaluation.Riders[order[k]]);
+                    FleetPlan fleet = LineSet.FleetFor(problem, order[k], evaluation.Riders[order[k]]);
                     route.Vehicles = fleet.Vehicles;
                     route.HeadwaySeconds = fleet.HeadwaySeconds;
                     route.DayUtilisation = Daytime.UtilisationInPeriod((float)evaluation.RidersByDay[order[k]], fleet.HeadwaySeconds, line.VehicleCapacity, Assumptions.DayShareOfDay);
@@ -350,7 +350,7 @@ namespace StationSuitabilityOverlay
                     $"(plan: {(route.StopPlan?.CandidateCount ?? 0).ToString(CultureInfo.InvariantCulture)} candidates, {(route.StopPlan?.EndCount ?? 0).ToString(CultureInfo.InvariantCulture)} doors in reach, " +
                     $"gain {(route.StopPlanGain / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h vs delay {(route.StopPlanDelay / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} h a day), " +
                     $"len={(route.Length).ToString("F0", CultureInfo.InvariantCulture)}m, riders/day in the set={(route.EnabledDemand).ToString("F0", CultureInfo.InvariantCulture)}, " +
-                    $"utilisation={(SuitabilityLineSet.Utilisation(problem, order[k], route.EnabledDemand) * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
+                    $"utilisation={(LineSet.Utilisation(problem, order[k], route.EnabledDemand) * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, " +
                     $"alone={(solution.StandaloneTimeSaved[order[k]] / 3600.0).ToString("F1", CultureInfo.InvariantCulture)} passenger-hours/day, {(route.Vehicles).ToString(CultureInfo.InvariantCulture)} veh of [{(route.FleetMin).ToString(CultureInfo.InvariantCulture)}, {(route.FleetMax == int.MaxValue ? "?" : route.FleetMax.ToString(CultureInfo.InvariantCulture))}] at {(route.HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)} s, " +
                     $"schedule {route.Schedule} (day {(route.DayUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, night {(route.NightUtilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of the period's seats)");
             }

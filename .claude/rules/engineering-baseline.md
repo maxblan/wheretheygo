@@ -18,7 +18,7 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
 - Three things are never skippable: the purity and determinism rules for the testable core
   (`pure-math.md`) — a Unity or ECS type in those files breaks every test in them; verifying a game
   API against the decompiled assembly before writing code against it (`ecs-systems.md`); and the
-  prohibition on weakening or deleting a test in `tests/SuitabilityScoring.Tests` to make a change
+  prohibition on weakening or deleting a test in `tests/TransitArchitect.Tests` to make a change
   pass.
 - Never justify a change by naming a pattern. State the problem in this repo's own terms first;
   if you cannot state it without the pattern's name, do not make the change.
@@ -38,7 +38,7 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   make a symptom disappear.
 - When one conceptual change forces edits across files that are not otherwise related, stop and
   name the missing boundary before continuing. Two fan-outs here are the design, not a smell: a new
-  panel control moves together through `Setting.cs`, `SuitabilityPanelUISystem.cs`, the `.mjs`, the
+  panel control moves together through `Setting.cs`, `PanelUISystem.cs`, the `.mjs`, the
   `.css` and both locale files (a new verdict token likewise through `LineVerdict`, the `.mjs`
   fallback tables and both locale files); and a new scoring term moves through `SuitabilityWalkAccess.cs`, the
   combine pass in `SuitabilityHeatmap.cs`, the F1 partial of the overlay system, the infomode
@@ -57,7 +57,7 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   direction.
 - Both rules govern *new* indirection. `AlignmentNetwork`'s uniform view over the streets and the
   free-form lattices, the `float2Like` vector that keeps the pure core Unity-free,
-  and `SuitabilityPanelUISystem`'s one-line binding forwarders exist by design — do not dissolve or
+  and `PanelUISystem`'s one-line binding forwarders exist by design — do not dissolve or
   flag them. Pass-through code outside your change point gets recorded, not deleted.
 - Never split a function because of its line count. Split when it mixes conceptual phases
   (gather ECS data / compute / render) or abstraction levels. If an extracted helper has one caller
@@ -200,7 +200,7 @@ exists, and prefer a logged rejection over a suggestion nobody can justify.
 - Cover rejected candidates, boundary values, empty and degenerate input (no stops, one node, all
   scores zero), not only the happy path. Several shipped bugs were the degenerate case: a percentile
   over a set with no positive member turned the whole map red.
-- Never weaken, delete or skip a test in `tests/SuitabilityScoring.Tests` to make a change pass. A
+- Never weaken, delete or skip a test in `tests/TransitArchitect.Tests` to make a change pass. A
   failure there means behavior changed — find out why.
 - Static "unused" signals lie here. Anything the game reaches by reflection or by name — an infomode
   field, a settings property rendered by the Options UI, a locale key, an `.mjs` export, a binding

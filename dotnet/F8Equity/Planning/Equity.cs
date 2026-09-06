@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // How well the served network reaches the people who want to travel (register
     // A1.8/A1.9, decided 2026-09-05): the share of journeys whose BOTH ends lie within
@@ -23,7 +23,7 @@ namespace StationSuitabilityOverlay
         public double GiniWalk;
     }
 
-    internal static class SuitabilityEquity
+    internal static class Equity
     {
         public const int NotServed = int.MaxValue;
 

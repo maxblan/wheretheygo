@@ -5,11 +5,11 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The recommended sites: candidate network nodes scored under the last combine,
     // the exact selection under the mode's stop spacing, and the layer they are drawn in.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         private int[]? m_LoggedSiteIndices;
 

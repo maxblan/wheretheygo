@@ -88,7 +88,7 @@ theorem clamp_of_under (v lo hi : Nat) (h : v < lo) (hlh : lo ≤ hi) : clamp v 
 /-! ### 2. The upper-median bar -/
 
 /-- The upper median: the element at index n/2 of the sorted list (0 for an empty
-list) — `SuitabilityLineHealth.UpperMedian` on an already sorted list. -/
+list) — `LineHealthRules.UpperMedian` on an already sorted list. -/
 def upperMedian (l : List Nat) : Nat := (l.drop (l.length / 2)).headD 0
 
 theorem filter_nil_of_none {α : Type} (p : α → Bool) :
@@ -154,7 +154,7 @@ inductive Verdict where
   | healthy | fleetShort | modeUp | splitRoute | remove | modeDown | fleetUp | fleetDown | schedule
 deriving Repr, DecidableEq
 
-/-- The inputs the tree reads (`SuitabilityLineHealth.VerdictOf`). -/
+/-- The inputs the tree reads (`LineHealthRules.VerdictOf`). -/
 structure Signals where
   gameShort : Bool          -- NotEnoughVehicles ∨ (RequireVehicles ∧ vehicles < target)
   chosenAbove : Bool        -- the ladder settled above the line's mode

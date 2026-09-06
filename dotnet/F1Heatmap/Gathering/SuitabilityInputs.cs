@@ -10,7 +10,7 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     internal static class SuitabilityInputs
     {

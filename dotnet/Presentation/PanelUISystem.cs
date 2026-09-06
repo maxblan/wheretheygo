@@ -2,7 +2,7 @@
 using Colossal.UI.Binding;
 using Game.UI;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Bindings for the in-game control panel.
     //
@@ -10,9 +10,9 @@ namespace StationSuitabilityOverlay
     // are things you want to change while looking at the map, and the Options page
     // costs two clicks and covers the city. Values here write straight through to
     // the same Setting object the Options page edits, so the two always agree.
-    public sealed partial class SuitabilityPanelUISystem : UISystemBase
+    public sealed partial class PanelUISystem : UISystemBase
     {
-        private const string Group = "stationSuitability";
+        private const string Group = "transitArchitect";
 
         // The panel's static shape: which modes and objectives exist, and the bounds
         // the setters below clamp to. Sent rather than hand-copied into the .mjs,
@@ -56,13 +56,13 @@ namespace StationSuitabilityOverlay
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
         // every use site for a state (OnCreate not yet run) in which nothing works anyway.
-        private StationSuitabilityOverlaySystem m_OverlaySystem;
+        private TransitArchitectSystem m_OverlaySystem;
 #pragma warning restore CS8618
 
         protected override void OnCreate()
         {
             base.OnCreate();
-            m_OverlaySystem = World.GetOrCreateSystemManaged<StationSuitabilityOverlaySystem>();
+            m_OverlaySystem = World.GetOrCreateSystemManaged<TransitArchitectSystem>();
 
             // Visibility is driven by the mod's own toolbar button rather than by the
             // infoview menu, so the panel is the single entry point.
@@ -90,18 +90,18 @@ namespace StationSuitabilityOverlay
             AddUpdateBinding(new GetterValueBinding<int>(Group, "sites", static () => Read(static s => s.SiteCount)));
             AddUpdateBinding(new GetterValueBinding<int>(Group, "routes", static () => Read(static s => s.RouteCount)));
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "showRoutes", static () => Settings is not null && Settings.ShowRoutes));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", static () => StationSuitabilityOverlaySystem.RouteListText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "routeUpdate", static () => StationSuitabilityOverlaySystem.RouteUpdateText));
-            AddBinding(new TriggerBinding(Group, "applyRouteUpdate", static () => StationSuitabilityOverlaySystem.RequestApplyRouteUpdate()));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", static () => StationSuitabilityOverlaySystem.LineHealthText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => StationSuitabilityOverlaySystem.DataCoverageText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "equity", static () => StationSuitabilityOverlaySystem.EquityText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", static () => StationSuitabilityOverlaySystem.ImprovePlanText));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "improvedLine", static () => StationSuitabilityOverlaySystem.ImprovedLineIndex));
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "improvedRouteDrawn", static () => StationSuitabilityOverlaySystem.ImprovedRouteDrawn));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", static () => TransitArchitectSystem.RouteListText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "routeUpdate", static () => TransitArchitectSystem.RouteUpdateText));
+            AddBinding(new TriggerBinding(Group, "applyRouteUpdate", static () => TransitArchitectSystem.RequestApplyRouteUpdate()));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", static () => TransitArchitectSystem.LineHealthText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => TransitArchitectSystem.DataCoverageText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "equity", static () => TransitArchitectSystem.EquityText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", static () => TransitArchitectSystem.ImprovePlanText));
+            AddUpdateBinding(new GetterValueBinding<int>(Group, "improvedLine", static () => TransitArchitectSystem.ImprovedLineIndex));
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "improvedRouteDrawn", static () => TransitArchitectSystem.ImprovedRouteDrawn));
             // The selection lives on the C# side so the panel's row highlight and what
             // the map draws cannot disagree, and so a refresh clearing it clears both.
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "selectedRoute", static () => StationSuitabilityOverlaySystem.SelectedRouteIndex));
+            AddUpdateBinding(new GetterValueBinding<int>(Group, "selectedRoute", static () => TransitArchitectSystem.SelectedRouteIndex));
 
             AddTriggerBindings();
         }
@@ -131,17 +131,17 @@ namespace StationSuitabilityOverlay
 
             AddBinding(new TriggerBinding<int>(Group, "improveLine", static index =>
             {
-                StationSuitabilityOverlaySystem.RequestImprovement(index);
+                TransitArchitectSystem.RequestImprovement(index);
             }));
 
             AddBinding(new TriggerBinding<int>(Group, "highlightRoute", static index =>
             {
-                StationSuitabilityOverlaySystem.HighlightRoute(index);
+                TransitArchitectSystem.HighlightRoute(index);
             }));
 
             AddBinding(new TriggerBinding<int>(Group, "selectRoute", static index =>
             {
-                StationSuitabilityOverlaySystem.SelectRoute(index);
+                TransitArchitectSystem.SelectRoute(index);
             }));
 
             // One shape, nine times over. The engineering baseline exempts this

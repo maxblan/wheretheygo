@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace StationSuitabilityOverlay.Tests
+namespace TransitArchitect.Tests
 {
     // The alignment stage (F4) and stop placement (F5) offline. The synthetic city
     // below is the one the conversion to float2Like was characterized on: the
@@ -75,18 +75,18 @@ namespace StationSuitabilityOverlay.Tests
             };
             var flows = new List<ZoneFlow>();
             var journeys = new List<Trip>();
-            float total = SuitabilityZones.Aggregate(trips, worldMin, grid, flows, out int count, journeys);
+            float total = DemandZones.Aggregate(trips, worldMin, grid, flows, out int count, journeys);
             AssertTrue(count == 3 && total == 6f, $"three trips survive (self-zone and off-map dropped): count {count.ToString(CultureInfo.InvariantCulture)}, weight {total.ToString(CultureInfo.InvariantCulture)}");
             AssertTrue(journeys.Count == 3, "the surviving trips are handed back as journeys");
             AssertTrue(flows.Count == 2, "two zone pairs");
             AssertTrue(flows[0].m_Origin == 0 && flows[0].m_Destination == 3 && flows[0].m_Weight == 5f, "pair 0->3 sums both trips' weights");
             AssertTrue(flows[1].m_Origin == 15 && flows[1].m_Destination == 0 && flows[1].m_Weight == 1f, "pairs come out in (origin, destination) order");
-            AssertTrue(SuitabilityZones.ZoneOf(new float2Like(1023f, 1023f), worldMin, grid) == 15 && SuitabilityZones.ZoneOf(new float2Like(1024f, 0f), worldMin, grid) == -1, "zone index and the open upper edge");
-            float2Like centre = SuitabilityZones.ZoneCentre(5, worldMin, grid);
+            AssertTrue(DemandZones.ZoneOf(new float2Like(1023f, 1023f), worldMin, grid) == 15 && DemandZones.ZoneOf(new float2Like(1024f, 0f), worldMin, grid) == -1, "zone index and the open upper edge");
+            float2Like centre = DemandZones.ZoneCentre(5, worldMin, grid);
             AssertTrue(centre.x == 384f && centre.y == 384f, "zone centre");
 
             var raster = new float[8 * 8];
-            SuitabilityZones.RasterizeDesireLines(flows, worldMin, grid, new int2Like(8, 8), 128f, raster);
+            DemandZones.RasterizeDesireLines(flows, worldMin, grid, new int2Like(8, 8), 128f, raster);
             float deposited = 0f;
             for (int i = 0; i < raster.Length; i++)
             {
@@ -143,7 +143,7 @@ namespace StationSuitabilityOverlay.Tests
             var grid = new int2Like(8, 8);
             var worldMin = new float2Like(0f, 0f);
             var trackMask = new byte[64];
-            SuitabilityLattice.RasterizeTracks(new List<float2Like> { new float2Like(128f, 64f) }, new List<float2Like> { new float2Like(128f, 64f) }, grid, worldMin, 32f, trackMask);
+            Lattice.RasterizeTracks(new List<float2Like> { new float2Like(128f, 64f) }, new List<float2Like> { new float2Like(128f, 64f) }, grid, worldMin, 32f, trackMask);
             int marked = 0;
             for (int i = 0; i < trackMask.Length; i++)
             {
@@ -152,12 +152,12 @@ namespace StationSuitabilityOverlay.Tests
 
             AssertTrue(marked == 9 && trackMask[4 + (2 * 8)] == 1 && trackMask[3 + (1 * 8)] == 1 && trackMask[2 + (2 * 8)] == 0, "a point marks its tile and a one-tile halo");
 
-            CompactGraph graph = SuitabilityLattice.Build(grid, worldMin, 32f, tile => tile % 8 < 4 || tile / 8 < 4, tile => SuitabilityLattice.RailCostScale(trackMask[tile] != 0), out float[] xs, out float[] zs);
+            CompactGraph graph = Lattice.Build(grid, worldMin, 32f, tile => tile % 8 < 4 || tile / 8 < 4, tile => Lattice.RailCostScale(trackMask[tile] != 0), out float[] xs, out float[] zs);
             // Nodes at (64,64) (192,64) (64,192); (192,192) is not passable.
             AssertTrue(graph.NodeCount == 3 && xs[0] == 64f && zs[0] == 64f && xs[1] == 192f && zs[2] == 192f, "nodes only where the mask admits, in row order");
             AssertTrue(graph.EdgeCount == 3, "right and down from the first node, and the rising diagonal from the third to the second");
-            float onTrack = 128f * SuitabilityLattice.RailCostScale(onExistingTrack: true);
-            float offTrack = 128f * SuitabilityLattice.RailCostScale(onExistingTrack: false);
+            float onTrack = 128f * Lattice.RailCostScale(onExistingTrack: true);
+            float offTrack = 128f * Lattice.RailCostScale(onExistingTrack: false);
             AssertTrue(graph.EdgeA[0] == 0 && graph.EdgeB[0] == 1 && graph.EdgeA[2] == 2 && graph.EdgeB[2] == 1, "edge order follows the sweep");
             AssertTrue(graph.EdgeCost[0] == onTrack, "the edge whose midpoint tile carries track is cheap");
             AssertTrue(graph.EdgeCost[1] == offTrack, "the edge off the track pays the full scale");
@@ -272,8 +272,8 @@ namespace StationSuitabilityOverlay.Tests
                 {
                     int a = rng.Next(Xs.Count);
                     int b = rng.Next(Xs.Count);
-                    int za = SuitabilityZones.ZoneOf(new float2Like(Xs[a], Zs[a]), WorldMin, ZoneGrid);
-                    int zb = SuitabilityZones.ZoneOf(new float2Like(Xs[b], Zs[b]), WorldMin, ZoneGrid);
+                    int za = DemandZones.ZoneOf(new float2Like(Xs[a], Zs[a]), WorldMin, ZoneGrid);
+                    int zb = DemandZones.ZoneOf(new float2Like(Xs[b], Zs[b]), WorldMin, ZoneGrid);
                     if (za < 0 || zb < 0 || za == zb)
                     {
                         continue;
@@ -330,7 +330,7 @@ namespace StationSuitabilityOverlay.Tests
                 }
 
                 float transferRadius = Assumptions.WalkSpeed * (Assumptions.TransferWalkMs / 1000f);
-                InterchangeMap hubs = SuitabilityTransit.BuildInterchangeMap(hubX, hubZ, hubModes, 6, transferRadius);
+                InterchangeMap hubs = TransitRouting.BuildInterchangeMap(hubX, hubZ, hubModes, 6, transferRadius);
                 Stops = new StopContext { Ends = ends, EndWeights = endWeights, Facts = Facts, Hubs = hubs, ScoreAt = ScoreAt };
             }
 
@@ -349,9 +349,9 @@ namespace StationSuitabilityOverlay.Tests
 
                 trackMask = new byte[GridX * GridY];
                 var tileGrid = new int2Like(GridX, GridY);
-                SuitabilityLattice.RasterizeTracks(trackStarts, trackEnds, tileGrid, WorldMin, Tile, trackMask);
+                Lattice.RasterizeTracks(trackStarts, trackEnds, tileGrid, WorldMin, Tile, trackMask);
                 byte[] mask = trackMask;
-                graph = SuitabilityLattice.Build(tileGrid, WorldMin, Tile, Land, t => SuitabilityLattice.RailCostScale(mask[t] != 0), out float[] railX, out float[] railZ);
+                graph = Lattice.Build(tileGrid, WorldMin, Tile, Land, t => Lattice.RailCostScale(mask[t] != 0), out float[] railX, out float[] railZ);
                 var rail = new AlignmentNetwork();
                 rail.Adopt(graph, railX, railZ, RouteNetwork.Rail);
                 return rail;
@@ -361,7 +361,7 @@ namespace StationSuitabilityOverlay.Tests
         private static List<SuggestedRoute> GrowOn(SyntheticCity city, RouteObjective objective, out int grown, out int tooShort, out int atHub)
         {
             var output = new List<SuggestedRoute>();
-            SuitabilityRoutes.BuildForNetwork(city.Roads, objective, 3, 0.1f, 12000f, city.NodeDemand, 0.005f, null, output, city.Stops, out grown, out tooShort, out atHub);
+            Routes.BuildForNetwork(city.Roads, objective, 3, 0.1f, 12000f, city.NodeDemand, 0.005f, null, output, city.Stops, out grown, out tooShort, out atHub);
             return output;
         }
 
@@ -437,7 +437,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertBits(0x45289000u, weight, "rail assigned weight");
 
             var output = new List<SuggestedRoute>();
-            SuitabilityRoutes.BuildDirectForNetwork(rail, city.Flows, zoneNodes, 3, 20000f, ModePreset.Train, output, city.Stops, out int considered, out int tooShort, out int atHub);
+            Routes.BuildDirectForNetwork(rail, city.Flows, zoneNodes, 3, 20000f, ModePreset.Train, output, city.Stops, out int considered, out int tooShort, out int atHub);
             AssertTrue(considered == 15 && tooShort == 3 && atHub == 3 && output.Count == 18, $"traces: considered {considered.ToString(CultureInfo.InvariantCulture)}, tooShort {tooShort.ToString(CultureInfo.InvariantCulture)}, atHub {atHub.ToString(CultureInfo.InvariantCulture)}, kept {output.Count.ToString(CultureInfo.InvariantCulture)}");
             int bent = 0;
             for (int i = 0; i < output.Count; i++)
@@ -467,13 +467,13 @@ namespace StationSuitabilityOverlay.Tests
             List<SuggestedRoute> balanced = GrowOn(city, RouteObjective.Balanced, out _, out _, out _);
             SuggestedRoute first = balanced[0];
             SuggestedRoute copy = first.CopyFor(ModePreset.Tram);
-            SuitabilityRoutes.Restop(copy, ModePreset.Tram, city.Stops);
+            Routes.Restop(copy, ModePreset.Tram, city.Stops);
             AssertTrue(copy.Mode == ModePreset.Tram && copy.Stops.Count == 10 && first.Stops.Count == 12, "the tram's wider spacing places fewer stops on the same alignment");
             AssertBits(0x4589BB0Du, copy.Length, "the trimmed length is unchanged when both termini stay");
             float ride = TransitModes.RideSeconds(copy.Length, copy.Stops.Count, Assumptions.CruiseSpeedFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode));
             AssertBits(0x43FBA411u, ride, "ride seconds");
-            AssertTrue(SuitabilityRoutes.KeepsItsShape(copy, ride), "within the tram's ride limit");
-            AssertTrue(!SuitabilityRoutes.KeepsItsShape(copy, Assumptions.MaxRideSecondsFor(ModePreset.Tram) + 1f), "over the limit the shape gate fails");
+            AssertTrue(Routes.KeepsItsShape(copy, ride), "within the tram's ride limit");
+            AssertTrue(!Routes.KeepsItsShape(copy, Assumptions.MaxRideSecondsFor(ModePreset.Tram) + 1f), "over the limit the shape gate fails");
             float roundTrip = TransitModes.RoundTripSeconds(copy.Length * 2f, copy.Stops.Count * 2, Assumptions.CruiseSpeedFor(copy.Mode), city.Facts.DelayPerStopSeconds(copy.Mode));
             AssertTrue(roundTrip > 2f * ride, "the loop with a dwell at every call each way outlasts two one-way rides");
             AssertBits(0x44865208u, roundTrip, "round trip seconds: an 8.8 km loop at 12 m/s plus twenty tram calls");
@@ -497,13 +497,13 @@ namespace StationSuitabilityOverlay.Tests
 
             var partial = new ExistingLine { m_Mode = ModePreset.Bus };
             partial.m_StopIndices.Add(0);
-            AssertTrue(SuitabilityRoutes.DuplicatesExisting(first, new List<ExistingLine> { existing }, stopPositions, 150f), "a line calling at every stop is already built");
-            AssertTrue(!SuitabilityRoutes.DuplicatesExisting(first, new List<ExistingLine> { partial }, stopPositions, 150f), "one shared stop is not");
-            AssertTrue(!SuitabilityRoutes.DuplicatesExisting(first, new List<ExistingLine>(), stopPositions, 150f), "no lines, no duplicate");
+            AssertTrue(Routes.DuplicatesExisting(first, new List<ExistingLine> { existing }, stopPositions, 150f), "a line calling at every stop is already built");
+            AssertTrue(!Routes.DuplicatesExisting(first, new List<ExistingLine> { partial }, stopPositions, 150f), "one shared stop is not");
+            AssertTrue(!Routes.DuplicatesExisting(first, new List<ExistingLine>(), stopPositions, 150f), "no lines, no duplicate");
 
             _ = GrowOn(city, RouteObjective.Coverage, out _, out _, out _);
             var scratch = new List<int>();
-            SuggestedRoute? retraced = SuitabilityRoutes.RetraceOnRoad(city.Roads, new float2Like(-1500f, -1500f), new float2Like(1500f, 1200f), city.Stops, scratch);
+            SuggestedRoute? retraced = Routes.RetraceOnRoad(city.Roads, new float2Like(-1500f, -1500f), new float2Like(1500f, 1200f), city.Stops, scratch);
             AssertTrue(retraced is not null, "a street path between the two points exists");
             if (retraced is null)
             {
@@ -513,7 +513,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(retraced.Mode == ModePreset.Bus && retraced.Network == RouteNetwork.Road && retraced.Nodes.Count == 18 && retraced.Stops.Count == 15, "the re-trace runs on the streets as a bus");
             AssertBits(0x45942103u, retraced.Length, "re-trace length");
             AssertRouteWellFormed(retraced, "retrace");
-            AssertTrue(SuitabilityRoutes.RetraceOnRoad(city.Roads, new float2Like(9000f, 9000f), new float2Like(1500f, 1200f), city.Stops, scratch) is null, "an end off the network cannot be re-traced");
+            AssertTrue(Routes.RetraceOnRoad(city.Roads, new float2Like(9000f, 9000f), new float2Like(1500f, 1200f), city.Stops, scratch) is null, "an end off the network cannot be re-traced");
         }
 
         private static void NetworkHelpersArePinned()

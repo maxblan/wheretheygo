@@ -5,7 +5,7 @@ route computations. It shares **no computation logic** with the mod: the referen
 model generator and the evaluator are written from `docs/formal-specification.md`,
 in exact integer/rational arithmetic. The only component that touches mod code is
 the *subject runner*, which links the unmodified pure files to produce the
-solution-under-test — the same linking trick `tests/SuitabilityScoring.Tests` uses.
+solution-under-test — the same linking trick `tests/TransitArchitect.Tests` uses.
 
 Companion documents:
 
@@ -88,9 +88,9 @@ is reported as skipped); with it built, a Lean rejection fails the run.
 The synthetic instances are committed and cover the algorithms; a real city adds
 the one thing they cannot — the Burst job, which does not run outside the game.
 
-1. In the game: **Options → Station Suitability Overlay → Export verification
+1. In the game: **Options → Transit Architect → Export verification
    instance**. The files appear after the next recalculation; the mod log names
-   the folder (`…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`).
+   the folder (`…\Cities Skylines II\ModsData\TransitArchitect\verification`).
 2. Copy the three `real-<city>-<stamp>-*.json` files into `instances/`.
 3. `make -C verification instance I=real-<city>-<stamp>-heatmap` — and the same
    for `-sites`, `-roads`, `-coverage`, `-lineset`, `-stops` and `-health`. They behave

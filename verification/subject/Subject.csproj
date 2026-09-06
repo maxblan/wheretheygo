@@ -5,9 +5,9 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>Subject</AssemblyName>
-    <RootNamespace>StationSuitabilityOverlay.Verification</RootNamespace>
+    <RootNamespace>TransitArchitect.Verification</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <!-- CS0649: TransitLine.m_RideSeconds is assigned by SuitabilityLines.cs, which
+    <!-- CS0649: TransitLine.m_RideSeconds is assigned by Lines.cs, which
          needs Unity types and is not linked here — same situation as the test harness. -->
     <NoWarn>CS0649</NoWarn>
   </PropertyGroup>

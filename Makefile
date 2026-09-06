@@ -1,4 +1,4 @@
-# Makefile for StationSuitabilityOverlay.
+# Makefile for TransitArchitect.
 #
 # Wraps the awkward parts of this project's build: the C# toolchain is Windows-only
 # and has to be driven through PowerShell from WSL, building is also deploying, and
@@ -9,15 +9,15 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-PROJECT     := dotnet/StationSuitabilityOverlay.csproj
-TESTS       := tests/SuitabilityScoring.Tests
-UI_MODULE   := dotnet/Presentation/UI/StationSuitabilityOverlay.mjs
+PROJECT     := dotnet/TransitArchitect.csproj
+TESTS       := tests/TransitArchitect.Tests
+UI_MODULE   := dotnet/Presentation/UI/TransitArchitect.mjs
 CONFIG      ?= Release
-OUTPUT      := dotnet/bin/$(CONFIG)/net48/StationSuitabilityOverlay.dll
+OUTPUT      := dotnet/bin/$(CONFIG)/net48/TransitArchitect.dll
 
 USERDATA    := /mnt/c/Users/maxbl/AppData/LocalLow/Colossal Order/Cities Skylines II
-DEPLOYED    := $(USERDATA)/Mods/StationSuitabilityOverlay/StationSuitabilityOverlay.dll
-MOD_LOG     := $(USERDATA)/Logs/StationSuitabilityOverlay.Mod.log
+DEPLOYED    := $(USERDATA)/Mods/TransitArchitect/TransitArchitect.dll
+MOD_LOG     := $(USERDATA)/Logs/TransitArchitect.Mod.log
 UI_LOG      := $(USERDATA)/Logs/UI.log
 
 # The toolchain resolves CSII_TOOLPATH from the Windows user environment, so the
@@ -28,7 +28,7 @@ DOTNET_WIN  := powershell.exe -NoProfile -Command
 .PHONY: help build compile debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
 
 help: ## Show this help
-	@echo "StationSuitabilityOverlay — targets:"
+	@echo "TransitArchitect — targets:"
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
 		| sed -e 's/:.*## /\t/' \
 		| awk -F'\t' '{ printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }'
@@ -113,7 +113,7 @@ logs: ## Follow the mod log
 	@tail -f "$(MOD_LOG)"
 
 errors: ## Show warnings and errors from the mod and UI logs
-	@echo "== StationSuitabilityOverlay.Mod.log =="
+	@echo "== TransitArchitect.Mod.log =="
 	@grep -nE 'ERROR|WARN|Exception' "$(MOD_LOG)" || echo "  (none)"
 	@echo "== UI.log =="
 	@grep -inE 'error|exception' "$(UI_LOG)" || echo "  (none)"

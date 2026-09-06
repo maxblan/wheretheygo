@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Every number the mod computes with, in one place (user decision 2026-09-06): a
     // value that lives in one file cannot drift between two. Each entry carries the
@@ -249,7 +249,7 @@ namespace StationSuitabilityOverlay
 
         // How far off an alignment an interchange may sit and still be worth bending
         // towards. Generous on purpose: the real bound is the detour
-        // (SuitabilityGraphMath.IsDetourWorthwhile), and it scales with the line, which
+        // (GraphMath.IsDetourWorthwhile), and it scales with the line, which
         // this cannot. Reaching a hub 2 km to one side costs about 4 km of extra
         // running, so a quarter-again detour only pays for it on a line already 16 km
         // long — short lines rule out far hubs on their own, without a second constant
@@ -370,7 +370,7 @@ namespace StationSuitabilityOverlay
 
         // Wall-clock budget for the line-set search on the worker. Past it the search
         // keeps the best set found and reports the open bound as the ceiling
-        // (SuitabilityLineSet.Solve); the log says which regime the result is in.
+        // (LineSet.Solve); the log says which regime the result is in.
         public const int LineSetTimeBudgetSeconds = 15;
 
         // Riders of a line may already have an equally fast route without it: above this

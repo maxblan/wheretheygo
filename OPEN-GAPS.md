@@ -38,8 +38,8 @@ proves it, so the next run is a checklist and not a hunt.
 | Staged updates | `FinishRoutesIfReady` / `AdoptPass` | `New suggestions are staged; the panel offers to apply them`, the panel button, then `Route pass adopted` only after the click; the first list after load adopts directly |
 | Tunnel/bridge nodes counted | `SuitabilityInputs.EndOnGround` | `Pedestrian network: N nodes, E edges with a pavement, K nodes in tunnels or on bridges (walkable, not sites)` with K > 0 where the city has them; the yellow over underground roads gone |
 | Whether the game flags `Elevated` only at bridge height or already for a slightly raised street | same line | if K is implausibly large, `CompositionFlags.General.Elevated` fires for retaining walls too and `Side.Raised` should be the split instead |
-| Calibration model stamp | `SuitabilityCalibration.Deserialize` | once: `Ridership samples discarded: gathered under scoring model 1`; fits report `(W4 is a discount and is not fitted)` |
-| Save-state round trip at format v2 | `SuitabilitySaveState` | `Restored N suggestions …` on load; no `Data size mismatch` |
+| Calibration model stamp | `Calibration.Deserialize` | once: `Ridership samples discarded: gathered under scoring model 1`; fits report `(W4 is a discount and is not fitted)` |
+| Save-state round trip at format v2 | `TransitArchitectSystem.SaveState` | `Restored N suggestions …` on load; no `Data size mismatch` |
 | Route-pass time after the ladder change | `StartRoutePass` timing lines | last measured 25 s before the street-first re-trace, which adds one `RetraceOnRoad` + `SettleMode` per rail candidate |
 | Day/night recommendation on real lines | `Daytime.Advise` | `HealthScheduleAdvice` rows only once a period has ≥ 4 readings |
 
@@ -64,9 +64,9 @@ proves it, so the next run is a checklist and not a hunt.
 | The combine formula (discount, zoning gate) | `SuitabilityScoring.Combine` | harness only (`CombineDiscountsByAccessAndGatesFuture`, `CalibrationFeaturesMatchCombine`); there is no export kind for the combine — `heatmap_walk` checks the seven terms feeding it, bit-exact |
 | Which nodes are siteable | `SuitabilityInputs.EndOnGround` (ECS side) | by construction from the decompiled `NetCompositionHelpers`; the flag is exported (`node_siteable`) and consumed offline, its derivation is not |
 | Real line-set instance 174518Z | `real-Valmare-20260905T174518Z-lineset` | **never run** — the bounded enumeration takes hours and the three earlier ones (155915Z, 164723Z, 173551Z) were stopped on request before finishing; the quick kinds of 174518Z all PASS (heatmap 2 069 tiles three-way, sites certified with gap 194 161/524 288 nodes, roads, coverage, stops three-way exact) |
-| Lattice via-bending plumbing | `SuitabilityRoutes.BendThroughInterchange` | the bound (`IsDetourWorthwhile`) is tested; sampling hubs along a `SuitabilityRoadGraph` is on the Unity side; `ViaReachMetres` (2000) unverified in game |
-| `ScoreForMode` leaving the map unchanged | `StationSuitabilityOverlaySystem` | read against `Combine`; both go through `CombineCell`, so they cannot disagree, but no test reaches the ECS method |
-| Panel rows keyed by route identity across a staged apply | `StationSuitabilityOverlay.mjs` | `node --check` only; behaviour by eye |
+| Lattice via-bending plumbing | `Routes.BendThroughInterchange` | the bound (`IsDetourWorthwhile`) is tested; sampling hubs along a `SuitabilityRoadGraph` is on the Unity side; `ViaReachMetres` (2000) unverified in game |
+| `ScoreForMode` leaving the map unchanged | `TransitArchitectSystem` | read against `Combine`; both go through `CombineCell`, so they cannot disagree, but no test reaches the ECS method |
+| Panel rows keyed by route identity across a staged apply | `TransitArchitect.mjs` | `node --check` only; behaviour by eye |
 
 ---
 
@@ -90,7 +90,7 @@ proves it, so the next run is a checklist and not a hunt.
 
 ### 1. The overlay system is a partial class over 20 files
 
-Split on 2026-09-05 by feature (`F<n>*/Systems/StationSuitabilityOverlaySystem.F<n>*.cs`) with the
+Split on 2026-09-05 by feature (`F<n>*/Systems/TransitArchitectSystem.F<n>*.cs`) with the
 orchestration in `Overlay/`, the infoview presenter and the trip observer as classes of their own,
 and the arithmetic moved into the `Planning/` folders (alignments, stop placement, served demand,
 the combine pass, site candidates, the panel payload, the sanity checks). What is left in the
@@ -99,7 +99,7 @@ partials is gathering, scheduling and logging. Method bodies were moved, not rew
 
 ### 2. Sixteen pure test-side files, four harness files
 
-`Program.cs` in `tests/SuitabilityScoring.Tests` is ~4 000 lines with no framework and no filter
+`Program.cs` in `tests/TransitArchitect.Tests` is ~4 000 lines with no framework and no filter
 flag; the newer tests sit in `AlignmentTests.cs`, `PipelineTests.cs` and `HeatmapTests.cs`. It still
 runs in seconds, so this is a convenience gap, not a correctness one.
 

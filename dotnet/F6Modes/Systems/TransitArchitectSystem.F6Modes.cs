@@ -5,13 +5,13 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // F6 — mode choice on the game side: settles what mode a candidate runs as from
     // its own riders, walks the capacity ladder across networks (a rail alignment is
     // first re-traced on streets), offers the next mode up as a variant, and applies
     // the shape and already-built gates. The arithmetic is TransitModes.ChooseMode.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
 
         // The per-line bars a resolved candidate has to clear before the set search may
@@ -21,7 +21,7 @@ namespace StationSuitabilityOverlay
         private bool PassesLineGates(SuggestedRoute candidate, int index, FleetFacts facts, RejectionTally tally)
         {
             float rideSeconds = RideSecondsOf(candidate, facts);
-            if (!SuitabilityRoutes.KeepsItsShape(candidate, rideSeconds))
+            if (!Routes.KeepsItsShape(candidate, rideSeconds))
             {
                 tally.Unjustified++;
                 DeferredLog.Info(
@@ -31,7 +31,7 @@ namespace StationSuitabilityOverlay
                 return false;
             }
 
-            if (SuitabilityRoutes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, Assumptions.DuplicateLineMatchMetres))
+            if (Routes.DuplicatesExisting(candidate, m_ExistingLines, m_TransitStops, Assumptions.DuplicateLineMatchMetres))
             {
                 tally.AlreadyBuilt++;
                 DeferredLog.Info(
@@ -140,7 +140,7 @@ namespace StationSuitabilityOverlay
             Setting settings, SuggestedRoute candidate, int index, FleetFacts facts, StopContext stops,
             List<int> scratch, RejectionTally tally, List<SuggestedRoute> resolved, RoutePass pass, bool requireFit)
         {
-            SuggestedRoute? onRoad = SuitabilityRoutes.RetraceOnRoad(
+            SuggestedRoute? onRoad = Routes.RetraceOnRoad(
                 m_RoadGraph, candidate.Stops[0], candidate.Stops[candidate.Stops.Count - 1], stops, scratch);
             if (onRoad is null)
             {
@@ -196,7 +196,7 @@ namespace StationSuitabilityOverlay
             }
 
             SuggestedRoute variant = route.CopyFor(larger);
-            SuitabilityRoutes.Restop(variant, larger, stops);
+            Routes.Restop(variant, larger, stops);
             PrepareFleet(variant, facts);
             variant.EnabledDemand = RidersAlone(settings, variant, pass);
             if (TransitModes.ChooseMode(variant.Network, variant.EnabledDemand, facts, m => RoundTripSecondsOf(variant, m, facts), out ModePreset settled, out FleetPlan fleet) && settled == larger)
@@ -312,13 +312,13 @@ namespace StationSuitabilityOverlay
 
             if (mode != route.Mode)
             {
-                SuitabilityRoutes.Restop(route, mode, stops);
+                Routes.Restop(route, mode, stops);
                 PrepareFleet(route, facts);
                 route.EnabledDemand = RidersAlone(settings, route, pass);
                 if (TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out ModePreset again, out fleet) && again != mode)
                 {
                     mode = again;
-                    SuitabilityRoutes.Restop(route, mode, stops);
+                    Routes.Restop(route, mode, stops);
                     PrepareFleet(route, facts);
                     route.EnabledDemand = RidersAlone(settings, route, pass);
                     _ = TransitModes.ChooseMode(route.Network, route.EnabledDemand, facts, RoundTripFor, out _, out fleet);
@@ -358,8 +358,8 @@ namespace StationSuitabilityOverlay
             }
 
             LineSetProblem probe = BuildLineSetProblem(settings, new List<SuggestedRoute> { route }, 1, pass);
-            float[] before = pass.Baseline ??= SuitabilityLineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
-            return (float)SuitabilityLineSet.Evaluate(probe, s_OnlyCandidate, 1, before).Riders[0];
+            float[] before = pass.Baseline ??= LineSet.Evaluate(probe, Array.Empty<int>(), 0, before: null).After;
+            return (float)LineSet.Evaluate(probe, s_OnlyCandidate, 1, before).Riders[0];
         }
 
         private static readonly int[] s_OnlyCandidate = { 0 };

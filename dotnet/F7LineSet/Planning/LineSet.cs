@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // One suggested line as the set objective sees it: its stops, the rider's expected
     // wait, how it covers ground, and what it costs to run (register A7.5, decided
@@ -58,10 +58,10 @@ namespace StationSuitabilityOverlay
         // it before the line counts as a duplicate (register A4.3: 0.5).
         public float DuplicateShare;
         // Optional equity: served share of the journeys given the chosen candidates'
-        // stops (SuitabilityEquity in the caller), and the floor it must reach first.
+        // stops (Equity in the caller), and the floor it must reach first.
         public Func<int[], int, float>? CoverageOf;
         public float EquityFloorShare;
-        // Derived from the pairs on first evaluation (SuitabilityLineSet.GeometryOf) and
+        // Derived from the pairs on first evaluation (LineSet.GeometryOf) and
         // reused by every evaluation since; the pair arrays are not modified after a
         // problem is built.
         internal LineSetGeometry? Geometry;
@@ -146,7 +146,7 @@ namespace StationSuitabilityOverlay
     // another door), so the value of "everything still available" bounds every
     // completion. Feasibility — each line's utilisation and the duplicate rule — is
     // checked on the set itself, since riders move between lines of a set.
-    internal static class SuitabilityLineSet
+    internal static class LineSet
     {
 
         // One search per origin DOOR rather than per pair, capped at the largest
@@ -166,7 +166,7 @@ namespace StationSuitabilityOverlay
         {
             LineSetGeometry geometry = GeometryOf(problem);
             AssembleStops(problem, chosen, count, out float[] stopX, out float[] stopZ, out int stopCount, out List<TransitLine> lines);
-            TransitNetwork network = SuitabilityTransit.Build(stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds);
+            TransitNetwork network = TransitRouting.Build(stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds);
             DoorAccess access = DoorAccess.Build(geometry, stopX, stopZ, stopCount, problem.ZoneReachMetres);
             var evaluation = new LineSetEvaluation
             {

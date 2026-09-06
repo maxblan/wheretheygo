@@ -2,13 +2,13 @@
 	<!--Id must be set in order to update existed mod. it is not required for publishing mod for the first time-->
 	<ModId Value="" />
 	<!--Name of the mod to display to players-->
-	<DisplayName Value="Station Suitability Overlay" />
+	<DisplayName Value="Transit Architect" />
 	<!--Short description of the mod-->
 	<ShortDescription Value="MCDA overlay for optimal transit station suitability." />
 	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
 	<!--LongDescription Value="This is a long description" /-->
 	<LongDescription>
-# Station Suitability Overlay
+# Transit Architect
 
 Renders a vanilla-style infoview heatmap that scores every 32 m tile for transit station placement, so you can see at a glance where a new bus stop or metro station would serve the most people.
 
@@ -25,7 +25,7 @@ The best tiles reach the top of the green-yellow-red gradient; how large that to
 
 ## Usage
 
-Open the infoview menu and select **Station Suitability**. The brightest red tiles are the best locations for a new stop. Tune mode preset, weights and radii under Options > Station Suitability Overlay; the overlay recalculates automatically when stops change or settings move.
+Open the infoview menu and select **Station Suitability**. The brightest red tiles are the best locations for a new stop. Tune mode preset, weights and radii under Options > Transit Architect; the overlay recalculates automatically when stops change or settings move.
 	</LongDescription>
 	<!--Thumbnail-->
 	<Thumbnail Value="Properties/Thumbnail.png" />

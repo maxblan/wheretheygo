@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // When a line runs, as the game offers it on a line: all day, by day only, by
     // night only (Game.Routes.RouteOption.Day / .Night policies; the game's own
@@ -58,7 +58,7 @@ namespace StationSuitabilityOverlay
                 return 0f;
             }
 
-            return SuitabilityEquity.Utilisation(ridersInPeriod, headwaySeconds, (double)vehicleCapacity * periodShareOfDay);
+            return Equity.Utilisation(ridersInPeriod, headwaySeconds, (double)vehicleCapacity * periodShareOfDay);
         }
 
         // The schedule a line should run, suggested or existing (register A8, decided

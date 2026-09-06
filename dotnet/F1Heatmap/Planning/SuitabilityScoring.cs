@@ -1,11 +1,11 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Pure scoring math, deliberately free of Unity and ECS types so it compiles
     // into both the mod (net48) and a plain test project. Every numerical bug this
     // mod has had lived in here, so this is the part that is unit tested — see
-    // tests/SuitabilityScoring.Tests.
+    // tests/TransitArchitect.Tests.
     //
     // net48 has neither MathF nor Math.Clamp, so everything goes through
     // System.Math with explicit float casts.

@@ -6,7 +6,7 @@ using Game.Simulation;
 using Unity.Mathematics;
 using UnityEngine;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Draws the suggested routes as world-space polylines with stop markers.
     //
@@ -19,7 +19,7 @@ namespace StationSuitabilityOverlay
     // game does, so these draws are most likely consumed on the FOLLOWING frame. That
     // is invisible here: the routes only change when the demand pipeline reruns, and
     // the overlay is redrawn every frame regardless.
-    public sealed partial class SuitabilityRouteRenderer : GameSystemBase
+    public sealed partial class RouteRenderer : GameSystemBase
     {
         // Width, dash and marker size all vary by mode: colour alone is not enough
         // to tell a bus line from a metro at a glance, especially against a
@@ -73,7 +73,7 @@ namespace StationSuitabilityOverlay
         private OverlayRenderSystem m_OverlayRenderSystem;
         private RenderingSystem m_RenderingSystem;
         private TerrainSystem m_TerrainSystem;
-        private StationSuitabilityOverlaySystem m_OverlaySystem;
+        private TransitArchitectSystem m_OverlaySystem;
 #pragma warning restore CS8618
 
         protected override void OnCreate()
@@ -82,7 +82,7 @@ namespace StationSuitabilityOverlay
             m_OverlayRenderSystem = World.GetOrCreateSystemManaged<OverlayRenderSystem>();
             m_RenderingSystem = World.GetOrCreateSystemManaged<RenderingSystem>();
             m_TerrainSystem = World.GetOrCreateSystemManaged<TerrainSystem>();
-            m_OverlaySystem = World.GetOrCreateSystemManaged<StationSuitabilityOverlaySystem>();
+            m_OverlaySystem = World.GetOrCreateSystemManaged<TransitArchitectSystem>();
         }
 
         protected override void OnUpdate()
@@ -142,8 +142,8 @@ namespace StationSuitabilityOverlay
             // Narrowed to one suggestion, or -1 for all of them. Both this and the
             // highlight are positions in the current list, which the overlay system
             // clears whenever it replaces that list.
-            int only = StationSuitabilityOverlaySystem.SelectedRouteIndex;
-            int highlighted = StationSuitabilityOverlaySystem.HighlightedRouteIndex;
+            int only = TransitArchitectSystem.SelectedRouteIndex;
+            int highlighted = TransitArchitectSystem.HighlightedRouteIndex;
 
             for (int r = 0; r < routes.Count; r++)
             {

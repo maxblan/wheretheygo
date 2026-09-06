@@ -2,8 +2,8 @@
 
 	<PropertyGroup>
 		<Configurations>Debug;Release</Configurations>
-		<AssemblyName>StationSuitabilityOverlay</AssemblyName>
-		<RootNamespace>StationSuitabilityOverlay</RootNamespace>
+		<AssemblyName>TransitArchitect</AssemblyName>
+		<RootNamespace>TransitArchitect</RootNamespace>
 		<Authors>maxblan</Authors>
 	
 		<!--The file where mod information which is required for publishing mod on PDX mods are stored-->
@@ -109,8 +109,8 @@
 	<!--The game loads <AssemblyName>.mjs and .css from the mod root, so these are
 	    flattened out of Presentation/UI/ on copy.-->
 	<ItemGroup>
-		<None Include="Presentation\UI\StationSuitabilityOverlay.mjs" Link="StationSuitabilityOverlay.mjs" CopyToOutputDirectory="PreserveNewest" />
-		<None Include="Presentation\UI\StationSuitabilityOverlay.css" Link="StationSuitabilityOverlay.css" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Presentation\UI\TransitArchitect.mjs" Link="TransitArchitect.mjs" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="Presentation\UI\TransitArchitect.css" Link="TransitArchitect.css" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 </Project>

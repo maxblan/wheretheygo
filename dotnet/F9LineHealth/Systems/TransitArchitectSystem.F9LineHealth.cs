@@ -6,12 +6,12 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The existing lines: read in game time into the rolling window, collected in
-    // travel order, handed the routing's riders, judged (SuitabilityLineHealth), and
+    // travel order, handed the routing's riders, judged (LineHealthRules), and
     // re-traced on request for the improvement plan.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         // Existing transit system: the lines themselves, the routable model of them,
         // and their health.
@@ -109,7 +109,7 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            SuitabilityLines.Observe(EntityManager, m_LineQuery, frame, TimeOfDay, m_LineHistory, m_LiveLineIds);
+            Lines.Observe(EntityManager, m_LineQuery, frame, TimeOfDay, m_LineHistory, m_LiveLineIds);
         }
 
         // Reads the lines, hands them the window and the routing's riders, and judges
@@ -127,7 +127,7 @@ namespace StationSuitabilityOverlay
             }
 
             m_LastLineRefreshFrame = frame;
-            SuitabilityLines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
+            Lines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
                 m_ExistingLines, m_TransitStops, m_StopIndices);
             for (int i = 0; i < m_ExistingLines.Count; i++)
             {
@@ -140,10 +140,10 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            LineHealthProblem problem = SuitabilityLineHealth.Capture(
+            LineHealthProblem problem = LineHealthRules.Capture(
                 m_ExistingLines, m_LineHistory, ReadFleetFacts(),
                 settings.UtilisationFloorPercent / 100f, Assumptions.MaxPlannedUtilisation, Assumptions.TargetLoad);
-            m_HealthReference = SuitabilityLineHealth.JudgeAll(problem, m_LineHealth);
+            m_HealthReference = LineHealthRules.JudgeAll(problem, m_LineHealth);
             m_HealthProblem = problem;
             LogLineHealth(frame);
             UpdateDataCoverage();
@@ -176,7 +176,7 @@ namespace StationSuitabilityOverlay
             {
                 LineHealth entry = m_LineHealth[i];
                 DeferredLog.Info(
-                    $"Line \"{entry.m_Name}\" ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
+                    $"Line \"{entry.m_Name}\" ({entry.m_Mode}): {LineHealthRules.Describe(entry)} — " +
                     $"plan {entry.m_RecommendedMode} × {(entry.m_RecommendedFleet).ToString(CultureInfo.InvariantCulture)} of [{(entry.m_FleetMin).ToString(CultureInfo.InvariantCulture)}, {(entry.m_FleetMax == int.MaxValue ? "?" : entry.m_FleetMax.ToString(CultureInfo.InvariantCulture))}] " +
                     $"(round trip {(entry.m_RoundTripSeconds).ToString("F0", CultureInfo.InvariantCulture)}s -> interval {(entry.m_HeadwaySeconds).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"game target {(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, " +
@@ -207,7 +207,7 @@ namespace StationSuitabilityOverlay
                 readings = math.max(readings, line.m_WindowReadings);
             }
 
-            s_DataCoverage = SuitabilityPanelPayload.DataCoverageRow(
+            s_DataCoverage = PanelPayload.DataCoverageRow(
                 coveredHours, readings, LineHistory.GameHours(m_LineHistory.WindowFrames),
                 m_TripObserver.Window.Count, LineHistory.GameHours(m_TripObserver.Window.SpanFrames));
         }
@@ -252,14 +252,14 @@ namespace StationSuitabilityOverlay
                     return;
                 }
 
-                SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(health);
-                s_ImprovePlan = SuitabilityLineHealth.PlanPayload(plan);
+                LineHealthRules.ImprovePlan plan = LineHealthRules.Plan(health);
+                s_ImprovePlan = LineHealthRules.PlanPayload(plan);
                 s_ImprovedLine = health.m_Id;
 
                 BuildImprovedRoute(health, line);
 
                 DeferredLog.Info(
-                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {SuitabilityLineHealth.Improve(health)} " +
+                    $"Improvement for \"{health.m_Name}\" ({health.m_Mode}): {LineHealthRules.Improve(health)} " +
                     $"[measured: {(health.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(health.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard, {(health.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(health.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} veh, " +
                     $"planning load {(health.m_PlanningLoad).ToString(CultureInfo.InvariantCulture)} riders, {(health.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(health.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km, " +
                     $"roundTrip {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, targetInterval {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s]");
@@ -324,7 +324,7 @@ namespace StationSuitabilityOverlay
 
             route.Length = length;
             route.CapturedFlow = graph.FlowAlong(scratch);
-            SuitabilityRoutes.Restop(route, mode, BuildStopContext());
+            Routes.Restop(route, mode, BuildStopContext());
             route.Vehicles = health.m_RecommendedFleet;
             route.HeadwaySeconds = health.m_HeadwaySeconds;
             route.FleetMin = health.m_FleetMin;

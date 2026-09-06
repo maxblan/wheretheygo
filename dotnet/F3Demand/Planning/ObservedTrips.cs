@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // One journey seen starting in the live city: where it began, where it was
     // headed, why, and the simulation frame it was first observed on.

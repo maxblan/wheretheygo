@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Globalization;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The transit modes this mod can plan, and what a suggested line is grown for.
     //

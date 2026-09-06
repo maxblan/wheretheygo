@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Canonical JSON for the verification export, deliberately free of Unity types so
     // the harness can pin the wire format offline (see the golden-vector test).
@@ -20,7 +20,7 @@ namespace StationSuitabilityOverlay
     //     nothing depends on decimal formatting on either side;
     //   * non-ASCII escaped as \uXXXX with LOWERCASE hex, surrogate pairs as two
     //     escapes, which is what ensure_ascii produces for a city or line name.
-    internal static class SuitabilityExportJson
+    internal static class ExportJson
     {
         // net48 has no BitConverter.SingleToUInt32Bits and the build forbids unsafe
         // blocks, so the reinterpretation goes through an explicit layout.
@@ -193,12 +193,12 @@ namespace StationSuitabilityOverlay
     // One JSON object under construction. Members may be added in any order; Build
     // sorts them, which is what keeps the canonical form independent of the order the
     // export code happens to gather things in.
-    internal sealed class SuitabilityJsonObject
+    internal sealed class JsonObject
     {
         private readonly List<KeyValuePair<string, string>> m_Members =
             new List<KeyValuePair<string, string>>();
 
-        public SuitabilityJsonObject Add(string key, string json)
+        public JsonObject Add(string key, string json)
         {
             m_Members.Add(new KeyValuePair<string, string>(key, json));
             return this;
@@ -219,7 +219,7 @@ namespace StationSuitabilityOverlay
                     _ = builder.Append(',');
                 }
 
-                _ = builder.Append(SuitabilityExportJson.Str(m_Members[i].Key))
+                _ = builder.Append(ExportJson.Str(m_Members[i].Key))
                     .Append(':')
                     .Append(m_Members[i].Value);
             }
@@ -237,16 +237,16 @@ namespace StationSuitabilityOverlay
         // whatever it parses, and only that re-encoding is hashed.
         public string BuildHashed(int schemaVersion)
         {
-            _ = Add("schema_version", SuitabilityExportJson.Int(schemaVersion));
+            _ = Add("schema_version", ExportJson.Int(schemaVersion));
             string body = Build();
             if (body.Length < 2)
             {
                 return body;
             }
 
-            string hash = SuitabilityExportJson.Sha256Hex(body);
+            string hash = ExportJson.Sha256Hex(body);
             var builder = new StringBuilder(body.Length + 80);
-            _ = builder.Append("{\"hash\":").Append(SuitabilityExportJson.Str(hash)).Append(',');
+            _ = builder.Append("{\"hash\":").Append(ExportJson.Str(hash)).Append(',');
             // Append the body without its opening brace. Deliberately not Substring:
             // the body can be tens of megabytes and this avoids copying it twice.
             _ = builder.Append(body, 1, body.Length - 1);

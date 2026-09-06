@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // One existing transit line, read out of the save: the stops it calls at in
     // travel order, how long each hop takes, how full it is, and the geometry needed
@@ -34,7 +34,7 @@ namespace StationSuitabilityOverlay
         public float m_TargetInterval;
         // Stable identity: the position in a worst-first list is not one, and using it
         // meant "Suggest improvement" pointed at whichever line had drifted into that
-        // slot when the list was last sorted. See SuitabilityLines.IdentityOf for why
+        // slot when the list was last sorted. See Lines.IdentityOf for why
         // it is not simply the entity's index either.
         public int m_Id;
         // The whole loop the vehicles drive (every segment of the route), and the calls
@@ -55,7 +55,7 @@ namespace StationSuitabilityOverlay
         public int m_NightSamples;
 
         // What the line looked like across the last game day, filled in from
-        // LineHistory (SuitabilityLineHealth.ApplyWindow). Everything above is the
+        // LineHistory (LineHealthRules.ApplyWindow). Everything above is the
         // reading at the instant of collection; these are what a verdict is drawn
         // from once enough readings exist, because a single reading catches a one-boat
         // ferry mid-crossing at zero passengers. m_WindowSamples of 0 means there is no
@@ -103,7 +103,7 @@ namespace StationSuitabilityOverlay
         public bool HasWindow => m_WindowSamples >= Assumptions.MinReadingsForVerdict;
 
         // Seats of one vehicle as this line actually runs them; 0 when nothing is out,
-        // and the prefab's largest vehicle then stands in (SuitabilityLineHealth).
+        // and the prefab's largest vehicle then stands in (LineHealthRules).
         public int CapacityPerVehicle => m_Vehicles > 0 ? m_Capacity / m_Vehicles : 0;
 
         // What a rider turning up at random waits, in seconds — the cost the transit
@@ -121,6 +121,6 @@ namespace StationSuitabilityOverlay
         // units, not seconds, and one stranded rider drives it into the thousands.
         // Passing it as seconds let it beat the real headway on some lines and not
         // others, so the router's wait cost was in mixed units.
-        public float ExpectedWait => SuitabilityTransit.ExpectedWait(JudgedInterval, 0f, m_StopDuration);
+        public float ExpectedWait => TransitRouting.ExpectedWait(JudgedInterval, 0f, m_StopDuration);
     }
 }

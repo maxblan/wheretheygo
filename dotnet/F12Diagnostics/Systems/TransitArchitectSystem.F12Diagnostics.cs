@@ -1,17 +1,17 @@
 ﻿using System.Globalization;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
-    // The log's disagreement pass: the sanity checks (SuitabilitySanity) with the
+    // The log's disagreement pass: the sanity checks (SanityChecks) with the
     // invariant each one tests, suggestion churn between refreshes, and the
     // change-gated route log.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         private readonly SuggestionChurn m_Churn = new SuggestionChurn();
 
         private void LogSanityChecks(float totalZoneWeight)
         {
-            int complaints = SuitabilitySanity.Check(
+            int complaints = SanityChecks.Check(
                 m_LineHealth, m_Routes, totalZoneWeight, m_ServedDemand.LongestJourneyMetres(m_ZoneFlows),
                 static message => DeferredLog.Warn($"  SANITY: {message}"));
 

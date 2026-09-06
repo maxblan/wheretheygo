@@ -8,12 +8,12 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The heat map itself: the cached collections the access pass reads, the worker
     // task that runs SuitabilityWalkAccess, the combine and normalisation of its terms,
     // and the scoring queries every later stage asks of the resulting field.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
 
 

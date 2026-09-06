@@ -2,13 +2,13 @@
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The panel bridge: the static strings and requests the options page, the panel
     // module and the route renderer read and raise. The settings object is built before
     // the world exists, so the panel talks to the system through statics rather than an
     // instance, and the payloads are the delimited strings ui-module.md describes.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         private static string s_RouteSummary = "No route suggestions yet.";
 
@@ -120,7 +120,7 @@ namespace StationSuitabilityOverlay
 
         private void UpdateLineHealthText()
         {
-            s_LineHealthList = SuitabilityPanelPayload.HealthRows(m_LineHealth);
+            s_LineHealthList = PanelPayload.HealthRows(m_LineHealth);
         }
 
         private void UpdateRouteSummary(int tripCount, int assignedPairs)
@@ -133,12 +133,12 @@ namespace StationSuitabilityOverlay
             if (m_Routes.Count == 0)
             {
                 s_RouteList = string.Empty;
-                s_RouteSummary = SuitabilityPanelPayload.EmptyRouteSummary(tripCount, assignedPairs);
+                s_RouteSummary = PanelPayload.EmptyRouteSummary(tripCount, assignedPairs);
                 return;
             }
 
-            s_RouteList = SuitabilityPanelPayload.RouteRows(m_Routes, m_UnservedTravelWeight);
-            s_RouteSummary = SuitabilityPanelPayload.RouteSummary(m_Routes);
+            s_RouteList = PanelPayload.RouteRows(m_Routes, m_UnservedTravelWeight);
+            s_RouteSummary = PanelPayload.RouteSummary(m_Routes);
         }
     }
 }

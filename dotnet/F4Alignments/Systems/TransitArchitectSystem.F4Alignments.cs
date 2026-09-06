@@ -4,12 +4,12 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // F4 — the alignment search on the worker: journeys assigned to every network,
     // corridors grown on the streets and direct traces on the lattices, gathered as
     // the candidate pool the mode ladder and the set selection then work through.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
 
         // Each network contributes candidates for the modes it can carry; the merged
@@ -49,7 +49,7 @@ namespace StationSuitabilityOverlay
 
             var phases = System.Diagnostics.Stopwatch.StartNew();
             StopContext stops = BuildStopContext();
-            SuitabilityRoutes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
+            Routes.BuildForNetwork(m_RoadGraph, objective, settings.RouteCount,
                 Assumptions.RoadFlowFraction, TransitModes.MaxAlignmentMetresFor(RouteNetwork.Road), roadDemand, demandFloor, forcedMode: null, candidates,
                 stops, out int g1, out int s1, out int h1);
 
@@ -59,12 +59,12 @@ namespace StationSuitabilityOverlay
             // lattice sees every journey (A3.4).
             var zoneGrid = new int2Like(m_ZoneGrid.x, m_ZoneGrid.y);
             var origin = new float2Like(worldMin.x, worldMin.y);
-            SuitabilityRoutes.BuildDirectForNetwork(m_TrainNetwork, m_ZoneFlows,
+            Routes.BuildDirectForNetwork(m_TrainNetwork, m_ZoneFlows,
                 m_TrainNetwork.MapZonesToNodes(zoneGrid, origin), settings.RouteCount,
                 TransitModes.MaxAlignmentMetresFor(RouteNetwork.Rail), ModePreset.Train, candidates,
                 stops, out int g2, out int s2, out int h2);
 
-            SuitabilityRoutes.BuildDirectForNetwork(m_MetroNetwork, m_ZoneFlows,
+            Routes.BuildDirectForNetwork(m_MetroNetwork, m_ZoneFlows,
                 m_MetroNetwork.MapZonesToNodes(zoneGrid, origin), settings.RouteCount,
                 TransitModes.MaxAlignmentMetresFor(RouteNetwork.Metro), ModePreset.Metro, candidates,
                 stops, out int g3, out int s3, out int h3);
@@ -77,7 +77,7 @@ namespace StationSuitabilityOverlay
                 Hubs = stops.Hubs,
                 ScoreAt = (point, _) => ShorelineScoreAt(new float2(point.x, point.y), gridSize),
             };
-            SuitabilityRoutes.BuildDirectForNetwork(m_WaterNetwork, m_ZoneFlows,
+            Routes.BuildDirectForNetwork(m_WaterNetwork, m_ZoneFlows,
                 m_WaterNetwork.MapZonesToNodes(zoneGrid, origin), settings.RouteCount,
                 TransitModes.MaxAlignmentMetresFor(RouteNetwork.Water), ModePreset.Ferry, candidates,
                 shoreline, out int g4, out int s4, out int h4);

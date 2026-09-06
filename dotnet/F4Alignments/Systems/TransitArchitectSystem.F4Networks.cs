@@ -7,11 +7,11 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The networks an alignment may run on: the street graph and the three lattices,
     // the track masks that price them, and the directed stop-to-stop driving times.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         private ComponentLookup<Node> m_NodeLookup;
 
@@ -76,7 +76,7 @@ namespace StationSuitabilityOverlay
             m_PrefabRefLookup.Update(this);
             m_RoadDataLookup.Update(this);
 
-            SuitabilityRoads.Build(m_RoadGraph, EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
+            Roads.Build(m_RoadGraph, EntityManager, m_RoadEdgeQuery, m_NodeLookup, m_CurveLookup,
                 m_PrefabRefLookup, m_RoadDataLookup);
             m_RoadLegs.Clear();
             m_RoadLegsDropped = 0;
@@ -96,26 +96,26 @@ namespace StationSuitabilityOverlay
                 m_TrackMask = new byte[cells];
             }
 
-            SuitabilityRoads.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds, m_MetroTrackStarts, m_MetroTrackEnds);
-            SuitabilityLattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, tileGrid, origin, Assumptions.TileSize, m_TrackMask);
-            SuitabilityLattice.RasterizeTracks(m_MetroTrackStarts, m_MetroTrackEnds, tileGrid, origin, Assumptions.TileSize, m_MetroTrackMask);
+            Roads.CollectTrackSegments(EntityManager, m_AllEdgeQuery, m_NodeLookup, m_TrackStarts, m_TrackEnds, m_MetroTrackStarts, m_MetroTrackEnds);
+            Lattice.RasterizeTracks(m_TrackStarts, m_TrackEnds, tileGrid, origin, Assumptions.TileSize, m_TrackMask);
+            Lattice.RasterizeTracks(m_MetroTrackStarts, m_MetroTrackEnds, tileGrid, origin, Assumptions.TileSize, m_MetroTrackMask);
 
             bool LandTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] != 0;
             bool WaterTile(int tile) => m_Land is not null && tile < m_Land.Length && m_Land[tile] == 0;
             bool OnTrack(int tile) => m_TrackMask is not null && tile < m_TrackMask.Length && m_TrackMask[tile] != 0;
             bool OnMetroTrack(int tile) => m_MetroTrackMask is not null && tile < m_MetroTrackMask.Length && m_MetroTrackMask[tile] != 0;
 
-            CompactGraph trainGraph = SuitabilityLattice.Build(tileGrid, origin, Assumptions.TileSize, LandTile,
-                tile => SuitabilityLattice.RailCostScale(OnTrack(tile)),
+            CompactGraph trainGraph = Lattice.Build(tileGrid, origin, Assumptions.TileSize, LandTile,
+                tile => Lattice.RailCostScale(OnTrack(tile)),
                 out float[] trainX, out float[] trainZ);
             m_TrainNetwork.Adopt(trainGraph, trainX, trainZ, RouteNetwork.Rail);
 
-            CompactGraph metroGraph = SuitabilityLattice.Build(tileGrid, origin, Assumptions.TileSize, LandTile,
-                tile => SuitabilityLattice.RailCostScale(OnMetroTrack(tile)),
+            CompactGraph metroGraph = Lattice.Build(tileGrid, origin, Assumptions.TileSize, LandTile,
+                tile => Lattice.RailCostScale(OnMetroTrack(tile)),
                 out float[] metroX, out float[] metroZ);
             m_MetroNetwork.Adopt(metroGraph, metroX, metroZ, RouteNetwork.Metro);
 
-            CompactGraph waterGraph = SuitabilityLattice.Build(tileGrid, origin, Assumptions.TileSize, WaterTile,
+            CompactGraph waterGraph = Lattice.Build(tileGrid, origin, Assumptions.TileSize, WaterTile,
                 tileCostScale: null, out float[] waterX, out float[] waterZ);
             m_WaterNetwork.Adopt(waterGraph, waterX, waterZ, RouteNetwork.Water);
 
@@ -145,7 +145,7 @@ namespace StationSuitabilityOverlay
         // Driving time into each stop of a road route from the stop before it, along
         // the fastest DIRECTED path with the street's speed limits and turn costs
         // (register A0.7/A0.8). Index i is the ride into stop i; 0 where no directed
-        // path exists, which SuitabilityTransit reads as "fall back to distance over
+        // path exists, which TransitRouting reads as "fall back to distance over
         // cruise speed" — and which is logged, because a stop pair with no drivable
         // path between them is a line the game cannot run either. Null for lattice
         // routes, whose alignments have no streets.

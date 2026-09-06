@@ -1,4 +1,4 @@
-﻿// In-game control panel for the Station Suitability overlay.
+﻿// In-game control panel for Transit Architect.
 //
 // Hand-written ES module rather than a bundled React app: the game exposes React
 // and its binding API on `window`, so no build toolchain is involved and the file
@@ -11,11 +11,11 @@ const React = window.React;
 const Api = window["cs2/api"];
 const L10n = window["cs2/l10n"];
 
-const GROUP = "stationSuitability";
+const GROUP = "transitArchitect";
 // Every panel string is looked up under this prefix. The English text stays inline
 // as the fallback argument, so a key missing from a locale file degrades to English
 // rather than showing the raw key.
-const LOC = "StationSuitabilityOverlay.Panel[";
+const LOC = "TransitArchitect.Panel[";
 
 // The game's localization, as a (key, englishFallback) => string. useLocalization is
 // a hook, so this is one too and must be called at the top of a component.
@@ -92,13 +92,13 @@ function h(tag, props, ...children) {
 // A row of buttons standing in for a dropdown, since cohtml has no <select>.
 function Choice({ label, options, optionKey, value, onPick }) {
     const t = useTranslate();
-    return h("div", { className: "sso-row" },
-        h("div", { className: "sso-label" }, label),
-        h("div", { className: "sso-choice" },
+    return h("div", { className: "ta-row" },
+        h("div", { className: "ta-label" }, label),
+        h("div", { className: "ta-choice" },
             options.map((name, index) =>
                 h("button", {
                     key: name,
-                    className: "sso-chip" + (index === value ? " sso-chip-on" : ""),
+                    className: "ta-chip" + (index === value ? " ta-chip-on" : ""),
                     onClick: () => onPick(index),
                 }, t(optionKey + "." + name, name)))));
 }
@@ -109,29 +109,29 @@ function Stepper({ label, value, min, max, step, unit, onSet }) {
     const clamp = (v) => Math.max(min, Math.min(max, v));
     const fraction = max > min ? (value - min) / (max - min) : 0;
 
-    return h("div", { className: "sso-row" },
-        h("div", { className: "sso-labelrow" },
-            h("div", { className: "sso-label" }, label),
-            h("div", { className: "sso-value" }, value + unit)),
-        h("div", { className: "sso-stepper" },
+    return h("div", { className: "ta-row" },
+        h("div", { className: "ta-labelrow" },
+            h("div", { className: "ta-label" }, label),
+            h("div", { className: "ta-value" }, value + unit)),
+        h("div", { className: "ta-stepper" },
             h("button", {
-                className: "sso-step",
+                className: "ta-step",
                 onClick: () => onSet(clamp(value - step)),
             }, "−"),
-            h("div", { className: "sso-bar" },
-                h("div", { className: "sso-bar-fill", style: { width: (fraction * 100) + "%" } })),
+            h("div", { className: "ta-bar" },
+                h("div", { className: "ta-bar-fill", style: { width: (fraction * 100) + "%" } })),
             h("button", {
-                className: "sso-step",
+                className: "ta-step",
                 onClick: () => onSet(clamp(value + step)),
             }, "+")));
 }
 
 function Toggle({ label, value, onToggle }) {
     const t = useTranslate();
-    return h("div", { className: "sso-row" },
-        h("div", { className: "sso-label" }, label),
+    return h("div", { className: "ta-row" },
+        h("div", { className: "ta-label" }, label),
         h("button", {
-            className: "sso-toggle" + (value ? " sso-toggle-on" : ""),
+            className: "ta-toggle" + (value ? " ta-toggle-on" : ""),
             onClick: () => onToggle(!value),
         }, value ? t("On", "On") : t("Off", "Off")));
 }
@@ -141,12 +141,12 @@ function Toggle({ label, value, onToggle }) {
 // in SuitabilityInfomodePrefab.cs.
 function Legend() {
     const t = useTranslate();
-    return h("div", { className: "sso-row" },
-        h("div", { className: "sso-label" }, t("Legend", "Station suitability")),
-        h("div", { className: "sso-legend" }),
-        h("div", { className: "sso-labelrow" },
-            h("div", { className: "sso-legend-end" }, t("LegendLow", "Low")),
-            h("div", { className: "sso-legend-end" }, t("LegendHigh", "High"))));
+    return h("div", { className: "ta-row" },
+        h("div", { className: "ta-label" }, t("Legend", "Station suitability")),
+        h("div", { className: "ta-legend" }),
+        h("div", { className: "ta-labelrow" },
+            h("div", { className: "ta-legend-end" }, t("LegendLow", "Low")),
+            h("div", { className: "ta-legend-end" }, t("LegendHigh", "High"))));
 }
 
 // Rows arrive as "mode|km|stops|vehicles|colour|reachPercent", best first. The colour comes with
@@ -164,15 +164,15 @@ function RouteList({ raw, selected, update }) {
     const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean);
 
-    return h("div", { className: "sso-half" },
-        h("div", { className: "sso-section" }, t("SuggestedLines", "Suggested lines")),
+    return h("div", { className: "ta-half" },
+        h("div", { className: "ta-section" }, t("SuggestedLines", "Suggested lines")),
         // A finished refresh waits here until the player takes it: the list and the
         // lines on the map never change under a selection.
         update
-            ? h("button", { className: "sso-improve", onClick: () => trigger("applyRouteUpdate") },
+            ? h("button", { className: "ta-improve", onClick: () => trigger("applyRouteUpdate") },
                 t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
             : null,
-        h("div", { className: "sso-scroll" },
+        h("div", { className: "ta-scroll" },
             rows.map((row, index) => {
                 const parts = row.split("|");
                 const mode = parts[0] || "Bus";
@@ -186,30 +186,30 @@ function RouteList({ raw, selected, update }) {
                     // key twice, re-seated the rows against the handlers, and hovering
                     // a bus highlighted a tram.
                     key: parts[6] || row,
-                    className: "sso-route" + (chosen ? " sso-route-on" : ""),
+                    className: "ta-route" + (chosen ? " ta-route-on" : ""),
                     onClick: () => trigger("selectRoute", index),
                     onMouseEnter: () => trigger("highlightRoute", index),
                     onMouseLeave: () => trigger("highlightRoute", -1),
                 },
                     h("div", {
-                        className: "sso-swatch",
+                        className: "ta-swatch",
                         style: { backgroundColor: parts[4] || "rgb(200, 200, 200)" },
                     }),
-                    h("div", { className: "sso-route-text" },
-                        h("div", { className: "sso-route-head" },
-                            h("div", { className: "sso-route-mode" }, t("Mode." + mode, mode)),
-                            h("div", { className: "sso-route-meta" },
+                    h("div", { className: "ta-route-text" },
+                        h("div", { className: "ta-route-head" },
+                            h("div", { className: "ta-route-mode" }, t("Mode." + mode, mode)),
+                            h("div", { className: "ta-route-meta" },
                                 (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
                                 + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
                                 + (parts[3] || "?") + " " + t("Vehicles", "veh"))),
                         // The figure the list is ordered by, so the gap between the
                         // first row and the second is visible rather than implied.
-                        h("div", { className: "sso-route-reach" },
+                        h("div", { className: "ta-route-reach" },
                             t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0")),
                         // When to run it. The game offers all day, day only (06:00–22:00) or
                         // night only per line; the recommendation rests on how full the
                         // line would be in each period on its own riders.
-                        h("div", { className: "sso-route-reach" },
+                        h("div", { className: "ta-route-reach" },
                             t("RouteSchedule", "run {0} · {1}% full by day, {2}% by night")
                                 .replace("{0}", t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day"))
                                 .replace("{1}", parts[8] || "0")
@@ -305,9 +305,9 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
     const t = useTranslate();
     const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
 
-    return h("div", { className: "sso-half" },
-        h("div", { className: "sso-section" }, t("LineHealth", "Line health")),
-        h("div", { className: "sso-scroll" },
+    return h("div", { className: "ta-half" },
+        h("div", { className: "ta-section" }, t("LineHealth", "Line health")),
+        h("div", { className: "ta-scroll" },
             rows.map((parts) => {
                 // parts[0] is the line's own id, not its position in this list. The list
                 // is re-sorted worst-first on every refresh, so keying by position made
@@ -368,33 +368,33 @@ function LineHealth({ raw, plan, planFor, planDrawn }) {
                     + ((parts[16] || "-") !== "-"
                         ? t("HealthDemand", " \u00b7 {0} riders/day, {1}% of seats").replace("{0}", parts[22] || "0").replace("{1}", parts[16])
                         : t("HealthDemandNone", " \u00b7 demand known after the first route pass"));
-                return h("div", { className: "sso-health", key: index },
-                    h("div", { className: "sso-health-head" },
+                return h("div", { className: "ta-health", key: index },
+                    h("div", { className: "ta-health-head" },
                         h("div", {
-                            className: "sso-dot",
+                            className: "ta-dot",
                             style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
                         }),
-                        h("div", { className: "sso-line-name" }, parts[1] || "Line"),
-                        h("div", { className: "sso-route-meta" }, meta)),
-                    h("div", { className: "sso-health-note" }, note),
-                    h("div", { className: "sso-health-basis" }, basis),
-                    h("div", { className: "sso-health-basis" }, planText),
-                    scheduleText ? h("div", { className: "sso-health-basis" }, scheduleText) : null,
+                        h("div", { className: "ta-line-name" }, parts[1] || "Line"),
+                        h("div", { className: "ta-route-meta" }, meta)),
+                    h("div", { className: "ta-health-note" }, note),
+                    h("div", { className: "ta-health-basis" }, basis),
+                    h("div", { className: "ta-health-basis" }, planText),
+                    scheduleText ? h("div", { className: "ta-health-basis" }, scheduleText) : null,
                     healthy ? null : h("button", {
-                        className: "sso-improve",
+                        className: "ta-improve",
                         onClick: () => trigger("improveLine", index),
                     }, t("SuggestImprovement", "Suggest improvement")),
                     // Shown against its own row: at the bottom of a twenty-line list
                     // nobody would ever see it.
                     (plan && planFor === index)
-                        ? h("div", { className: "sso-plan" },
-                            h("div", { className: "sso-plan-title" }, t("ImprovedPlan", "Improved plan")),
+                        ? h("div", { className: "ta-plan" },
+                            h("div", { className: "ta-plan-title" }, t("ImprovedPlan", "Improved plan")),
                             h("div", {}, describePlan(t, plan)),
                             // Only when an alignment was actually traced. There are
                             // three ways for the re-trace to come back with nothing,
                             // and the panel used to promise a map line regardless.
                             planDrawn
-                                ? h("div", { className: "sso-plan-hint" },
+                                ? h("div", { className: "ta-plan-hint" },
                                     t("ImprovedPlanHint", "The white dashed line on the map is the re-traced route."))
                                 : null)
                         : null);
@@ -420,7 +420,7 @@ function DataCoverage({ raw }) {
     // Shopping and leisure journeys are watched, not read from the save, so the
     // panel says how many it has seen and over how long — the reader can then
     // judge how much of the demand picture is filled in.
-    const observedLine = h("div", { className: "sso-coverage-value" },
+    const observedLine = h("div", { className: "ta-coverage-value" },
         (observedTrips
             ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
             : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
@@ -428,9 +428,9 @@ function DataCoverage({ raw }) {
             .replace("{1}", observedHours));
 
     if (!readings) {
-        return h("div", { className: "sso-coverage" },
-            h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
-            h("div", { className: "sso-coverage-empty" },
+        return h("div", { className: "ta-coverage" },
+            h("div", { className: "ta-coverage-label" }, t("DataBasis", "Data collected")),
+            h("div", { className: "ta-coverage-empty" },
                 t("DataBasisEmpty", "no lines to watch yet — readings start with your first one")),
             observedLine);
     }
@@ -438,15 +438,15 @@ function DataCoverage({ raw }) {
     // Bar rather than only a number: the point is how much of the window is filled,
     // and a fraction is read faster as a length than as two figures to divide.
     const filled = Math.max(0, Math.min(100, (parseFloat(hours) / parseFloat(windowHours)) * 100));
-    return h("div", { className: "sso-coverage" },
-        h("div", { className: "sso-coverage-label" }, t("DataBasis", "Data collected")),
-        h("div", { className: "sso-coverage-value" },
+    return h("div", { className: "ta-coverage" },
+        h("div", { className: "ta-coverage-label" }, t("DataBasis", "Data collected")),
+        h("div", { className: "ta-coverage-value" },
             t("DataBasisValue", "{0} h of {1} h · {2} readings")
                 .replace("{0}", hours)
                 .replace("{1}", windowHours)
                 .replace("{2}", String(readings))),
-        h("div", { className: "sso-coverage-track" },
-            h("div", { className: "sso-coverage-fill", style: { width: filled + "%" } })),
+        h("div", { className: "ta-coverage-track" },
+            h("div", { className: "ta-coverage-fill", style: { width: filled + "%" } })),
         observedLine);
 }
 
@@ -458,20 +458,20 @@ function Equity({ raw }) {
     const t = useTranslate();
     const parts = (raw || "").split("|");
     if (parts.length < 4) {
-        return h("div", { className: "sso-coverage" },
-            h("div", { className: "sso-coverage-label" }, t("Equity", "Served journeys")),
-            h("div", { className: "sso-coverage-empty" }, t("EquityEmpty", "not measured yet")));
+        return h("div", { className: "ta-coverage" },
+            h("div", { className: "ta-coverage-label" }, t("Equity", "Served journeys")),
+            h("div", { className: "ta-coverage-empty" }, t("EquityEmpty", "not measured yet")));
     }
     const share = parseFloat(parts[0]);
     const target = parseFloat(parts[2]);
     const filled = Math.max(0, Math.min(100, share));
-    return h("div", { className: "sso-coverage" },
-        h("div", { className: "sso-coverage-label" }, t("Equity", "Served journeys")),
-        h("div", { className: "sso-coverage-value" },
+    return h("div", { className: "ta-coverage" },
+        h("div", { className: "ta-coverage-label" }, t("Equity", "Served journeys")),
+        h("div", { className: "ta-coverage-value" },
             t("EquityValue", "{0} % of journeys have home and destination within {1} min of a served stop (target {2} %) · Gini of access walk {3}")
                 .replace("{0}", parts[0]).replace("{1}", parts[1]).replace("{2}", parts[2]).replace("{3}", parts[3])),
-        h("div", { className: "sso-coverage-track" },
-            h("div", { className: "sso-coverage-fill", style: { width: filled + "%", opacity: share >= target ? 1 : 0.6 } })));
+        h("div", { className: "ta-coverage-track" },
+            h("div", { className: "ta-coverage-fill", style: { width: filled + "%", opacity: share >= target ? 1 : 0.6 } })));
 }
 
 function Panel() {
@@ -513,9 +513,9 @@ function Panel() {
         }
 
         if (visible && !foreignInfoview) {
-            root.classList.add("sso-hide-vanilla-infoview");
+            root.classList.add("ta-hide-vanilla-infoview");
         } else {
-            root.classList.remove("sso-hide-vanilla-infoview");
+            root.classList.remove("ta-hide-vanilla-infoview");
         }
     }, [visible, foreignInfoview]);
 
@@ -529,21 +529,21 @@ function Panel() {
     }
 
     if (collapsed) {
-        return h("div", { className: "sso-panel sso-panel-collapsed" },
+        return h("div", { className: "ta-panel ta-panel-collapsed" },
             h("button", {
-                className: "sso-header",
+                className: "ta-header",
                 onClick: () => setCollapsed(false),
-            }, t("Title", "Station Suitability") + "  +"));
+            }, t("Title", "Transit Architect") + "  +"));
     }
 
-    return h("div", { className: "sso-panel" },
+    return h("div", { className: "ta-panel" },
         h("button", {
-            className: "sso-header",
+            className: "ta-header",
             onClick: () => setCollapsed(true),
-        }, t("Title", "Station Suitability") + "  -"),
+        }, t("Title", "Transit Architect") + "  -"),
 
-        h("div", { className: "sso-body" },
-        h("div", { className: "sso-column" },
+        h("div", { className: "ta-body" },
+        h("div", { className: "ta-column" },
 
         h(DataCoverage, { raw: dataCoverage }),
         h(Equity, { raw: equity }),
@@ -557,7 +557,7 @@ function Panel() {
         }),
 
         h("button", {
-            className: "sso-preset",
+            className: "ta-preset",
             onClick: () => trigger("applyPreset"),
         }, t("ApplyPreset", "Apply preset weights for this mode")),
 
@@ -569,7 +569,7 @@ function Panel() {
 
         heatmap ? h(Legend, {}) : null,
 
-        h("div", { className: "sso-section" }, t("RoutePlanning", "Route planning")),
+        h("div", { className: "ta-section" }, t("RoutePlanning", "Route planning")),
 
         h(Choice, {
             label: t("Objective", "Objective"),
@@ -585,7 +585,7 @@ function Panel() {
             onToggle: (next) => trigger("setShowRoutes", next),
         }),
 
-        h("div", { className: "sso-section" }, t("Tuning", "Tuning")),
+        h("div", { className: "ta-section" }, t("Tuning", "Tuning")),
 
         SLIDERS.map((slider, i) => {
             const b = bounds[slider.key] || FALLBACK_BOUNDS;
@@ -606,7 +606,7 @@ function Panel() {
         // The right-hand column, split in half: what to build on top, how what you
         // have is doing below. Each half scrolls on its own so neither can push the
         // other off the bottom.
-        h("div", { className: "sso-column" },
+        h("div", { className: "ta-column" },
             h(RouteList, { raw: routeList, selected: selectedRoute, update: routeUpdate }),
             h(LineHealth, {
                 raw: lineHealth,
@@ -620,20 +620,20 @@ function Panel() {
 // class. infoview-menu-toggle_bYF carries a second rule,
 // `width: calc(400rem * (0.33333 + var(--fontScale) / 1.5))`, which overrides its own
 // square rule — it is the infoview menu BAR, not a square toggle. Borrowing it stretched
-// this button into a 400rem lozenge across the toolbar. sso-toolbar-slot now supplies
+// this button into a 400rem lozenge across the toolbar. ta-toolbar-slot now supplies
 // the whole box itself.
 function ToolbarButton() {
     const t = useTranslate();
     const open = useBound("visible", false);
-    return h("div", { className: "sso-toolbar-slot" },
+    return h("div", { className: "ta-toolbar-slot" },
         h("button", {
-            className: "sso-toolbar-button" + (open ? " sso-toolbar-button-on" : ""),
-            title: t("Title", "Station Suitability"),
+            className: "ta-toolbar-button" + (open ? " ta-toolbar-button-on" : ""),
+            title: t("Title", "Transit Architect"),
             onClick: () => trigger("toggle"),
         },
             h("img", {
-                className: "sso-toolbar-icon",
-                src: "coui://stationsuitabilityoverlay/StationSuitability.svg",
+                className: "ta-toolbar-icon",
+                src: "coui://transitarchitect/TransitArchitect.svg",
             })));
 }
 
@@ -645,10 +645,10 @@ function ToolbarButton() {
 function HideInfoviewMenuEntry() {
     React.useEffect(() => {
         const hide = () => {
-            const icons = document.querySelectorAll('img[src*="stationsuitabilityoverlay"]');
+            const icons = document.querySelectorAll('img[src*="transitarchitect"]');
             for (let i = 0; i < icons.length; i++) {
                 const icon = icons[i];
-                if (icon.closest(".sso-toolbar-slot")) {
+                if (icon.closest(".ta-toolbar-slot")) {
                     continue;
                 }
 
@@ -699,14 +699,14 @@ function HideInfoviewMenuEntry() {
 
 const register = (moduleRegistry) => {
     if (!React || !Api || !moduleRegistry || !moduleRegistry.append) {
-        console.error("[StationSuitability] UI module could not register.");
+        console.error("[TransitArchitect] UI module could not register.");
         return;
     }
 
     moduleRegistry.append("Game", Panel);
     moduleRegistry.append("GameTopLeft", ToolbarButton);
     moduleRegistry.append("Game", HideInfoviewMenuEntry);
-    console.info("[StationSuitability] Control panel registered.");
+    console.info("[TransitArchitect] Control panel registered.");
 };
 
 export const hasCSS = true;

@@ -6,14 +6,14 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Reads the game's own facts about each mode from the loaded prefabs (register
     // A5.5, A6.x): the largest vehicle's seats (carriages included), its acceleration
     // and braking, and the passenger line prefab's default interval and stop duration.
     // Every rider floor derives from these, so they must be the real figures and not a
     // table in this mod that nothing keeps in step. Logged once with what they rest on.
-    internal static class SuitabilityFleet
+    internal static class Fleet
     {
         // The game's own facts about each mode, read once from the loaded prefabs
         // (register A5.5, A6.x): the largest vehicle's seats (carriages included), its

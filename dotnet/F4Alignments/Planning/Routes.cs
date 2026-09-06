@@ -2,12 +2,12 @@
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // F4 — alignments: corridors grown along street flow, direct traces on the
     // lattices, the interchange aiming and bending, re-tracing on streets and the
     // shape and duplicate gates. Stop placement is the F5 half of this class.
-    internal static partial class SuitabilityRoutes
+    internal static partial class Routes
     {
 
         // Grows corridors on ONE network and appends them as candidates. Each
@@ -57,17 +57,17 @@ namespace StationSuitabilityOverlay
             var growthNetwork = new CorridorNetwork(
                 graph, flow, used, novelty, nodeDemand, network.NodePositionsX, network.NodePositionsZ);
 
-            float meanFlow = SuitabilityGraphMath.MeanPositiveFlow(flow, graph.EdgeCount);
+            float meanFlow = GraphMath.MeanPositiveFlow(flow, graph.EdgeCount);
             if (meanFlow <= 0f)
             {
                 return;
             }
 
-            float noveltyWeight = SuitabilityGraphMath.NoveltyWeight(objective, meanFlow);
+            float noveltyWeight = GraphMath.NoveltyWeight(objective, meanFlow);
             // The objective has to reach SEEDING, not just the extension tie-break:
             // novelty is uniform while the first corridor grows, so a weight that only
             // tips extensions leaves every objective producing the same suggestions.
-            float seedNoveltyBias = SuitabilityGraphMath.SeedNoveltyBias(objective);
+            float seedNoveltyBias = GraphMath.SeedNoveltyBias(objective);
             float flowFloor = meanFlow * minFlowFraction;
             var corridor = new Corridor();
             var blocked = default(CorridorBlocks);
@@ -95,7 +95,7 @@ namespace StationSuitabilityOverlay
             int budget = maxRoutes * 4;
             for (int r = 0; r < attempts && added < budget; r++)
             {
-                if (!SuitabilityGraphMath.GrowCorridor(in growthNetwork, noveltyWeight,
+                if (!GraphMath.GrowCorridor(in growthNetwork, noveltyWeight,
                         flowFloor, maxRouteLength, corridor, demandFloor, seedNoveltyBias))
                 {
                     break;
@@ -117,7 +117,7 @@ namespace StationSuitabilityOverlay
                 // A single edge is not a line.
                 if (corridor.Edges.Count < 2)
                 {
-                    SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, 1f);
+                    GraphMath.PeelFlow(graph, corridor, flow, used, 1f);
                     continue;
                 }
 
@@ -143,8 +143,8 @@ namespace StationSuitabilityOverlay
                     wandered++;
                 }
 
-                SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, Assumptions.CaptureFraction);
-                SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, Assumptions.NoveltyHops, Assumptions.NoveltyFactor);
+                GraphMath.PeelFlow(graph, corridor, flow, used, Assumptions.CaptureFraction);
+                GraphMath.DecayNovelty(graph, corridor, novelty, Assumptions.NoveltyHops, Assumptions.NoveltyFactor);
             }
 
             // Why the corridors on this network came out the length they did. A route
@@ -469,7 +469,7 @@ namespace StationSuitabilityOverlay
             }
 
             float bentLength = NodePathLength(network, head) + NodePathLength(network, tail);
-            if (!SuitabilityGraphMath.IsDetourWorthwhile(direct, bentLength, maxRouteLength))
+            if (!GraphMath.IsDetourWorthwhile(direct, bentLength, maxRouteLength))
             {
                 return false;
             }
@@ -505,7 +505,7 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            if (!SuitabilityGraphMath.IsDirectEnough(endToEnd, bentLength))
+            if (!GraphMath.IsDirectEnough(endToEnd, bentLength))
             {
                 return false;
             }
@@ -675,7 +675,7 @@ namespace StationSuitabilityOverlay
                 Simplify(route.Path, Assumptions.SimplifyTolerance);
             }
 
-            if (!SuitabilityGraphMath.IsDirectEnough(EndToEnd(route.Path), route.Length))
+            if (!GraphMath.IsDirectEnough(EndToEnd(route.Path), route.Length))
             {
                 return null;
             }
@@ -879,7 +879,7 @@ namespace StationSuitabilityOverlay
 
         private static void Simplify(List<float2Like> path, float tolerance)
         {
-            SuitabilityGraphMath.SimplifyPolyline(path, tolerance);
+            GraphMath.SimplifyPolyline(path, tolerance);
         }
     }
 }

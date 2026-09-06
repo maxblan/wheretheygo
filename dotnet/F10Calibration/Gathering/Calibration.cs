@@ -9,7 +9,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Builds a ridership time series the game does not keep, then fits the scoring
     // weights to it.
@@ -27,7 +27,7 @@ namespace StationSuitabilityOverlay
     // turns the two quantities the game does maintain, queue length and average
     // wait, into an arrival rate, which is the throughput the placement model is
     // actually trying to predict.
-    internal sealed class SuitabilityCalibration
+    internal sealed class Calibration
     {
         private const int FeatureCount = SuitabilityScoring.CalibrationFeatureCount;
         // Stamped into the persisted series. Records gathered under another scoring
@@ -173,7 +173,7 @@ namespace StationSuitabilityOverlay
 
                 // Little's law needs a wait in SECONDS. WaitingPassengers'
                 // m_AverageWaitingTime is the pathfinder's accumulator in game units —
-                // the same field SuitabilityLineHealth refuses to read — so dividing a
+                // the same field LineHealthRules refuses to read — so dividing a
                 // passenger count by it produced a target in no unit at all, which is
                 // why the fit came back with three of its four coefficients pinned at
                 // exactly zero. The wait now comes from the serving line's headway,

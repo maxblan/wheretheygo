@@ -105,7 +105,7 @@ def sites_plateau():
 # --------------------------------------------------------- lattice_path (S4)
 
 def grid_graph(cols, rows, blocked, scale_fn, seed=None):
-    """8-connected lattice like SuitabilityLattice.Build: orthogonal cost 128,
+    """8-connected lattice like Lattice.Build: orthogonal cost 128,
     diagonal 128*1.41421356 (the mod's 7-digit constant), times a per-edge
     scale. Costs are rounded through binary32 like the mod's float pipeline."""
     def rf32(x):

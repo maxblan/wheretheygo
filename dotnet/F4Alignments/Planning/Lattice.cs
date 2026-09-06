@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // A free-form graph laid over the map on a regular grid, for modes that are not
     // bound to the road network. Nodes exist only where the mask allows, and
@@ -9,7 +9,7 @@ namespace StationSuitabilityOverlay
     //
     // This is what lets metro and ferry routes exist at all: the road graph cannot
     // express a tunnel or a boat crossing.
-    internal static class SuitabilityLattice
+    internal static class Lattice
     {
 
         // Builds a lattice over the tiles the mask admits. `costScale` is applied per

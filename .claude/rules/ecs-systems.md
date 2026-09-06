@@ -11,7 +11,7 @@ paths:
 # Game-facing systems
 
 You are in the half that talks to Cities: Skylines II: the `Gathering/` readers, the `Systems/`
-partials of `StationSuitabilityOverlaySystem`, and the `Overlay/` and `Presentation/` shell. Nothing
+partials of `TransitArchitectSystem`, and the `Overlay/` and `Presentation/` shell. Nothing
 here can be executed outside the game, so the discipline that replaces testing is: verify the API against the real assembly, and log
 enough that a wrong number is visible in the log rather than only on screen.
 
@@ -26,10 +26,10 @@ enough that a wrong number is visible in the log rather than only on screen.
   your own — a fleet target invented from the achieved interval read `9 vehicles, target 1`.
 - **Log every input and decision with the numbers behind it.** This is the only instrument
   available. A verdict, a mode choice, a rejection or a count that reaches the panel should also
-  reach `StationSuitabilityOverlay.Mod.log` with the values it came from, and units named when they
+  reach `TransitArchitect.Mod.log` with the values it came from, and units named when they
   are not obvious. A quantity you are unsure about gets logged with what it actually is
   (`waitAccumulator=… (game units, not seconds)`), never silently presented as seconds.
-- **The save block is consumed exactly or the load fails.** `SuitabilitySaveState` writes one
+- **The save block is consumed exactly or the load fails.** `TransitArchitectSystem.SaveState` writes one
   length-prefixed payload behind `SaveFormatVersion`; anything added to it goes INSIDE the payload
   (BinaryWriter), never as extra fields beside it, and a layout change bumps the version. Parsing
   errors inside the payload are caught and mean "start cold"; a length the reader cannot consume

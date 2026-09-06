@@ -8,14 +8,14 @@ using Unity.Entities;
 using Unity.Mathematics;
 using PathMethod = Game.Pathfind.PathMethod;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Reads the streets out of the save into an AlignmentNetwork: which edges a
     // transit vehicle may drive, their arc lengths and sampled centrelines, which are
     // highways, and one directed arc per admitted driving direction with its speed
     // limit and end tangents — plus the track segments the rail lattices are priced
     // by. Everything numeric happens on the network; this file only gathers.
-    internal static class SuitabilityRoads
+    internal static class Roads
     {
 
         // Walks road edges and their endpoint nodes into index arrays and hands them

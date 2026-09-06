@@ -4,12 +4,12 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
-    <AssemblyName>SuitabilityScoring.Tests</AssemblyName>
-    <RootNamespace>StationSuitabilityOverlay.Tests</RootNamespace>
+    <AssemblyName>TransitArchitect.Tests</AssemblyName>
+    <RootNamespace>TransitArchitect.Tests</RootNamespace>
     <!-- No test framework package on purpose: this must run offline with nothing
          to restore. Failures are reported by a non-zero exit code. -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <!-- CS0649: TransitLine.m_RideSeconds is assigned in SuitabilityLines.cs, which is
+    <!-- CS0649: TransitLine.m_RideSeconds is assigned in Lines.cs, which is
          part of the mod and deliberately not linked here (it needs Unity types). Inside
          this project alone the field looks write-free. -->
     <!-- CA1515: ModePreset and RouteGoal are public because Setting exposes them
@@ -26,7 +26,7 @@
     <!-- The mod's whole pure core, linked rather than duplicated: every file in a
          Planning folder under dotnet/ uses System.* only, precisely so it compiles here. A Unity
          type in any of them breaks this build, which is the purity check.
-         SuitabilityExportJson.cs is among them so the golden-vector test can pin the
+         ExportJson.cs is among them so the golden-vector test can pin the
          wire format against verification/common/canonical.py, which refuses any file
          whose digest it cannot reproduce. -->
     <Compile Include="../../dotnet/**/Planning/*.cs" Link="%(RecursiveDir)%(Filename)%(Extension)" />

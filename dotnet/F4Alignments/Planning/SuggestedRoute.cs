@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // A suggested transit line: the polyline it runs along, where its stops go, and
     // which mode it should be.
@@ -10,7 +10,7 @@ namespace StationSuitabilityOverlay
         public readonly List<float2Like> Path = new List<float2Like>();
         public readonly List<float2Like> Stops = new List<float2Like>();
         public ModePreset Mode;
-        // Length-weighted MEAN edge flow along the corridor (SuitabilityGraphMath's
+        // Length-weighted MEAN edge flow along the corridor (GraphMath's
         // GrowCorridor). Comparable to the network's mean positive edge flow, which is
         // what the mode floors are a multiple of.
         public float CapturedFlow;
@@ -48,13 +48,13 @@ namespace StationSuitabilityOverlay
         // after a mode change re-places the stops.
         public AlignmentNetwork? Source;
         public readonly List<int> Nodes = new List<int>();
-        // The stop plan the stops came from (SuitabilityStopPlan), for the log and the
+        // The stop plan the stops came from (StopPlanning), for the log and the
         // verification export.
         public StopPlanProblem? StopPlan;
         public int[] StopPlanChosen = Array.Empty<int>();
         public double StopPlanGain;
         public double StopPlanDelay;
-        // The alignment this candidate is a variant of (SuitabilityRoutes numbers them
+        // The alignment this candidate is a variant of (Routes numbers them
         // per pass); variants are alternatives in the set selection. Negative = none.
         public int Group = -1;
         // When the line should run (Daytime.Recommend on the set's riders by period),

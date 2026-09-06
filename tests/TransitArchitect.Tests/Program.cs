@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
-namespace StationSuitabilityOverlay.Tests
+namespace TransitArchitect.Tests
 {
     // Minimal self-contained harness: no test framework, so it runs offline with
     // nothing to restore. Exit code is the number of failed tests.
@@ -1032,7 +1032,7 @@ namespace StationSuitabilityOverlay.Tests
             var zoneNodes = new[] { 0, 1, 2, 3, 4 };
             var edgeFlow = new float[5];
             var arcFlow = new float[graph.ArcCount];
-            int assigned = SuitabilityDirectedRoads.AssignFlow(graph, dijkstra, flows, zoneNodes, long.MaxValue / 4, edgeFlow, arcFlow, out float weight);
+            int assigned = DirectedRoads.AssignFlow(graph, dijkstra, flows, zoneNodes, long.MaxValue / 4, edgeFlow, arcFlow, out float weight);
             AssertEqual(3, assigned, 0, "all three flows have a directed route");
             AssertEqual(13f, weight, 0f, "assigned weight");
             AssertEqual(5f, edgeFlow[0], 0f, "street 0-1 carries only the 0->1 flow");
@@ -1088,7 +1088,7 @@ namespace StationSuitabilityOverlay.Tests
             // Line 0..7 one minute apart; one served stop at node 1 (access 0), horizon 10 min.
             WalkGraph graph = LineGraph(8, 72f);
             var dijkstra = new IntDijkstra(graph.NodeCount);
-            int[] served = SuitabilityEquity.ServedWalkMs(graph, dijkstra, new[] { 1 }, new[] { 0 }, 1, 600000);
+            int[] served = Equity.ServedWalkMs(graph, dijkstra, new[] { 1 }, new[] { 0 }, 1, 600000);
             AssertEqual(0, served[1], 0, "the stop's node is served at once");
             AssertEqual(60000, served[0], 0, "one minute to node 0");
             AssertEqual(360000, served[7], 0, "six minutes to node 7");
@@ -1100,39 +1100,39 @@ namespace StationSuitabilityOverlay.Tests
             var dest = new[] { 7, 7, -1 };
             var destAccess = new[] { 0, 300000, 0 };
             var weight = new[] { 2f, 1f, 1f };
-            CoverageReport report = SuitabilityEquity.Coverage(served, 600000, origin, originAccess, dest, destAccess, weight, 3);
+            CoverageReport report = Equity.Coverage(served, 600000, origin, originAccess, dest, destAccess, weight, 3);
             AssertEqual(1, report.TripsCovered, 0, "only the first journey is served at both ends");
             AssertEqual(1, report.TripsOffNetwork, 0, "one journey has an end off the network");
             AssertEqual(0.5f, report.Share, 0f, "2 of 4 weight covered");
-            AssertTrue(SuitabilityEquity.EndServed(served, 7, 240000, 600000), "6 + 4 minutes fits the horizon exactly");
-            AssertTrue(!SuitabilityEquity.EndServed(served, 7, 240001, 600000), "one millisecond over does not");
+            AssertTrue(Equity.EndServed(served, 7, 240000, 600000), "6 + 4 minutes fits the horizon exactly");
+            AssertTrue(!Equity.EndServed(served, 7, 240001, 600000), "one millisecond over does not");
 
             // Adding a stop at node 7 covers the second journey as well (5 min access ≤ 10).
-            int[] merged = SuitabilityEquity.WithStops(graph, dijkstra, served, new[] { 7 }, new[] { 0 }, 1, 600000);
+            int[] merged = Equity.WithStops(graph, dijkstra, served, new[] { 7 }, new[] { 0 }, 1, 600000);
             AssertEqual(0, merged[7], 0, "node 7 is now a stop");
             AssertEqual(0, served[7] == 360000 ? 0 : 1, 0, "the original field is untouched");
-            CoverageReport after = SuitabilityEquity.Coverage(merged, 600000, origin, originAccess, dest, destAccess, weight, 3);
+            CoverageReport after = Equity.Coverage(merged, 600000, origin, originAccess, dest, destAccess, weight, 3);
             AssertEqual(0.75f, after.Share, 0f, "3 of 4 weight covered with the new stop");
         }
 
         private static void EquityGiniAndUtilisation()
         {
-            AssertEqual(0f, (float)SuitabilityEquity.Gini(new[] { 3.0, 3.0, 3.0 }, new[] { 1f, 1f, 1f }, 3), 0f, "equal values: Gini 0");
-            AssertEqual(0f, (float)SuitabilityEquity.Gini(new[] { 0.0, 0.0 }, new[] { 1f, 1f }, 2), 0f, "all zero: Gini 0 by convention");
-            double concentrated = SuitabilityEquity.Gini(new[] { 0.0, 0.0, 0.0, 10.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
+            AssertEqual(0f, (float)Equity.Gini(new[] { 3.0, 3.0, 3.0 }, new[] { 1f, 1f, 1f }, 3), 0f, "equal values: Gini 0");
+            AssertEqual(0f, (float)Equity.Gini(new[] { 0.0, 0.0 }, new[] { 1f, 1f }, 2), 0f, "all zero: Gini 0 by convention");
+            double concentrated = Equity.Gini(new[] { 0.0, 0.0, 0.0, 10.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
             AssertEqual(0.75f, (float)concentrated, 1e-6f, "one of four holds everything: (n-1)/n");
-            double weighted = SuitabilityEquity.Gini(new[] { 1.0, 2.0 }, new[] { 3f, 1f }, 2);
-            double unweighted = SuitabilityEquity.Gini(new[] { 1.0, 1.0, 1.0, 2.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
+            double weighted = Equity.Gini(new[] { 1.0, 2.0 }, new[] { 3f, 1f }, 2);
+            double unweighted = Equity.Gini(new[] { 1.0, 1.0, 1.0, 2.0 }, new[] { 1f, 1f, 1f, 1f }, 4);
             AssertEqual((float)unweighted, (float)weighted, 1e-9f, "weights behave like repeated observations");
 
             // 179 journeys a game day on a 400 s headway with 80-seat buses: 358
             // boardings against (4369.07 / 400) runs × 2 directions × 80 seats.
             float day = 262144f / 60f;
             AssertEqual(day, Assumptions.MovementSecondsPerGameDay, 1e-3f, "a game day is 262144 ticks at 60 per second");
-            float utilisation = SuitabilityEquity.Utilisation(179f, 400f, 80f);
+            float utilisation = Equity.Utilisation(179f, 400f, 80f);
             AssertEqual(358f / (day / 400f * 2f * 80f), utilisation, 1e-6f, "boardings over seats offered in the day");
             AssertTrue(utilisation is > 0.20f and < 0.21f, "Valmare's best candidate sits near 20 %");
-            AssertEqual(0f, SuitabilityEquity.Utilisation(1000f, 0f, 70f), 0f, "no headway, no utilisation");
+            AssertEqual(0f, Equity.Utilisation(1000f, 0f, 70f), 0f, "no headway, no utilisation");
         }
 
         private static LineCandidate Line(float wait, float speed, params (float x, float z)[] stops)
@@ -1176,20 +1176,20 @@ namespace StationSuitabilityOverlay.Tests
         private static void LineSetTrunkAndFeeder()
         {
             LineSetProblem problem = FeederProblem();
-            float[] before = SuitabilityLineSet.Evaluate(problem, Array.Empty<int>(), 0, null).After;
+            float[] before = LineSet.Evaluate(problem, Array.Empty<int>(), 0, null).After;
             AssertEqual(6000f / 1.2f, before[0], 1e-3f, "with no lines, A->B is a walk");
-            double trunk = SuitabilityLineSet.Evaluate(problem, new[] { 0 }, 1, before).TimeSaved;
-            double feeder = SuitabilityLineSet.Evaluate(problem, new[] { 1 }, 1, before).TimeSaved;
-            double both = SuitabilityLineSet.Evaluate(problem, new[] { 0, 1 }, 2, before).TimeSaved;
+            double trunk = LineSet.Evaluate(problem, new[] { 0 }, 1, before).TimeSaved;
+            double feeder = LineSet.Evaluate(problem, new[] { 1 }, 1, before).TimeSaved;
+            double both = LineSet.Evaluate(problem, new[] { 0, 1 }, 2, before).TimeSaved;
             AssertTrue(trunk > 0.0, "the trunk saves A->B riders time");
             AssertTrue(both > trunk && both > feeder, "adding a line never loses time (monotone)");
             AssertTrue(both > trunk + feeder, "trunk and feeder together save more than apart: C->B needs both");
-            LineSetEvaluation withBoth = SuitabilityLineSet.Evaluate(problem, new[] { 0, 1 }, 2, before);
+            LineSetEvaluation withBoth = LineSet.Evaluate(problem, new[] { 0, 1 }, 2, before);
             AssertEqual(80f, (float)withBoth.Riders[0], 1e-3f, "A->B and C->B ride the trunk");
             AssertEqual(50f, (float)withBoth.Riders[1], 1e-3f, "C->B and C->A ride the feeder");
             AssertTrue(withBoth.WaitSeconds > 0.0 && withBoth.RideSeconds > 0.0, "the realism breakdown is filled");
 
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(solution.Optimal, "three candidates close at once");
             AssertEqual(2, solution.Count, 0, "two lines chosen");
             AssertTrue((solution.Chosen[0] == 0 && solution.Chosen[1] == 1) || (solution.Chosen[0] == 1 && solution.Chosen[1] == 0), "trunk and feeder are the pair");
@@ -1266,7 +1266,7 @@ namespace StationSuitabilityOverlay.Tests
                 float[]? referenceBefore = null;
                 foreach (int[] set in sets)
                 {
-                    LineSetEvaluation grouped = SuitabilityLineSet.Evaluate(problem, set, set.Length, before);
+                    LineSetEvaluation grouped = LineSet.Evaluate(problem, set, set.Length, before);
                     PerPairReference(problem, set, referenceBefore, out float[] after, out double[] riders, out double saved);
                     for (int i = 0; i < pairs; i++)
                     {
@@ -1293,7 +1293,7 @@ namespace StationSuitabilityOverlay.Tests
         }
 
         // The definition of the objective: two zone nodes per pair, one uncapped search
-        // each (SuitabilityLineSet.Evaluate as first written).
+        // each (LineSet.Evaluate as first written).
         private static void PerPairReference(LineSetProblem problem, int[] chosen, float[]? before, out float[] after, out double[] riders, out double saved)
         {
             int stopCount = problem.BaseStopCount;
@@ -1332,7 +1332,7 @@ namespace StationSuitabilityOverlay.Tests
                 zoneZ[(2 * i) + 1] = problem.PairDz[i];
             }
 
-            TransitNetwork network = SuitabilityTransit.BuildWithZones(stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds, zoneX, zoneZ, problem.PairCount * 2, problem.ZoneReachMetres);
+            TransitNetwork network = TransitRouting.BuildWithZones(stopX, stopZ, stopCount, lines, problem.WalkRadius, problem.BoardPenaltySeconds, zoneX, zoneZ, problem.PairCount * 2, problem.ZoneReachMetres);
             var workspace = new DijkstraWorkspace(network.Graph.NodeCount);
             after = new float[problem.PairCount];
             riders = new double[problem.Candidates.Count];
@@ -1343,7 +1343,7 @@ namespace StationSuitabilityOverlay.Tests
                 int origin = network.ZoneNodeStart + (2 * i);
                 int destination = origin + 1;
                 workspace.Run(network.Graph, origin, problem.MaxTravelSeconds, network.ZoneNodeStart);
-                float walkOnly = SuitabilityLineSet.WalkOnlySeconds(problem, i);
+                float walkOnly = LineSet.WalkOnlySeconds(problem, i);
                 float transit = workspace.Dist[destination];
                 after[i] = Math.Min(walkOnly, transit);
                 if (transit < walkOnly)
@@ -1377,7 +1377,7 @@ namespace StationSuitabilityOverlay.Tests
         {
             LineSetProblem problem = FeederProblem();
             problem.UtilisationFloor = 0f;
-            LineSetSolution open = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution open = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             LineSetEvaluation? openEvaluation = open.Evaluation;
             AssertTrue(open.Count == 2 && openEvaluation is not null, "without a ceiling the trunk-and-feeder pair is chosen");
             if (openEvaluation is null)
@@ -1390,17 +1390,17 @@ namespace StationSuitabilityOverlay.Tests
             float busiest = 0f;
             for (int k = 0; k < open.Count; k++)
             {
-                busiest = Math.Max(busiest, SuitabilityLineSet.Utilisation(problem, open.Chosen[k], openEvaluation.Riders[open.Chosen[k]]));
+                busiest = Math.Max(busiest, LineSet.Utilisation(problem, open.Chosen[k], openEvaluation.Riders[open.Chosen[k]]));
             }
 
             problem.UtilisationCeiling = busiest * 0.99f;
-            LineSetSolution capped = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution capped = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(capped.Infeasible > 0, "the overloaded set was met and refused");
             AssertTrue(capped.TimeSaved < open.TimeSaved, "the ceiling costs time saved");
             LineSetEvaluation? evaluation = capped.Evaluation;
             for (int k = 0; k < capped.Count; k++)
             {
-                AssertTrue(evaluation is not null && SuitabilityLineSet.Utilisation(problem, capped.Chosen[k], evaluation.Riders[capped.Chosen[k]]) <= problem.UtilisationCeiling,
+                AssertTrue(evaluation is not null && LineSet.Utilisation(problem, capped.Chosen[k], evaluation.Riders[capped.Chosen[k]]) <= problem.UtilisationCeiling,
                     "every chosen line stays under the ceiling");
             }
         }
@@ -1408,7 +1408,7 @@ namespace StationSuitabilityOverlay.Tests
         private static void LineSetLocalSearch()
         {
             LineSetProblem problem = FeederProblem();
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(solution.Optimal && solution.Count == 2, "the exact search still closes");
             AssertTrue(solution.GreedyTimeSaved > 0.0, "the greedy build found a feasible set");
             AssertTrue(solution.LocalSearchTimeSaved >= solution.GreedyTimeSaved, "swaps never lose against the greedy build");
@@ -1422,7 +1422,7 @@ namespace StationSuitabilityOverlay.Tests
             problem.Candidates.Add(Line(150f, 20f, (0f, 0f), (6000f, 0f)));   // an exact copy of the trunk: a duplicate
             problem.MaxLines = 3;
             problem.UtilisationFloor = 0.01f;
-            float[] before = SuitabilityLineSet.Evaluate(problem, Array.Empty<int>(), 0, null).After;
+            float[] before = LineSet.Evaluate(problem, Array.Empty<int>(), 0, null).After;
 
             // Brute force over every subset of size <= 3 with the same feasibility rules.
             int n = problem.Candidates.Count;
@@ -1443,11 +1443,11 @@ namespace StationSuitabilityOverlay.Tests
                     continue;
                 }
 
-                LineSetEvaluation evaluation = SuitabilityLineSet.Evaluate(problem, chosen.ToArray(), chosen.Count, before);
+                LineSetEvaluation evaluation = LineSet.Evaluate(problem, chosen.ToArray(), chosen.Count, before);
                 bool feasible = true;
                 foreach (int c in chosen)
                 {
-                    feasible &= SuitabilityLineSet.Utilisation(problem, c, evaluation.Riders[c]) >= problem.UtilisationFloor;
+                    feasible &= LineSet.Utilisation(problem, c, evaluation.Riders[c]) >= problem.UtilisationFloor;
                 }
 
                 if (feasible && chosen.Count >= 2)
@@ -1456,7 +1456,7 @@ namespace StationSuitabilityOverlay.Tests
                     foreach (int c in chosen)
                     {
                         var rest = chosen.Where(x => x != c).ToArray();
-                        LineSetEvaluation without = SuitabilityLineSet.Evaluate(problem, rest, rest.Length, before);
+                        LineSetEvaluation without = LineSet.Evaluate(problem, rest, rest.Length, before);
                         double slowed = 0.0;
                         for (int i = 0; i < problem.PairCount; i++)
                         {
@@ -1480,14 +1480,14 @@ namespace StationSuitabilityOverlay.Tests
                 }
             }
 
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertTrue(solution.Optimal, "four candidates close");
             AssertEqual((float)best, (float)solution.TimeSaved, 1e-3f, "solver equals brute force");
             AssertTrue(solution.Count == 2, "the duplicate trunk cannot join its twin and the stub carries nobody");
             AssertTrue(solution.Infeasible > 0, "infeasible sets were met and counted");
 
             problem.UtilisationFloor = 10f;
-            LineSetSolution starved = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution starved = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertEqual(0, starved.Count, 0, "an unreachable utilisation floor leaves the empty set");
         }
 
@@ -1507,12 +1507,12 @@ namespace StationSuitabilityOverlay.Tests
                 return coverage;
             };
             problem.EquityFloorShare = 0.8f;
-            LineSetSolution solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            LineSetSolution solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertEqual(1, solution.Count, 0, "one line");
             AssertEqual(2, solution.Chosen[0], 0, "below the floor the line that serves the most doors wins, whatever it saves");
 
             problem.EquityFloorShare = 0.05f;   // already met by everyone: time saved decides
-            solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+            solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             AssertEqual(0, solution.Chosen[0], 0, "with the floor met the trunk's time saving wins");
         }
 
@@ -2063,7 +2063,7 @@ namespace StationSuitabilityOverlay.Tests
             var ws = new DijkstraWorkspace(graph.NodeCount);
             ws.Run(graph, 0, 1000f);
 
-            AssertTrue(SuitabilityGraphMath.AccumulatePath(graph, ws, 0, 5, 10f, flow), "path should be found");
+            AssertTrue(GraphMath.AccumulatePath(graph, ws, 0, 5, 10f, flow), "path should be found");
 
             // Chain edges 0..4 carry the flow; the expensive shortcut (edge 5) does not.
             for (int e = 0; e < 5; e++)
@@ -2084,7 +2084,7 @@ namespace StationSuitabilityOverlay.Tests
             var ws = new DijkstraWorkspace(graph.NodeCount);
             ws.Run(graph, 0, 1000f);
 
-            AssertTrue(!SuitabilityGraphMath.AccumulatePath(graph, ws, 0, 3, 5f, flow), "must report failure");
+            AssertTrue(!GraphMath.AccumulatePath(graph, ws, 0, 3, 5f, flow), "must report failure");
             AssertEqual(0f, flow[0], 0f, "no flow on the reachable component");
             AssertEqual(0f, flow[1], 0f, "no flow on the unreachable component");
         }
@@ -2102,7 +2102,7 @@ namespace StationSuitabilityOverlay.Tests
             var novelty = NewNovelty(7);
 
             var corridor = new Corridor();
-            AssertTrue(SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), 0f, 2f, 1000f, corridor),
+            AssertTrue(GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), 0f, 2f, 1000f, corridor),
                 "corridor should grow");
 
             // Seeded on edge 2 (the strongest) and extended over the other strong
@@ -2128,7 +2128,7 @@ namespace StationSuitabilityOverlay.Tests
             var used = new bool[4];
 
             var corridor = new Corridor();
-            AssertTrue(SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(5)), 0f, 1f, 1000f, corridor),
+            AssertTrue(GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(5)), 0f, 1f, 1000f, corridor),
                 "corridor should grow");
 
             // Nodes must form an unbroken walk: each consecutive pair is joined by
@@ -2154,7 +2154,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 10f, 10f, 10f, 10f, 10f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[5], NewNovelty(6)), 0f, 1f, 250f, corridor);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[5], NewNovelty(6)), 0f, 1f, 250f, corridor);
 
             AssertTrue(corridor.Length <= 250f, $"length {corridor.Length} must respect the limit");
             AssertTrue(corridor.Edges.Count <= 2, $"only 2 edges of 100 fit under 250, got {corridor.Edges.Count}");
@@ -2171,7 +2171,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 40f, 40f, 40f, 40f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5)), 0f, 1f, 10000f, corridor);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5)), 0f, 1f, 10000f, corridor);
 
             AssertTrue(corridor.Edges.Count >= 3, $"should grow along the chain, got {corridor.Edges.Count} edges");
             AssertEqual(40f, corridor.CapturedFlow, 1e-3f, "uniform flow means the mean equals that flow");
@@ -2192,11 +2192,11 @@ namespace StationSuitabilityOverlay.Tests
             var demand = new[] { 1f, 1f, 1f, 0f, 0f };
 
             var ungated = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5)), 0f, 1f, 10000f, ungated);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5)), 0f, 1f, 10000f, ungated);
             AssertTrue(ungated.Edges.Count == 4, "without the gate it runs the whole chain including empty land");
 
             var gated = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, gated, 0.5f);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, gated, 0.5f);
 
             AssertTrue(gated.Nodes.Contains(0) && gated.Nodes.Contains(2), "populated stretch is kept");
             AssertTrue(!gated.Nodes.Contains(3) && !gated.Nodes.Contains(4), "empty nodes must be refused");
@@ -2213,14 +2213,14 @@ namespace StationSuitabilityOverlay.Tests
             var used = new bool[3];
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(4)), 0f, 1f, 1000f, corridor);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(4)), 0f, 1f, 1000f, corridor);
             float before = 0f;
             for (int e = 0; e < 3; e++)
             {
                 before += flow[e];
             }
 
-            SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, 0.8f);
+            GraphMath.PeelFlow(graph, corridor, flow, used, 0.8f);
 
             float after = 0f;
             for (int e = 0; e < 3; e++)
@@ -2236,7 +2236,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // A second growth must not re-select the same corridor.
             var second = new Corridor();
-            bool grew = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(4)), 0f, 1f, 1000f, second);
+            bool grew = GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, NewNovelty(4)), 0f, 1f, 1000f, second);
             if (grew)
             {
                 for (int i = 0; i < second.Edges.Count; i++)
@@ -2256,15 +2256,15 @@ namespace StationSuitabilityOverlay.Tests
 
             var ridership = new Corridor();
             var flowA = new[] { 100f, 90f, 20f };
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flowA, new bool[3], NewNovelty(4)),
-                SuitabilityGraphMath.NoveltyWeight(RouteObjective.Ridership, 70f), 0f, 1000f, ridership);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flowA, new bool[3], NewNovelty(4)),
+                GraphMath.NoveltyWeight(RouteObjective.Ridership, 70f), 0f, 1000f, ridership);
 
             var coverage = new Corridor();
             var flowB = new[] { 100f, 90f, 20f };
             // Node 3 is virgin territory; nodes 0-2 are already covered.
             var novelty = new[] { 0.05f, 0.05f, 0.05f, 1f };
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flowB, new bool[3], novelty),
-                SuitabilityGraphMath.NoveltyWeight(RouteObjective.Coverage, 70f), 0f, 1000f, coverage);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flowB, new bool[3], novelty),
+                GraphMath.NoveltyWeight(RouteObjective.Coverage, 70f), 0f, 1000f, coverage);
 
             AssertTrue(ridership.Edges.Contains(1), "ridership objective should take the busy trunk");
             AssertTrue(!ridership.Edges.Contains(2), "ridership objective should skip the quiet branch");
@@ -2296,20 +2296,20 @@ namespace StationSuitabilityOverlay.Tests
                 var flow = (float[])baseFlow.Clone();
                 var used = new bool[graph.EdgeCount];
                 float[] novelty = NewNovelty(8);
-                float weight = SuitabilityGraphMath.NoveltyWeight(objective, 77f);
-                float bias = SuitabilityGraphMath.SeedNoveltyBias(objective);
+                float weight = GraphMath.NoveltyWeight(objective, 77f);
+                float bias = GraphMath.SeedNoveltyBias(objective);
 
                 var first = new Corridor();
                 AssertTrue(
-                    SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), weight, 0f, 250f, first,
+                    GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), weight, 0f, 250f, first,
                         seedNoveltyBias: bias),
                     "first corridor grows");
-                SuitabilityGraphMath.PeelFlow(graph, first, flow, used, 0.85f);
-                SuitabilityGraphMath.DecayNovelty(graph, first, novelty, 3, 0.15f);
+                GraphMath.PeelFlow(graph, first, flow, used, 0.85f);
+                GraphMath.DecayNovelty(graph, first, novelty, 3, 0.15f);
 
                 var second = new Corridor();
                 AssertTrue(
-                    SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), weight, 0f, 250f, second,
+                    GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, used, novelty), weight, 0f, 250f, second,
                         seedNoveltyBias: bias),
                     "second corridor grows");
                 return second;
@@ -2339,7 +2339,7 @@ namespace StationSuitabilityOverlay.Tests
             var raster = new float[width * height];
 
             // A horizontal line across row 5 from x=0.5 to x=9.5.
-            SuitabilityGraphMath.RasterizeSegment(raster, width, height, 0.5f, 5.5f, 9.5f, 5.5f, 2f);
+            GraphMath.RasterizeSegment(raster, width, height, 0.5f, 5.5f, 9.5f, 5.5f, 2f);
 
             for (int x = 0; x < width; x++)
             {
@@ -2349,7 +2349,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // Out-of-bounds endpoints must be clipped, not wrapped or crash.
             var clipped = new float[width * height];
-            SuitabilityGraphMath.RasterizeSegment(clipped, width, height, -50f, 2.5f, 50f, 2.5f, 1f);
+            GraphMath.RasterizeSegment(clipped, width, height, -50f, 2.5f, 50f, 2.5f, 1f);
             for (int x = 0; x < width; x++)
             {
                 AssertEqual(1f, clipped[x + 2 * width], 1e-4f, $"clipped line still fills ({x},2)");
@@ -2371,7 +2371,7 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             int before = points.Count;
-            SuitabilityGraphMath.SimplifyPolyline(points, 120f);
+            GraphMath.SimplifyPolyline(points, 120f);
 
             AssertTrue(points.Count < before, $"simplification must drop corners ({points.Count} vs {before})");
             AssertTrue(points.Count >= 2, "endpoints must survive");
@@ -2383,7 +2383,7 @@ namespace StationSuitabilityOverlay.Tests
             {
                 new float2Like(0f, 0f), new float2Like(0f, 1000f), new float2Like(1000f, 1000f),
             };
-            SuitabilityGraphMath.SimplifyPolyline(corner, 120f);
+            GraphMath.SimplifyPolyline(corner, 120f);
             AssertEqual(3, corner.Count, 0, "a real corner must be preserved");
         }
 
@@ -2401,7 +2401,7 @@ namespace StationSuitabilityOverlay.Tests
                 new TransitLine { m_Stops = new[] { 4, 1 }, m_ExpectedWait = wait, m_SpeedMetresPerSecond = 10f },
             };
 
-            return SuitabilityTransit.Build(xs, zs, 5, lines, 100f, Assumptions.DefaultBoardPenaltySeconds);
+            return TransitRouting.Build(xs, zs, 5, lines, 100f, Assumptions.DefaultBoardPenaltySeconds);
         }
 
         private static void DirectBeatsTransfer()
@@ -2411,14 +2411,14 @@ namespace StationSuitabilityOverlay.Tests
 
             // 0 -> 3 is a single ride on the trunk: one boarding.
             ws.Run(net.Graph, 0, 100000f);
-            AssertTrue(SuitabilityTransit.Inspect(net, ws, 0, 3, -1, out int boardings, out _, out float direct),
+            AssertTrue(TransitRouting.Inspect(net, ws, 0, 3, -1, out int boardings, out _, out float direct),
                 "trunk journey should be routable");
             AssertEqual(1, boardings, 0, "riding one line is one boarding");
 
             // 4 -> 3 needs the feeder then the trunk: two boardings, and must cost
             // more than the direct trip even though the ride distance is shorter.
             ws.Run(net.Graph, 4, 100000f);
-            AssertTrue(SuitabilityTransit.Inspect(net, ws, 4, 3, -1, out int viaFeeder, out _, out float changed),
+            AssertTrue(TransitRouting.Inspect(net, ws, 4, 3, -1, out int viaFeeder, out _, out float changed),
                 "feeder journey should be routable");
             AssertEqual(2, viaFeeder, 0, "changing vehicle is a second boarding");
             AssertTrue(changed > direct, $"a change must cost extra ({changed} vs {direct})");
@@ -2432,11 +2432,11 @@ namespace StationSuitabilityOverlay.Tests
 
             var wsCheap = new DijkstraWorkspace(cheap.Graph.NodeCount);
             wsCheap.Run(cheap.Graph, 4, 100000f);
-            _ = SuitabilityTransit.Inspect(cheap, wsCheap, 4, 3, -1, out _, out _, out float cheapTime);
+            _ = TransitRouting.Inspect(cheap, wsCheap, 4, 3, -1, out _, out _, out float cheapTime);
 
             var wsDear = new DijkstraWorkspace(dear.Graph.NodeCount);
             wsDear.Run(dear.Graph, 4, 100000f);
-            _ = SuitabilityTransit.Inspect(dear, wsDear, 4, 3, -1, out _, out _, out float dearTime);
+            _ = TransitRouting.Inspect(dear, wsDear, 4, 3, -1, out _, out _, out float dearTime);
 
             // Two boardings, each paying the extra wait: the gap is about 2x.
             AssertTrue(dearTime > cheapTime + 1000f, $"longer headways must cost more ({dearTime} vs {cheapTime})");
@@ -2454,26 +2454,26 @@ namespace StationSuitabilityOverlay.Tests
                 new TransitLine { m_Stops = new[] { 2, 3 }, m_ExpectedWait = 30f, m_SpeedMetresPerSecond = 10f },
             };
 
-            TransitNetwork linked = SuitabilityTransit.Build(xs, zs, 4, lines, 200f, 5f);
+            TransitNetwork linked = TransitRouting.Build(xs, zs, 4, lines, 200f, 5f);
             var ws = new DijkstraWorkspace(linked.Graph.NodeCount);
             ws.Run(linked.Graph, 0, 100000f);
-            AssertTrue(SuitabilityTransit.Inspect(linked, ws, 0, 3, -1, out int boardings, out _, out _),
+            AssertTrue(TransitRouting.Inspect(linked, ws, 0, 3, -1, out int boardings, out _, out _),
                 "a short walk must join the two lines");
             AssertEqual(2, boardings, 0, "one boarding per line");
 
-            TransitNetwork split = SuitabilityTransit.Build(xs, zs, 4, lines, 50f, 5f);
+            TransitNetwork split = TransitRouting.Build(xs, zs, 4, lines, 50f, 5f);
             var ws2 = new DijkstraWorkspace(split.Graph.NodeCount);
             ws2.Run(split.Graph, 0, 100000f);
-            AssertTrue(!SuitabilityTransit.Inspect(split, ws2, 0, 3, -1, out _, out _, out _),
+            AssertTrue(!TransitRouting.Inspect(split, ws2, 0, 3, -1, out _, out _, out _),
                 "too far to walk means no itinerary");
         }
 
         private static void ExpectedWaitModel()
         {
             // max(interval/2, observed) - dwell, floored at zero.
-            AssertEqual(25f, SuitabilityTransit.ExpectedWait(60f, 0f, 5f), 1e-4f, "half the headway less dwell");
-            AssertEqual(85f, SuitabilityTransit.ExpectedWait(60f, 90f, 5f), 1e-4f, "observed wait dominates when longer");
-            AssertEqual(0f, SuitabilityTransit.ExpectedWait(10f, 0f, 100f), 0f, "never negative");
+            AssertEqual(25f, TransitRouting.ExpectedWait(60f, 0f, 5f), 1e-4f, "half the headway less dwell");
+            AssertEqual(85f, TransitRouting.ExpectedWait(60f, 90f, 5f), 1e-4f, "observed wait dominates when longer");
+            AssertEqual(0f, TransitRouting.ExpectedWait(10f, 0f, 100f), 0f, "never negative");
         }
 
         // The corridor's own head node is where GROWTH continues from, which while it
@@ -2496,7 +2496,7 @@ namespace StationSuitabilityOverlay.Tests
 
             var corridor = new Corridor();
             AssertTrue(
-                SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, corridor, 0.5f),
+                GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, corridor, 0.5f),
                 "corridor should grow");
 
             AssertTrue(!corridor.Nodes.Contains(0) && !corridor.Nodes.Contains(1),
@@ -2521,7 +2521,7 @@ namespace StationSuitabilityOverlay.Tests
             var demand = new[] { 1f, 1f, 0f, 0f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, flow, new bool[3], NewNovelty(4), demand), 0f, 1f, 300f, corridor, 0.5f);
 
             AssertEqual(100f, corridor.Length, 1e-3f, "the two crossing edges are handed back");
@@ -2542,10 +2542,10 @@ namespace StationSuitabilityOverlay.Tests
             {
                 var corridor = new Corridor();
                 AssertTrue(
-                    SuitabilityGraphMath.GrowCorridor(
+                    GraphMath.GrowCorridor(
                         new CorridorNetwork(graph, new[] { 5f, 5f }, new bool[2]), noveltyWeight: 0f,
                         flowFloor: 1f, maxLength: 1000f, result: corridor, demandFloor: 0f,
-                        seedNoveltyBias: SuitabilityGraphMath.SeedNoveltyBias(objective)),
+                        seedNoveltyBias: GraphMath.SeedNoveltyBias(objective)),
                     $"{objective} must grow a corridor without a novelty array");
                 AssertNodeWalkMatchesEdges(graph, corridor);
             }
@@ -2570,7 +2570,7 @@ namespace StationSuitabilityOverlay.Tests
             corridor.Nodes.Add(2);
 
             var flow = new[] { 100f, 100f, 100f };
-            SuitabilityGraphMath.PeelFlow(graph, corridor, flow, new bool[3], 0.85f);
+            GraphMath.PeelFlow(graph, corridor, flow, new bool[3], 0.85f);
 
             // sideCapture is half the capture, so one application leaves 57.5.
             AssertEqual(57.5f, flow[2], 1e-3f, "the chord must lose exactly one side capture");
@@ -2697,7 +2697,7 @@ namespace StationSuitabilityOverlay.Tests
         private static LineHealth Judged(LineHealthProblem problem, int id)
         {
             var health = new List<LineHealth>();
-            _ = SuitabilityLineHealth.JudgeAll(problem, health);
+            _ = LineHealthRules.JudgeAll(problem, health);
             for (int i = 0; i < health.Count; i++)
             {
                 if (health[i].m_Id == id)
@@ -2742,7 +2742,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertEqual(6, TransitModes.FleetForDemand(2000f, 1000f, 80f, 1f), 0, "the smallest fleet under the ceiling");
             FleetPlan plan = TransitModes.PlanFleet(2000f, 1000f, 80f, 1, 13, 1f);
             AssertTrue(plan.Vehicles == 6 && plan.Utilisation <= 1f && plan.Utilisation > 0.9f, $"six buses at {(1000f / 6f).ToString("F0", CultureInfo.InvariantCulture)} s carry 2000 riders at {(plan.Utilisation * 100f).ToString("F1", CultureInfo.InvariantCulture)} %");
-            AssertEqual(plan.Utilisation, SuitabilityEquity.Utilisation(2000f, plan.HeadwaySeconds, 80f), 0f, "the plan's utilisation is the one formula at the plan's interval");
+            AssertEqual(plan.Utilisation, Equity.Utilisation(2000f, plan.HeadwaySeconds, 80f), 0f, "the plan's utilisation is the one formula at the plan's interval");
             FleetPlan clamped = TransitModes.PlanFleet(2000f, 1000f, 80f, 1, 3, 1f);
             AssertTrue(clamped.Vehicles == 3 && clamped.Utilisation > 1f, "clamped to the span, the ceiling is exceeded and says so");
             FleetPlan minimal = TransitModes.PlanFleet(5f, 1000f, 80f, 2, 13, 1f);
@@ -2796,7 +2796,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(judged.m_FleetMin == 1 && judged.m_FleetMax == 13, "the span of the bus on this round trip");
             AssertEqual(250f, judged.m_HeadwaySeconds, 1e-3f, "the interval four buses yield");
             AssertEqual(205, judged.m_PlanningLoad, 0, "the planning load is the window's 90th percentile");
-            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "1", "the argument is the change of fleet");
+            AssertTrue(LineHealthRules.VerdictArgument(judged) == "1", "the argument is the change of fleet");
 
             // The load exceeds the largest bus fleet: 1200 riders need 22 buses of the
             // 13 allowed -> Tram (240 seats: 8 trams of the 13 allowed).
@@ -2833,7 +2833,7 @@ namespace StationSuitabilityOverlay.Tests
             Readings(problem, starved, new[] { 300, 320, 310, 330, 300, 320 });
             judged = Judged(problem, 5);
             AssertTrue(judged.m_Verdict == LineVerdict.FleetShort && judged.m_TargetVehicles == 10 && judged.m_MissingVehicles == 4, $"expected FleetShort by 4, got {judged.m_Verdict} target {judged.m_TargetVehicles.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "4", "the missing count is the argument");
+            AssertTrue(LineHealthRules.VerdictArgument(judged) == "4", "the missing count is the argument");
 
             // Over-served: 10 buses for 50 riders is a FleetDown to one.
             ExistingLine over = HealthLine(6, ModePreset.Bus, 10, 80, 1000f, 20);
@@ -2841,7 +2841,7 @@ namespace StationSuitabilityOverlay.Tests
             Readings(problem, over, new[] { 40, 50, 45, 50, 48, 50 });
             judged = Judged(problem, 6);
             AssertTrue(judged.m_Verdict == LineVerdict.FleetDown && judged.m_RecommendedFleet == 1, $"expected FleetDown to 1, got {judged.m_Verdict} {judged.m_RecommendedFleet.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "-9", "a negative change of fleet");
+            AssertTrue(LineHealthRules.VerdictArgument(judged) == "-9", "a negative change of fleet");
 
             // Right-sized: 2 buses, load 100 -> 2 buses. Healthy without demand data.
             ExistingLine fine = HealthLine(7, ModePreset.Bus, 2, 80, 1000f, 20);
@@ -2901,7 +2901,7 @@ namespace StationSuitabilityOverlay.Tests
             judged = Judged(problem, 4);
             AssertTrue(judged.m_Verdict == LineVerdict.Schedule && judged.m_ScheduleAdvice == LineSchedule.Day, $"expected a day-only advice, got {judged.m_Verdict} {judged.m_ScheduleAdvice}");
             AssertTrue(judged.m_DayUtilisation > 0.15f && judged.m_NightUtilisation < 0.15f, "the day carries the riders, the night does not reach the floor");
-            AssertTrue(SuitabilityLineHealth.VerdictArgument(judged) == "Day", "the schedule token is the argument");
+            AssertTrue(LineHealthRules.VerdictArgument(judged) == "Day", "the schedule token is the argument");
             daytime.m_Schedule = LineSchedule.Day;
             judged = Judged(problem, 4);
             AssertTrue(judged.m_Verdict == LineVerdict.Healthy, "already running by day, nothing to advise");
@@ -2923,9 +2923,9 @@ namespace StationSuitabilityOverlay.Tests
         // more than half the lines; the reference itself is pinned.
         private static void HealthReferenceBoundsTheEmptyBar()
         {
-            AssertEqual(0f, SuitabilityLineHealth.UpperMedian(new List<float>()), 0f, "no lines, no median");
-            AssertEqual(0.2f, SuitabilityLineHealth.UpperMedian(new List<float> { 0.1f, 0.3f, 0.2f }), 0f, "odd count: the middle value");
-            AssertEqual(0.2f, SuitabilityLineHealth.UpperMedian(new List<float> { 0.1f, 0.3f, 0.2f, 0.05f }), 0f, "even count: the upper of the two middle values (0.1 and 0.2)");
+            AssertEqual(0f, LineHealthRules.UpperMedian(new List<float>()), 0f, "no lines, no median");
+            AssertEqual(0.2f, LineHealthRules.UpperMedian(new List<float> { 0.1f, 0.3f, 0.2f }), 0f, "odd count: the middle value");
+            AssertEqual(0.2f, LineHealthRules.UpperMedian(new List<float> { 0.1f, 0.3f, 0.2f, 0.05f }), 0f, "even count: the upper of the two middle values (0.1 and 0.2)");
 
             var rng = new Random(20260906);
             for (int trial = 0; trial < 200; trial++)
@@ -2937,7 +2937,7 @@ namespace StationSuitabilityOverlay.Tests
                     lines.Add(new ExistingLine { m_Id = i, m_Capacity = 100, m_Passengers = rng.Next(0, 30) });
                 }
 
-                HealthReference reference = SuitabilityLineHealth.ReferenceOf(lines);
+                HealthReference reference = LineHealthRules.ReferenceOf(lines);
                 AssertTrue(reference.m_EmptyThreshold <= Assumptions.EmptyUsage + 1e-7f, "the bar never exceeds the absolute share");
                 int flagged = 0;
                 for (int i = 0; i < n; i++)
@@ -2969,10 +2969,10 @@ namespace StationSuitabilityOverlay.Tests
                 m_LengthKm = 3f,
                 m_Verdict = LineVerdict.ModeUp,
             };
-            SuitabilityLineHealth.ImprovePlan plan = SuitabilityLineHealth.Plan(health);
+            LineHealthRules.ImprovePlan plan = LineHealthRules.Plan(health);
             AssertTrue(plan.m_Mode == ModePreset.Tram && plan.m_Vehicles == 6 && plan.m_VehicleDelta == 2 && plan.m_IntervalSeconds == 167, "the plan is the verdict's numbers");
-            AssertTrue(plan.m_Shape == SuitabilityLineHealth.PlanShape.Fine, "a mode change is not a shape problem");
-            string[] parts = SuitabilityLineHealth.PlanPayload(plan).Split('|');
+            AssertTrue(plan.m_Shape == LineHealthRules.PlanShape.Fine, "a mode change is not a shape problem");
+            string[] parts = LineHealthRules.PlanPayload(plan).Split('|');
             AssertEqual(8, parts.Length, 0, "the panel reads mode|vehicles|delta|interval|shape|value|fleetMin|fleetMax");
             AssertTrue(parts[0] == "Tram" && parts[4] == "Fine" && parts[6] == "1" && parts[7] == "13", "tokens and span");
             for (int i = 0; i < parts.Length; i++)
@@ -2981,13 +2981,13 @@ namespace StationSuitabilityOverlay.Tests
             }
 
             health.m_Verdict = LineVerdict.SplitRoute;
-            AssertTrue(SuitabilityLineHealth.Plan(health).m_Shape == SuitabilityLineHealth.PlanShape.Split, "a split verdict is a split plan");
+            AssertTrue(LineHealthRules.Plan(health).m_Shape == LineHealthRules.PlanShape.Split, "a split verdict is a split plan");
             health.m_Verdict = LineVerdict.Remove;
-            AssertTrue(SuitabilityLineHealth.Plan(health).m_Shape == SuitabilityLineHealth.PlanShape.Reroute, "a removal is a reroute plan");
+            AssertTrue(LineHealthRules.Plan(health).m_Shape == LineHealthRules.PlanShape.Reroute, "a removal is a reroute plan");
             health.m_FleetMax = int.MaxValue;
-            AssertTrue(SuitabilityLineHealth.PlanPayload(SuitabilityLineHealth.Plan(health)).Split('|')[7] == "0", "an unbounded span travels as 0");
+            AssertTrue(LineHealthRules.PlanPayload(LineHealthRules.Plan(health)).Split('|')[7] == "0", "an unbounded span travels as 0");
             health.m_RoundTripSeconds = 0f;
-            AssertTrue(SuitabilityLineHealth.Plan(health).m_IntervalSeconds < 0, "an unknown round trip is reported as such, not as zero");
+            AssertTrue(LineHealthRules.Plan(health).m_IntervalSeconds < 0, "an unknown round trip is reported as such, not as zero");
         }
 
         // The walk pass is bucketed because route scoring rebuilds this network once per
@@ -3006,7 +3006,7 @@ namespace StationSuitabilityOverlay.Tests
                 zs[i] = (float)(random.NextDouble() * 3000.0);
             }
 
-            TransitNetwork net = SuitabilityTransit.Build(
+            TransitNetwork net = TransitRouting.Build(
                 xs, zs, stops, new List<TransitLine>(), radius, Assumptions.DefaultBoardPenaltySeconds);
 
             var built = new HashSet<long>();
@@ -3156,7 +3156,7 @@ namespace StationSuitabilityOverlay.Tests
 
             AddEnd(problem, 1000f, 60f, 50f);
             AddEnd(problem, 2000f, 60f, 10f);
-            StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+            StopPlanSolution plan = StopPlanning.Solve(problem);
             AssertEqual(3, plan.Count, 0, $"three calls, got {string.Join(",", plan.Chosen)}");
             AssertTrue(plan.Chosen[0] == 0 && plan.Chosen[2] == problem.CandidateCount - 1, "termini are the ends");
             AssertEqual(10, plan.Chosen[1], 0, "the heavy door gets its stop at 1000 m");
@@ -3169,7 +3169,7 @@ namespace StationSuitabilityOverlay.Tests
                 problem.ThroughFlow[c] = 100f;
             }
 
-            plan = SuitabilityStopPlan.Solve(problem);
+            plan = StopPlanning.Solve(problem);
             AssertEqual(4, plan.Count, 0, "with half the through-riders the light door is worth a call");
         }
 
@@ -3183,7 +3183,7 @@ namespace StationSuitabilityOverlay.Tests
 
             problem.MustCall[7] = true;   // an interchange at 700 m, nobody boarding
             AddEnd(problem, 900f, 10f, 80f);    // 200 m past the hub: closer than the 400 m gap
-            StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+            StopPlanSolution plan = StopPlanning.Solve(problem);
             AssertTrue(Array.IndexOf(plan.Chosen, 7) >= 0, "the interchange is called at although nobody boards there");
             AssertTrue(Array.IndexOf(plan.Chosen, 9) < 0, "a stop 200 m past a forced call would break the gap floor");
             for (int i = 1; i < plan.Count; i++)
@@ -3194,7 +3194,7 @@ namespace StationSuitabilityOverlay.Tests
 
             // A line shorter than the gap still has its two termini.
             StopPlanProblem stub = StraightLine(300f, 100f, 400f, 30f, 360f);
-            StopPlanSolution stubPlan = SuitabilityStopPlan.Solve(stub);
+            StopPlanSolution stubPlan = StopPlanning.Solve(stub);
             AssertEqual(2, stubPlan.Count, 0, "a stub keeps both ends");
         }
 
@@ -3223,7 +3223,7 @@ namespace StationSuitabilityOverlay.Tests
                     AddEnd(problem, Next((count - 1) * 100f), Next(300f) - 150f, 1f + Next(60f));
                 }
 
-                StopPlanSolution plan = SuitabilityStopPlan.Solve(problem);
+                StopPlanSolution plan = StopPlanning.Solve(problem);
                 double best = double.NegativeInfinity;
                 for (int mask = 0; mask < (1 << count); mask++)
                 {
@@ -3283,18 +3283,18 @@ namespace StationSuitabilityOverlay.Tests
                 float walk;
                 if (after < 0)
                 {
-                    walk = SuitabilityStopPlan.WalkSeconds(problem, e, chosen[chosen.Count - 1]);
+                    walk = StopPlanning.WalkSeconds(problem, e, chosen[chosen.Count - 1]);
                 }
                 else if (after == 0)
                 {
-                    walk = SuitabilityStopPlan.WalkSeconds(problem, e, chosen[0]);
+                    walk = StopPlanning.WalkSeconds(problem, e, chosen[0]);
                 }
                 else
                 {
-                    walk = Math.Min(SuitabilityStopPlan.WalkSeconds(problem, e, chosen[after - 1]), SuitabilityStopPlan.WalkSeconds(problem, e, chosen[after]));
+                    walk = Math.Min(StopPlanning.WalkSeconds(problem, e, chosen[after - 1]), StopPlanning.WalkSeconds(problem, e, chosen[after]));
                 }
 
-                gain += problem.EndWeight[e] * SuitabilityStopPlan.Kernel(problem, walk);
+                gain += problem.EndWeight[e] * StopPlanning.Kernel(problem, walk);
             }
 
             double delay = 0.0;
@@ -3323,7 +3323,7 @@ namespace StationSuitabilityOverlay.Tests
                 TransitModes.ModeBit(ModePreset.Bus),
             };
 
-            InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
+            InterchangeMap map = TransitRouting.BuildInterchangeMap(x, z, modes, x.Length, 250f);
             AssertTrue(map.Count == 4, $"every served stop is in the map, got {map.Count}");
 
             AssertTrue(map.TryFindNear(ModePreset.Bus, 10f, 0f, 250f, out float hubX, out float hubZ, out _),
@@ -3365,7 +3365,7 @@ namespace StationSuitabilityOverlay.Tests
                 TransitModes.ModeBit(ModePreset.Tram),
             };
 
-            InterchangeMap map = SuitabilityTransit.BuildInterchangeMap(x, z, modes, x.Length, 250f);
+            InterchangeMap map = TransitRouting.BuildInterchangeMap(x, z, modes, x.Length, 250f);
             AssertTrue(map.TryFindNear(ModePreset.Bus, 250f, 0f, 250f, out float hubX, out _, out _),
                 "there is somewhere to change within a walk");
             AssertTrue(hubX == 60f,
@@ -3382,7 +3382,7 @@ namespace StationSuitabilityOverlay.Tests
                 TransitModes.ModeBit(ModePreset.Metro),
             };
 
-            InterchangeMap pairs = SuitabilityTransit.BuildInterchangeMap(pairX, pairZ, pairModes, 4, 250f);
+            InterchangeMap pairs = TransitRouting.BuildInterchangeMap(pairX, pairZ, pairModes, 4, 250f);
             AssertTrue(pairs.TryFindNear(ModePreset.Bus, 380f, 0f, 250f, out float nearX, out _, out _),
                 "both interchanges offer the same two modes");
             AssertTrue(nearX == 400f, $"so the nearer one is chosen, got {nearX}");
@@ -3400,7 +3400,7 @@ namespace StationSuitabilityOverlay.Tests
                 brisk[i] = 180f + i;
             }
 
-            float ceiling = SuitabilityTransit.ServedCeiling(
+            float ceiling = TransitRouting.ServedCeiling(
                 brisk, brisk.Length, multiple: 3f, fallback: 3600f, minSamples: 20, out float median);
             AssertEqual(200f, median, 20f, "the median of the carried journeys");
             AssertEqual(median * 3f, ceiling, 1e-3f, "the ceiling is a multiple of it");
@@ -3419,7 +3419,7 @@ namespace StationSuitabilityOverlay.Tests
                 slow[i] = 2000f;
             }
 
-            float slowCeiling = SuitabilityTransit.ServedCeiling(
+            float slowCeiling = TransitRouting.ServedCeiling(
                 slow, slow.Length, multiple: 3f, fallback: 3600f, minSamples: 20, out _);
             AssertEqual(3600f, slowCeiling, 1e-3f, "never past the router's own horizon");
         }
@@ -3431,14 +3431,14 @@ namespace StationSuitabilityOverlay.Tests
             var few = new[] { 100f, 120f, 140f };
             AssertEqual(
                 3600f,
-                SuitabilityTransit.ServedCeiling(few, few.Length, 3f, 3600f, minSamples: 20, out float median),
+                TransitRouting.ServedCeiling(few, few.Length, 3f, 3600f, minSamples: 20, out float median),
                 1e-3f,
                 "too few carried journeys falls back to the fixed hour");
             AssertEqual(0f, median, 0f, "and reports no median, rather than a misleading one");
 
             AssertEqual(
                 3600f,
-                SuitabilityTransit.ServedCeiling(Array.Empty<float>(), 0, 3f, 3600f, 20, out _),
+                TransitRouting.ServedCeiling(Array.Empty<float>(), 0, 3f, 3600f, 20, out _),
                 1e-3f,
                 "a network carrying nothing falls back too");
         }
@@ -3462,14 +3462,14 @@ namespace StationSuitabilityOverlay.Tests
             // With no positions there is no direction to prefer, and the busier branch
             // wins — the behaviour every caller had before positions existed.
             var blind = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5)),
                 0f, 1f, 10000f, blind);
             AssertTrue(blind.Nodes.Contains(4), "without positions the busier turn is taken");
 
             // With them, a right-angle turn has to be worth appreciably more.
             var straight = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), null, x, z),
                 0f, 1f, 10000f, straight);
             AssertTrue(!straight.Nodes.Contains(4),
@@ -3480,7 +3480,7 @@ namespace StationSuitabilityOverlay.Tests
             // preference, not a constraint.
             var worthIt = new[] { 20f, 10f, 10f, 60f };
             var turned = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, worthIt, new bool[4], NewNovelty(5), null, x, z),
                 0f, 1f, 10000f, turned);
             AssertTrue(turned.Nodes.Contains(4), "a far busier direction still wins");
@@ -3509,7 +3509,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 30f, 20f, 10f, 12f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5), null, x, z),
                 0f, 1f, 10000f, corridor);
             AssertTrue(corridor.Nodes.Contains(3),
@@ -3520,7 +3520,7 @@ namespace StationSuitabilityOverlay.Tests
             // Without positions there is nothing to measure and the busier curl wins,
             // which is the behaviour every caller had before positions existed.
             var blind = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, (float[])flow.Clone(), new bool[4], NewNovelty(5)),
                 0f, 1f, 10000f, blind);
             AssertTrue(blind.Nodes.Contains(4), "without positions the busier curl is taken");
@@ -3539,54 +3539,54 @@ namespace StationSuitabilityOverlay.Tests
             const float maxLength = 20000f;
 
             AssertTrue(
-                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct, maxLength),
+                GraphMath.IsDetourWorthwhile(direct, direct, maxLength),
                 "a via that costs nothing extra is always worth taking");
             AssertTrue(
-                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * 1.1f, maxLength),
+                GraphMath.IsDetourWorthwhile(direct, direct * 1.1f, maxLength),
                 "a tenth further to reach an interchange is worth it");
 
             AssertTrue(
-                SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * Assumptions.MaxViaDetour, maxLength),
+                GraphMath.IsDetourWorthwhile(direct, direct * Assumptions.MaxViaDetour, maxLength),
                 "the bound itself is allowed");
             AssertTrue(
-                !SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * (Assumptions.MaxViaDetour + 0.01f), maxLength),
+                !GraphMath.IsDetourWorthwhile(direct, direct * (Assumptions.MaxViaDetour + 0.01f), maxLength),
                 "and a line that goes noticeably out of its way is not");
 
             // A hub two kilometres to one side costs roughly four kilometres of extra
             // running. That pays on a long line and not on a short one, which is what
             // lets the reach radius stay a single generous constant.
             AssertTrue(
-                SuitabilityGraphMath.IsDetourWorthwhile(20000f, 24000f, 60000f),
+                GraphMath.IsDetourWorthwhile(20000f, 24000f, 60000f),
                 "reaching it off a twenty-kilometre line is worth four kilometres");
             AssertTrue(
-                !SuitabilityGraphMath.IsDetourWorthwhile(4000f, 8000f, 60000f),
+                !GraphMath.IsDetourWorthwhile(4000f, 8000f, 60000f),
                 "doubling a four-kilometre line for the same hub is not");
 
             // The mode's own ceiling still applies: a line it cannot hold a headway
             // around is no use however modest the detour.
             AssertTrue(
-                !SuitabilityGraphMath.IsDetourWorthwhile(direct, direct * 1.05f, 9000f),
+                !GraphMath.IsDetourWorthwhile(direct, direct * 1.05f, 9000f),
                 "past the mode's maximum length nothing is worthwhile");
 
             // Degenerate input is not a licence to wander.
-            AssertTrue(!SuitabilityGraphMath.IsDetourWorthwhile(0f, 5000f, maxLength), "no direct path, no detour");
-            AssertTrue(!SuitabilityGraphMath.IsDetourWorthwhile(direct, 0f, maxLength), "a via of no length is not a path");
+            AssertTrue(!GraphMath.IsDetourWorthwhile(0f, 5000f, maxLength), "no direct path, no detour");
+            AssertTrue(!GraphMath.IsDetourWorthwhile(direct, 0f, maxLength), "a via of no length is not a path");
         }
 
         private static void RingsAreNotRoutes()
         {
             // A 4 km line that gets 3.6 km away from where it began is a route.
-            AssertTrue(SuitabilityGraphMath.IsDirectEnough(3600f, 4000f), "a line that gets somewhere");
+            AssertTrue(GraphMath.IsDirectEnough(3600f, 4000f), "a line that gets somewhere");
 
             // The same 4 km spent going round a block is not.
-            AssertTrue(!SuitabilityGraphMath.IsDirectEnough(800f, 4000f), "a loop around a field is not a route");
-            AssertTrue(!SuitabilityGraphMath.IsDirectEnough(0f, 4000f), "and a closed ring least of all");
+            AssertTrue(!GraphMath.IsDirectEnough(800f, 4000f), "a loop around a field is not a route");
+            AssertTrue(!GraphMath.IsDirectEnough(0f, 4000f), "and a closed ring least of all");
 
             // Exactly at the bar counts, and a zero-length corridor is nothing to judge.
             AssertTrue(
-                SuitabilityGraphMath.IsDirectEnough(4000f * Assumptions.MinDirectness, 4000f),
+                GraphMath.IsDirectEnough(4000f * Assumptions.MinDirectness, 4000f),
                 "the bar itself passes");
-            AssertTrue(SuitabilityGraphMath.IsDirectEnough(0f, 0f), "nothing to judge");
+            AssertTrue(GraphMath.IsDirectEnough(0f, 0f), "nothing to judge");
         }
 
         private static float[] NewNovelty(int nodes)
@@ -3719,7 +3719,7 @@ namespace StationSuitabilityOverlay.Tests
             AssertTrue(Daytime.Recommend(nightUtil, nightUtil, 0.15f) == LineSchedule.DayAndNight, "both empty is not a schedule question");
 
             // Period utilisation is the one formula on the period's share of a vehicle's seats.
-            AssertEqual(SuitabilityEquity.Utilisation(500f, 300f, 80f * Assumptions.DayShareOfDay), dayUtil, 0f, "the period share scales the seats");
+            AssertEqual(Equity.Utilisation(500f, 300f, 80f * Assumptions.DayShareOfDay), dayUtil, 0f, "the period share scales the seats");
             AssertEqual(0f, Daytime.UtilisationInPeriod(500f, 300f, 80f, 0f), 0f, "a period of no length has no utilisation");
         }
 
@@ -3869,7 +3869,7 @@ namespace StationSuitabilityOverlay.Tests
             var flow = new[] { 50f, 50f, 0f, 0f, 0f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[5], NewNovelty(6)), 0f, 10f, 100000f, corridor);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flow, new bool[5], NewNovelty(6)), 0f, 10f, 100000f, corridor);
 
             AssertTrue(corridor.Edges.Count == 2, $"only the two edges with flow are taken, got {corridor.Edges.Count}");
             AssertTrue(!corridor.Blocks.m_HitMaxLength, "it stopped for want of flow, not at the length limit");
@@ -3881,7 +3881,7 @@ namespace StationSuitabilityOverlay.Tests
             // the other reason, and says so.
             var flowing = new[] { 50f, 50f, 50f, 50f, 50f };
             var capped = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(new CorridorNetwork(graph, flowing, new bool[5], NewNovelty(6)), 0f, 10f, 250f, capped);
+            _ = GraphMath.GrowCorridor(new CorridorNetwork(graph, flowing, new bool[5], NewNovelty(6)), 0f, 10f, 250f, capped);
 
             AssertTrue(capped.Blocks.m_Length > 0 || capped.Blocks.m_HitMaxLength,
                 "a corridor stopped by its length limit reports the length, not the flow");
@@ -3905,7 +3905,7 @@ namespace StationSuitabilityOverlay.Tests
             var demand = new[] { 1f, 1f, 1f, 0f, 0f, 1f, 1f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, flow, new bool[6], NewNovelty(7), demand), 0f, 1f, 10000f, corridor, 0.5f);
 
             AssertTrue(corridor.Nodes.Contains(0), "the first district is served");
@@ -3918,7 +3918,7 @@ namespace StationSuitabilityOverlay.Tests
             // crossing, not a licence to strike out into open country.
             var wide = new[] { 1f, 1f, 1f, 0f, 0f, 0f, 0f };
             var stopped = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, (float[])flow.Clone(), new bool[6], NewNovelty(7), wide), 0f, 1f, 10000f,
                 stopped, 0.5f, seedNoveltyBias: 0f, maxLowDemandBridge: 2);
 
@@ -3939,7 +3939,7 @@ namespace StationSuitabilityOverlay.Tests
             var demand = new[] { 1f, 1f, 1f, 0f, 0f };
 
             var corridor = new Corridor();
-            _ = SuitabilityGraphMath.GrowCorridor(
+            _ = GraphMath.GrowCorridor(
                 new CorridorNetwork(graph, flow, new bool[4], NewNovelty(5), demand), 0f, 1f, 10000f, corridor, 0.5f);
 
             AssertTrue(!corridor.Nodes.Contains(3) && !corridor.Nodes.Contains(4),
@@ -4009,18 +4009,18 @@ namespace StationSuitabilityOverlay.Tests
         private const string GoldenHash =
             "ed592da4e2e64bf1a8dde36156ecdacd83812eb864ca1a1b75fdc9a802c453db";
 
-        private static SuitabilityJsonObject GoldenBody()
+        private static JsonObject GoldenBody()
         {
-            string data = new SuitabilityJsonObject()
+            string data = new JsonObject()
                 // Added out of order on purpose: the writer sorts, so the canonical
                 // form must not depend on the order the export code gathers things in.
-                .Add("values_b32", SuitabilityExportJson.BitsArray(new[] { 1.5f, -0.0f }))
-                .Add("label", SuitabilityExportJson.Str("Grüße \"x\" \\ y"))
+                .Add("values_b32", ExportJson.BitsArray(new[] { 1.5f, -0.0f }))
+                .Add("label", ExportJson.Str("Grüße \"x\" \\ y"))
                 .Build();
 
-            return new SuitabilityJsonObject()
-                .Add("name", SuitabilityExportJson.Str("golden"))
-                .Add("kind", SuitabilityExportJson.Str("demo"))
+            return new JsonObject()
+                .Add("name", ExportJson.Str("golden"))
+                .Add("kind", ExportJson.Str("demo"))
                 .Add("data", data);
         }
 
@@ -4035,8 +4035,8 @@ namespace StationSuitabilityOverlay.Tests
 
         private static void ExportJsonIsCanonical()
         {
-            SuitabilityJsonObject body = GoldenBody();
-            _ = body.Add("schema_version", SuitabilityExportJson.Int(1));
+            JsonObject body = GoldenBody();
+            _ = body.Add("schema_version", ExportJson.Int(1));
             string canonical = body.Build();
             if (!string.Equals(canonical, GoldenCanonical, StringComparison.Ordinal))
             {
@@ -4044,7 +4044,7 @@ namespace StationSuitabilityOverlay.Tests
                     $"canonical form drifted from canonical.py:\n  got      {canonical}\n  expected {GoldenCanonical}");
             }
 
-            string hash = SuitabilityExportJson.Sha256Hex(canonical);
+            string hash = ExportJson.Sha256Hex(canonical);
             if (!string.Equals(hash, GoldenHash, StringComparison.Ordinal))
             {
                 throw new TestFailedException($"digest drifted: {hash} != {GoldenHash}");
@@ -4055,10 +4055,10 @@ namespace StationSuitabilityOverlay.Tests
         {
             // Control characters, the short forms, a surrogate pair, and lowercase hex
             // — all four are what ensure_ascii=True produces.
-            AssertJson("\"\\u0000\\b\\t\\n\\f\\r\"", SuitabilityExportJson.Str("\0\b\t\n\f\r"));
-            AssertJson("\"\\ud83d\\ude00\"", SuitabilityExportJson.Str("\U0001F600"));
-            AssertJson("\"~\"", SuitabilityExportJson.Str("~"));
-            AssertJson("null", SuitabilityExportJson.Str(null));
+            AssertJson("\"\\u0000\\b\\t\\n\\f\\r\"", ExportJson.Str("\0\b\t\n\f\r"));
+            AssertJson("\"\\ud83d\\ude00\"", ExportJson.Str("\U0001F600"));
+            AssertJson("\"~\"", ExportJson.Str("~"));
+            AssertJson("null", ExportJson.Str(null));
         }
 
         private static void ExportJsonBitsRoundTrip()
@@ -4066,7 +4066,7 @@ namespace StationSuitabilityOverlay.Tests
             float[] values = { 0f, -0f, 1f, -1.5f, 3.4028235e38f, 1.4e-45f, 128f * 1.41421356f };
             foreach (float value in values)
             {
-                uint bits = SuitabilityExportJson.ToBits(value);
+                uint bits = ExportJson.ToBits(value);
                 byte[] bytes = BitConverter.GetBytes(bits);
                 float back = BitConverter.ToSingle(bytes, 0);
                 if (!back.Equals(value))

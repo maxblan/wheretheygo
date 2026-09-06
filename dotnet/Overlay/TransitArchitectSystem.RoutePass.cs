@@ -4,12 +4,12 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The route pass: the alignment searches, weighing every candidate alone, the mode
     // ladder, the exact line-set search and the adoption of a finished pass. Runs on
     // a worker task; see the class comment on m_RoutesPending for what that implies.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         // The route pipeline — alignment search, weighing every candidate alone and the
         // exact line-set search — runs on a worker task. Everything it reads (the

@@ -10,14 +10,14 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Observed shopping and leisure journeys (register A0.1; formal-specification.md
     // §7b step 1 v2): the once-a-second scan of citizens queued inside buildings and
     // travelling, keyed per (citizen, purpose) so one journey is recorded once, the
     // window they are held in, and the hand-over into the demand refresh's queue. The
     // overlay system owns the queries and the lookups and calls Scan on its cadence.
-    internal sealed class SuitabilityTripObserver
+    internal sealed class TripObserver
     {
         private readonly EntityManager m_EntityManager;
         private readonly EntityQuery m_QueuedQuery;
@@ -28,7 +28,7 @@ namespace StationSuitabilityOverlay
         private ComponentLookup<Game.Buildings.PropertyRenter> m_Renters;
         private float m_TimeOfDay;
 
-        public SuitabilityTripObserver(EntityManager entityManager, EntityQuery queuedQuery, EntityQuery travellingQuery, EntityQuery insideQuery)
+        public TripObserver(EntityManager entityManager, EntityQuery queuedQuery, EntityQuery travellingQuery, EntityQuery insideQuery)
         {
             m_EntityManager = entityManager;
             m_QueuedQuery = queuedQuery;

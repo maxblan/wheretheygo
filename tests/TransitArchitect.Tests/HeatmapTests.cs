@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Globalization;
 
-namespace StationSuitabilityOverlay.Tests
+namespace TransitArchitect.Tests
 {
     // F1's pass over the tile field and F2's candidate set — the grid around the
     // combine, pure since 2026-09-05.

@@ -15,7 +15,7 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The vanilla heatmap pipeline: OverlayInfomodeSystem clears the terrain
     // override overlay each frame and active heatmap infomodes rewrite it, then
@@ -23,7 +23,7 @@ namespace StationSuitabilityOverlay
     // PreCulling, so this system must be ordered between the two vanilla ones.
     [UpdateAfter(typeof(OverlayInfomodeSystem))]
     [UpdateBefore(typeof(TerrainRenderSystem))]
-    public sealed partial class StationSuitabilityOverlaySystem : GameSystemBase
+    public sealed partial class TransitArchitectSystem : GameSystemBase
     {
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
@@ -47,7 +47,7 @@ namespace StationSuitabilityOverlay
         private OverlayInfomodeSystem m_OverlayInfomodeSystem;
 
         private SuitabilityInfoview m_Infoview;
-        private SuitabilityTripObserver m_TripObserver;
+        private TripObserver m_TripObserver;
 
 #pragma warning restore CS8618
 
@@ -301,7 +301,7 @@ namespace StationSuitabilityOverlay
             m_QueuedQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TripNeeded>(), ComponentType.ReadOnly<CurrentBuilding>());
             m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<CurrentTransport>());
             m_InsideQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<CurrentBuilding>());
-            m_TripObserver = new SuitabilityTripObserver(EntityManager, m_QueuedQuery, m_TravellingQuery, m_InsideQuery);
+            m_TripObserver = new TripObserver(EntityManager, m_QueuedQuery, m_TravellingQuery, m_InsideQuery);
 
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
             m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(isReadOnly: true);

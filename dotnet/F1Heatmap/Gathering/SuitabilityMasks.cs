@@ -1,7 +1,7 @@
 ﻿using Game.Simulation;
 using Unity.Mathematics;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Terrain-derived masks: where a stop could physically go, and which tiles are
     // land rather than water.

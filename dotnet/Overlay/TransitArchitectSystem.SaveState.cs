@@ -6,7 +6,7 @@ using Unity.Collections;
 using BinaryReader = System.IO.BinaryReader;
 using BinaryWriter = System.IO.BinaryWriter;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // What the mod keeps across a save and a load, so a loaded city does not start
     // cold: the observed shopping/leisure journeys (a game day to refill), the line
@@ -22,7 +22,7 @@ namespace StationSuitabilityOverlay
     // ComponentSystemSerializer throws "Data size mismatch" otherwise — so the
     // content is one length-prefixed byte payload behind a format version: any
     // version can read the length and skip, and only a matching version parses.
-    public sealed partial class StationSuitabilityOverlaySystem : IDefaultSerializable
+    public sealed partial class TransitArchitectSystem : IDefaultSerializable
     {
         private const int SaveFormatVersion = 2;
         private const int MaxSavePayloadBytes = 64 * 1024 * 1024;
@@ -60,7 +60,7 @@ namespace StationSuitabilityOverlay
             {
                 // Cannot be consumed exactly, so the load must fail loudly rather than
                 // read garbage into the rest of the save.
-                throw new InvalidDataException($"Station Suitability save block claims {length.ToString(CultureInfo.InvariantCulture)} bytes");
+                throw new InvalidDataException($"Transit Architect save block claims {length.ToString(CultureInfo.InvariantCulture)} bytes");
             }
 
             using var bytes = new NativeArray<byte>(length, Allocator.Temp);

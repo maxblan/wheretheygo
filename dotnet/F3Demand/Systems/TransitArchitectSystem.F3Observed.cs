@@ -4,11 +4,11 @@ using Unity.Entities;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Observed shopping and leisure journeys (register A0.1): the system's cadence for
-    // the live-city scan; the scan itself is SuitabilityTripObserver.
-    public sealed partial class StationSuitabilityOverlaySystem
+    // the live-city scan; the scan itself is TripObserver.
+    public sealed partial class TransitArchitectSystem
     {
 
         private EntityQuery m_QueuedQuery;

@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Outcome of the exact site selection. `Count` sites in `Indices`/`Scores`, ranked
     // by score descending. `Indices` are cell indices for the grid form and network

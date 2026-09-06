@@ -4,7 +4,7 @@
  * margins; 1rem is about one design pixel, so sizes are written in rem to scale
  * with the game's UI scale setting the same way vanilla panels do. */
 
-.sso-panel {
+.ta-panel {
     /* Right-hand side on purpose: the vanilla infoview legend occupies the top-left
        and grew tall enough with ten layers to sit underneath this panel. */
     position: absolute;
@@ -28,11 +28,11 @@
     z-index: 20;
 }
 
-.sso-panel-collapsed {
+.ta-panel-collapsed {
     width: 180rem;
 }
 
-.sso-labelrow {
+.ta-labelrow {
     display: flex;
     flex-direction: row;
     justify-content: space-between;
@@ -40,7 +40,7 @@
     margin-bottom: 3rem;
 }
 
-.sso-header {
+.ta-header {
     display: block;
     width: 100%;
     padding: 5rem 6rem;
@@ -54,11 +54,11 @@
     cursor: pointer;
 }
 
-.sso-header:hover {
+.ta-header:hover {
     background-color: rgba(60, 100, 140, 0.85);
 }
 
-.sso-section {
+.ta-section {
     margin-top: 8rem;
     margin-bottom: 4rem;
     padding-bottom: 2rem;
@@ -68,24 +68,24 @@
     text-transform: uppercase;
 }
 
-.sso-row {
+.ta-row {
     margin-bottom: 8rem;
 }
 
-.sso-label {
+.ta-label {
     margin-bottom: 2rem;
     color: #a8bccf;
     font-size: 11rem;
 }
 
 /* Button strip standing in for a dropdown. */
-.sso-choice {
+.ta-choice {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
 }
 
-.sso-chip {
+.ta-chip {
     margin-right: 3rem;
     margin-bottom: 3rem;
     padding: 3rem 7rem;
@@ -97,24 +97,24 @@
     cursor: pointer;
 }
 
-.sso-chip:hover {
+.ta-chip:hover {
     background-color: rgba(70, 95, 125, 0.95);
 }
 
-.sso-chip-on {
+.ta-chip-on {
     background-color: rgba(70, 140, 210, 0.95);
     border-color: rgba(160, 210, 255, 0.8);
     color: #ffffff;
 }
 
 /* Stepper standing in for a range input. */
-.sso-stepper {
+.ta-stepper {
     display: flex;
     flex-direction: row;
     align-items: center;
 }
 
-.sso-step {
+.ta-step {
     width: 22rem;
     height: 20rem;
     background-color: rgba(45, 60, 78, 0.9);
@@ -126,11 +126,11 @@
     cursor: pointer;
 }
 
-.sso-step:hover {
+.ta-step:hover {
     background-color: rgba(70, 95, 125, 0.95);
 }
 
-.sso-bar {
+.ta-bar {
     flex-grow: 1;
     margin-left: 6rem;
     margin-right: 6rem;
@@ -140,17 +140,17 @@
     overflow: hidden;
 }
 
-.sso-bar-fill {
+.ta-bar-fill {
     height: 6rem;
     background-color: rgba(90, 165, 235, 0.95);
 }
 
-.sso-value {
+.ta-value {
     color: #ffffff;
     font-size: 11rem;
 }
 
-.sso-route {
+.ta-route {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -164,55 +164,55 @@
     text-align: left;
 }
 
-.sso-route:hover {
+.ta-route:hover {
     background-color: rgba(120, 170, 220, 0.16);
 }
 
 /* The map is narrowed to this one. Stated on the row as well as on the map, because
    the map going quiet is otherwise unexplained. */
-.sso-route-on {
+.ta-route-on {
     background-color: rgba(120, 170, 220, 0.30);
 }
 
-.sso-swatch {
+.ta-swatch {
     width: 14rem;
     height: 6rem;
     margin-right: 6rem;
     border-radius: 2rem;
 }
 
-.sso-route-text {
+.ta-route-text {
     flex-grow: 1;
     display: flex;
     flex-direction: column;
 }
 
-.sso-route-head {
+.ta-route-head {
     display: flex;
     flex-direction: row;
     align-items: center;
 }
 
 /* What the list is ordered by, under the row it belongs to. */
-.sso-route-reach {
+.ta-route-reach {
     color: #7f97ad;
     font-size: 9rem;
 }
 
-.sso-route-mode {
+.ta-route-mode {
     width: 52rem;
     color: #eaf2fb;
     font-size: 11rem;
 }
 
-.sso-route-meta {
+.ta-route-meta {
     flex-grow: 1;
     color: #9fb6cc;
     font-size: 10rem;
     text-align: right;
 }
 
-.sso-toggle {
+.ta-toggle {
     width: 60rem;
     padding: 3rem 0;
     background-color: rgba(45, 60, 78, 0.9);
@@ -223,13 +223,13 @@
     cursor: pointer;
 }
 
-.sso-toggle-on {
+.ta-toggle-on {
     background-color: rgba(70, 160, 110, 0.95);
     border-color: rgba(150, 230, 190, 0.8);
     color: #ffffff;
 }
 
-.sso-preset {
+.ta-preset {
     display: block;
     width: 100%;
     padding: 4rem;
@@ -242,14 +242,14 @@
     cursor: pointer;
 }
 
-.sso-preset:hover {
+.ta-preset:hover {
     background-color: rgba(70, 95, 125, 0.95);
 }
 
 
 /* The mod's own legend, replacing the vanilla infoview panel on the left. Stops
    match LowColor / MediumColor / HighColor in SuitabilityInfomodePrefab.cs. */
-.sso-legend {
+.ta-legend {
     height: 8rem;
     margin-bottom: 2rem;
     border-radius: 2rem;
@@ -259,15 +259,15 @@
         rgb(217, 56, 31));
 }
 
-.sso-legend-end {
+.ta-legend-end {
     color: #9fb6cc;
     font-size: 10rem;
 }
 
 /* Hiding the vanilla legend while our panel is up, so the mod has one home rather
    than a panel on each side of the screen. */
-.sso-hide-vanilla-infoview .active-infoview-panel_HkP,
-.sso-hide-vanilla-infoview [class*="active-infoview-panel"] {
+.ta-hide-vanilla-infoview .active-infoview-panel_HkP,
+.ta-hide-vanilla-infoview [class*="active-infoview-panel"] {
     display: none;
 }
 
@@ -281,7 +281,7 @@
    40rem is the value the game gives that variable, so the size still matches the
    neighbouring tiles; it just has to be written out. flex-basis is pinned too, or the
    row stretches the slot to fill the bar. */
-.sso-toolbar-slot {
+.ta-toolbar-slot {
     position: relative;
     display: flex;
     flex-direction: row;
@@ -292,7 +292,7 @@
     margin-bottom: 6rem;
 }
 
-.sso-toolbar-button {
+.ta-toolbar-button {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -310,18 +310,18 @@
     pointer-events: auto;
 }
 
-.sso-toolbar-button:hover {
+.ta-toolbar-button:hover {
     background-color: rgb(112, 210, 246);
 }
 
-.sso-toolbar-button-on {
+.ta-toolbar-button-on {
     background-color: rgb(38, 158, 208);
 }
 
 /* Literal for the same reason as the slot above: --iconWidth/--iconHeight are not in
    scope out here either. 27rem is two thirds of the 40rem tile, which is the inset the
    vanilla toolbar icons use. */
-.sso-toolbar-icon {
+.ta-toolbar-icon {
     width: 27rem;
     height: 27rem;
 }
@@ -333,24 +333,24 @@
    activates a view's infomodes while ToolSystem.activeInfoview is non-null, and that
    getter returns null for any prefab flagged invalid or hidden. */
 
-.sso-health {
+.ta-health {
     margin-bottom: 5rem;
 }
 
-.sso-health-head {
+.ta-health-head {
     display: flex;
     flex-direction: row;
     align-items: center;
 }
 
-.sso-dot {
+.ta-dot {
     width: 8rem;
     height: 8rem;
     margin-right: 6rem;
     border-radius: 50%;
 }
 
-.sso-health-note {
+.ta-health-note {
     margin-left: 14rem;
     color: #9fb6cc;
     font-size: 10rem;
@@ -358,44 +358,44 @@
 
 /* How much of the rolling window has actually been observed. Sits above the controls
    because it qualifies every number below it. No `gap` — cohtml does not support it. */
-.sso-coverage {
+.ta-coverage {
     margin-bottom: 8rem;
     padding-bottom: 6rem;
     border-bottom: 1rem solid rgba(255, 255, 255, 0.12);
 }
 
-.sso-coverage-label {
+.ta-coverage-label {
     color: #9fb6cc;
     font-size: 10rem;
     text-transform: uppercase;
 }
 
-.sso-coverage-value {
+.ta-coverage-value {
     color: #dce8f2;
     font-size: 11rem;
     margin-top: 2rem;
 }
 
-.sso-coverage-empty {
+.ta-coverage-empty {
     color: #708698;
     font-size: 10rem;
     margin-top: 2rem;
 }
 
-.sso-coverage-track {
+.ta-coverage-track {
     margin-top: 4rem;
     height: 4rem;
     background-color: rgba(255, 255, 255, 0.12);
 }
 
-.sso-coverage-fill {
+.ta-coverage-fill {
     height: 4rem;
     background-color: #4a9de0;
 }
 
 /* What the verdict rests on: a day's mean or a single reading. Quieter than the
    verdict itself — it qualifies the number above, it is not a finding of its own. */
-.sso-health-basis {
+.ta-health-basis {
     margin-left: 14rem;
     color: #708698;
     font-size: 9rem;
@@ -403,7 +403,7 @@
 
 /* Two columns: the controls on the left, line health scrolling on the right. With
    twenty lines a single column pushed everything off the bottom of the screen. */
-.sso-body {
+.ta-body {
     display: flex;
     flex-direction: row;
     align-items: stretch;
@@ -414,7 +414,7 @@
     min-height: 0;
 }
 
-.sso-column {
+.ta-column {
     width: 300rem;
     margin-right: 10rem;
     display: flex;
@@ -422,7 +422,7 @@
     min-height: 0;
 }
 
-.sso-column:last-child {
+.ta-column:last-child {
     margin-right: 0;
 }
 
@@ -431,7 +431,7 @@
    not jump every time the suggestion count changes. min-height 0 is what lets a flex
    child be SHORTER than its content, which is the prerequisite for the scroll box
    inside it to scroll instead of growing the panel. */
-.sso-half {
+.ta-half {
     flex: 1 1 0;
     min-height: 0;
     display: flex;
@@ -442,7 +442,7 @@
    the list takes whatever is left below its heading, so the full height is used
    instead of stopping at a fixed 420rem with dead space underneath. min-height 0 is
    what actually lets a flex child scroll rather than growing the panel. */
-.sso-scroll {
+.ta-scroll {
     /* basis 0, not auto: with auto the box starts at its content height and grow has
        nothing left to distribute. */
     flex: 1 1 0;
@@ -452,7 +452,7 @@
     padding-right: 4rem;
 }
 
-.sso-improve {
+.ta-improve {
     margin-top: 2rem;
     margin-left: 14rem;
     padding: 2rem 6rem;
@@ -464,11 +464,11 @@
     cursor: pointer;
 }
 
-.sso-improve:hover {
+.ta-improve:hover {
     background-color: rgba(70, 110, 160, 0.95);
 }
 
-.sso-plan {
+.ta-plan {
     margin-top: 6rem;
     padding: 5rem;
     background-color: rgba(30, 50, 70, 0.85);
@@ -477,13 +477,13 @@
     font-size: 10rem;
 }
 
-.sso-plan-title {
+.ta-plan-title {
     margin-bottom: 2rem;
     color: #ffffff;
     font-size: 10rem;
 }
 
-.sso-plan-hint {
+.ta-plan-hint {
     margin-top: 3rem;
     color: #9fb6cc;
     font-size: 9rem;
@@ -491,7 +491,7 @@
 
 /* Line names are longer and more variable than a mode word, so they get room and
    ellipsis rather than wrapping the row. */
-.sso-line-name {
+.ta-line-name {
     flex-grow: 1;
     overflow: hidden;
     white-space: nowrap;

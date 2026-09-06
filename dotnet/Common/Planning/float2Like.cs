@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // A point or vector on the map plane, with Unity's float2 shape: `x` is the world
     // x and `y` the world z, so code moved off float2 reads the same and the mod

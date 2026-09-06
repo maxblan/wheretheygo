@@ -11,16 +11,16 @@ using Unity.Collections;
 using Unity.Entities;
 using System.Diagnostics.CodeAnalysis;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Reads the existing transit system: which lines exist, which stops they serve in
-    // order, and how loaded they are. The judging is SuitabilityLineHealth (pure).
+    // order, and how loaded they are. The judging is LineHealthRules (pure).
     //
     // Ordering matters and is easy to get wrong: only RouteWaypoint/RouteSegment on
     // the LINE are in travel order. The ConnectedRoute buffer on a stop is built by
     // iterating waypoints in arbitrary chunk order, so it must never be used to infer
     // a line's sequence.
-    internal static class SuitabilityLines
+    internal static class Lines
     {
         // Every passenger line of a modelled mode with at least two waypoints, in query
         // order — the one loop both the full collection and the reading share.

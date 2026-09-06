@@ -8,7 +8,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Extracts real origin-destination pairs from the citizens in the save.
     //
@@ -143,10 +143,10 @@ namespace StationSuitabilityOverlay
         }
     }
 
-    internal static class SuitabilityTravelDemand
+    internal static class TravelDemand
     {
         // Drains the job's queue in the order it hands the trips back and aggregates
-        // them (SuitabilityZones.Aggregate). The order is thread-dependent, which is
+        // them (DemandZones.Aggregate). The order is thread-dependent, which is
         // why the aggregation sorts the flows totally before anything reads them.
         public static float Aggregate(
             NativeQueue<Trip> trips,
@@ -162,7 +162,7 @@ namespace StationSuitabilityOverlay
                 drained.Add(trip);
             }
 
-            return SuitabilityZones.Aggregate(
+            return DemandZones.Aggregate(
                 drained, new float2Like(worldMin.x, worldMin.y), new int2Like(zoneGrid.x, zoneGrid.y), flows, out tripCount, journeys);
         }
     }

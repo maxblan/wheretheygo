@@ -1,12 +1,12 @@
 # Formal specification of the problems the mod actually computes
 
 Status: complete against the code as of commit `b96e9bd` (working tree, 2026-09-03).
-Line references cite `StationSuitabilityOverlaySystem` (since 2026-09-05 a partial class split by
+Line references cite `TransitArchitectSystem` (since 2026-09-05 a partial class split by
 feature under `dotnet/F<n>*/Systems/`; the pure code it calls sits in the `Planning/` folders) unless
 another file is named. Folder `F<n>` implements stage `S<n>` below.
 
 This document specifies, in exact terms, the computational problems solved by
-`StationSuitabilityOverlay`. It is written for verification: every set, parameter and
+`TransitArchitect`. It is written for verification: every set, parameter and
 objective below is stated so that an independent implementation can reproduce it in
 exact rational arithmetic. Where the mod leaves an objective implicit (it computes a
 *procedure*, not a declared optimum), that is stated explicitly, and the candidate
@@ -62,13 +62,13 @@ The mod computes, in order (per recompute):
    `SelectCallingPoints`, `ChooseInWindow`): deterministic procedure.
 6. **S6 Mode choice** (`TransitModes.ChooseMode`, v3 since 2026-09-06): the capacity
    ladder over the fleet the game's vehicle-count slider allows (§5 v3).
-7. **S7 Line-set selection** (`SuitabilityLineSet.Solve`, v2 since Phase 7): exact
+7. **S7 Line-set selection** (`LineSet.Solve`, v2 since Phase 7): exact
    branch-and-bound over candidate subsets under the lexicographic objective
    (equity share capped at the floor, passenger time saved), with per-line
    utilisation and duplicate feasibility. v1 (`CreditLine` credits and greedy
    `AcceptBestCandidate` rounds) is kept below as history.
 
-8. **S9 Line health** (`SuitabilityLineHealth.JudgeAll`, v2 since 2026-09-06, §7e):
+8. **S9 Line health** (`LineHealthRules.JudgeAll`, v2 since 2026-09-06, §7e):
    the existing lines judged and planned from a game-day window of readings and the
    riders the routing attributes to them. A function of its inputs; the plan it
    yields is the exact minimum of the fleet rule within the game's span.
@@ -288,7 +288,7 @@ cruise speed, a/b the vehicle prefab's acceleration and braking), and the journe
 (each contributing its origin and its destination as a *door* with the journey's
 weight):
 
-1. **Candidates** (`SuitabilityRoutes.BuildStopPlan`): positions every 50 m along P
+1. **Candidates** (`Routes.BuildStopPlan`): positions every 50 m along P
    plus the far end; a position is *admissible* iff the score oracle is positive
    there (for ferries: shoreline; for rail/road: a scored tile). The first and last
    admissible positions are the termini. Within every maximal run of candidates that
@@ -299,7 +299,7 @@ weight):
    candidate c (`AlignmentNetwork.FlowNear`).
 2. **Doors**: every journey end within H·1.2 m of P between the termini, with the
    arc length of its projection.
-3. **Objective** (`SuitabilityStopPlan.Solve`), for a chosen set S containing both
+3. **Objective** (`StopPlanning.Solve`), for a chosen set S containing both
    termini and every forced candidate, consecutive members ≥ σ/2 apart unless both
    are forced:
    value(S) = Σ_doors w·max(0, H − t_e(S)) − Σ_{c∈S} through_c·δ,
@@ -356,12 +356,12 @@ The player sets a vehicle COUNT. The game turns it into an interval and back:
   δ_max, T)`, with the lerp ends evaluated as fl32(δ_min + 0·(δ_max − δ_min)) and
   fl32(δ_min + 1·(δ_max − δ_min)); span = [1, ∞) while the policy prefab is unknown or
   the mode has no line prefab (I₀ = 0). The mod reads the policy once per save
-  (`SuitabilityFleet.ReadVehicleCountPolicy`) and logs it.
+  (`Fleet.ReadVehicleCountPolicy`) and logs it.
 
 **Fleet rule (A6.8).** For B boardings' worth of riders a day (journeys, each riding
 twice), round trip T, one vehicle's seats c and the ceiling u = 1 (`MaxPlannedUtilisation`):
 `utilisation(v) = fl32((B·2) / (((D / interval(T, v))·2)·c))` in double with D = 4369.07 s
-(`SuitabilityEquity.Utilisation`, the one utilisation formula of the mod); the fleet is
+(`Equity.Utilisation`, the one utilisation formula of the mod); the fleet is
 **v* = clamp(v_demand, min, max)** with
 `v_demand = max(1, ⌈(B·T) / ((u·D)·c)⌉)` (double, in exactly that bracketing;
 `TransitModes.FleetForDemand`), the interval the line runs is `interval(T, v*)` and the
@@ -431,7 +431,7 @@ match; reachBar halved when trackShare ≥ 0.6. Bit-exact agreement was verified
 
 ## 6. S7 — Transit routing, candidate credit, greedy acceptance
 
-### 6.1 Transit graph (`SuitabilityTransit.Build`)
+### 6.1 Transit graph (`TransitRouting.Build`)
 
 Nodes: stop nodes 0..S−1, then one line-stop node per (line, position). Undirected
 edges with cost floor 0.01 s:
@@ -449,7 +449,7 @@ expectedWait = max(0, max(interval/2, observedAvgWait) − stopDwell) (mirrors v
 ### 6.2 Journey door-to-door time (v2, Phase 7, 2026-09-05; A4.1, A7.2, A7.4, A3.1)
 
 The transit graph of 6.1 is extended by one node per journey end (**zone node**,
-`SuitabilityTransit.BuildWithZones`): a zone node is joined by a walk edge (cost
+`TransitRouting.BuildWithZones`): a zone node is joined by a walk edge (cost
 = Euclidean distance / 1.2 m/s in binary32, floor 0.01 s) to every stop within
 `zoneReach` (= 2 × transfer walk = 432 m). Zone nodes are numbered after the
 line-stop nodes (`TransitNetwork.ZoneNodeStart`).
@@ -502,7 +502,7 @@ journey (`AttributeItinerary`). Tie sensitivity: with equal-cost itineraries the
 rider attribution depends on which path Dijkstra retained; the evaluator
 enumerates every shortest itinerary and reports `tie_affected`.
 
-### 6.3 Set objective and feasibility (`SuitabilityLineSet.Solve`)
+### 6.3 Set objective and feasibility (`LineSet.Solve`)
 
 For a set A (|A| ≤ K = RouteCount) of the candidate pool:
 
@@ -511,7 +511,7 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
   order (`LineSetEvaluation.TimeSaved`).
 - **coverage(A)** = the §7c served share of the walking-network journeys once A's
   stops (snapped like served stops) join the served stops
-  (`SuitabilityEquity.WithStops` → `Coverage`); 0 when no equity inputs exist.
+  (`Equity.WithStops` → `Coverage`); 0 when no equity inputs exist.
 - **Key(A)** = (min(coverage(A), X), saved(A)), compared lexicographically; X =
   the equity floor share (0.8).
 - **Feasible(A)** iff A holds at most one candidate per *alignment group* (the
@@ -520,7 +520,7 @@ For a set A (|A| ≤ K = RouteCount) of the candidate pool:
   `LineCandidate.Group`, negative = none), and for every line c ∈ A:
   (F1, v3 since 2026-09-06) utilisation(c, A) = §5's `utilisation(v*)` at the fleet
   `v* = clamp(v_demand(riders(c, A)), min_c, max_c)` the set's own riders call for
-  within the game's span for c's round trip (`SuitabilityLineSet.FleetFor`; the
+  within the game's span for c's round trip (`LineSet.FleetFor`; the
   candidate carries `RoundTripSeconds`, `VehicleCapacity`, `FleetMin`, `FleetMax`;
   riders are handed over as fl32) ≥ the utilisation floor (0.15 default) — riders are
   the set's attribution, so a feeder's riders count for the trunk it feeds — and ≤
@@ -838,7 +838,7 @@ per-citizen offset of ±1 h and return at `m_WorkDayEnd` plus the same offset; t
 evening shift adds 0.33 of a day, the night shift 0.67 (`WorkerSystem.GetTimeToWork`);
 students keep the day shift's hours (`StudentSystem.GetTimeToStudy`).
 
-Model (`SuitabilityDaytime`):
+Model (`Daytime`):
 - every journey carries a **day share** ∈ [0, 1] of its rides: a commute's two rides
   are classed by their shift's nominal times (the ±1 h offset is not modelled), an
   observed shopping/leisure journey by the clock when it was seen; door pairs carry

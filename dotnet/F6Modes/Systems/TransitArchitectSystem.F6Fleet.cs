@@ -4,11 +4,11 @@ using Unity.Entities;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The game's own facts about each mode, read once from the loaded prefabs: seats,
     // acceleration and braking, the passenger line's interval and stop duration.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         private EntityQuery m_VehiclePrefabQuery;
 
@@ -83,14 +83,14 @@ namespace StationSuitabilityOverlay
             return TransitModes.CapacityWeight(capacity, busCapacity);
         }
 
-        // The facts for every mode, read once (SuitabilityFleet.Read) and kept: prefabs
+        // The facts for every mode, read once (Fleet.Read) and kept: prefabs
         // do not change while a save is loaded, and a reload rebuilds the system.
         private FleetFacts ReadFleetFacts()
         {
             if (m_FleetFacts is null || m_VehicleCountPolicy is null)
             {
-                m_VehicleCountPolicy = SuitabilityFleet.ReadVehicleCountPolicy(EntityManager, m_PrefabSystem, m_TransportConfigQuery);
-                m_FleetFacts = SuitabilityFleet.Read(EntityManager, m_VehiclePrefabQuery, m_LinePrefabQuery, m_VehicleCountPolicy, out float[] byType);
+                m_VehicleCountPolicy = Fleet.ReadVehicleCountPolicy(EntityManager, m_PrefabSystem, m_TransportConfigQuery);
+                m_FleetFacts = Fleet.Read(EntityManager, m_VehiclePrefabQuery, m_LinePrefabQuery, m_VehicleCountPolicy, out float[] byType);
                 m_TypeCapacities = byType;
             }
 

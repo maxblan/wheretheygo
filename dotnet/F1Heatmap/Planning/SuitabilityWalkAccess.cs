@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Per-cell raw scoring terms. Kept as one struct so the access pass writes a
     // single array and the managed combine pass reads it back without re-deriving

@@ -1,4 +1,4 @@
-# Station Suitability Overlay
+# Transit Architect
 
 A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m tile for transit station placement, based on multi-criteria decision analysis (MCDA).
 
@@ -15,7 +15,7 @@ A Cities: Skylines II mod that adds a vanilla-style infoview scoring every 32 m 
   - Interchange potential — a served stop of a *different* mode within transfer distance (W6), which is what makes a bus stop at a metro station rate highly
   - Cross-mode overlap — another mode's service close enough to carry the same riders but too far to transfer to (W7), which discourages running parallel to an existing line
 - **Terrain awareness** — tiles too steep to build on or under water score nothing, and a catchment never draws population across water or a cliff it has no route around
-- **Bus / Tram / Metro / Train / Ferry presets** with per-mode weights and radii, all adjustable in Options → Station Suitability Overlay. Ferry mode restricts candidates to the shoreline.
+- **Bus / Tram / Metro / Train / Ferry presets** with per-mode weights and radii, all adjustable in Options → Transit Architect. Ferry mode restricts candidates to the shoreline.
 - **Ridership calibration** — the mod samples your served stops while the city runs, then fits the demand, jobs and future weights to the observed data under the current accessibility discount and reports how well the model explains it (R²). Fitted values are only suggestions until you press **Apply fitted weights**.
 - **Auto-recalculation** (debounced, off the main thread) when stops are placed or removed or settings change, plus a periodic refresh so new roads, zones and residents appear on their own
 - **No surprise activation** — the game's automatic "related infoview" selection for build-menu assets has this mod's infoview stripped out and the vanilla choice restored, so the overlay only appears when you pick it
@@ -121,14 +121,14 @@ A fit needs at least 8 stops with at least 30 samples each, so expect to play fo
 ./build.ps1 -Configuration Debug
 ```
 
-or `dotnet build dotnet/StationSuitabilityOverlay.csproj -c Release`. The build deploys to `%CSII_USERDATAPATH%\Mods\StationSuitabilityOverlay` automatically. The game locks the deployed DLL, so close it before building.
+or `dotnet build dotnet/TransitArchitect.csproj -c Release`. The build deploys to `%CSII_USERDATAPATH%\Mods\TransitArchitect` automatically. The game locks the deployed DLL, so close it before building.
 
 ## Tests
 
 The scoring math (percentile normalization, site selection, corridor growth, transit routing, weight fitting and the line-health thresholds) is free of Unity types so it can be tested directly:
 
 ```bash
-dotnet run --project tests/SuitabilityScoring.Tests
+dotnet run --project tests/TransitArchitect.Tests
 ```
 
 No packages to restore; a non-zero exit code counts the failures. This project is intentionally not part of the solution so the mod toolchain build is unaffected. It links every `Planning/` file — scoring, walking-time access, exact site selection, observed-journey window, graph math, directed roads, the equity measure, transit routing, the line-reading window, line health, the per-mode tables, every numeric constant (`Assumptions.cs`) and the verification export's JSON format — so the thresholds behind a verdict are testable too.
@@ -137,7 +137,7 @@ No packages to restore; a non-zero exit code counts the failures. This project i
 
 1. Load a city and open the infoview menu (the ⓘ button), then select **Station Suitability**.
 2. The brightest tiles are the best locations for a new stop. The ranked recommended sites, with the walk-distance score behind each, are written to the mod log.
-3. Tune the mode, objective and radii in the mod's own panel, or under Options → Station Suitability Overlay for the full set including weights; the overlay recalculates automatically.
+3. Tune the mode, objective and radii in the mod's own panel, or under Options → Transit Architect for the full set including weights; the overlay recalculates automatically.
 
 ## License
 

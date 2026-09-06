@@ -48,9 +48,9 @@ Two sources, same schema:
 - **Synthetic instances** (`verification/instances/`): deterministic generators for
   bounded cases — these are what complete enumeration and the counterexample search
   run on.
-- **Game exports** (implemented 2026-09-03, `dotnet/F11Export/Systems/StationSuitabilityOverlaySystem.VerificationExport.cs`):
+- **Game exports** (implemented 2026-09-03, `dotnet/F11Export/Systems/TransitArchitectSystem.VerificationExport.cs`):
   `Options → Export verification instance` writes canonical instances of the live city
-  to `…\Cities Skylines II\ModsData\StationSuitabilityOverlay\verification`. Seven
+  to `…\Cities Skylines II\ModsData\TransitArchitect\verification`. Seven
   files per press — `heatmap_walk` (the access pass's own inputs plus a sample of its
   terms), `sites_walk` (the real score field on network nodes), `road_times`,
   `coverage`, `lineset_time` (journeys, the real transit graph, the candidate
@@ -88,10 +88,10 @@ downstream artifact.
 ### 2. Subject runner (`verification/subject/`)
 
 A small C# console project that **links** (does not copy) every `Planning/` file exactly
-as `tests/SuitabilityScoring.Tests` does, reads an instance JSON, drives the pure
+as `tests/TransitArchitect.Tests` does, reads an instance JSON, drives the pure
 entry points (`SuitabilityExactSites.Solve`, `SuitabilityWalkAccess.Run`, `GrowCorridor`,
-`TracePath` semantics via `DijkstraWorkspace`, `SuitabilityLineSet.Solve`,
-`SuitabilityStopPlan`, `TransitModes.ChooseMode`, `SuitabilityLineHealth.JudgeAll`) with the same
+`TracePath` semantics via `DijkstraWorkspace`, `LineSet.Solve`,
+`StopPlanning`, `TransitModes.ChooseMode`, `LineHealthRules.JudgeAll`) with the same
 argument wiring the ECS half uses (documented per call in
 `docs/formal-specification.md`), and writes a solution JSON. This is the *system
 under test*; nothing in it is trusted by the verifier.
@@ -169,7 +169,7 @@ Components that must still be trusted after a green run:
 | The export's wire format | Producing what the pipeline can load | Golden-vector test in the offline harness pins the C# canonical form and digest against `canonical.py` (claim CX.5); on load the pipeline recomputes the digest and refuses a file it cannot reproduce |
 | Subject runner glue | Wiring arguments as the ECS half does | Wiring table in formal-specification.md, reviewed against code; kept minimal |
 | Instance generator | Representativeness of synthetic instances | Property-based generation + adversarial hand-built cases; generators seeded and versioned |
-| The vehicle-count policy read from the prefab | The span really being the slider's | ECS-side read (`SuitabilityFleet.ReadVehicleCountPolicy`) mirrored from the decompiled `VehicleCountSection`; the fleet-facts log line prints the policy and two example spans to compare with the game's own line panel (claim C9.11) |
+| The vehicle-count policy read from the prefab | The span really being the slider's | ECS-side read (`Fleet.ReadVehicleCountPolicy`) mirrored from the decompiled `VehicleCountSection`; the fleet-facts log line prints the policy and two example spans to compare with the game's own line panel (claim C9.11) |
 | Refmodel generator | Encoding spec → MIP correctly | Cross-checked against the independent evaluator on every instance (candidate sets must agree; on small instances the evaluator's own enumeration must reproduce the certified optimum) |
 | Evaluator objective (S7) | Being the declared reference objective | The enumeration reuses it (subset iteration only); its independence cross-check is against the subject (mod code), not a second Python implementation |
 | Solver | Only when no certificate is produced | Certificate mode preferred; enumeration path removes the solver entirely |

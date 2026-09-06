@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // How a suggested corridor is scored while it grows.
     internal enum RouteObjective
@@ -437,7 +437,7 @@ namespace StationSuitabilityOverlay
         public float[]? NodeZ { get; }
     }
 
-    internal static class SuitabilityGraphMath
+    internal static class GraphMath
     {
 
         // Whether a grown corridor actually gets somewhere.

@@ -1,14 +1,14 @@
 ﻿---
 paths:
   - "dotnet/**/Planning/**"
-  - "tests/SuitabilityScoring.Tests/**"
+  - "tests/TransitArchitect.Tests/**"
   - "verification/subject/**"
 ---
 
 # The testable core
 
 You are in the half of this mod that can be executed without the game: every `Planning/` folder
-under `dotnet/`. These files use `System.*` only, which is what lets `tests/SuitabilityScoring.Tests`
+under `dotnet/`. These files use `System.*` only, which is what lets `tests/TransitArchitect.Tests`
 and `verification/subject` link them by glob and run offline. That property is the whole reason the
 `Planning/` folders exist.
 
@@ -28,7 +28,7 @@ and `verification/subject` link them by glob and run offline. That property is t
   Game: with no Unity-free home for a mode table, five of them grew separate copies in separate
   files — two byte-for-byte identical — and a sixth in the panel's JavaScript.
 - **Algorithms belong here, not in the ECS systems.** If you are about to write a loop with real
-  arithmetic in a `Systems/` partial of `StationSuitabilityOverlaySystem` or in a `Gathering/`
+  arithmetic in a `Systems/` partial of `TransitArchitectSystem` or in a `Gathering/`
   reader, ask whether it can be expressed against plain arrays and moved here instead. Every numerical bug this mod has shipped that stayed hidden — demand counted once per
   Dijkstra pop, corridor flow summed instead of averaged, transfers costing nothing because an
   undirected graph made the alight edge a free boarding — was invisible until the math was
@@ -37,7 +37,7 @@ and `verification/subject` link them by glob and run offline. That property is t
   wrong, not merely that the function returns something. `Run(...)` in `Program.cs` is the
   registry; there is no discovery.
 - **Keep the harness dependency-free.** No NuGet package, no test framework, and the project stays
-  out of `smart-transit-planner.sln` so the mod toolchain build is unaffected. Exit code is the
+  out of `TransitArchitect.sln` so the mod toolchain build is unaffected. Exit code is the
   failure count.
 - **Determinism is a requirement, not a nicety.** These functions run on every recompute and their
   output is compared across runs by eye and in the log. No time, no randomness, no dictionary or

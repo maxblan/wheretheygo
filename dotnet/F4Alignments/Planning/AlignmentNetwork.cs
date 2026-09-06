@@ -1,12 +1,12 @@
 ﻿using System.Collections.Generic;
 using System;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // A network an alignment is traced on, with travel demand loaded onto it: the
-    // streets as SuitabilityRoads reads them (buses, trams) or a free-form lattice
+    // streets as Roads reads them (buses, trams) or a free-form lattice
     // (metro and train alignment, ferry water crossings). Pure: the ECS reading is
-    // SuitabilityRoads' job, this class only ever sees plain arrays.
+    // Roads' job, this class only ever sees plain arrays.
     //
     // The game's own pathfinder is not usable here: it is agent-shaped (origins and
     // destinations are entities, not coordinates), asynchronous and frame-spread for
@@ -83,7 +83,7 @@ namespace StationSuitabilityOverlay
             EdgeShapeCount = null;
         }
 
-        // Takes the streets as SuitabilityRoads read them: node positions, undirected
+        // Takes the streets as Roads read them: node positions, undirected
         // edges with the arc length as cost, which edges cannot host a stop, the sampled
         // centreline points per edge, and the directed arcs with the game's turn cost
         // rate (0 when no car lane named a pathfind prefab).
@@ -132,7 +132,7 @@ namespace StationSuitabilityOverlay
         public int EdgeCount => Graph?.EdgeCount ?? 0;
 
         // Plain-array accumulator for the directed arcs of the streets being read, filled
-        // by SuitabilityRoads and handed to AdoptRoads.
+        // by Roads and handed to AdoptRoads.
         public sealed class ArcBuilder
         {
             public readonly List<int> From = new List<int>();
@@ -419,7 +419,7 @@ namespace StationSuitabilityOverlay
             for (int n = 0; n < NodeCount; n++)
             {
                 var position = new float2Like(NodePositionsX[n], NodePositionsZ[n]);
-                int zone = SuitabilityZones.ZoneOf(position, worldMin, zoneGrid);
+                int zone = DemandZones.ZoneOf(position, worldMin, zoneGrid);
                 if (zone < 0)
                 {
                     continue;
@@ -431,7 +431,7 @@ namespace StationSuitabilityOverlay
             float snapSq = Assumptions.ZoneSnapRadius * Assumptions.ZoneSnapRadius;
             for (int zone = 0; zone < zoneCount; zone++)
             {
-                float2Like centre = SuitabilityZones.ZoneCentre(zone, worldMin, zoneGrid);
+                float2Like centre = DemandZones.ZoneCentre(zone, worldMin, zoneGrid);
                 int zx = zone % zoneGrid.x;
                 int zy = zone / zoneGrid.x;
                 int best = -1;
@@ -483,7 +483,7 @@ namespace StationSuitabilityOverlay
         // serves every destination from it, so the cost is (origin zones x graph)
         // rather than (pairs x graph).
         //
-        // `flows` must be sorted by origin, which SuitabilityZones.Aggregate
+        // `flows` must be sorted by origin, which DemandZones.Aggregate
         // guarantees.
         public int AssignFlow(List<ZoneFlow> flows, int[] zoneNodes, float maxCost, out float assignedWeight)
         {
@@ -506,7 +506,7 @@ namespace StationSuitabilityOverlay
                 // Metres of cap become milliseconds at the planning cruise speed of a
                 // bus, so the ceiling keeps its meaning of "not one line's journey".
                 long maxMs = (long)(maxCost / Assumptions.CruiseSpeedFor(ModePreset.Bus) * 1000f);
-                return SuitabilityDirectedRoads.AssignFlow(Directed, m_DirectedWorkspace, directedFlows, zoneNodes, maxMs, EdgeFlow, ArcFlow, out assignedWeight);
+                return DirectedRoads.AssignFlow(Directed, m_DirectedWorkspace, directedFlows, zoneNodes, maxMs, EdgeFlow, ArcFlow, out assignedWeight);
             }
 
             int assignedPairs = 0;
@@ -530,7 +530,7 @@ namespace StationSuitabilityOverlay
                     m_Workspace.Run(Graph, originNode, maxCost);
                 }
 
-                if (SuitabilityGraphMath.AccumulatePath(Graph, m_Workspace, originNode, destinationNode, flow.m_Weight, EdgeFlow))
+                if (GraphMath.AccumulatePath(Graph, m_Workspace, originNode, destinationNode, flow.m_Weight, EdgeFlow))
                 {
                     assignedPairs++;
                     assignedWeight += flow.m_Weight;

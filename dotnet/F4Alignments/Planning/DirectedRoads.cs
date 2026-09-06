@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The road network as a road VEHICLE sees it (register A0.7/A0.8): one arc per
     // drivable direction of a street, timed by its speed limit, with a turn cost at
@@ -448,7 +448,7 @@ namespace StationSuitabilityOverlay
         }
     }
 
-    internal static class SuitabilityDirectedRoads
+    internal static class DirectedRoads
     {
         // Assigns each flow to the fastest DIRECTED route from its origin node to its
         // destination node, adding its weight to every undirected edge the route runs

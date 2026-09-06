@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // What is wrong with an existing line, as the recommendation names it (register
     // A8, decided 2026-09-06). One verdict per line, the first that applies in this
@@ -142,7 +142,7 @@ namespace StationSuitabilityOverlay
     // Judging a line's health and planning its remedy (formal-specification.md §7e,
     // register A8.1–A8.6). Pure so the thresholds and the plan can be tested and
     // verified rather than eyeballed in game.
-    internal static class SuitabilityLineHealth
+    internal static class LineHealthRules
     {
         // Snapshots the inputs of one pass: the samples are copied so a reading taken
         // after the judgement cannot change what the export describes.
@@ -424,7 +424,7 @@ namespace StationSuitabilityOverlay
                 m_RoundTripSeconds = rung.RoundTripSeconds,
                 m_HeadwaySeconds = headway,
                 m_RidersPerDay = line.m_RidersPerDay,
-                m_Utilisation = line.HasDemand ? SuitabilityEquity.Utilisation(line.m_RidersPerDay, headway, rung.Capacity) : -1f,
+                m_Utilisation = line.HasDemand ? Equity.Utilisation(line.m_RidersPerDay, headway, rung.Capacity) : -1f,
                 m_Schedule = line.m_Schedule,
                 m_ScheduleAdvice = line.m_Schedule,
                 m_DayUsage = line.m_DayUsage,
@@ -470,7 +470,7 @@ namespace StationSuitabilityOverlay
                 && health.m_PeakUsage <= reference.m_EmptyThreshold * Assumptions.EmptyPeakAllowance;
             if (measuredEmpty && line.HasDemand && smallest.Available)
             {
-                float atFewest = SuitabilityEquity.Utilisation(line.m_RidersPerDay, TransitModes.GameInterval(smallest.RoundTripSeconds, smallest.Min), smallest.Capacity);
+                float atFewest = Equity.Utilisation(line.m_RidersPerDay, TransitModes.GameInterval(smallest.RoundTripSeconds, smallest.Min), smallest.Capacity);
                 if (atFewest < problem.UtilisationFloor)
                 {
                     return LineVerdict.Remove;

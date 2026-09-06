@@ -2,7 +2,7 @@
 using Unity.Entities;
 using UnityEngine;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The overlay layers the player can toggle in the infoview panel. Order is the
     // display order; Score stays first so it is the one activated by default.
@@ -45,16 +45,16 @@ namespace StationSuitabilityOverlay
         {
             switch (layer)
             {
-                case SuitabilityLayer.Sites: return "StationSuitabilitySites";
-                case SuitabilityLayer.Demand: return "StationSuitabilityDemand";
-                case SuitabilityLayer.Jobs: return "StationSuitabilityJobs";
-                case SuitabilityLayer.Coverage: return "StationSuitabilityCoverage";
-                case SuitabilityLayer.Access: return "StationSuitabilityAccess";
-                case SuitabilityLayer.Future: return "StationSuitabilityFuture";
-                case SuitabilityLayer.Interchange: return "StationSuitabilityInterchange";
-                case SuitabilityLayer.CrossCoverage: return "StationSuitabilityCrossCoverage";
-                case SuitabilityLayer.TravelDemand: return "StationSuitabilityTravelDemand";
-                default: return "StationSuitabilityOverlay";
+                case SuitabilityLayer.Sites: return "TransitArchitectSites";
+                case SuitabilityLayer.Demand: return "TransitArchitectDemand";
+                case SuitabilityLayer.Jobs: return "TransitArchitectJobs";
+                case SuitabilityLayer.Coverage: return "TransitArchitectCoverage";
+                case SuitabilityLayer.Access: return "TransitArchitectAccess";
+                case SuitabilityLayer.Future: return "TransitArchitectFuture";
+                case SuitabilityLayer.Interchange: return "TransitArchitectInterchange";
+                case SuitabilityLayer.CrossCoverage: return "TransitArchitectCrossCoverage";
+                case SuitabilityLayer.TravelDemand: return "TransitArchitectTravelDemand";
+                default: return "TransitArchitect";
             }
         }
 
@@ -133,7 +133,7 @@ namespace StationSuitabilityOverlay
 
     public sealed class SuitabilityInfomodePrefab : GradientInfomodeBasePrefab
     {
-        public const string LocaleKey = "StationSuitabilityOverlay.Infomode";
+        public const string LocaleKey = "TransitArchitect.Infomode";
 
         public override string infomodeTypeLocaleKey => LocaleKey;
 

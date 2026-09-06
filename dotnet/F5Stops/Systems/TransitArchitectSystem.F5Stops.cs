@@ -2,11 +2,11 @@
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // F5 — what every stop plan of a pass shares, gathered from the system's state:
     // the journeys' doors, the fleet facts, the interchanges and the score oracle.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         // Everything a stop plan reads that is not the alignment itself: the journeys'
         // doors (each journey contributes its origin and its destination, both at the

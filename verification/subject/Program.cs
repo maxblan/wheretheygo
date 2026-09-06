@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace StationSuitabilityOverlay.Verification
+namespace TransitArchitect.Verification
 {
     // The SYSTEM UNDER TEST driver. It links the mod's pure files unchanged and
     // wires them exactly as the ECS half does (wiring documented per call in
@@ -188,8 +188,8 @@ namespace StationSuitabilityOverlay.Verification
             }
 
             var dijkstra = new IntDijkstra(graph.NodeCount);
-            int[] served = SuitabilityEquity.ServedWalkMs(graph, dijkstra, stopNodes, stopAccess, stopNodes.Length, horizonMs);
-            CoverageReport report = SuitabilityEquity.Coverage(served, horizonMs, on, oa, dn, da, w, count);
+            int[] served = Equity.ServedWalkMs(graph, dijkstra, stopNodes, stopAccess, stopNodes.Length, horizonMs);
+            CoverageReport report = Equity.Coverage(served, horizonMs, on, oa, dn, da, w, count);
             return new Dictionary<string, object?>
             {
                 ["share_b32"] = B32(report.Share),
@@ -471,7 +471,7 @@ namespace StationSuitabilityOverlay.Verification
                 };
                 problem.CandidateCount = problem.CandidateAt.Length;
                 problem.EndCount = problem.EndAt.Length;
-                StopPlanSolution solution = SuitabilityStopPlan.Solve(problem);
+                StopPlanSolution solution = StopPlanning.Solve(problem);
                 plans.Add(new Dictionary<string, object?>
                 {
                     ["chosen"] = solution.Chosen,
@@ -552,7 +552,7 @@ namespace StationSuitabilityOverlay.Verification
 
         // Rebuilds the captured line-health pass — the lines as collected, the window's
         // readings, the routing's riders, the facts and floors — and judges it with the
-        // mod's own SuitabilityLineHealth.JudgeAll.
+        // mod's own LineHealthRules.JudgeAll.
         private static Dictionary<string, object?> LineHealthKind(JsonElement data)
         {
             var problem = new LineHealthProblem
@@ -621,7 +621,7 @@ namespace StationSuitabilityOverlay.Verification
             }
 
             var health = new List<LineHealth>();
-            HealthReference reference = SuitabilityLineHealth.JudgeAll(problem, health);
+            HealthReference reference = LineHealthRules.JudgeAll(problem, health);
             var verdicts = new List<object>();
             foreach (LineHealth h in health)
             {
@@ -692,9 +692,9 @@ namespace StationSuitabilityOverlay.Verification
             var network = new CorridorNetwork(graph, flow, used, novelty, nodeDemand, nodeX, nodeZ);
             var objective = (RouteObjective)Enum.Parse(
                 typeof(RouteObjective), data.GetProperty("objective").GetString() ?? "Ridership");
-            float meanFlow = SuitabilityGraphMath.MeanPositiveFlow(flow, graph.EdgeCount);
-            float noveltyWeight = SuitabilityGraphMath.NoveltyWeight(objective, meanFlow);
-            float seedBias = SuitabilityGraphMath.SeedNoveltyBias(objective);
+            float meanFlow = GraphMath.MeanPositiveFlow(flow, graph.EdgeCount);
+            float noveltyWeight = GraphMath.NoveltyWeight(objective, meanFlow);
+            float seedBias = GraphMath.SeedNoveltyBias(objective);
             float flowFloor = meanFlow * F32(data.GetProperty("min_flow_fraction_b32"));
             float maxLength = F32(data.GetProperty("max_route_length_b32"));
             float demandFloor = F32(data.GetProperty("demand_floor_b32"));
@@ -708,7 +708,7 @@ namespace StationSuitabilityOverlay.Verification
             var rounds = new List<object>();
             for (int r = 0; r < roundCount; r++)
             {
-                bool ok = SuitabilityGraphMath.GrowCorridor(
+                bool ok = GraphMath.GrowCorridor(
                     in network, noveltyWeight, flowFloor, maxLength, corridor,
                     demandFloor, seedBias, maxBridge);
                 if (!ok)
@@ -737,12 +737,12 @@ namespace StationSuitabilityOverlay.Verification
 
                 if (corridor.Edges.Count < 2)
                 {
-                    SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, 1f);
+                    GraphMath.PeelFlow(graph, corridor, flow, used, 1f);
                 }
                 else
                 {
-                    SuitabilityGraphMath.PeelFlow(graph, corridor, flow, used, capture);
-                    SuitabilityGraphMath.DecayNovelty(graph, corridor, novelty, hops, factor);
+                    GraphMath.PeelFlow(graph, corridor, flow, used, capture);
+                    GraphMath.DecayNovelty(graph, corridor, novelty, hops, factor);
                 }
 
                 round["flow_after_b32"] = Bits(flow, flow.Length);
@@ -850,7 +850,7 @@ namespace StationSuitabilityOverlay.Verification
         // Rebuilds the exported line-set problem and solves it with the mod's own
         // branch-and-bound. The equity term, when the instance carries the walking
         // network, is the coverage share of the embedded journeys with the chosen
-        // candidates' stops added — the same SuitabilityEquity calls the system makes.
+        // candidates' stops added — the same Equity calls the system makes.
         private static Dictionary<string, object?> LineSetTime(JsonElement data)
         {
             var problem = new LineSetProblem
@@ -918,11 +918,11 @@ namespace StationSuitabilityOverlay.Verification
             if (budgetSeconds > 0.0)
             {
                 using var budget = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds));
-                solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget, budget.Token);
+                solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget, budget.Token);
             }
             else
             {
-                solution = SuitabilityLineSet.Solve(problem, Assumptions.LineSetNodeBudget);
+                solution = LineSet.Solve(problem, Assumptions.LineSetNodeBudget);
             }
 
             long elapsedMs = clock.ElapsedMilliseconds;
@@ -952,7 +952,7 @@ namespace StationSuitabilityOverlay.Verification
             return owner.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.Array ? F32Array(e) : null;
         }
 
-        // Mirrors StationSuitabilityOverlaySystem.CoverageWith: snap the chosen candidates'
+        // Mirrors TransitArchitectSystem.CoverageWith: snap the chosen candidates'
         // stops, merge their walking times into the served map, share of the journeys.
         private static Func<int[], int, float> EquityCoverage(JsonElement equity, LineSetProblem problem)
         {
@@ -968,7 +968,7 @@ namespace StationSuitabilityOverlay.Verification
             float[] sx = F32Array(equity.GetProperty("stop_x_b32"));
             float[] sz = F32Array(equity.GetProperty("stop_z_b32"));
             SnapAll(index, sx, sz, accessMs, out int[] stopNodes, out int[] stopAccess);
-            int[] served = SuitabilityEquity.ServedWalkMs(graph, dijkstra, stopNodes, stopAccess, stopNodes.Length, horizonMs);
+            int[] served = Equity.ServedWalkMs(graph, dijkstra, stopNodes, stopAccess, stopNodes.Length, horizonMs);
 
             float[] w = F32Array(equity.GetProperty("trip_w_b32"));
             SnapAll(index, F32Array(equity.GetProperty("trip_ox_b32")), F32Array(equity.GetProperty("trip_oz_b32")), accessMs, out int[] on, out int[] oa);
@@ -985,8 +985,8 @@ namespace StationSuitabilityOverlay.Verification
                 }
 
                 SnapAll(index, xs.ToArray(), zs.ToArray(), accessMs, out int[] nodes, out int[] access);
-                int[] merged = SuitabilityEquity.WithStops(graph, dijkstra, served, nodes, access, nodes.Length, horizonMs);
-                return SuitabilityEquity.Coverage(merged, horizonMs, on, oa, dn, da, w, w.Length).Share;
+                int[] merged = Equity.WithStops(graph, dijkstra, served, nodes, access, nodes.Length, horizonMs);
+                return Equity.Coverage(merged, horizonMs, on, oa, dn, da, w, w.Length).Share;
             };
         }
 

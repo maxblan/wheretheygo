@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // One log line produced off the main thread, waiting for it.
     internal readonly struct DeferredLogLine

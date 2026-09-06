@@ -8,7 +8,7 @@ the subject's rounds bit-for-bit — corridors, blocks, and the full flow and
 novelty arrays after every round. On top of the replay it checks structural
 invariants that would catch a bug shared by both implementations.
 
-Float semantics mirrored from the C# (file: SuitabilityGraphMath.cs):
+Float semantics mirrored from the C# (file: GraphMath.cs):
   - flow/length/score accumulation: float32 ops;
   - Continuity: float32 subs/muls/adds, then DOUBLE sqrt and double divisions,
     result rounded to float32 once ((cosine+1.0)*0.5 in double, cast);

@@ -9,12 +9,12 @@ using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // Travel demand: the home-work/school journeys read from the save joined with the
     // observed window, the routable model of the existing network, the served-demand
     // discount, the equity measure and the desire-line layer.
-    public sealed partial class StationSuitabilityOverlaySystem
+    public sealed partial class TransitArchitectSystem
     {
         private EntityQuery m_EconomyQuery;
 
@@ -142,7 +142,7 @@ namespace StationSuitabilityOverlay
 
                 job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
                 m_TripObserver.Drain(trips);
-                totalWeight = SuitabilityTravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount, m_Journeys);
+                totalWeight = TravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_ZoneFlows, out tripCount, m_Journeys);
             }
             finally
             {
@@ -241,11 +241,11 @@ namespace StationSuitabilityOverlay
                 }
             }
 
-            m_Interchanges = SuitabilityTransit.BuildInterchangeMap(
+            m_Interchanges = TransitRouting.BuildInterchangeMap(
                 xs, zs, stopModes, m_TransitStops.Count, Assumptions.TransferWalkRadius);
 
-            List<TransitLine> transitLines = SuitabilityLines.ToTransitLines(m_ExistingLines);
-            m_TransitNetwork = SuitabilityTransit.Build(xs, zs, m_TransitStops.Count, transitLines,
+            List<TransitLine> transitLines = Lines.ToTransitLines(m_ExistingLines);
+            m_TransitNetwork = TransitRouting.Build(xs, zs, m_TransitStops.Count, transitLines,
                 Assumptions.TransferWalkRadius, Assumptions.DefaultBoardPenaltySeconds);
             m_TransitWorkspace ??= new DijkstraWorkspace(0);
             m_TransitWorkspace.Resize(m_TransitNetwork.Graph.NodeCount);
@@ -271,7 +271,7 @@ namespace StationSuitabilityOverlay
             {
                 LineHealth entry = m_LineHealth[i];
                 DeferredLog.Info(
-                    $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {SuitabilityLineHealth.Describe(entry)} — " +
+                    $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {LineHealthRules.Describe(entry)} — " +
                     $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard right now, " +
                     $"occupancy {(entry.m_Usage * 100f).ToString("F1", CultureInfo.InvariantCulture)}% " +
                     $"(peak {(entry.m_PeakUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, planning load {(entry.m_PlanningLoad).ToString(CultureInfo.InvariantCulture)}) " +
@@ -320,7 +320,7 @@ namespace StationSuitabilityOverlay
                 m_DemandRaster = new float[cells];
             }
 
-            SuitabilityZones.RasterizeDesireLines(
+            DemandZones.RasterizeDesireLines(
                 m_ZoneFlows, new float2Like(worldMin.x, worldMin.y), new int2Like(m_ZoneGrid.x, m_ZoneGrid.y),
                 new int2Like(gridSize.x, gridSize.y), Assumptions.TileSize, m_DemandRaster);
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Cities: Skylines II mod (`StationSuitabilityOverlay`) that scores 32 m terrain tiles for
+A Cities: Skylines II mod (`TransitArchitect`) that scores 32 m terrain tiles for
 transit-stop placement, reads real citizen origin-destination data out of the save, suggests new
 lines, and reports on the health of existing ones. See `README.md` for the domain model and the
 reasoning behind the scoring terms.
@@ -32,14 +32,14 @@ what resolves the user-level `CSII_TOOLPATH` and `CSII_USERDATAPATH` environment
 imports `Mod.props`/`Mod.targets` from:
 
 ```bash
-powershell.exe -NoProfile -Command "dotnet build dotnet/StationSuitabilityOverlay.csproj -c Release"
+powershell.exe -NoProfile -Command "dotnet build dotnet/TransitArchitect.csproj -c Release"
 ```
 
 `./build.ps1 [-Configuration Debug]` does the same from PowerShell. A .NET SDK and the official CS2
 modding toolchain are required.
 
 **Building deploys.** `Mod.targets` copies the build straight into
-`%CSII_USERDATAPATH%\Mods\StationSuitabilityOverlay`, so there is no separate install step — and the
+`%CSII_USERDATAPATH%\Mods\TransitArchitect`, so there is no separate install step — and the
 running game holds a lock on the deployed DLL. Close the game before building. To check that a
 change compiles while the game is running, use `make compile`: it runs only the `Compile` target,
 which the post-processor and the deploy (both hooked onto `AfterBuild`) never see, so `bin/` and the
@@ -47,8 +47,8 @@ Mods folder stay as they were. `ModPostProcessor`
 also returns a spurious exit code if it runs within ~25 s of the game closing, so **verify a deploy
 by comparing file sizes, not by trusting the exit code**. `make deploy` encodes the wait-and-compare.
 
-**Tests.** `tests/SuitabilityScoring.Tests` is a hand-rolled harness with no test framework, so it
-runs offline with nothing to restore. It is deliberately **not** in `smart-transit-planner.sln`, so
+**Tests.** `tests/TransitArchitect.Tests` is a hand-rolled harness with no test framework, so it
+runs offline with nothing to restore. It is deliberately **not** in `TransitArchitect.sln`, so
 the mod toolchain build is unaffected. There is no filter flag: to run one test, comment out the
 other `Run(...)` calls at the top of `Program.cs`. The harness links every `Planning/` folder under
 `dotnet/` by glob, so a new pure file is tested for purity the moment it exists; the test bodies are
@@ -94,14 +94,14 @@ generator (found the hard way: removing it fails the build with EA0007). Volume 
 reason — read the comment before adding another.
 
 `MA0051` (method length) is **ratcheted, not disabled**: the limits sit exactly at today's worst
-offender so no method may grow. The line ceiling is `SuitabilityGraphMath.GrowCorridor` at 138; the
+offender so no method may grow. The line ceiling is `GraphMath.GrowCorridor` at 138; the
 statement ceiling is 60. Check either by build rather than by counting — MA0051 counts statements
 differently from a reader, and 138/60 is where the build says the real worst sits today.
 
 Roughly forty methods sit over 60 lines and sixteen over 100; the longest are
-`SuitabilityGraphMath.GrowCorridor`, `SuitabilityRoutes.BuildForNetwork`,
-`StationSuitabilityOverlaySystem.OnCreate/OnUpdate/StartCompute`,
-`SuitabilityScoring.FindTopSites` and `SuitabilityRouteRenderer.OnUpdate`. Splitting them is a
+`GraphMath.GrowCorridor`, `Routes.BuildForNetwork`,
+`TransitArchitectSystem.OnCreate/OnUpdate/StartCompute`,
+`SuitabilityScoring.FindTopSites` and `RouteRenderer.OnUpdate`. Splitting them is a
 refactor rather than a fix and must not be done blind, which is what the ratchet is holding the line
 for. (The 2026-09-05 restructure split the *class* by feature and moved arithmetic into the pure
 core; it deliberately left method bodies as they were, so the ratchet figures still hold.) **Lower the numbers as methods are split; never raise them** — and check the real figure with a
@@ -124,7 +124,7 @@ The annotations already in place encode decisions worth keeping:
   or flow analysis only trusts the one that was tested (`EnsureTileDensities`, `BuildPairArrays`).
 
 **Logs are the primary instrument** — the game cannot be driven from here. After a run, read
-`%LOCALAPPDATA%Low\Colossal Order\Cities Skylines II\Logs\StationSuitabilityOverlay.Mod.log` (mod
+`%LOCALAPPDATA%Low\Colossal Order\Cities Skylines II\Logs\TransitArchitect.Mod.log` (mod
 diagnostics; the code logs every input and decision on purpose so nonsense numbers are visible) and
 `UI.log` (JS errors from the panel module). `make errors` greps both.
 
@@ -132,11 +132,11 @@ diagnostics; the code logs every input and decision on purpose so nonsense numbe
 
 ### Two halves that ship side by side
 
-C# ECS systems compile to `StationSuitabilityOverlay.dll`. The panel's UI is a **hand-written ES
-module**, `dotnet/Presentation/UI/StationSuitabilityOverlay.mjs` plus `.css`, flattened out of `Presentation/UI/` on copy
+C# ECS systems compile to `TransitArchitect.dll`. The panel's UI is a **hand-written ES
+module**, `dotnet/Presentation/UI/TransitArchitect.mjs` plus `.css`, flattened out of `Presentation/UI/` on copy
 because the game loads `<AssemblyName>.mjs` from the mod root. It uses `window.React` and
 `window["cs2/api"]` (`bindValue`/`useValue`/`trigger`) — no build step, no JSX, and cohtml supports
-neither `<select>`, `<input type=range>`, checkboxes, nor CSS `gap`. `SuitabilityPanelUISystem`
+neither `<select>`, `<input type=range>`, checkboxes, nor CSS `gap`. `PanelUISystem`
 supplies the bindings; a value binding must be registered with `AddUpdateBinding`, since plain
 `AddBinding` never re-polls.
 
@@ -144,13 +144,13 @@ supplies the bindings; a value binding must be registered with `AddUpdateBinding
 
 `Mod.OnLoad` registers exactly three, and the phases are load-bearing (details in its comments):
 
-- `StationSuitabilityOverlaySystem` at **PreCulling** — must sit between `OverlayInfomodeSystem`,
+- `TransitArchitectSystem` at **PreCulling** — must sit between `OverlayInfomodeSystem`,
   which clears the terrain override overlay every frame, and `TerrainRenderSystem`, which consumes
   it.
-- `SuitabilityRouteRenderer` at **Rendering** — `OverlayRenderSystem` drains and clears its buffer
+- `RouteRenderer` at **Rendering** — `OverlayRenderSystem` drains and clears its buffer
   during Rendering, which runs *before* PreCulling, so drawing route polylines from the overlay
   system would always be a frame late.
-- `SuitabilityPanelUISystem` at **UIUpdate**.
+- `PanelUISystem` at **UIUpdate**.
 
 ### Layout: one folder per feature, three kinds of code inside
 
@@ -162,27 +162,38 @@ sections, then the shell. Inside each feature folder the code is split by what i
 |---|---|---|---|---|
 | `F1Heatmap` | S1 §7 | `SuitabilityWalkAccess`, `SuitabilityScoring`, `SuitabilityHeatmap` | `SuitabilityInputs`, `SuitabilityMasks` | `.F1Heatmap` |
 | `F2Sites` | S2 §2 | `SuitabilityExactSites` | — | `.F2Sites` |
-| `F3Demand` | S3 §7b | `SuitabilityZones`, `SuitabilityServedDemand`, `SuitabilityObservedTrips` | `SuitabilityTravelDemand` (Burst job), `SuitabilityTripObserver` | `.F3Demand`, `.F3Observed` |
-| `F4Alignments` | S4 §3 | `AlignmentNetwork`, `SuitabilityRoutes`, `SuitabilityLattice`, `SuitabilityGraphMath`, `SuitabilityDirectedRoads`, `SuggestedRoute` | `SuitabilityRoads` | `.F4Alignments`, `.F4Networks` |
-| `F5Stops` | S5 §4 | `SuitabilityStopPlan`, `SuitabilityRoutes.Stops` | — | `.F5Stops` |
-| `F6Modes` | S6 §5 | `TransitMode.Choice` | `SuitabilityFleet` | `.F6Modes`, `.F6Fleet` |
-| `F7LineSet` | S7 §6 | `SuitabilityTransit`, `SuitabilityLineSet` | — | `.F7LineSet` |
-| `F8Equity` | §7c | `SuitabilityEquity` | — | `.F8Equity` |
-| `F9LineHealth` | §7e | `ExistingLine`, `SuitabilityLineHistory`, `SuitabilityLineHealth` (window, ladder, fleet plan, verdicts) | `SuitabilityLines` (collect, observe) | `.F9LineHealth` |
-| `F10Calibration` | §7 v2 | (the fit is in `SuitabilityScoring`) | `SuitabilityCalibration` | `.F10Calibration` |
-| `F11Export` | — | `SuitabilityExportJson` | — | `.VerificationExport` |
-| `F12Diagnostics` | — | `SuitabilityDiagnostics` (sanity checks, churn) | — | `.F12Diagnostics` |
-| `Common` | §0, §7d | `Assumptions` (EVERY numeric constant and per-mode table), `float2Like`/`int2Like`, `TileGrid`, `SuitabilityDaytime`, `TransitMode` (enums, ladders, colours), `DeferredLog` | — | — |
-| `Overlay` | — | — | — | `StationSuitabilityOverlaySystem` (orchestration), `.Panel`, `.RoutePass`, `.SaveState`, `SuitabilityInfoview`, `SuitabilityInfomodePrefab` |
-| `Presentation` | — | `SuitabilityPanelPayload` | — | `SuitabilityRouteRenderer`, `SuitabilityPanelUISystem`, `UI/` |
+| `F3Demand` | S3 §7b | `DemandZones`, `ServedDemand`, `ObservedTrips` | `TravelDemand` (Burst job), `TripObserver` | `.F3Demand`, `.F3Observed` |
+| `F4Alignments` | S4 §3 | `AlignmentNetwork`, `Routes`, `Lattice`, `GraphMath`, `DirectedRoads`, `SuggestedRoute` | `Roads` | `.F4Alignments`, `.F4Networks` |
+| `F5Stops` | S5 §4 | `StopPlanning`, `Routes.Stops` | — | `.F5Stops` |
+| `F6Modes` | S6 §5 | `TransitMode.Choice` | `Fleet` | `.F6Modes`, `.F6Fleet` |
+| `F7LineSet` | S7 §6 | `TransitRouting`, `LineSet` | — | `.F7LineSet` |
+| `F8Equity` | §7c | `Equity` | — | `.F8Equity` |
+| `F9LineHealth` | §7e | `ExistingLine`, `LineHistory`, `LineHealthRules` (window, ladder, fleet plan, verdicts) | `Lines` (collect, observe) | `.F9LineHealth` |
+| `F10Calibration` | §7 v2 | (the fit is in `SuitabilityScoring`) | `Calibration` | `.F10Calibration` |
+| `F11Export` | — | `ExportJson` | — | `.VerificationExport` |
+| `F12Diagnostics` | — | `Diagnostics` (sanity checks, churn) | — | `.F12Diagnostics` |
+| `Common` | §0, §7d | `Assumptions` (EVERY numeric constant and per-mode table), `float2Like`/`int2Like`, `TileGrid`, `Daytime`, `TransitMode` (enums, ladders, colours), `DeferredLog` | — | — |
+| `Overlay` | — | — | — | `TransitArchitectSystem` (orchestration), `.Panel`, `.RoutePass`, `.SaveState`, `SuitabilityInfoview`, `SuitabilityInfomodePrefab` |
+| `Presentation` | — | `PanelPayload` | — | `RouteRenderer`, `PanelUISystem`, `UI/` |
 
 `Common` holds what several features use and no feature owns. `Overlay` is the ECS shell: the
 system that schedules the features, its save state and the panel bridge. `Presentation` draws.
 
+**The `Suitability` prefix means the score, not the mod.** The mod was called
+`StationSuitabilityOverlay` until 2026-09-06, and the old name had leaked into the prefix of nearly
+every type. On the rename to `TransitArchitect` the prefix was kept exactly where the thing IS the
+station-suitability score — `SuitabilityScoring`, `SuitabilityHeatmap`, `SuitabilityWalkAccess`,
+`SuitabilityInputs`, `SuitabilityMasks`, `SuitabilityCell`, `SuitabilityExactSites`, and the overlay
+layers and their presentation (`SuitabilityLayer(s)`, `SuitabilityInfoview`,
+`SuitabilityInfomodePrefab`) — and dropped everywhere else, because routes, stops, modes, line sets
+and the export are not suitability. Do not re-attach it, and do not rename what kept it: the
+infoview still calls itself "Station Suitability" to the player, which is the feature's name, while
+`TransitArchitect` is the mod's.
+
 ### The purity rule
 
 Numeric logic belongs in a `Planning/` folder, where files use `System.*` only, so they can be
-linked into the offline test project. `tests/SuitabilityScoring.Tests` and `verification/subject`
+linked into the offline test project. `tests/TransitArchitect.Tests` and `verification/subject`
 link `dotnet/**/Planning/*.cs` by glob — every pure file is compiled outside the game on every
 test run, with overflow checking on, and a Unity type in any of them breaks the whole harness.
 
@@ -192,12 +203,12 @@ test run, with overflow checking on, and a Unity type in any of them breaks the 
   formula decompiled from `Unity.Mathematics`, so a value computed on the pure side is bit-identical
   to the same expression on `float2`. The conversion to `float2` happens in the `Gathering/` readers
   and the `Systems/` partials, as a two-field copy at the seam. `int2Like` is the grid pair.
-- **The whole alignment stage is pure.** `SuitabilityRoutes`, `SuitabilityLattice` and
+- **The whole alignment stage is pure.** `Routes`, `Lattice` and
   `AlignmentNetwork` were converted from `float2` on 2026-09-05 and characterised against the
   Unity-typed code on a seeded synthetic city: 82 171 recorded values (paths, stops, stop plans,
   flows, log lines) identical bit for bit. `AlignmentTests.cs` pins a sample of that record, so the
   harness now covers corridor growth, lattice traces, stop planning, re-tracing and the network
-  helpers. `SuitabilityRoads` is what remains on the game side: it reads street entities into
+  helpers. `Roads` is what remains on the game side: it reads street entities into
   plain arrays and hands them to `AlignmentNetwork.AdoptRoads`.
 - **`DeferredLog` is pure and lives in `Common`.** It reaches the game's logger through
   `DeferredLog.Sink`, which `Mod.OnLoad` sets; offline the lines are dropped unless a test binds a
@@ -221,18 +232,18 @@ test run, with overflow checking on, and a Unity type in any of them breaks the 
 - **A per-mode fact is one more `switch` in `Assumptions.cs`**, keyed on `ModePreset`; the mode
   *choice* (`ChooseMode`, `FleetFacts`, the game's fleet arithmetic `GameFleet`/`GameInterval`/
   `FleetSpan`) is the F6 half of `TransitModes`.
-- **`SuitabilityExportJson` is pure for one reason:** the format is a CONTRACT with
+- **`ExportJson` is pure for one reason:** the format is a CONTRACT with
   `verification/common/canonical.py`, which recomputes the digest on load and refuses any file it
   cannot reproduce, so a golden-vector test is the only thing standing between a wire-format drift
   and every exported instance becoming unloadable.
 
 ### Data flow
 
-`StationSuitabilityOverlaySystem` orchestrates everything. It used to be one 5 700-line file; it is
-now a partial class with one file per feature (`F<n>*/Systems/StationSuitabilityOverlaySystem.F<n>*.cs`),
-the orchestration itself in `Overlay/StationSuitabilityOverlaySystem.cs` (`OnCreate`, `OnUpdate`,
+`TransitArchitectSystem` orchestrates everything. It used to be one 5 700-line file; it is
+now a partial class with one file per feature (`F<n>*/Systems/TransitArchitectSystem.F<n>*.cs`),
+the orchestration itself in `Overlay/TransitArchitectSystem.cs` (`OnCreate`, `OnUpdate`,
 the timers and dirty flags), and two collaborators with state of their own: `SuitabilityInfoview`
-(prefabs, channels, painting) and `SuitabilityTripObserver` (the live-city journey scan). Each
+(prefabs, channels, painting) and `TripObserver` (the live-city journey scan). Each
 partial declares the fields its feature owns; a field used by two features is declared where it is
 produced. The pipeline stages have clean seams (`UpdateTravelDemand` → `BuildTransitModel` →
 `StartRoutePass`/`BuildRoutes` → `FinishRoutesIfReady`/`AdoptPass`).
@@ -248,11 +259,11 @@ produced. The pipeline stages have clean seams (`UpdateTravelDemand` → `BuildT
    exactly among network nodes (`SuitabilityExactSites.SolveOnNetwork`) with the mode's stop
    spacing as walking-time separation.
 2. **Travel demand** — real home→work/school journeys read from `Citizen`/`HouseholdMember`
-   (`SuitabilityTravelDemand.cs`) plus shopping/leisure journeys observed once a second from
-   `TravelPurpose`/`Target`/`CurrentBuilding` (`SuitabilityTripObserver`) and held for a game day,
-   aggregated into 256 m zones (`SuitabilityZones`), discounted by whether the existing network
+   (`TravelDemand.cs`) plus shopping/leisure journeys observed once a second from
+   `TravelPurpose`/`Target`/`CurrentBuilding` (`TripObserver`) and held for a game day,
+   aggregated into 256 m zones (`DemandZones`), discounted by whether the existing network
    can actually route them (`ServedDemand`), then assigned to a network by shortest path.
-3. **Route suggestion** — two alignment searches in `SuitabilityRoutes.cs`, picked by network:
+3. **Route suggestion** — two alignment searches in `Routes.cs`, picked by network:
    `BuildForNetwork` grows a corridor with flow peeling and novelty decay on the road graph, where
    edge flow is a real measurement (assigned along DIRECTED fastest routes since Phase 5, summed
    per street); `BuildDirectForNetwork` traces straight between the two ends of
@@ -262,12 +273,12 @@ produced. The pipeline stages have clean seams (`UpdateTravelDemand` → `BuildT
    the map unions modes over neighbouring stops because a CS2 hub is several stop entities metres
    apart. An alignment that passes a hub further along is offered twice, direct and bent through
    the hub; the set selection decides, not a length ratio. Stops come from a stop plan per alignment
-   (`SuitabilityStopPlan`): candidates every 50 m, journey doors within the mode's horizon as
+   (`StopPlanning`): candidates every 50 m, journey doors within the mode's horizon as
    boarders, the corridor flow as through-riders, the prefabs' stop delay, forced interchanges,
    the gap floor; the mode is the smallest whose vehicles the standalone riders do not
    overload at the prefab headway (`TransitModes.ChooseMode`), a line needs three stops and
    a ride within its mode's limit; and the set of suggestions is chosen exactly
-   (`SuitabilityLineSet.Solve`): every journey is routed door-to-door over the existing lines plus a
+   (`LineSet.Solve`): every journey is routed door-to-door over the existing lines plus a
    candidate set, the objective is the passenger time saved against the best of walking and the
    existing network, ranked lexicographically after the equity share capped at its floor, and every
    line in the set must clear the utilisation floor on the set's own riders and must not duplicate
@@ -283,11 +294,11 @@ produced. The pipeline stages have clean seams (`UpdateTravelDemand` → `BuildT
    the fields the panel, renderer and export read only when the task has completed. Code that
    can run on the worker logs through `DeferredLog`, never `Mod.Log`: the game's logger is an
    unguarded stream writer, so the worker's lines wait in a buffer and are flushed on adoption.
-4. **Line health** — a reading of every line every 15 game minutes (`SuitabilityLines.Observe`
+4. **Line health** — a reading of every line every 15 game minutes (`Lines.Observe`
    → `LineHistory`, on the simulation frame, never gated on the route worker); the full
-   collection in travel order (`SuitabilityLines.Collect`) every 30 s while no pass is out; the
+   collection in travel order (`Lines.Collect`) every 30 s while no pass is out; the
    riders the last pass's baseline attributed to each existing line (`AdoptExistingLineRiders`);
-   then `SuitabilityLineHealth.JudgeAll` on a `LineHealthProblem` captured at that instant (the
+   then `LineHealthRules.JudgeAll` on a `LineHealthProblem` captured at that instant (the
    export reads the same object). Verdicts are a classification of the plan: the S6 ladder and
    the fleet rule within the game's vehicle-slider span, judged on the window's 90 % planning
    load and the routed riders; "empty" needs the readings AND the demand (spec §7e).
@@ -300,7 +311,7 @@ an empty list is adopted without asking. Anything that must see the newest route
 
 ### The save state
 
-`Overlay/StationSuitabilityOverlaySystem.SaveState.cs` (a partial of the overlay system) implements `IDefaultSerializable`, which
+`Overlay/TransitArchitectSystem.SaveState.cs` (a partial of the overlay system) implements `IDefaultSerializable`, which
 is how the game persists a world system into the save (`SystemSerializerLibrary`, keyed by the
 system's assembly-qualified type name). It carries the current suggestions, the observed
 shopping/leisure journeys and the line readings, so a loaded city does not start cold and the
@@ -314,7 +325,7 @@ state at load, it runs before the first `OnUpdate`.
 
 ### The verification export
 
-`F11Export/Systems/StationSuitabilityOverlaySystem.VerificationExport.cs` (a partial of the overlay system) writes the
+`F11Export/Systems/TransitArchitectSystem.VerificationExport.cs` (a partial of the overlay system) writes the
 offline pipeline in `verification/` a canonical instance of the live city, behind an
 Options button. It is **read-only** — it exports what the mod already computed and
 must never grow a rule of its own; anything it would have to decide belongs on the
@@ -327,14 +338,14 @@ and it is wrong — the input collections are rebuilt on their own timers, so th
 would describe a city the exported terms were never computed from.
 
 The wire format is a contract with `verification/common/canonical.py`, which recomputes
-the SHA-256 on load and refuses a file it cannot reproduce. `F11Export/Planning/SuitabilityExportJson.cs`
+the SHA-256 on load and refuses a file it cannot reproduce. `F11Export/Planning/ExportJson.cs`
 owns it and is pinned by a golden-vector test; changing sort order, escaping or number
 formatting there breaks every exported instance at once.
 
 ### Networks are not interchangeable
 
-`AlignmentNetwork` (pure) holds either the streets as `SuitabilityRoads` read them or a free-form
-lattice (`SuitabilityLattice.cs`, 128 m pitch): one for train, one for metro and one for water. Train and
+`AlignmentNetwork` (pure) holds either the streets as `Roads` read them or a free-form
+lattice (`Lattice.cs`, 128 m pitch): one for train, one for metro and one for water. Train and
 metro track are told apart by `TrackLaneData.m_TrackTypes` on the segment's sub-lanes
 (`CollectTrackSegments`), and each lattice prefers only its own kind — a metro alignment on a railway
 was a real finding. A rail alignment is a candidate only where its street re-trace is overloaded,

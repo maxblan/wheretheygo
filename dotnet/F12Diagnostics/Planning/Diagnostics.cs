@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // A pass whose whole job is to disagree with the rest of the mod.
     //
@@ -11,7 +11,7 @@ namespace StationSuitabilityOverlay
     // something upstream being broken. Each check states the invariant it is
     // testing, so a warning names the defect rather than reporting a symptom.
     // Anything this reports is a bug in the mod, not a property of the city.
-    internal static class SuitabilitySanity
+    internal static class SanityChecks
     {
 
         // Returns the number of complaints; each one is handed to `complain` as it is

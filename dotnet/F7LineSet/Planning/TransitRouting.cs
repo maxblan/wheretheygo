@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     internal enum TransitEdgeKind
     {
@@ -54,7 +54,7 @@ namespace StationSuitabilityOverlay
 
     // The served stops of the existing network, each carrying the set of modes a
     // rider can reach on foot from it. Built by
-    // SuitabilityTransit.BuildInterchangeMap, which is where the union is explained.
+    // TransitRouting.BuildInterchangeMap, which is where the union is explained.
     internal readonly struct InterchangeMap
     {
         private readonly float[] m_StopX;
@@ -168,7 +168,7 @@ namespace StationSuitabilityOverlay
         }
     }
 
-    internal static class SuitabilityTransit
+    internal static class TransitRouting
     {
 
         // Vanilla's rider wait, from PathUtils.GetTransportStopSpecification.

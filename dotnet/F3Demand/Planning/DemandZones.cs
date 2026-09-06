@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // One journey somebody wants to make.
     internal struct Trip
@@ -25,7 +25,7 @@ namespace StationSuitabilityOverlay
         public float m_Weight;
     }
 
-    internal static class SuitabilityZones
+    internal static class DemandZones
     {
 
         // Collapses trips into zone-to-zone flows. Returns the total trip weight so
@@ -148,7 +148,7 @@ namespace StationSuitabilityOverlay
                 float2Like fromTile = (from - worldMin) / tileSize;
                 float2Like toTile = (to - worldMin) / tileSize;
 
-                SuitabilityGraphMath.RasterizeSegment(
+                GraphMath.RasterizeSegment(
                     raster, tileGrid.x, tileGrid.y,
                     fromTile.x, fromTile.y, toTile.x, toTile.y,
                     flow.m_Weight);

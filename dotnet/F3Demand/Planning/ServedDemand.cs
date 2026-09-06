@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // F3, steps 3 and 4 (formal-specification.md §7b): which served stop each 256 m
     // zone reaches, the routable stop pairs the zone flows make, and the discount of
@@ -65,7 +65,7 @@ namespace StationSuitabilityOverlay
             float radiusSq = Assumptions.ZoneStopReachMetres * Assumptions.ZoneStopReachMetres;
             for (int zone = 0; zone < zoneCount; zone++)
             {
-                float2Like centre = SuitabilityZones.ZoneCentre(zone, worldMin, zoneGrid);
+                float2Like centre = DemandZones.ZoneCentre(zone, worldMin, zoneGrid);
                 int best = -1;
                 float bestSq = radiusSq;
                 for (int i = 0; i < xs.Length; i++)
@@ -179,7 +179,7 @@ namespace StationSuitabilityOverlay
                     workspace.Run(network.Graph, origin, Assumptions.MaxJourneySeconds);
                 }
 
-                if (!SuitabilityTransit.Inspect(network, workspace, origin, destination,
+                if (!TransitRouting.Inspect(network, workspace, origin, destination,
                         -1, out int boardings, out bool _, out float travelTime))
                 {
                     continue;
@@ -204,7 +204,7 @@ namespace StationSuitabilityOverlay
             }
 
             Array.Copy(servedSeconds, medianScratch, servedPairs);
-            float ceiling = SuitabilityTransit.ServedCeiling(
+            float ceiling = TransitRouting.ServedCeiling(
                 medianScratch, servedPairs, Assumptions.ServedCeilingMultiple,
                 Assumptions.MaxJourneySeconds, Assumptions.MinPairsForServedMedian, out float medianSeconds);
 

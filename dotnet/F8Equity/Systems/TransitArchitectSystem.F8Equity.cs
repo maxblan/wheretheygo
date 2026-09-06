@@ -4,13 +4,13 @@ using System.Globalization;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The equity measure (register A1.8/A1.9) on the game side: every journey of the
     // last demand refresh with its ends snapped to the pedestrian network, the walk
     // from each node to the nearest served stop, and the coverage share the panel
-    // and the set objective read. The arithmetic is SuitabilityEquity.
-    public sealed partial class StationSuitabilityOverlaySystem
+    // and the set objective read. The arithmetic is Equity.
+    public sealed partial class TransitArchitectSystem
     {
         private int[] m_JourneyOriginNode = Array.Empty<int>();
 
@@ -68,7 +68,7 @@ namespace StationSuitabilityOverlay
             }
 
             SnapStops(m_TransitStops, access.Index, inputs.AccessMs, out int[] stopNodes, out int[] stopAccess);
-            m_ServedWalkMs = SuitabilityEquity.ServedWalkMs(inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length, m_EquityHorizonMs);
+            m_ServedWalkMs = Equity.ServedWalkMs(inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length, m_EquityHorizonMs);
             RefreshCoverage(settings, "measured");
         }
 
@@ -89,11 +89,11 @@ namespace StationSuitabilityOverlay
                 return;
             }
 
-            m_Coverage = SuitabilityEquity.Coverage(
+            m_Coverage = Equity.Coverage(
                 m_ServedWalkMs, m_EquityHorizonMs,
                 m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
                 m_JourneyWeight, m_Journeys.Count);
-            s_Equity = SuitabilityPanelPayload.EquityRow(m_Coverage.Share, settings.EquityWalkMinutes, settings.EquityFloorPercent, m_Coverage.GiniWalk);
+            s_Equity = PanelPayload.EquityRow(m_Coverage.Share, settings.EquityWalkMinutes, settings.EquityFloorPercent, m_Coverage.GiniWalk);
             DeferredLog.Info(
                 $"Equity ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
                 $"{settings.EquityWalkMinutes.ToString(CultureInfo.InvariantCulture)} min (floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} %), " +

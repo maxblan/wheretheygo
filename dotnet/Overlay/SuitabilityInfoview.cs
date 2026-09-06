@@ -13,7 +13,7 @@ using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 using System.Diagnostics.CodeAnalysis;
 
-namespace StationSuitabilityOverlay
+namespace TransitArchitect
 {
     // The heat map's presentation in the game: the infoview and infomode prefabs, the
     // repair of the game's infoview buffer, the undo of vanilla auto-activation, the
@@ -199,9 +199,9 @@ namespace StationSuitabilityOverlay
                 infomodeInfos.Add(info);
             }
 
-            m_InfoviewPrefab = PrefabBase.Create<InfoviewPrefab>("StationSuitabilityOverlay");
+            m_InfoviewPrefab = PrefabBase.Create<InfoviewPrefab>("TransitArchitect");
             SetField(m_InfoviewPrefab, "m_Infomodes", infomodeInfos.ToArray());
-            SetField(m_InfoviewPrefab, "m_IconPath", "coui://stationsuitabilityoverlay/StationSuitability.svg");
+            SetField(m_InfoviewPrefab, "m_IconPath", "coui://transitarchitect/TransitArchitect.svg");
             SetField(m_InfoviewPrefab, "m_Priority", 900);
             SetField(m_InfoviewPrefab, "m_Group", 0);
             SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
@@ -237,9 +237,9 @@ namespace StationSuitabilityOverlay
             SetField(prefab, "m_High", high);
             SetField(prefab, "m_Steps", layer == SuitabilityLayer.Sites ? 4 : 16);
             SetField(prefab, "m_LegendType", GradientLegendType.Gradient);
-            SetField(prefab, "m_LowLabelId", "StationSuitabilityOverlay.Legend.Low");
-            SetField(prefab, "m_MediumLabelId", "StationSuitabilityOverlay.Legend.Medium");
-            SetField(prefab, "m_HighLabelId", "StationSuitabilityOverlay.Legend.High");
+            SetField(prefab, "m_LowLabelId", "TransitArchitect.Legend.Low");
+            SetField(prefab, "m_MediumLabelId", "TransitArchitect.Legend.Medium");
+            SetField(prefab, "m_HighLabelId", "TransitArchitect.Legend.High");
             return prefab;
         }
 
