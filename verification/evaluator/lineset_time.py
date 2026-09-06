@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import os
 from fractions import Fraction
 
 from common.canonical import bits_to_f32, bits_to_fraction
@@ -111,34 +112,75 @@ def walk_only(p: dict, i: int) -> Fraction:
     return Fraction(f32.div(d, f32.r(transit.WALK_SPEED)))
 
 
+# The per-pair work is independent, so the check phase runs it on a process pool
+# (Linux fork; the network is rebuilt once per worker from the instance). Inside an
+# enumeration worker — a daemonic process that may not spawn children — it runs
+# serially, as before. Same arithmetic, same fold order, same bits.
+_EVAL_STATE: dict = {}
+
+
+def _init_eval(p: dict, chosen: list[int], before) -> None:
+    net, zone_start = network_with_zones(p, chosen)
+    _EVAL_STATE.update(p=p, chosen=chosen, before=before, net=net, zone_start=zone_start)
+
+
+def _eval_pair(i: int):
+    st = _EVAL_STATE
+    return _pair_result(st["p"], st["chosen"], st["before"], st["net"], st["zone_start"], i)
+
+
+def _pair_result(p, chosen, before, net, zone_start, i):
+    origin = zone_start + 2 * i; dest = origin + 1
+    dist = transit.dijkstra(net, origin, Fraction(p["max_travel"]), expand_below=zone_start)
+    wo = walk_only(p, i)
+    t = dist[dest]
+    a = wo if t is None or t >= wo else t
+    saved = Fraction(0)
+    if before is not None and before[i] > a:
+        saved = Fraction(p["w"][i]) * (before[i] - a)
+    tie = False
+    used: list[int] = []
+    if t is not None and t < wo:
+        # Which candidate lines the journey boards, over every shortest itinerary.
+        used_sets = itinerary_lines(net, dist, origin, dest, zone_start)
+        tie = len(used_sets) > 1
+        used = sorted(used_sets[0])
+    return a, saved, tie, used
+
+
+def _workers() -> int:
+    import multiprocessing
+    if multiprocessing.current_process().daemon:
+        return 1
+    return max(1, min(16, (os.cpu_count() or 2) - 1))
+
+
 def evaluate(p: dict, chosen: list[int], before: list[Fraction] | None) -> dict:
     """Exact after-times, exact time saved (Σ w·(before−after) as rationals), riders per
     candidate from the retained shortest itinerary, and tie flags."""
-    net, zone_start = network_with_zones(p, chosen)
     line_offset = len(p["base_lines"])
+    workers = _workers()
+    if workers > 1 and p["pairs"] >= 2000:
+        from multiprocessing import Pool
+        with Pool(workers, initializer=_init_eval, initargs=(p, chosen, before)) as pool:
+            results = pool.map(_eval_pair, range(p["pairs"]), chunksize=max(1, p["pairs"] // (workers * 8)))
+    else:
+        net, zone_start = network_with_zones(p, chosen)
+        results = [_pair_result(p, chosen, before, net, zone_start, i) for i in range(p["pairs"])]
     after: list[Fraction] = []
     saved = Fraction(0)
     riders = [Fraction(0)] * len(p["candidates"])
     tie_affected = False
     for i in range(p["pairs"]):
-        origin = zone_start + 2 * i; dest = origin + 1
-        dist = transit.dijkstra(net, origin, Fraction(p["max_travel"]), expand_below=zone_start)
-        wo = walk_only(p, i)
-        t = dist[dest]
-        a = wo if t is None or t >= wo else t
+        a, s, tie, used = results[i]
         after.append(a)
-        if before is not None and before[i] > a:
-            saved += Fraction(p["w"][i]) * (before[i] - a)
-        if t is not None and t < wo:
-            # Which candidate lines the journey boards, over every shortest itinerary.
-            used_sets = itinerary_lines(net, dist, origin, dest, zone_start)
-            if len(used_sets) > 1:
-                tie_affected = True
-            for l in used_sets[0]:
-                # Lines after the base ones sit in `chosen` order (mod: Riders[chosen[k]]).
-                k = l - line_offset
-                if 0 <= k < len(chosen):
-                    riders[chosen[k]] += Fraction(p["w"][i])
+        saved += s
+        tie_affected = tie_affected or tie
+        for l in used:
+            # Lines after the base ones sit in `chosen` order (mod: Riders[chosen[k]]).
+            k = l - line_offset
+            if 0 <= k < len(chosen):
+                riders[chosen[k]] += Fraction(p["w"][i])
     return {"after": after, "saved": saved, "riders": riders, "tie_affected": tie_affected}
 
 
