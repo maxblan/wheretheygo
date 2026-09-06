@@ -213,3 +213,39 @@ position has no public API and needs the orbit controller's `pivot` or a throwaw
 - Whether a runtime-created `NotificationIconPrefab` with a fresh `Texture2D` actually renders.
 - Whether `::after { content: … }` works in cohtml (would give the A1 column a header).
 - CSS load order of our file relative to `index.css`.
+
+## What was built (2026-09-06)
+
+The reshuffle is in. Where it differs from the plan above, the plan was wrong and this section is
+what the code does.
+
+| Surface | Built as | File |
+|---|---|---|
+| Every knob | Options page, two tabs (`General`, `Advanced`) | `dotnet/Setting.cs` |
+| Line verdicts | An extra cell on each vanilla Transport Overview row, `extend(TransportLineItem)` (approach A1) | `TransitArchitect.mjs` `extendOverview` |
+| Suggestions | A section under the vanilla list, `extend(TransportationOverviewPage)` | `TransitArchitect.mjs` `SuggestionsSection` |
+| Infoview legend | The game's own, from `GradientInfomodeBasePrefab` | `Overlay/SuitabilityInfomodePrefab.cs` |
+| Buildings by transit access | `Game.Objects.Color` written between `ObjectColorSystem` and `BatchDataSystem` | `F8Equity/Systems/BuildingAccessColorSystem.cs` |
+| Ranked sites | Rings in the overlay buffer, size and opacity by rank | `Presentation/RouteRenderer.cs` `DrawSiteMarkers` |
+| One-click actions | `PoliciesUISystem.SetPolicy` for the fleet and the schedule, `ToolSystem.selected` plus the orbit camera to focus | `F9LineHealth/Systems/TransitArchitectSystem.F9Actions.cs` |
+| Rebuild markers | `IconCommandSystem`, reusing a shipped icon prefab by name | `…F9Notifications.cs` |
+| The mod's own window | Two city-wide figures and the heat-map switch, nothing else | `TransitArchitect.mjs` `Panel` |
+
+Four planned things did **not** survive contact:
+
+- **Hiding our infoview row is gone, not replaced.** The `MutationObserver` hack was deleted rather
+  than rewritten as `extend(InfoviewMenu)`: with a suitability map and a transit-access view to
+  offer, a row in the game's own infoview menu is where a player expects to find them.
+- **The mod's own gradient legend is gone.** The infomode prefabs make the game draw its own, and
+  two legends on one screen was the thing the hack was hiding from in the first place.
+- **The site markers are not clickable.** The overlay buffer draws geometry only, and a click would
+  need a tool of its own; rank is carried by size and opacity instead of a number.
+- **The panel's improvement plan moved into the row that asked for it.** Clicking a verdict that
+  means building work sends `improveLine` and `focusLine`; the worked-out plan then replaces that
+  row's own hint, so the answer appears where the question was asked.
+
+Two of the open questions above are answered: a mod-written `Game.Objects.Color` does survive, as
+long as the system writing it is ordered after `ObjectColorSystem` and before `BatchDataSystem`; and
+a runtime-created notification icon prefab is the wrong path, because
+`NotificationIconRenderSystem` packs every registered icon into one `Texture2DArray` and takes its
+format from the last prefab it walks.

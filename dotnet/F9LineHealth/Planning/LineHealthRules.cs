@@ -42,6 +42,8 @@ namespace TransitArchitect
         public int m_Index;
         // Stable per-line identity, unaffected by the list being re-sorted worst-first.
         public int m_Id;
+        // The line entity's ECS index, for joining onto the vanilla overview's rows.
+        public int m_EntityIndex;
         // The game's own display name for the line.
         public string m_Name;
         public ModePreset m_Mode;
@@ -407,6 +409,7 @@ namespace TransitArchitect
             {
                 m_Index = index,
                 m_Id = line.m_Id,
+                m_EntityIndex = line.m_EntityIndex,
                 m_Name = line.m_Name,
                 m_Mode = line.m_Mode,
                 m_Vehicles = line.m_Vehicles,

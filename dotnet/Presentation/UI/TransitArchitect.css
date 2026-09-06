@@ -32,14 +32,6 @@
     width: 180rem;
 }
 
-.ta-labelrow {
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 3rem;
-}
-
 .ta-header {
     display: block;
     width: 100%;
@@ -58,16 +50,6 @@
     background-color: rgba(60, 100, 140, 0.85);
 }
 
-.ta-section {
-    margin-top: 8rem;
-    margin-bottom: 4rem;
-    padding-bottom: 2rem;
-    border-bottom: 1rem solid rgba(140, 170, 200, 0.25);
-    color: #9fb6cc;
-    font-size: 11rem;
-    text-transform: uppercase;
-}
-
 .ta-row {
     margin-bottom: 8rem;
 }
@@ -79,101 +61,9 @@
 }
 
 /* Button strip standing in for a dropdown. */
-.ta-choice {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-}
-
-.ta-chip {
-    margin-right: 3rem;
-    margin-bottom: 3rem;
-    padding: 3rem 7rem;
-    background-color: rgba(45, 60, 78, 0.9);
-    border: 1rem solid rgba(120, 150, 180, 0.3);
-    border-radius: 3rem;
-    color: #c8d6e4;
-    font-size: 11rem;
-    cursor: pointer;
-}
-
-.ta-chip:hover {
-    background-color: rgba(70, 95, 125, 0.95);
-}
-
-.ta-chip-on {
-    background-color: rgba(70, 140, 210, 0.95);
-    border-color: rgba(160, 210, 255, 0.8);
-    color: #ffffff;
-}
-
 /* Stepper standing in for a range input. */
-.ta-stepper {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-}
-
-.ta-step {
-    width: 22rem;
-    height: 20rem;
-    background-color: rgba(45, 60, 78, 0.9);
-    border: 1rem solid rgba(120, 150, 180, 0.3);
-    border-radius: 3rem;
-    color: #dfe8f2;
-    font-size: 14rem;
-    text-align: center;
-    cursor: pointer;
-}
-
-.ta-step:hover {
-    background-color: rgba(70, 95, 125, 0.95);
-}
-
-.ta-bar {
-    flex-grow: 1;
-    margin-left: 6rem;
-    margin-right: 6rem;
-    height: 6rem;
-    background-color: rgba(30, 42, 56, 0.9);
-    border-radius: 2rem;
-    overflow: hidden;
-}
-
-.ta-bar-fill {
-    height: 6rem;
-    background-color: rgba(90, 165, 235, 0.95);
-}
-
-.ta-value {
-    color: #ffffff;
-    font-size: 11rem;
-}
-
-.ta-route {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    width: 100%;
-    margin-bottom: 3rem;
-    padding: 3rem 4rem;
-    border: 0;
-    border-radius: 3rem;
-    background-color: transparent;
-    cursor: pointer;
-    text-align: left;
-}
-
-.ta-route:hover {
-    background-color: rgba(120, 170, 220, 0.16);
-}
-
 /* The map is narrowed to this one. Stated on the row as well as on the map, because
    the map going quiet is otherwise unexplained. */
-.ta-route-on {
-    background-color: rgba(120, 170, 220, 0.30);
-}
-
 .ta-swatch {
     width: 14rem;
     height: 6rem;
@@ -181,37 +71,7 @@
     border-radius: 2rem;
 }
 
-.ta-route-text {
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
-}
-
-.ta-route-head {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-}
-
 /* What the list is ordered by, under the row it belongs to. */
-.ta-route-reach {
-    color: #7f97ad;
-    font-size: 9rem;
-}
-
-.ta-route-mode {
-    width: 52rem;
-    color: #eaf2fb;
-    font-size: 11rem;
-}
-
-.ta-route-meta {
-    flex-grow: 1;
-    color: #9fb6cc;
-    font-size: 10rem;
-    text-align: right;
-}
-
 .ta-toggle {
     width: 60rem;
     padding: 3rem 0;
@@ -227,48 +87,6 @@
     background-color: rgba(70, 160, 110, 0.95);
     border-color: rgba(150, 230, 190, 0.8);
     color: #ffffff;
-}
-
-.ta-preset {
-    display: block;
-    width: 100%;
-    padding: 4rem;
-    margin-top: 2rem;
-    background-color: rgba(45, 60, 78, 0.9);
-    border: 1rem solid rgba(120, 150, 180, 0.3);
-    border-radius: 3rem;
-    color: #c8d6e4;
-    font-size: 11rem;
-    cursor: pointer;
-}
-
-.ta-preset:hover {
-    background-color: rgba(70, 95, 125, 0.95);
-}
-
-
-/* The mod's own legend, replacing the vanilla infoview panel on the left. Stops
-   match LowColor / MediumColor / HighColor in SuitabilityInfomodePrefab.cs. */
-.ta-legend {
-    height: 8rem;
-    margin-bottom: 2rem;
-    border-radius: 2rem;
-    background-image: linear-gradient(to right,
-        rgb(31, 117, 46),
-        rgb(240, 214, 64),
-        rgb(217, 56, 31));
-}
-
-.ta-legend-end {
-    color: #9fb6cc;
-    font-size: 10rem;
-}
-
-/* Hiding the vanilla legend while our panel is up, so the mod has one home rather
-   than a panel on each side of the screen. */
-.ta-hide-vanilla-infoview .active-infoview-panel_HkP,
-.ta-hide-vanilla-infoview [class*="active-infoview-panel"] {
-    display: none;
 }
 
 /* Toolbar toggle, sitting alongside the vanilla top-left buttons.
@@ -333,29 +151,6 @@
    activates a view's infomodes while ToolSystem.activeInfoview is non-null, and that
    getter returns null for any prefab flagged invalid or hidden. */
 
-.ta-health {
-    margin-bottom: 5rem;
-}
-
-.ta-health-head {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-}
-
-.ta-dot {
-    width: 8rem;
-    height: 8rem;
-    margin-right: 6rem;
-    border-radius: 50%;
-}
-
-.ta-health-note {
-    margin-left: 14rem;
-    color: #9fb6cc;
-    font-size: 10rem;
-}
-
 /* How much of the rolling window has actually been observed. Sits above the controls
    because it qualifies every number below it. No `gap` — cohtml does not support it. */
 .ta-coverage {
@@ -393,16 +188,6 @@
     background-color: #4a9de0;
 }
 
-/* What the verdict rests on: a day's mean or a single reading. Quieter than the
-   verdict itself — it qualifies the number above, it is not a finding of its own. */
-.ta-health-basis {
-    margin-left: 14rem;
-    color: #708698;
-    font-size: 9rem;
-}
-
-/* Two columns: the controls on the left, line health scrolling on the right. With
-   twenty lines a single column pushed everything off the bottom of the screen. */
 .ta-body {
     display: flex;
     flex-direction: row;
@@ -426,32 +211,6 @@
     margin-right: 0;
 }
 
-/* The right column is split in half: what to build on top, how what you have is
-   doing below. A fixed half each rather than sized to content, so the divider does
-   not jump every time the suggestion count changes. min-height 0 is what lets a flex
-   child be SHORTER than its content, which is the prerequisite for the scroll box
-   inside it to scroll instead of growing the panel. */
-.ta-half {
-    flex: 1 1 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-/* The controls column sets the panel's height; this one stretches to match it and
-   the list takes whatever is left below its heading, so the full height is used
-   instead of stopping at a fixed 420rem with dead space underneath. min-height 0 is
-   what actually lets a flex child scroll rather than growing the panel. */
-.ta-scroll {
-    /* basis 0, not auto: with auto the box starts at its content height and grow has
-       nothing left to distribute. */
-    flex: 1 1 0;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: 4rem;
-}
-
 .ta-improve {
     margin-top: 2rem;
     margin-left: 14rem;
@@ -468,34 +227,135 @@
     background-color: rgba(70, 110, 160, 0.95);
 }
 
-.ta-plan {
-    margin-top: 6rem;
-    padding: 5rem;
-    background-color: rgba(30, 50, 70, 0.85);
-    border-radius: 3rem;
-    color: #e6f0fa;
-    font-size: 10rem;
+
+/* ---------------------------------------------------------------------------
+   Inside the game's Transportation Overview.
+
+   The rule for everything below: borrow the vanilla measurements, never the vanilla
+   class names. A game class is hashed per build (active-infoview-panel_HkP), so a
+   selector naming one survives exactly until the next patch. The layout classes that
+   ARE borrowed come through the page's own module.scss at runtime, read in
+   extendOverview, which is why nothing here sets a column width. */
+
+/* One vanilla row plus our cell. The vanilla row keeps every pixel it had — it is
+   the flex child that grows — and the cell takes only what it needs at the end. */
+.ta-overview-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
 }
 
-.ta-plan-title {
-    margin-bottom: 2rem;
-    color: #ffffff;
-    font-size: 10rem;
+.ta-overview-vanilla {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-.ta-plan-hint {
-    margin-top: 3rem;
-    color: #9fb6cc;
-    font-size: 9rem;
+.ta-overview-page {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
-/* Line names are longer and more variable than a mode word, so they get room and
-   ellipsis rather than wrapping the row. */
-.ta-line-name {
-    flex-grow: 1;
-    overflow: hidden;
+/* The verdict cell. A coloured dot carries the severity at a glance, the short text
+   says what to do, and the sentence underneath says why. Clickable throughout,
+   because the whole cell is the button. */
+.ta-cell {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    cursor: pointer;
+    padding-left: 4rem;
+    padding-right: 4rem;
+}
+
+.ta-cell:hover {
+    background-color: rgba(120, 170, 220, 0.18);
+}
+
+.ta-cell-dot {
+    width: 8rem;
+    height: 8rem;
+    border-radius: 4rem;
+    margin-right: 5rem;
+    flex: 0 0 auto;
+}
+
+.ta-cell-text {
+    color: #dceaf8;
+    font-size: 12rem;
     white-space: nowrap;
+}
+
+/* The column has no header — the overview's header row is a private const inside the
+   game's page module — so the explanation rides along in the row itself, quietly. */
+.ta-cell-hint {
+    color: #9fb6cc;
+    font-size: 10rem;
+    margin-left: 6rem;
+    overflow: hidden;
     text-overflow: ellipsis;
-    color: #eaf2fb;
-    font-size: 11rem;
+    white-space: nowrap;
+    max-width: 240rem;
+}
+
+/* The worked-out plan is a sentence, not a label, so the row it belongs to gives it
+   room and lets it wrap instead of cutting it off at an ellipsis. */
+.ta-cell-plan {
+    white-space: normal;
+    max-width: 420rem;
+    color: #dceaf8;
+}
+
+/* Suggestions, under the vanilla list. They are not game entities, so they cannot be
+   rows of it; a section below it in the same panel is the honest place. */
+.ta-suggestions {
+    display: flex;
+    flex-direction: column;
+    padding: 6rem 10rem 10rem 10rem;
+    border-top: 1rem solid rgba(120, 170, 220, 0.25);
+}
+
+.ta-suggestions-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 4rem;
+}
+
+.ta-suggestions-title {
+    color: #ffffff;
+    font-size: 13rem;
+    text-transform: uppercase;
+}
+
+.ta-suggestion {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 3rem 0;
+    color: #dceaf8;
+    font-size: 12rem;
+    cursor: pointer;
+}
+
+.ta-suggestion:hover {
+    background-color: rgba(120, 170, 220, 0.18);
+}
+
+/* The suggestion the map is narrowed to. Rendered from the C# selection, never from
+   state of this file's own, so the list and the map cannot disagree. */
+.ta-suggestion-on {
+    background-color: rgba(120, 170, 220, 0.3);
+}
+
+/* Mode names are short but vary in length, so the name cell gets room and ellipsis
+   rather than wrapping the row. */
+.ta-suggestion-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ta-suggestion-reach {
+    color: #9fb6cc;
 }

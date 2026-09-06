@@ -14,7 +14,7 @@ namespace TransitArchitect
 
         private static string s_RouteList = string.Empty;
 
-        private static string s_LineHealthList = string.Empty;
+        private static string s_OverviewRows = string.Empty;
 
         private static int s_ImproveRequest = -1;
 
@@ -50,8 +50,8 @@ namespace TransitArchitect
 
         public static void RequestApplyRouteUpdate() => s_ApplyRouteUpdate = true;
 
-        // One line per existing route as "mode|verdict|detail", for the panel.
-        public static string LineHealthText => s_LineHealthList;
+        // One row per existing line for the vanilla transport overview.
+        public static string OverviewRowsText => s_OverviewRows;
 
         // "coveredHours|readings|windowHours" — how much observed history the verdicts
         // and the served-demand discount are actually resting on. The panel shows it
@@ -118,9 +118,9 @@ namespace TransitArchitect
         // between our infoview closing and the game unmounting its panel.
         public bool ForeignInfoviewActive => m_Infoview.ForeignActive;
 
-        private void UpdateLineHealthText()
+        private void UpdateOverviewRows()
         {
-            s_LineHealthList = PanelPayload.HealthRows(m_LineHealth);
+            s_OverviewRows = PanelPayload.OverviewRows(m_LineHealth);
         }
 
         private void UpdateRouteSummary(int tripCount, int assignedPairs)

@@ -122,8 +122,8 @@ namespace TransitArchitect
 
         // Registered layer prefabs, and the mapping from the infomode entity the
         // game activates back to the layer it draws.
-        private readonly Dictionary<SuitabilityLayer, SuitabilityInfomodePrefab> m_LayerPrefabs =
-            new Dictionary<SuitabilityLayer, SuitabilityInfomodePrefab>();
+        private readonly Dictionary<SuitabilityLayer, InfomodeBasePrefab> m_LayerPrefabs =
+            new Dictionary<SuitabilityLayer, InfomodeBasePrefab>();
 
         private readonly Dictionary<Entity, SuitabilityLayer> m_InfomodeLayers = new Dictionary<Entity, SuitabilityLayer>();
 
@@ -181,7 +181,7 @@ namespace TransitArchitect
             for (int i = 0; i < layers.Length; i++)
             {
                 SuitabilityLayer layer = layers[i];
-                SuitabilityInfomodePrefab prefab = CreateLayerPrefab(layer);
+                InfomodeBasePrefab prefab = CreateLayerPrefab(layer);
                 m_LayerPrefabs[layer] = prefab;
 
                 if (!m_PrefabSystem.AddPrefab(prefab))
@@ -225,9 +225,11 @@ namespace TransitArchitect
             DeferredLog.Info($"Registered {layers.Length} suitability infomodes and the infoview prefab.");
         }
 
-        private static SuitabilityInfomodePrefab CreateLayerPrefab(SuitabilityLayer layer)
+        private static InfomodeBasePrefab CreateLayerPrefab(SuitabilityLayer layer)
         {
-            var prefab = PrefabBase.Create<SuitabilityInfomodePrefab>(SuitabilityLayers.NameOf(layer));
+            InfomodeBasePrefab prefab = SuitabilityLayers.IsObjectLayer(layer)
+                ? PrefabBase.Create<AccessInfomodePrefab>(SuitabilityLayers.NameOf(layer))
+                : PrefabBase.Create<SuitabilityInfomodePrefab>(SuitabilityLayers.NameOf(layer));
             SuitabilityLayers.ColorsOf(layer, out Color low, out Color medium, out Color high);
 
             SetField(prefab, "m_Priority", InfomodePriority);
@@ -270,7 +272,7 @@ namespace TransitArchitect
             SuitabilityLayer[] layers = SuitabilityLayers.All;
             for (int i = 0; i < layers.Length; i++)
             {
-                if (!m_LayerPrefabs.TryGetValue(layers[i], out SuitabilityInfomodePrefab prefab) ||
+                if (!m_LayerPrefabs.TryGetValue(layers[i], out InfomodeBasePrefab prefab) ||
                     !m_PrefabSystem.TryGetEntity(prefab, out Entity entity))
                 {
                     if (!m_InfoviewLinkWaitLogged)
@@ -458,9 +460,20 @@ namespace TransitArchitect
         private readonly List<KeyValuePair<int, SuitabilityLayer>> m_ActiveChannels =
             new List<KeyValuePair<int, SuitabilityLayer>>();
 
+        // The colour-group index each active OBJECT layer landed in, or 0 when it is
+        // off. Read by BuildingAccessColorSystem, which writes it into Game.Objects.Color.
+        private readonly int[] m_ObjectLayerIndex = new int[SuitabilityLayers.Count];
+
+        public int ObjectLayerIndex(SuitabilityLayer layer)
+        {
+            int index = (int)layer;
+            return index >= 0 && index < m_ObjectLayerIndex.Length ? m_ObjectLayerIndex[index] : 0;
+        }
+
         public int ResolveActiveLayers(out long signature)
         {
             m_ActiveChannels.Clear();
+            System.Array.Clear(m_ObjectLayerIndex, 0, m_ObjectLayerIndex.Length);
             signature = 0;
 
             if (m_ActiveInfomodeQuery.IsEmptyIgnoreFilter)
@@ -478,6 +491,14 @@ namespace TransitArchitect
                 if (!m_InfomodeLayers.TryGetValue(entities[i], out SuitabilityLayer layer))
                 {
                     unlinked++;
+                    continue;
+                }
+
+                if (SuitabilityLayers.IsObjectLayer(layer))
+                {
+                    // Object layers colour buildings, not the terrain: their index
+                    // belongs to another colour group and is not a terrain channel.
+                    m_ObjectLayerIndex[(int)layer] = actives[i].m_Index;
                     continue;
                 }
 

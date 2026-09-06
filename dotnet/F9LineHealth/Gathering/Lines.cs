@@ -68,11 +68,13 @@ namespace TransitArchitect
             Game.UI.NameSystem nameSystem,
             List<ExistingLine> lines,
             List<float2Like> stopPositions,
-            Dictionary<Entity, int> stopIndices)
+            Dictionary<Entity, int> stopIndices,
+            Dictionary<int, Entity> lineEntities)
         {
             lines.Clear();
             stopPositions.Clear();
             stopIndices.Clear();
+            lineEntities.Clear();
             var ignored = new List<string>();
 
             ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
@@ -80,6 +82,7 @@ namespace TransitArchitect
                 var line = new ExistingLine
                 {
                     m_Id = IdentityOf(lineEntity),
+                    m_EntityIndex = lineEntity.Index,
                     m_Mode = ModeOf(lineData.m_TransportType),
                     m_Name = ResolveName(entityManager, nameSystem, prefabSystem, lineEntity, lineData.m_TransportType),
                     m_Schedule = ScheduleOf(entityManager, lineEntity),
@@ -124,6 +127,7 @@ namespace TransitArchitect
                 line.m_NotEnoughVehicles = (flags & TransportLineFlags.NotEnoughVehicles) != 0;
 
                 lines.Add(line);
+                lineEntities[line.m_Id] = lineEntity;
             });
 
             if (ignored.Count > 0)

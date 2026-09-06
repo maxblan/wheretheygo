@@ -138,6 +138,40 @@ namespace TransitArchitect
         // configuration singleton names the policy prefab; its PolicySliderData carries the
         // slider range and its RouteModifierData buffer the VehicleInterval modifier's mode
         // and range (RouteModifierInitializeSystem lerps the one onto the other).
+        // The three policy prefab entities the line panel drives, so a recommendation
+        // can be carried out through the game's own controls (F9Actions).
+        public static void ReadPolicyEntities(PrefabSystem prefabSystem, EntityQuery configQuery, out Entity vehicleCount, out Entity dayRoute, out Entity nightRoute)
+        {
+            vehicleCount = Entity.Null;
+            dayRoute = Entity.Null;
+            nightRoute = Entity.Null;
+            if (configQuery.IsEmptyIgnoreFilter)
+            {
+                return;
+            }
+
+            UITransportConfigurationPrefab configuration = prefabSystem.GetSingletonPrefab<UITransportConfigurationPrefab>(configQuery);
+            if (configuration is null)
+            {
+                return;
+            }
+
+            if (configuration.m_VehicleCountPolicy is not null)
+            {
+                vehicleCount = prefabSystem.GetEntity(configuration.m_VehicleCountPolicy);
+            }
+
+            if (configuration.m_DayRoutePolicy is not null)
+            {
+                dayRoute = prefabSystem.GetEntity(configuration.m_DayRoutePolicy);
+            }
+
+            if (configuration.m_NightRoutePolicy is not null)
+            {
+                nightRoute = prefabSystem.GetEntity(configuration.m_NightRoutePolicy);
+            }
+        }
+
         public static VehicleCountPolicy ReadVehicleCountPolicy(EntityManager entityManager, PrefabSystem prefabSystem, EntityQuery configQuery)
         {
             var policy = new VehicleCountPolicy();

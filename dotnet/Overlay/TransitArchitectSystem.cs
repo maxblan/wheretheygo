@@ -42,6 +42,16 @@ namespace TransitArchitect
 
         private ToolSystem m_ToolSystem;
 
+        // Carrying out a recommendation goes through the game's own systems: the policy
+        // system applies the vehicle-count and schedule policies, the camera system
+        // follows a line the player asked to see (F9Actions).
+        private Game.UI.InGame.PoliciesUISystem m_PoliciesUISystem;
+
+        private Game.Rendering.CameraUpdateSystem? m_CameraUpdateSystem;
+
+        // Map markers on the lines that need rebuilding (F9Notifications).
+        private Game.Notifications.IconCommandSystem m_IconCommandSystem;
+
         private Game.UI.NameSystem m_NameSystem;
 
         private OverlayInfomodeSystem m_OverlayInfomodeSystem;
@@ -210,6 +220,9 @@ namespace TransitArchitect
             m_ZoneSystem = World.GetOrCreateSystemManaged<Game.Prefabs.ZoneSystem>();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             m_ToolSystem = World.GetOrCreateSystemManaged<ToolSystem>();
+            m_PoliciesUISystem = World.GetOrCreateSystemManaged<Game.UI.InGame.PoliciesUISystem>();
+            m_CameraUpdateSystem = World.GetExistingSystemManaged<Game.Rendering.CameraUpdateSystem>();
+            m_IconCommandSystem = World.GetOrCreateSystemManaged<Game.Notifications.IconCommandSystem>();
             m_TimeSystem = World.GetOrCreateSystemManaged<TimeSystem>();
             m_NameSystem = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             m_OverlayInfomodeSystem = World.GetOrCreateSystemManaged<OverlayInfomodeSystem>();
@@ -338,6 +351,7 @@ namespace TransitArchitect
                 ComponentType.ReadOnly<SuitabilityInfomodeData>(),
                 ComponentType.ReadOnly<InfomodeActive>());
 
+            CreateNotificationQuery();
             m_PlaceableInfoviewQuery = GetEntityQuery(ComponentType.ReadOnly<PlaceableInfoviewItem>());
             m_PlaceableInfoviewChangedQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -391,7 +405,6 @@ namespace TransitArchitect
             // refresh landed.
             s_RouteSummary = "No route suggestions yet.";
             s_RouteList = string.Empty;
-            s_LineHealthList = string.Empty;
             s_DataCoverage = string.Empty;
             s_Equity = string.Empty;
             s_ImprovePlan = string.Empty;
@@ -431,6 +444,7 @@ namespace TransitArchitect
             if (!m_RoutesPending)
             {
                 HandleImprovementRequest();
+                HandleLineActionRequests();
                 HandleCalibrationRequests(settings);
                 FinishComputeIfReady();
             }

@@ -128,7 +128,7 @@ namespace TransitArchitect
 
             m_LastLineRefreshFrame = frame;
             Lines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
-                m_ExistingLines, m_TransitStops, m_StopIndices);
+                m_ExistingLines, m_TransitStops, m_StopIndices, m_LineEntities);
             for (int i = 0; i < m_ExistingLines.Count; i++)
             {
                 ExistingLine line = m_ExistingLines[i];
@@ -145,9 +145,10 @@ namespace TransitArchitect
                 settings.UtilisationFloorPercent / 100f, Assumptions.MaxPlannedUtilisation, Assumptions.TargetLoad);
             m_HealthReference = LineHealthRules.JudgeAll(problem, m_LineHealth);
             m_HealthProblem = problem;
+            RefreshLineNotifications();
             LogLineHealth(frame);
             UpdateDataCoverage();
-            UpdateLineHealthText();
+            UpdateOverviewRows();
         }
 
         private void LogLineHealth(uint frame)

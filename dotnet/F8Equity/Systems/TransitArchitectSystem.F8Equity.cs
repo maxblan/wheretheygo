@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using Unity.Mathematics;
 using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
@@ -29,6 +30,29 @@ namespace TransitArchitect
         private int m_EquityHorizonMs;
 
         private IntDijkstra? m_EquityDijkstra;
+
+        // How far each 32 m tile is from a served stop, as 0 (at a stop) to 255 (at or
+        // beyond the walking horizon), and the grid it is laid out on. Rebuilt with the
+        // served-walk field; BuildingAccessColorSystem samples it to colour buildings.
+        private byte[]? m_AccessByTile;
+
+        private int2 m_AccessFieldGrid;
+
+        private float2 m_AccessFieldWorldMin;
+
+        private int m_AccessFieldVersion;
+
+        internal byte[]? AccessField => m_AccessByTile;
+
+        internal int AccessFieldVersion => m_AccessFieldVersion;
+
+        internal int2 AccessFieldGrid => m_AccessFieldGrid;
+
+        internal float2 AccessFieldWorldMin => m_AccessFieldWorldMin;
+
+        // The colour-group index the transit-access infomode is active in, 0 when the
+        // player has it switched off.
+        internal int TransitAccessInfomodeIndex => m_Infoview.ObjectLayerIndex(SuitabilityLayer.TransitAccess);
 
         // Snaps every journey end to the pedestrian network once per demand refresh,
         // measures how many journeys the served stops reach at both ends within the
@@ -69,7 +93,54 @@ namespace TransitArchitect
 
             SnapStops(m_TransitStops, access.Index, inputs.AccessMs, out int[] stopNodes, out int[] stopAccess);
             m_ServedWalkMs = Equity.ServedWalkMs(inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length, m_EquityHorizonMs);
+            BuildAccessField(access);
             RefreshCoverage(settings, "measured");
+        }
+
+        // The served-walk field rasterised onto the heat map's own tile grid, reusing
+        // the tile-to-node snap the access pass already made (WalkAccessOutput.TileNode
+        // / TileWalkMs). A tile off the network, or one whose nearest stop is beyond the
+        // horizon, is 255 — the far end of the gradient rather than "no data", because
+        // "no service within ten minutes" is exactly what the player wants to see.
+        private void BuildAccessField(WalkAccessOutput access)
+        {
+            int[]? served = m_ServedWalkMs;
+            if (served is null || m_EquityHorizonMs <= 0 || access.TileNode.Length == 0)
+            {
+                m_AccessByTile = null;
+                return;
+            }
+
+            int count = access.TileNode.Length;
+            if (m_AccessByTile is null || m_AccessByTile.Length != count)
+            {
+                m_AccessByTile = new byte[count];
+            }
+
+            byte[] field = m_AccessByTile;
+            int reached = 0;
+            for (int i = 0; i < count; i++)
+            {
+                int node = access.TileNode[i];
+                long walk = node >= 0 && node < served.Length && served[node] != Equity.NotServed
+                    ? (long)served[node] + access.TileWalkMs[i]
+                    : m_EquityHorizonMs;
+                if (walk >= m_EquityHorizonMs)
+                {
+                    field[i] = 255;
+                    continue;
+                }
+
+                reached++;
+                field[i] = (byte)(walk * 255L / m_EquityHorizonMs);
+            }
+
+            m_AccessFieldGrid = m_PlayableGridAtCompute;
+            m_AccessFieldWorldMin = m_ScoreWorldMin;
+            m_AccessFieldVersion++;
+            DeferredLog.Info(
+                $"Transit access field: {(reached).ToString(CultureInfo.InvariantCulture)} of {(count).ToString(CultureInfo.InvariantCulture)} tiles within " +
+                $"{(m_EquityHorizonMs / 60_000).ToString(CultureInfo.InvariantCulture)} min of a served stop (grid {(m_AccessFieldGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_AccessFieldGrid.y).ToString(CultureInfo.InvariantCulture)}, version {(m_AccessFieldVersion).ToString(CultureInfo.InvariantCulture)})");
         }
 
         private static void SnapStops(List<float2Like> stops, WalkNodeIndex index, int accessMs, out int[] nodes, out int[] access)

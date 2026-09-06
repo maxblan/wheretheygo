@@ -172,6 +172,7 @@ namespace TransitArchitect.Tests
             var health = new LineHealth
             {
                 m_Id = 77,
+                m_EntityIndex = 512,
                 m_Name = "Line 3",
                 m_Mode = ModePreset.Tram,
                 m_Verdict = LineVerdict.Healthy,
@@ -197,19 +198,25 @@ namespace TransitArchitect.Tests
                 m_DayUtilisation = 0.3f,
                 m_NightUtilisation = 0.1f,
             };
-            string[] healthFields = PanelPayload.HealthRows(new List<LineHealth> { health }).Split('|');
-            AssertTrue(healthFields.Length == 25, $"the health row has twenty-five fields, got {healthFields.Length.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(healthFields[16] == "23" && healthFields[17] == "Tram" && healthFields[18] == "5" && healthFields[19] == "1" && healthFields[20] == "13", "demand utilisation, plan mode, fleet and span");
-            AssertTrue(healthFields[21] == "96" && healthFields[22] == "812" && healthFields[23] == "30" && healthFields[24] == "10", "planning load, riders and the period utilisations come last");
+            // The row the vanilla transport overview joins on. Five fields, in this
+            // order: the entity index it is keyed by, the id every action is sent
+            // back with, the verdict token, its argument and the utilisation the
+            // verdict was reached on.
+            string[] overview = PanelPayload.OverviewRows(new List<LineHealth> { health }).Split('|');
+            AssertTrue(overview.Length == 5, $"the overview row has five fields, got {overview.Length.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(overview[0] == "512" && overview[1] == "77", "the entity index comes first and the id second");
+            AssertTrue(overview[2] == "Healthy" && overview[3].Length == 0, "a healthy line has a verdict and no argument");
+            AssertTrue(overview[4] == "23", "the utilisation is the plan's, as a whole percent");
+
             health.m_RidersPerDay = -1f;
-            health.m_FleetMax = int.MaxValue;
-            string[] noDemand = PanelPayload.HealthRows(new List<LineHealth> { health }).Split('|');
-            AssertTrue(noDemand[16] == "-" && noDemand[22] == "-" && noDemand[20] == "0", "no demand reads as a dash, an open span as 0");
-            AssertTrue(healthFields[0] == "77" && healthFields[1] == "Line 3" && healthFields[2] == "Healthy" && healthFields[4] == "46" && healthFields[5] == "4" && healthFields[6] == "9", "id, name, verdict, usage, vehicles, stops");
-            AssertTrue(healthFields[7] == "12" && healthFields[8] == "6" && healthFields[9] == "90" && healthFields[10] == "DayAndNight" && healthFields[11] == "Day", "evidence, peak, schedule and advice");
-            AssertTrue(healthFields[12] == "50" && healthFields[13] == "5" && healthFields[14] == "8" && healthFields[15] == "4", "the period usages and their sample counts come last");
-            health.m_Name = string.Empty;
-            AssertTrue(PanelPayload.HealthRows(new List<LineHealth> { health }).Split('|')[1] == "Tram", "an unnamed line shows its mode");
+            AssertTrue(PanelPayload.OverviewRows(new List<LineHealth> { health }).Split('|')[4] == "-",
+                "a line no route pass has measured reads as a dash rather than as 0%");
+
+            health.m_RidersPerDay = 812f;
+            health.m_Verdict = LineVerdict.FleetUp;
+            health.m_RecommendedFleet = 7;
+            string[] fleetUp = PanelPayload.OverviewRows(new List<LineHealth> { health }).Split('|');
+            AssertTrue(fleetUp[2] == "FleetUp" && fleetUp[3] == "3", "the argument is how many vehicles to add, not the target");
 
             AssertTrue(PanelPayload.DataCoverageRow(1.5f, 4, 24f, 12, 3.2f) == "1.5|4|24|12|3.2", "data coverage row");
             AssertTrue(PanelPayload.EquityRow(0.8f, 10, 80, 0.126) == "80.0|10|80|0.13", "equity row");

@@ -37,6 +37,10 @@ namespace TransitArchitect
         // slot when the list was last sorted. See Lines.IdentityOf for why
         // it is not simply the entity's index either.
         public int m_Id;
+        // The raw ECS index of the line entity. The vanilla transport overview keys its
+        // rows on it, so it is what a row of ours joins by; m_Id stays the identity the
+        // panel hands back, because an index alone is reused after a deletion.
+        public int m_EntityIndex;
         // The whole loop the vehicles drive (every segment of the route), and the calls
         // they make on it (a two-way line lists each place twice, once per direction).
         public float m_LengthMetres;

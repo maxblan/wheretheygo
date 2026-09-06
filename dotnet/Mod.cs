@@ -69,6 +69,13 @@ namespace TransitArchitect
             // frame late. Hence a second system in the right phase.
             updateSystem.UpdateAt<RouteRenderer>(SystemUpdatePhase.Rendering);
 
+            // Also Rendering, and deliberately so: it writes Game.Objects.Color between
+            // Game.Rendering.ObjectColorSystem (which writes it every frame an infoview
+            // is open) and Game.Rendering.BatchDataSystem (which reads it). The
+            // UpdateAfter/UpdateBefore attributes on the class place it there; the phase
+            // has to match or the attributes have nothing to order against.
+            updateSystem.UpdateAt<BuildingAccessColorSystem>(SystemUpdatePhase.Rendering);
+
             // Bindings for the in-game control panel. The panel's own code ships as
             // TransitArchitect.mjs beside the DLL, which the game loads by
             // matching the assembly name.

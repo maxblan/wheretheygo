@@ -18,11 +18,15 @@ namespace TransitArchitect
         Interchange = 7,
         CrossCoverage = 8,
         TravelDemand = 9,
+        // Not a terrain layer: this one colours BUILDINGS by how far their door is
+        // from a served stop (author's request 2026-09-06). It therefore lives in the
+        // object colour group, not the terrain group — see AccessInfomodePrefab.
+        TransitAccess = 10,
     }
 
     internal static class SuitabilityLayers
     {
-        public const int Count = 10;
+        public const int Count = 11;
 
         // The terrain override overlay is a single RGBA texture, so only four
         // layers can be drawn at once. ToolSystem.Activate does NOT enforce this —
@@ -39,7 +43,16 @@ namespace TransitArchitect
             new[]
             {
                 SuitabilityLayer.Score,
+                SuitabilityLayer.TransitAccess,
             };
+
+        // Layers that colour OBJECTS rather than the terrain. They take an index in
+        // the object colour group, so they never occupy one of the four terrain
+        // channels and must be filtered out of that bookkeeping.
+        public static bool IsObjectLayer(SuitabilityLayer layer)
+        {
+            return layer == SuitabilityLayer.TransitAccess;
+        }
 
         public static string NameOf(SuitabilityLayer layer)
         {
@@ -54,6 +67,7 @@ namespace TransitArchitect
                 case SuitabilityLayer.Interchange: return "TransitArchitectInterchange";
                 case SuitabilityLayer.CrossCoverage: return "TransitArchitectCrossCoverage";
                 case SuitabilityLayer.TravelDemand: return "TransitArchitectTravelDemand";
+                case SuitabilityLayer.TransitAccess: return "TransitArchitectTransitAccess";
                 default: return "TransitArchitect";
             }
         }
@@ -117,6 +131,15 @@ namespace TransitArchitect
                     medium = new Color(0.45f, 0.30f, 0.85f, 0.60f);
                     high = new Color(1f, 1f, 1f, 0.95f);
                     break;
+                case SuitabilityLayer.TransitAccess:
+                    // Walking time from a building to the nearest served stop, so the
+                    // ramp runs the other way round: green is a short walk. Object
+                    // colours are opaque — alpha here would make the building
+                    // translucent rather than lightly tinted.
+                    low = new Color(0.18f, 0.72f, 0.30f, 1f);
+                    medium = new Color(0.95f, 0.80f, 0.20f, 1f);
+                    high = new Color(0.85f, 0.20f, 0.15f, 1f);
+                    break;
                 default:
                     // The combined score keeps the original green/yellow/red ramp.
                     low = new Color(0.12f, 0.46f, 0.18f, 0.2f);
@@ -129,6 +152,27 @@ namespace TransitArchitect
 
     public struct SuitabilityInfomodeData : IComponentData
     {
+    }
+
+    // The object-coloured sibling of SuitabilityInfomodePrefab: identical except that
+    // it does NOT override GetColorGroup, so the game gives it an index in the object
+    // colour group (ToolSystem.Activate: colorGroup * 4 + count). BuildingAccessColorSystem
+    // writes that index into Game.Objects.Color, and the object shader reads the three
+    // gradient colours from the matching slot.
+    public sealed class AccessInfomodePrefab : GradientInfomodeBasePrefab
+    {
+        public override string infomodeTypeLocaleKey => SuitabilityInfomodePrefab.LocaleKey;
+
+        public override void GetPrefabComponents(System.Collections.Generic.HashSet<ComponentType> components)
+        {
+            if (components is null)
+            {
+                throw new System.ArgumentNullException(nameof(components));
+            }
+
+            base.GetPrefabComponents(components);
+            _ = components.Add(ComponentType.ReadWrite<SuitabilityInfomodeData>());
+        }
     }
 
     public sealed class SuitabilityInfomodePrefab : GradientInfomodeBasePrefab

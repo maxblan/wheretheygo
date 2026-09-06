@@ -1,57 +1,17 @@
-﻿using System;
-using Colossal.UI.Binding;
+﻿using Colossal.UI.Binding;
 using Game.UI;
 
 namespace TransitArchitect
 {
-    // Bindings for the in-game control panel.
+    // Bindings for what the mod shows in the game.
     //
-    // The panel exists because the mode, the route objective and the tuning values
-    // are things you want to change while looking at the map, and the Options page
-    // costs two clicks and covers the city. Values here write straight through to
-    // the same Setting object the Options page edits, so the two always agree.
+    // Since the 2026-09-06 rework this is a reporting channel, not a control surface:
+    // every knob lives on the Options page, and what is left here is what the game
+    // cannot show by itself — the verdict on each existing line, the suggestions, the
+    // two city-wide figures, and the four clicks that act on them.
     public sealed partial class PanelUISystem : UISystemBase
     {
         private const string Group = "transitArchitect";
-
-        // The panel's static shape: which modes and objectives exist, and the bounds
-        // the setters below clamp to. Sent rather than hand-copied into the .mjs,
-        // where both had drifted — the mode list had Metro and Tram at each other's
-        // enum values, so picking one selected the other.
-        private static readonly string s_Modes = JoinNames(TransitModes.All);
-        private static readonly string s_Objectives = JoinNames(TransitModes.AllGoals);
-        private static readonly string s_SliderBounds = BuildSliderBounds();
-
-        private static string JoinNames<T>(T[] values)
-        {
-            var names = new string[values.Length];
-            for (int i = 0; i < values.Length; i++)
-            {
-                names[i] = values[i]?.ToString() ?? string.Empty;
-            }
-
-            return string.Join("|", names);
-        }
-
-        // "key|min|max|step" per row, keyed by the same names the setters use.
-        private static string BuildSliderBounds()
-        {
-            return string.Join("\n", new[]
-            {
-                Bounds("catchment", Setting.kCatchmentMin, Setting.kCatchmentMax, Setting.kCatchmentStep),
-                Bounds("access", Setting.kAccessMin, Setting.kAccessMax, Setting.kAccessStep),
-                Bounds("highlight", Setting.kHighlightMin, Setting.kHighlightMax, 1),
-                Bounds("slope", Setting.kSlopeMin, Setting.kSlopeMax, 1),
-                Bounds("sites", Setting.kSiteCountMin, Setting.kSiteCountMax, 1),
-                Bounds("routes", Setting.kRouteCountMin, Setting.kRouteCountMax, 1),
-            });
-        }
-
-        private static string Bounds(string key, int min, int max, int step)
-        {
-            var culture = System.Globalization.CultureInfo.InvariantCulture;
-            return key + "|" + min.ToString(culture) + "|" + max.ToString(culture) + "|" + step.ToString(culture);
-        }
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
@@ -69,31 +29,13 @@ namespace TransitArchitect
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "visible",
                 () => m_OverlaySystem is not null && m_OverlaySystem.PanelOpen));
 
-            // Lets the panel keep the vanilla legend hidden while it is open, instead
-            // of only while our infoview happens to be active.
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "foreignInfoview", () =>
-                m_OverlaySystem is not null && m_OverlaySystem.ForeignInfoviewActive));
-
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
                 m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
 
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "modes", static () => s_Modes));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "objectives", static () => s_Objectives));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "sliderBounds", static () => s_SliderBounds));
-
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "mode", static () => Read(static s => (int)s.Mode)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "objective", static () => Read(static s => (int)s.Objective)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "catchment", static () => Read(static s => s.CatchmentRadius)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "access", static () => Read(static s => s.AccessRadius)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "highlight", static () => Read(static s => s.HighlightShare)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "slope", static () => Read(static s => s.MaxSlope)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "sites", static () => Read(static s => s.SiteCount)));
-            AddUpdateBinding(new GetterValueBinding<int>(Group, "routes", static () => Read(static s => s.RouteCount)));
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "showRoutes", static () => Settings is not null && Settings.ShowRoutes));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeList", static () => TransitArchitectSystem.RouteListText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "routeUpdate", static () => TransitArchitectSystem.RouteUpdateText));
             AddBinding(new TriggerBinding(Group, "applyRouteUpdate", static () => TransitArchitectSystem.RequestApplyRouteUpdate()));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "lineHealth", static () => TransitArchitectSystem.LineHealthText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "overviewRows", static () => TransitArchitectSystem.OverviewRowsText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => TransitArchitectSystem.DataCoverageText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "equity", static () => TransitArchitectSystem.EquityText));
             AddUpdateBinding(new GetterValueBinding<string>(Group, "improvePlan", static () => TransitArchitectSystem.ImprovePlanText));
@@ -129,9 +71,21 @@ namespace TransitArchitect
                 m_OverlaySystem.SetInfoviewActive(open);
             }));
 
-            AddBinding(new TriggerBinding<int>(Group, "improveLine", static index =>
+            AddBinding(new TriggerBinding<int>(Group, "applyPlan", static id =>
             {
-                TransitArchitectSystem.RequestImprovement(index);
+                TransitArchitectSystem.RequestApplyPlan(id);
+            }));
+
+            AddBinding(new TriggerBinding<int>(Group, "focusLine", static id =>
+            {
+                TransitArchitectSystem.RequestFocusLine(id);
+            }));
+
+            // By the line's own id, not its position: the health list is re-sorted
+            // worst-first on every refresh.
+            AddBinding(new TriggerBinding<int>(Group, "improveLine", static id =>
+            {
+                TransitArchitectSystem.RequestImprovement(id);
             }));
 
             AddBinding(new TriggerBinding<int>(Group, "highlightRoute", static index =>
@@ -143,64 +97,6 @@ namespace TransitArchitect
             {
                 TransitArchitectSystem.SelectRoute(index);
             }));
-
-            // One shape, nine times over. The engineering baseline exempts this
-            // file's one-line VALUE binding forwarders by name; these were an
-            // eight-line block repeated for every setting, which is the case its
-            // "unify at the third" rule is about.
-            AddSetting<int>("setMode", static (settings, value) => settings.Mode = (ModePreset)value);
-            AddSetting<int>("setObjective", static (settings, value) => settings.Objective = (RouteGoal)value);
-            AddSetting<int>("setCatchment", static (settings, value) => settings.CatchmentRadius = value);
-            AddSetting<int>("setAccess", static (settings, value) => settings.AccessRadius = value);
-            AddSetting<int>("setHighlight", static (settings, value) => settings.HighlightShare = value);
-            AddSetting<int>("setSlope", static (settings, value) => settings.MaxSlope = value);
-            AddSetting<int>("setSites", static (settings, value) => settings.SiteCount = value);
-            AddSetting<int>("setRoutes", static (settings, value) => settings.RouteCount = value);
-            AddSetting<bool>("setShowRoutes", static (settings, value) => settings.ShowRoutes = value);
-
-            AddBinding(new TriggerBinding(Group, "applyPreset", static () =>
-            {
-                if (Settings is null)
-                {
-                    return;
-                }
-                Settings.ApplyPreset(Settings.Mode);
-                Changed();
-            }));
-        }
-
-        // Writes one setting and saves, so the panel and the Options page stay in step
-        // on disk. The panel is not a second place a setting may be clamped: the
-        // property setter owns that.
-        private void AddSetting<T>(string name, Action<Setting, T> apply)
-        {
-            AddBinding(new TriggerBinding<T>(Group, name, value =>
-            {
-                Setting? settings = Settings;
-                if (settings is null)
-                {
-                    return;
-                }
-
-                apply(settings, value);
-                Changed();
-            }));
-        }
-
-        private static Setting? Settings => Mod.Settings;
-
-        private static int Read(System.Func<Setting, int> getter)
-        {
-            Setting? settings = Settings;
-            return settings is not null ? getter(settings) : 0;
-        }
-
-        // The overlay system already watches the settings for changes and reschedules
-        // its own recompute, so the panel does not need to poke it directly. Saving
-        // keeps the panel and the Options page in step on disk.
-        private static void Changed()
-        {
-            Settings?.ApplyAndSave();
         }
     }
 }

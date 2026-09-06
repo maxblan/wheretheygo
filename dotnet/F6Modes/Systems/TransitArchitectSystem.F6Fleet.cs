@@ -25,6 +25,15 @@ namespace TransitArchitect
 
         private VehicleCountPolicy? m_VehicleCountPolicy;
 
+        // The policy prefab entities the line panel drives: the vehicle-count slider and
+        // the two schedule policies (UITransportConfigurationPrefab). Entity.Null until
+        // the prefabs are read, which is what the action handlers check.
+        private Entity m_VehicleCountPolicyEntity;
+
+        private Entity m_DayRoutePolicyEntity;
+
+        private Entity m_NightRoutePolicyEntity;
+
         // Largest vehicle capacity per Game.Prefabs.TransportType (index = enum value),
         // read alongside m_FleetFacts. The interchange weights derive from it.
         private float[]? m_TypeCapacities;
@@ -90,6 +99,8 @@ namespace TransitArchitect
             if (m_FleetFacts is null || m_VehicleCountPolicy is null)
             {
                 m_VehicleCountPolicy = Fleet.ReadVehicleCountPolicy(EntityManager, m_PrefabSystem, m_TransportConfigQuery);
+                Fleet.ReadPolicyEntities(m_PrefabSystem, m_TransportConfigQuery,
+                    out m_VehicleCountPolicyEntity, out m_DayRoutePolicyEntity, out m_NightRoutePolicyEntity);
                 m_FleetFacts = Fleet.Read(EntityManager, m_VehiclePrefabQuery, m_LinePrefabQuery, m_VehicleCountPolicy, out float[] byType);
                 m_TypeCapacities = byType;
             }

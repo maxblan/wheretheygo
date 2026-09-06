@@ -10,9 +10,11 @@ Status vocabulary: `[ ]` open · `[~]` in progress · `[x]` done and verified.
 
 - [x] S1–S9 specified, verified offline, Lean CF.1–CF.10 (2026-09-06)
 - [x] Real-city three-way checks: heatmap, sites, roads, coverage, stops, health (Valmare 2026-09-06)
-- [~] Real-city `-lineset` v3: faithfulness/feasibility run in progress; optimality stays "bounded" until the
-      evaluator's shortest-path search is faster (pure-Python Fractions on 19 858 door pairs make even
-      size-2 enumeration a matter of days)
+- [~] Real-city `-lineset` v3: the 2026-09-06 run timed out again even with the enumeration bounded to
+      the empty set (`ENUM_BUDGET=1`), leaving only `solution.json` and `subject.log`. Faithfulness and
+      optimality on a real city stay open until the evaluator's shortest-path search is faster — pure-Python
+      `Fraction` Dijkstra over 19 858 door pairs is the bottleneck, and parallelising the check phase was
+      not enough
 - [ ] Re-export after the schedule guard (`Daytime.Advise`) and check `-health` three-way again (C9.10)
 - [ ] Log checklist of OPEN-GAPS.md on the next run: metro on metro track only, staged updates,
       tunnel nodes, C1.13, C6.3, C6.4, C8.5, C9.11 (slider ends vs the panel)
@@ -25,28 +27,30 @@ Status vocabulary: `[ ]` open · `[~]` in progress · `[x]` done and verified.
 - [ ] Performance note for weak PCs: route pass ~31 s on the worker, set search hits its 15 s budget and is
       not proven optimal on Valmare (ceiling 434 h vs 158 h found) — release note or a setting
 
-## 2. UI / UX — decided 2026-09-06, see docs/ui-architecture.md for the mechanics
+## 2. UI / UX — built 2026-09-06, see docs/ui-architecture.md for the mechanics
 
 Goal (author): trivially easy to use, every setting in the game's Options page, the rest
 indistinguishable from vanilla. Decisions: 6a, 7c, 8b, 9b, 10a (+ colour buildings by transit
 access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
 
-- [ ] Options page in two sections, "General" and "Advanced" (8b); everything the panel duplicates moves there
-- [ ] Route objective to Advanced, default Balanced (9b)
-- [ ] Infoview in vanilla style: gradient legend from a `GradientInfomodeBasePrefab` (10a), site markers with rank, clickable (11a)
-- [ ] Colour buildings by how well they are connected (10a) — **the vanilla infomode path carries no
-      custom per-building values**; decide between writing `Game.Objects.Color` ourselves, colouring
-      the STOPS via `TransportStopInfomodePrefab`, or markers (docs/ui-architecture.md)
-- [ ] Suggestions and line health as rows in the vanilla Transport Overview (7c, 12a, 15a), starting
-      with `extend(TransportLineItem)`; the vanilla header is private, so an aligned column needs the
-      page rewrite
-- [ ] One-click actions: show and focus a line (13a; focusing a line entity works out of the box),
-      set the fleet and the schedule through the game's own policies (17a)
-- [ ] Game notification for ModeUp, SplitRoute, Remove (16a) via `IconCommandSystem`
-- [ ] Replace the `MutationObserver` hack that hides our infoview row with `extend(InfoviewMenu)`
-- [ ] Localisation EN and DE for every new key; further languages by community (18a)
+- [x] Options page in two sections, "General" and "Advanced" (8b); everything the panel duplicated moved there
+- [x] Route objective to Advanced, default Balanced (9b)
+- [x] Infoview in vanilla style: the game draws its own gradient legend for a `GradientInfomodeBasePrefab` (10a)
+- [x] Colour buildings by how well they are connected (10a) — `BuildingAccessColorSystem` writes
+      `Game.Objects.Color` between `ObjectColorSystem` and `BatchDataSystem`
+- [x] Suggestions and line health in the vanilla Transport Overview (7c, 12a, 15a): one extra cell per
+      line row via `extend(TransportLineItem)`, the suggestions as a section under the list
+- [x] One-click actions: focus a line, set the fleet and the schedule through the game's own policies (13a, 17a)
+- [x] Game notification for ModeUp, SplitRoute, Remove (16a) via `IconCommandSystem`
+- [x] The `MutationObserver` hack is deleted; our infoview row now simply belongs in the game's menu
+- [x] Localisation EN and DE for every key the module uses; the two files carry identical key sets (18a)
+- [x] Payload contracts kept (`|`-delimited rows, `AddUpdateBinding`) and the purity rule held
+- [~] Site markers with rank (11a): drawn as rings sized and faded by rank. **Not clickable** — the
+      overlay buffer draws geometry only and a click needs a tool of its own
 - [ ] Mod icon and thumbnail in the game's style (19a)
-- [ ] Keep the payload contracts (`|`-delimited rows, `AddUpdateBinding`) and the purity rule while redoing the presentation
+- [ ] Choose the notification icon prefab from the names the next run logs (`s_LineNotificationIconName` is empty, so the markers are off)
+- [ ] Verify the whole reshuffle in the running game: the overview cell, the suggestions section, the
+      building colours, the site rings, the two locales
 
 ## 3. Repository hygiene
 

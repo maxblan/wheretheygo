@@ -47,6 +47,22 @@ namespace TransitArchitect
                 default: return 20f;
             }
         }
+        // Ranked site markers (author's decision 11a, 2026-09-06). Rank has to be
+        // readable without a label, because the overlay buffer draws geometry only —
+        // there is no text primitive — so it is carried by size and opacity: the best
+        // site is the largest and fully opaque, and each one after it is a step
+        // smaller down to a floor, so a marker never shrinks out of sight.
+        private const float SiteMarkerDiameter = 90f;
+
+        private const float SiteMarkerStep = 8f;
+
+        private const float SiteMarkerMinDiameter = 34f;
+
+        // The dark centre that turns a disc into a ring, as a share of the diameter.
+        private const float SiteMarkerCoreShare = 0.55f;
+
+        private const float SiteMarkerMinOpacity = 0.45f;
+
         private const float TerrainOffset = 4f;
 
 
@@ -88,7 +104,7 @@ namespace TransitArchitect
         protected override void OnUpdate()
         {
             var settings = Mod.Settings;
-            if (settings is null || !settings.ShowRoutes || m_OverlaySystem is null)
+            if (settings is null || m_OverlaySystem is null)
             {
                 return;
             }
@@ -109,8 +125,16 @@ namespace TransitArchitect
                 return;
             }
 
+            // "Show routes" is about the suggested LINES; the ranked site markers belong
+            // to the heat map and are switched with it, not with them.
             List<SuggestedRoute> routes = m_OverlaySystem.SuggestedRoutes;
-            if (routes is null || routes.Count == 0)
+            bool anyRoutes = settings.ShowRoutes && routes is not null && routes.Count > 0;
+            bool anySites = m_OverlaySystem.IsInfoviewActive && m_OverlaySystem.SiteCount > 0;
+            // The re-traced alignment for one existing line stands on its own: it is
+            // asked for from the transport overview, and a city with no suggestions at
+            // all can still ask for one.
+            bool anyProposal = settings.ShowRoutes && m_OverlaySystem.ImprovedRoute is not null;
+            if (!anyRoutes && !anySites && !anyProposal)
             {
                 return;
             }
@@ -120,25 +144,57 @@ namespace TransitArchitect
 
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(waitForPending: false);
 
-            // The improved alignment for whichever line the player asked about, drawn
-            // white and dashed so it reads as a proposal against its existing line.
-            SuggestedRoute? improved = m_OverlaySystem.ImprovedRoute;
-            if (improved is not null)
+            // The sites the heat map recommends, ranked. Drawn only with the heat map
+            // itself: they are the answer that map is giving, and on their own over
+            // bare terrain there is nothing to read them against.
+            if (anySites)
             {
-                var proposalColor = new Color(1f, 1f, 1f, 0.95f);
-                for (int i = 1; i < improved.Path.Count; i++)
-                {
-                    float3 from = ToGround(improved.Path[i - 1], ref heightData);
-                    float3 to = ToGround(improved.Path[i], ref heightData);
-                    buffer.DrawDashedLine(proposalColor, new Line3.Segment(from, to), 14f, 50f, 25f);
-                }
-
-                for (int i = 0; i < improved.Stops.Count; i++)
-                {
-                    buffer.DrawCircle(proposalColor, ToGround(improved.Stops[i], ref heightData), 28f);
-                }
+                DrawSiteMarkers(buffer, ref heightData, settings.Mode);
             }
 
+            if (anyProposal)
+            {
+                DrawProposal(buffer, ref heightData);
+            }
+
+            if (!anyRoutes || routes is null)
+            {
+                return;
+            }
+
+            DrawSuggestions(buffer, ref heightData, routes);
+
+            // The buffer was written on the main thread with the prior writers already
+            // completed, so there is no new job handle to register.
+        }
+
+        // The improved alignment for whichever line the player asked about, drawn white
+        // and dashed so it reads as a proposal against the existing line it replaces.
+        private void DrawProposal(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData)
+        {
+            SuggestedRoute? improved = m_OverlaySystem.ImprovedRoute;
+            if (improved is null)
+            {
+                return;
+            }
+
+            var proposalColor = new Color(1f, 1f, 1f, 0.95f);
+            for (int i = 1; i < improved.Path.Count; i++)
+            {
+                float3 from = ToGround(improved.Path[i - 1], ref heightData);
+                float3 to = ToGround(improved.Path[i], ref heightData);
+                buffer.DrawDashedLine(proposalColor, new Line3.Segment(from, to), 14f, 50f, 25f);
+            }
+
+            for (int i = 0; i < improved.Stops.Count; i++)
+            {
+                buffer.DrawCircle(proposalColor, ToGround(improved.Stops[i], ref heightData), 28f);
+            }
+        }
+
+        // The suggested lines themselves, in their mode's colour, width and dash.
+        private static void DrawSuggestions(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, List<SuggestedRoute> routes)
+        {
             // Narrowed to one suggestion, or -1 for all of them. Both this and the
             // highlight are positions in the current list, which the overlay system
             // clears whenever it replaces that list.
@@ -211,9 +267,34 @@ namespace TransitArchitect
                     buffer.DrawCircle(color, stop, StopDiameterFor(route.Mode) * stopScale);
                 }
             }
+        }
 
-            // The buffer was written on the main thread with the prior writers already
-            // completed, so there is no new job handle to register.
+        // One ring per recommended site, best first. Two circles rather than one: the
+        // mode colour outside and a dark core inside, so a marker reads as a target on
+        // top of the heat map instead of as another blob of it.
+        private void DrawSiteMarkers(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, ModePreset mode)
+        {
+            Color color = ColorFor(mode);
+            var core = new Color(0.06f, 0.08f, 0.11f, 0.85f);
+            int count = m_OverlaySystem.SiteCount;
+            for (int rank = 0; rank < count; rank++)
+            {
+                if (!m_OverlaySystem.TryGetSite(rank, out float3 flat, out int _))
+                {
+                    continue;
+                }
+
+                float diameter = math.max(SiteMarkerMinDiameter, SiteMarkerDiameter - (rank * SiteMarkerStep));
+                // Opacity falls with rank as well as size, so two sites of the same
+                // clamped size are still ordered on screen.
+                float fade = count > 1 ? rank / (float)(count - 1) : 0f;
+                color.a = math.lerp(1f, SiteMarkerMinOpacity, fade);
+
+                float height = TerrainUtils.SampleHeight(ref heightData, flat);
+                var position = new float3(flat.x, height + TerrainOffset, flat.z);
+                buffer.DrawCircle(color, position, diameter);
+                buffer.DrawCircle(core, position, diameter * SiteMarkerCoreShare);
+            }
         }
 
         // Interior corner sharp enough that the two segments' square ends leave a gap

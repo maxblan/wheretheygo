@@ -31,42 +31,6 @@ function useTranslate() {
     }, [loc]);
 }
 
-// The mode and objective names, the slider bounds and every mode colour all arrive
-// from C#. They used to be copied here and kept in step by comment, and two of the
-// three had already drifted: the mode list read Bus, Tram, Metro while the enum is
-// Bus, Metro, Tram, so picking Tram selected Metro and picking Metro selected Tram.
-//
-// The slider KEYS stay here, because each one names its own C# trigger and because
-// useBound is a hook — a list whose length could change at runtime would change the
-// number of hooks a render makes. Only the bounds come over the wire.
-const SLIDERS = [
-    { key: "catchment", label: "Catchment", unit: " m" },
-    { key: "access", label: "Road access", unit: " m" },
-    { key: "highlight", label: "Highlight", unit: "%" },
-    { key: "slope", label: "Max slope", unit: "°" },
-    { key: "sites", label: "Sites", unit: "" },
-    { key: "routes", label: "Routes", unit: "" },
-];
-
-// Used only until the first binding value arrives.
-const FALLBACK_BOUNDS = { min: 0, max: 100, step: 1 };
-
-function parseNames(raw, fallback) {
-    const names = (raw || "").split("|").filter(Boolean);
-    return names.length ? names : fallback;
-}
-
-function parseBounds(raw) {
-    const bounds = {};
-    (raw || "").split("\n").filter(Boolean).forEach((row) => {
-        const p = row.split("|");
-        if (p.length >= 4) {
-            bounds[p[0]] = { min: Number(p[1]), max: Number(p[2]), step: Number(p[3]) };
-        }
-    });
-    return bounds;
-}
-
 const bindings = {};
 
 function binding(name, fallback) {
@@ -89,43 +53,6 @@ function h(tag, props, ...children) {
     return React.createElement(tag, props, ...children);
 }
 
-// A row of buttons standing in for a dropdown, since cohtml has no <select>.
-function Choice({ label, options, optionKey, value, onPick }) {
-    const t = useTranslate();
-    return h("div", { className: "ta-row" },
-        h("div", { className: "ta-label" }, label),
-        h("div", { className: "ta-choice" },
-            options.map((name, index) =>
-                h("button", {
-                    key: name,
-                    className: "ta-chip" + (index === value ? " ta-chip-on" : ""),
-                    onClick: () => onPick(index),
-                }, t(optionKey + "." + name, name)))));
-}
-
-// A stepper standing in for a range input: minus, value, plus. Holding is not
-// available, so the step sizes match the ones the Options sliders use.
-function Stepper({ label, value, min, max, step, unit, onSet }) {
-    const clamp = (v) => Math.max(min, Math.min(max, v));
-    const fraction = max > min ? (value - min) / (max - min) : 0;
-
-    return h("div", { className: "ta-row" },
-        h("div", { className: "ta-labelrow" },
-            h("div", { className: "ta-label" }, label),
-            h("div", { className: "ta-value" }, value + unit)),
-        h("div", { className: "ta-stepper" },
-            h("button", {
-                className: "ta-step",
-                onClick: () => onSet(clamp(value - step)),
-            }, "−"),
-            h("div", { className: "ta-bar" },
-                h("div", { className: "ta-bar-fill", style: { width: (fraction * 100) + "%" } })),
-            h("button", {
-                className: "ta-step",
-                onClick: () => onSet(clamp(value + step)),
-            }, "+")));
-}
-
 function Toggle({ label, value, onToggle }) {
     const t = useTranslate();
     return h("div", { className: "ta-row" },
@@ -136,277 +63,6 @@ function Toggle({ label, value, onToggle }) {
         }, value ? t("On", "On") : t("Off", "Off")));
 }
 
-// The suitability gradient, moved off the vanilla left-hand legend panel so the
-// mod presents itself in one place. Colours mirror LowColor/MediumColor/HighColor
-// in SuitabilityInfomodePrefab.cs.
-function Legend() {
-    const t = useTranslate();
-    return h("div", { className: "ta-row" },
-        h("div", { className: "ta-label" }, t("Legend", "Station suitability")),
-        h("div", { className: "ta-legend" }),
-        h("div", { className: "ta-labelrow" },
-            h("div", { className: "ta-legend-end" }, t("LegendLow", "Low")),
-            h("div", { className: "ta-legend-end" }, t("LegendHigh", "High"))));
-}
-
-// Rows arrive as "mode|km|stops|vehicles|colour|reachPercent", best first. The colour comes with
-// the row so this file holds no copy of the mode palette.
-//
-// Pointing at a row draws its line heavier on the map; clicking narrows the map to
-// that line alone, and clicking it again brings the others back. Neither decision is
-// taken here: the row reports what the pointer did and renders `selected` from the
-// binding, so the highlight in the list and the lines on the map cannot disagree —
-// and a refresh clearing the selection on the C# side clears it here too.
-//
-// The index is a position in the list, which is only safe because that clearing
-// happens the moment a new list arrives.
-function RouteList({ raw, selected, update }) {
-    const t = useTranslate();
-    const rows = (raw || "").split("\n").filter(Boolean);
-
-    return h("div", { className: "ta-half" },
-        h("div", { className: "ta-section" }, t("SuggestedLines", "Suggested lines")),
-        // A finished refresh waits here until the player takes it: the list and the
-        // lines on the map never change under a selection.
-        update
-            ? h("button", { className: "ta-improve", onClick: () => trigger("applyRouteUpdate") },
-                t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
-            : null,
-        h("div", { className: "ta-scroll" },
-            rows.map((row, index) => {
-                const parts = row.split("|");
-                const mode = parts[0] || "Bus";
-                const chosen = index === selected;
-                return h("button", {
-                    // Keyed by where the line runs between, which the C# side sends as
-                    // parts[6]. Not the position — the list is re-ranked on every
-                    // refresh and a positional key re-seats the rows. Not the row's
-                    // text either: two different suggestions can agree on mode, length,
-                    // stop count, vehicles and reach, and when they did React saw one
-                    // key twice, re-seated the rows against the handlers, and hovering
-                    // a bus highlighted a tram.
-                    key: parts[6] || row,
-                    className: "ta-route" + (chosen ? " ta-route-on" : ""),
-                    onClick: () => trigger("selectRoute", index),
-                    onMouseEnter: () => trigger("highlightRoute", index),
-                    onMouseLeave: () => trigger("highlightRoute", -1),
-                },
-                    h("div", {
-                        className: "ta-swatch",
-                        style: { backgroundColor: parts[4] || "rgb(200, 200, 200)" },
-                    }),
-                    h("div", { className: "ta-route-text" },
-                        h("div", { className: "ta-route-head" },
-                            h("div", { className: "ta-route-mode" }, t("Mode." + mode, mode)),
-                            h("div", { className: "ta-route-meta" },
-                                (parts[1] || "?") + " " + t("Km", "km") + " \u00b7 "
-                                + (parts[2] || "?") + " " + t("Stops", "stops") + " \u00b7 "
-                                + (parts[3] || "?") + " " + t("Vehicles", "veh"))),
-                        // The figure the list is ordered by, so the gap between the
-                        // first row and the second is visible rather than implied.
-                        h("div", { className: "ta-route-reach" },
-                            t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0")),
-                        // When to run it. The game offers all day, day only (06:00–22:00) or
-                        // night only per line; the recommendation rests on how full the
-                        // line would be in each period on its own riders.
-                        h("div", { className: "ta-route-reach" },
-                            t("RouteSchedule", "run {0} · {1}% full by day, {2}% by night")
-                                .replace("{0}", t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day"))
-                                .replace("{1}", parts[8] || "0")
-                                .replace("{2}", parts[9] || "0"))));
-            })));
-}
-
-// The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|fleetMin|fleetMax",
-// numbers and tokens only, so the sentence can be assembled in the player's language.
-function describePlan(t, raw) {
-    const p = (raw || "").split("|");
-    // Eight fields, as PlanPayload writes them. A short payload used to pass this
-    // guard and render "NaN" and "undefined" into the player's language.
-    if (p.length < 8) {
-        return raw || "";
-    }
-
-    const mode = t("Mode." + p[0], p[0]);
-    let text = t("Plan.Fleet", "run it as {0} with {1} vehicle(s)")
-        .replace("{0}", mode)
-        .replace("{1}", p[1]);
-
-    const delta = parseInt(p[2], 10);
-    if (delta) {
-        text += t("Plan.Delta", " ({0})").replace("{0}", delta > 0 ? "+" + delta : String(delta));
-    }
-
-    // The span the game's vehicle slider allows this line; 0 as the maximum means the
-    // policy prefab was not found and the span is open above.
-    const fleetMax = parseInt(p[7], 10);
-    if (fleetMax > 0) {
-        text += t("Plan.Span", ", the game allows {0} to {1}").replace("{0}", p[6]).replace("{1}", p[7]);
-    }
-
-    const interval = parseInt(p[3], 10);
-    if (interval >= 0) {
-        text += t("Plan.Interval", ", i.e. an interval of about {0} s").replace("{0}", String(interval));
-    }
-
-    switch (p[4]) {
-        case "Split":
-            return text + t("Plan.Split", "; split it — {0} km is more than the largest {1} fleet can carry")
-                .replace("{0}", p[5]).replace("{1}", mode);
-        case "Reroute":
-            return text + t("Plan.Reroute",
-                "; or reroute it through denser ground — the suggestions list shows where demand is unserved");
-        default:
-            return text + t("Plan.Fine", "; the route shape looks reasonable");
-    }
-}
-
-// Every other t(...) call in this file carries its English inline so a key missing
-// from a locale degrades to English rather than to a blank line. These did not.
-const SCHEDULE_FALLBACKS = {
-    DayAndNight: "all day",
-    Day: "by day only (06:00\u201322:00)",
-    Night: "by night only (22:00\u201306:00)",
-};
-
-const VERDICT_FALLBACKS = {
-    FleetShort: "fleet short \u2014 the game wants {0} more vehicle(s) than it can supply",
-    ModeUp: "too big for its mode \u2014 upgrade to {0}",
-    SplitRoute: "beyond the largest fleet of any mode \u2014 split the route",
-    Remove: "empty and unjustified even as the smallest service \u2014 reroute or remove",
-    ModeDown: "a smaller vehicle would do \u2014 run it as {0}",
-    FleetUp: "add {0} vehicle(s)",
-    FleetDown: "remove {0} vehicle(s)",
-    Schedule: "run it {0}",
-    Healthy: "healthy",
-};
-
-const VERDICT_COLORS = {
-    FleetShort: "rgb(240, 140, 40)",
-    ModeUp: "rgb(230, 60, 50)",
-    SplitRoute: "rgb(230, 60, 50)",
-    Remove: "rgb(130, 140, 155)",
-    ModeDown: "rgb(120, 170, 220)",
-    FleetUp: "rgb(240, 140, 40)",
-    FleetDown: "rgb(120, 170, 220)",
-    Schedule: "rgb(230, 200, 60)",
-    Healthy: "rgb(80, 190, 120)",
-};
-
-// Verdicts whose argument is a token to translate rather than a number.
-const MODE_ARGUMENT = { ModeUp: true, ModeDown: true };
-const SCHEDULE_ARGUMENT = { Schedule: true };
-
-// Existing lines, worst first, each with the numbers its verdict came from and a
-// button that works out a concrete improvement — a remedy you cannot check is not
-// worth much. Lives in its own scrolling column so a city with twenty lines does
-// not push the controls off the screen.
-function LineHealth({ raw, plan, planFor, planDrawn }) {
-    const t = useTranslate();
-    const rows = (raw || "").split("\n").filter(Boolean).map((line) => line.split("|"));
-
-    return h("div", { className: "ta-half" },
-        h("div", { className: "ta-section" }, t("LineHealth", "Line health")),
-        h("div", { className: "ta-scroll" },
-            rows.map((parts) => {
-                // parts[0] is the line's own id, not its position in this list. The list
-                // is re-sorted worst-first on every refresh, so keying by position made
-                // React re-seat the rows and the open plan appeared under another line.
-                const index = parseInt(parts[0], 10);
-                const verdict = parts[2] || "Healthy";
-                const healthy = verdict === "Healthy";
-                // Most verdicts carry an argument (vehicles missing or to add, the mode or
-                // schedule to change to) and have their own key, so the placeholder never
-                // shows up bare; a negative fleet change is shown as a count to remove.
-                const rawArg = parts[3] || "";
-                const arg = MODE_ARGUMENT[verdict] ? t("Mode." + rawArg, rawArg)
-                    : SCHEDULE_ARGUMENT[verdict] ? t("Schedule." + rawArg, SCHEDULE_FALLBACKS[rawArg] || rawArg)
-                    : rawArg.replace(/^-/, "");
-                const note = t("Verdict." + verdict + (rawArg ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
-                    .replace("{0}", arg);
-                const meta = t("Meta", "{0}% full, {1} veh, {2} stops")
-                    .replace("{0}", parts[4] || "0")
-                    .replace("{1}", parts[5] || "0")
-                    .replace("{2}", parts[6] || "0");
-                // What the verdict rests on. The percentage above is a mean over the
-                // rolling window once enough readings back it, and a single reading
-                // catches a one-boat ferry mid-crossing at nobody aboard — so the row
-                // says which of the two the player is looking at.
-                const samples = parseInt(parts[7], 10) || 0;
-                const basis = samples > 0
-                    ? t("Basis", "average over {0} h, {1} readings, peak {2}%")
-                        .replace("{0}", parts[8] || "0")
-                        .replace("{1}", String(samples))
-                        .replace("{2}", parts[9] || "0")
-                    : t("BasisSingle", "single reading so far");
-                // What the line's own readings say about its schedule: the mean usage
-                // of each period and, when one period is empty and the other is not,
-                // the schedule to switch to. Only shown once both periods have readings.
-                const scheduleNow = parts[10] || "DayAndNight";
-                const scheduleAdvice = parts[11] || scheduleNow;
-                const daySamples = parseInt(parts[14], 10) || 0;
-                const nightSamples = parseInt(parts[15], 10) || 0;
-                const scheduleText = (daySamples > 0 || nightSamples > 0)
-                    ? t("HealthSchedule", "runs {0} · {1}% full by day, {2}% by night")
-                        .replace("{0}", t("Schedule." + scheduleNow, SCHEDULE_FALLBACKS[scheduleNow] || "all day"))
-                        .replace("{1}", parts[12] || "0")
-                        .replace("{2}", parts[13] || "0")
-                      + (scheduleAdvice !== scheduleNow
-                        ? t("HealthScheduleAdvice", " \u2192 switch to {0}")
-                            .replace("{0}", t("Schedule." + scheduleAdvice, SCHEDULE_FALLBACKS[scheduleAdvice] || scheduleAdvice))
-                        : "")
-                    : null;
-                // The plan behind the verdict, with the span the game allows and the
-                // demand the routing attributes to the line (none before the first pass).
-                const planMode = t("Mode." + (parts[17] || parts[1]), parts[17] || "");
-                const spanMax = parseInt(parts[20], 10) || 0;
-                const planText = t("HealthPlan", "plan: {0} \u00d7 {1}{2} \u00b7 planning load {3} aboard")
-                    .replace("{0}", planMode)
-                    .replace("{1}", parts[18] || "0")
-                    .replace("{2}", spanMax > 0 ? t("HealthPlanSpan", " (game allows {0}\u2013{1})").replace("{0}", parts[19] || "1").replace("{1}", String(spanMax)) : "")
-                    .replace("{3}", parts[21] || "0")
-                    + ((parts[16] || "-") !== "-"
-                        ? t("HealthDemand", " \u00b7 {0} riders/day, {1}% of seats").replace("{0}", parts[22] || "0").replace("{1}", parts[16])
-                        : t("HealthDemandNone", " \u00b7 demand known after the first route pass"));
-                return h("div", { className: "ta-health", key: index },
-                    h("div", { className: "ta-health-head" },
-                        h("div", {
-                            className: "ta-dot",
-                            style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
-                        }),
-                        h("div", { className: "ta-line-name" }, parts[1] || "Line"),
-                        h("div", { className: "ta-route-meta" }, meta)),
-                    h("div", { className: "ta-health-note" }, note),
-                    h("div", { className: "ta-health-basis" }, basis),
-                    h("div", { className: "ta-health-basis" }, planText),
-                    scheduleText ? h("div", { className: "ta-health-basis" }, scheduleText) : null,
-                    healthy ? null : h("button", {
-                        className: "ta-improve",
-                        onClick: () => trigger("improveLine", index),
-                    }, t("SuggestImprovement", "Suggest improvement")),
-                    // Shown against its own row: at the bottom of a twenty-line list
-                    // nobody would ever see it.
-                    (plan && planFor === index)
-                        ? h("div", { className: "ta-plan" },
-                            h("div", { className: "ta-plan-title" }, t("ImprovedPlan", "Improved plan")),
-                            h("div", {}, describePlan(t, plan)),
-                            // Only when an alignment was actually traced. There are
-                            // three ways for the re-trace to come back with nothing,
-                            // and the panel used to promise a map line regardless.
-                            planDrawn
-                                ? h("div", { className: "ta-plan-hint" },
-                                    t("ImprovedPlanHint", "The white dashed line on the map is the re-traced route."))
-                                : null)
-                        : null);
-            })));
-}
-
-// How much observed history the verdicts and the suggestions rest on.
-//
-// Every percentage in this panel is a mean over a rolling 24 game-hour window, and a
-// mean over twenty minutes looks exactly like a mean over a full day once it is a
-// number on screen. The window fills as the city runs, so the panel says how far in
-// it has got rather than leaving the player to assume it is complete.
 function DataCoverage({ raw }) {
     const t = useTranslate();
     const parts = (raw || "").split("|");
@@ -474,55 +130,22 @@ function Equity({ raw }) {
             h("div", { className: "ta-coverage-fill", style: { width: filled + "%", opacity: share >= target ? 1 : 0.6 } })));
 }
 
+// What is left of the mod's own window (author's decision 6a, 2026-09-06): the two
+// figures that describe the whole city, and the switch for the heat map. Every knob
+// moved to the Options page, and the two lists moved into the game's Transportation
+// Overview, so nothing here duplicates a place the player would look first.
+//
+// No legend of its own any more. The infomodes derive from GradientInfomodeBasePrefab,
+// so the game draws its own gradient legend for them, which is the one a player
+// already knows.
 function Panel() {
     const t = useTranslate();
     const visible = useBound("visible", false);
     const [collapsed, setCollapsed] = React.useState(false);
 
-    const mode = useBound("mode", 0);
-    const objective = useBound("objective", 1);
-    const showRoutes = useBound("showRoutes", true);
-    const routeList = useBound("routeList", "");
-    const routeUpdate = useBound("routeUpdate", "");
-    const foreignInfoview = useBound("foreignInfoview", false);
     const heatmap = useBound("heatmap", true);
-    const lineHealth = useBound("lineHealth", "");
     const dataCoverage = useBound("dataCoverage", "");
     const equity = useBound("equity", "");
-    const improvePlan = useBound("improvePlan", "");
-    const improvedLine = useBound("improvedLine", -1);
-    const improvedRouteDrawn = useBound("improvedRouteDrawn", false);
-    const selectedRoute = useBound("selectedRoute", -1);
-
-    // The panel's static shape, from the side that owns it.
-    const modes = parseNames(useBound("modes", ""), ["Bus", "Metro", "Tram", "Train", "Ferry"]);
-    const objectives = parseNames(useBound("objectives", ""), ["Ridership", "Balanced", "Coverage"]);
-    const bounds = parseBounds(useBound("sliderBounds", ""));
-
-    // Suppress the vanilla infoview legend while ours is showing; a class on the
-    // document root is the only hook a plain CSS file can key off.
-    //
-    // Keyed on the panel being open and no OTHER infoview being active, not on us
-    // owning the infoview. Turning the heat map off drops ownsInfoview immediately,
-    // but the game takes a few frames to unmount its own legend — so the old
-    // condition un-hid it just in time for the player to watch it flash in and out.
-    React.useEffect(() => {
-        const root = document.documentElement;
-        if (!root) {
-            return;
-        }
-
-        if (visible && !foreignInfoview) {
-            root.classList.add("ta-hide-vanilla-infoview");
-        } else {
-            root.classList.remove("ta-hide-vanilla-infoview");
-        }
-    }, [visible, foreignInfoview]);
-
-    // Hooks must run unconditionally, so the slider values are read before the
-    // visibility check rather than inside it. SLIDERS is a module constant of fixed
-    // length, which is what keeps the number of hooks the same on every render.
-    const sliderValues = SLIDERS.map((slider) => useBound(slider.key, 0));
 
     if (!visible) {
         return null;
@@ -543,77 +166,14 @@ function Panel() {
         }, t("Title", "Transit Architect") + "  -"),
 
         h("div", { className: "ta-body" },
-        h("div", { className: "ta-column" },
-
-        h(DataCoverage, { raw: dataCoverage }),
-        h(Equity, { raw: equity }),
-
-        h(Choice, {
-            label: t("Mode", "Mode"),
-            options: modes,
-            optionKey: "Mode",
-            value: mode,
-            onPick: (index) => trigger("setMode", index),
-        }),
-
-        h("button", {
-            className: "ta-preset",
-            onClick: () => trigger("applyPreset"),
-        }, t("ApplyPreset", "Apply preset weights for this mode")),
-
-        h(Toggle, {
-            label: t("Heatmap", "Suitability heat map"),
-            value: heatmap,
-            onToggle: (next) => trigger("setHeatmap", next),
-        }),
-
-        heatmap ? h(Legend, {}) : null,
-
-        h("div", { className: "ta-section" }, t("RoutePlanning", "Route planning")),
-
-        h(Choice, {
-            label: t("Objective", "Objective"),
-            options: objectives,
-            optionKey: "Objective",
-            value: objective,
-            onPick: (index) => trigger("setObjective", index),
-        }),
-
-        h(Toggle, {
-            label: t("ShowRoutes", "Show routes"),
-            value: showRoutes,
-            onToggle: (next) => trigger("setShowRoutes", next),
-        }),
-
-        h("div", { className: "ta-section" }, t("Tuning", "Tuning")),
-
-        SLIDERS.map((slider, i) => {
-            const b = bounds[slider.key] || FALLBACK_BOUNDS;
-            return h(Stepper, {
-                key: slider.key,
-                label: t("Slider." + slider.key, slider.label),
-                value: sliderValues[i],
-                min: b.min,
-                max: b.max,
-                step: b.step,
-                unit: slider.unit,
-                onSet: (value) => trigger("set" + slider.key.charAt(0).toUpperCase() + slider.key.slice(1), value),
-            });
-        }),
-
-        ),
-
-        // The right-hand column, split in half: what to build on top, how what you
-        // have is doing below. Each half scrolls on its own so neither can push the
-        // other off the bottom.
-        h("div", { className: "ta-column" },
-            h(RouteList, { raw: routeList, selected: selectedRoute, update: routeUpdate }),
-            h(LineHealth, {
-                raw: lineHealth,
-                plan: improvePlan,
-                planFor: improvedLine,
-                planDrawn: improvedRouteDrawn,
-            }))));
+            h("div", { className: "ta-column" },
+                h(Equity, { raw: equity }),
+                h(DataCoverage, { raw: dataCoverage }),
+                h(Toggle, {
+                    label: t("Heatmap", "Suitability heat map"),
+                    value: heatmap,
+                    onToggle: (next) => trigger("setHeatmap", next),
+                }))));
 }
 
 // Styled to match the vanilla floating toggles beside it, but WITHOUT borrowing their
@@ -637,64 +197,288 @@ function ToolbarButton() {
             })));
 }
 
-// Our infoview has to stay registered and valid — the terrain heat map only draws
-// while it is the active infoview — so its row cannot be removed from the game's
-// infoview menu on the C# side. It is removed here instead, by hiding the menu button
-// carrying our icon. Our own toolbar button uses the same icon, so it is excluded by
-// checking for the wrapper class.
-function HideInfoviewMenuEntry() {
-    React.useEffect(() => {
-        const hide = () => {
-            const icons = document.querySelectorAll('img[src*="transitarchitect"]');
-            for (let i = 0; i < icons.length; i++) {
-                const icon = icons[i];
-                if (icon.closest(".ta-toolbar-slot")) {
-                    continue;
-                }
+// ---------------------------------------------------------------------------
+// Inside the game's own Transportation Overview.
+//
+// The player's own words for this mod: it should look as though the game came with
+// it. So the verdicts live in the vanilla overview's line list rather than in a
+// window of ours, and the suggestions sit under that list in the same panel.
+//
+// Two facts decide how (docs/ui-architecture.md, read out of the game's UI bundle):
+// moduleRegistry.append does nothing on these components, because none of them
+// renders {children} — only extend works; and the overview's header row is a private
+// const inside its page module, so an extra column can carry a value but not a
+// label. Every lookup below is therefore defensive: on anything unexpected the
+// vanilla component is returned untouched, because a throw inside the registrar
+// takes the whole UI module down without a visible error.
 
-                const button = icon.closest("button") || icon.parentElement;
-                if (button && button.style.display !== "none") {
-                    button.style.display = "none";
-                }
+const VANILLA = {
+    lineItem: "game-ui/game/components/transportation-overview-panel/transport-line-item/transport-line-item.tsx",
+    page: "game-ui/game/components/transportation-overview-panel/transportation-overview-page.tsx",
+    pageStyle: "game-ui/game/components/transportation-overview-panel/transportation-overview-page.module.scss",
+};
+
+// The vanilla page's own cell classes, so our column is exactly as wide as a
+// numeric one and moves with the game's own layout. Empty when the module is not
+// where it used to be, and then the fallback class in our CSS applies.
+let pageClasses = {};
+
+function readVanilla(registry, path, exportName) {
+    try {
+        const module = registry && registry.registry ? registry.registry.get(path) : null;
+        return module ? module[exportName] : null;
+    } catch (error) {
+        console.warn("[TransitArchitect] " + path + " is not where it used to be: " + error);
+        return null;
+    }
+}
+
+// Rows arrive as "entityIndex|id|verdict|argument|utilisation", keyed by the ECS
+// index of the line entity — which is what the vanilla row carries.
+// The id is handed back to C# for an action, because an index is reused once a line
+// is deleted and would then point at whatever took its slot.
+function useOverviewRows() {
+    const raw = useBound("overviewRows", "");
+    return React.useMemo(() => {
+        const map = {};
+        (raw || "").split("\n").filter(Boolean).forEach((line) => {
+            const parts = line.split("|");
+            if (parts.length >= 5) {
+                map[parts[0]] = parts;
             }
-        };
+        });
+        return map;
+    }, [raw]);
+}
 
-        hide();
-        // The menu is built and rebuilt as the player opens it, so one pass is not
-        // enough; this watches for it appearing rather than polling on a timer.
-        //
-        // Coalesced onto an animation frame. hide() queries the whole document and
-        // itself mutates it, and the game's UI changes on almost every frame, so
-        // running it once per mutation record meant a full-document query several
-        // times a frame.
-        let observer = null;
-        let queued = 0;
-        if (typeof MutationObserver !== "undefined") {
-            observer = new MutationObserver(() => {
-                if (queued) {
-                    return;
-                }
+// The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|fleetMin|fleetMax",
+// numbers and tokens only, so the sentence can be assembled in the player's language.
+function describePlan(t, raw) {
+    const p = (raw || "").split("|");
+    // Eight fields, as PlanPayload writes them. A short payload used to pass this
+    // guard and render "NaN" and "undefined" into the player's language.
+    if (p.length < 8) {
+        return raw || "";
+    }
 
-                queued = requestAnimationFrame(() => {
-                    queued = 0;
-                    hide();
-                });
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
+    const mode = t("Mode." + p[0], p[0]);
+    let text = t("Plan.Fleet", "run it as {0} with {1} vehicle(s)")
+        .replace("{0}", mode)
+        .replace("{1}", p[1]);
+
+    const delta = parseInt(p[2], 10);
+    if (delta) {
+        text += t("Plan.Delta", " ({0})").replace("{0}", delta > 0 ? "+" + delta : String(delta));
+    }
+
+    // The span the game's vehicle slider allows this line; 0 as the maximum means the
+    // policy prefab was not found and the span is open above.
+    const fleetMax = parseInt(p[7], 10);
+    if (fleetMax > 0) {
+        text += t("Plan.Span", ", the game allows {0} to {1}").replace("{0}", p[6]).replace("{1}", p[7]);
+    }
+
+    const interval = parseInt(p[3], 10);
+    if (interval >= 0) {
+        text += t("Plan.Interval", ", i.e. an interval of about {0} s").replace("{0}", String(interval));
+    }
+
+    switch (p[4]) {
+        case "Split":
+            return text + t("Plan.Split", "; split it \u2014 {0} km is more than the largest {1} fleet can carry")
+                .replace("{0}", p[5]).replace("{1}", mode);
+        case "Reroute":
+            return text + t("Plan.Reroute",
+                "; or reroute it through denser ground \u2014 the suggestions list shows where demand is unserved");
+        default:
+            return text + t("Plan.Fine", "; the route shape looks reasonable");
+    }
+}
+
+// Every other t(...) call in this file carries its English inline so a key missing
+// from a locale degrades to English rather than to a blank line. These did not.
+const SCHEDULE_FALLBACKS = {
+    DayAndNight: "all day",
+    Day: "by day only (06:00\u201322:00)",
+    Night: "by night only (22:00\u201306:00)",
+};
+
+const VERDICT_FALLBACKS = {
+    FleetShort: "fleet short \u2014 the game wants {0} more vehicle(s) than it can supply",
+    ModeUp: "too big for its mode \u2014 upgrade to {0}",
+    SplitRoute: "beyond the largest fleet of any mode \u2014 split the route",
+    Remove: "empty and unjustified even as the smallest service \u2014 reroute or remove",
+    ModeDown: "a smaller vehicle would do \u2014 run it as {0}",
+    FleetUp: "add {0} vehicle(s)",
+    FleetDown: "remove {0} vehicle(s)",
+    Schedule: "run it {0}",
+    Healthy: "healthy",
+};
+
+const VERDICT_COLORS = {
+    FleetShort: "rgb(240, 140, 40)",
+    ModeUp: "rgb(230, 60, 50)",
+    SplitRoute: "rgb(230, 60, 50)",
+    Remove: "rgb(130, 140, 155)",
+    ModeDown: "rgb(120, 170, 220)",
+    FleetUp: "rgb(240, 140, 40)",
+    FleetDown: "rgb(120, 170, 220)",
+    Schedule: "rgb(230, 200, 60)",
+    Healthy: "rgb(80, 190, 120)",
+};
+
+// What the extra cell says. Deliberately short: a verdict is a sentence, a column is
+// a glance, and the sentence is one hover away.
+function cellText(t, parts) {
+    const verdict = parts[2];
+    const argument = parts[3] || "";
+    switch (verdict) {
+        case "Healthy": return "";
+        case "ModeUp":
+        case "ModeDown": return "\u2192 " + t("Mode." + argument, argument);
+        case "SplitRoute": return t("Cell.Split", "split");
+        case "Remove": return t("Cell.Remove", "remove");
+        case "Schedule": return t("Schedule." + argument, SCHEDULE_FALLBACKS[argument] || argument);
+        case "FleetShort":
+        case "FleetUp": return "+" + argument;
+        case "FleetDown": return "\u2212" + argument.replace(/^-/, "");
+        default: return "";
+    }
+}
+
+function TransitCell({ parts }) {
+    const t = useTranslate();
+    const id = parseInt(parts[1], 10);
+    const verdict = parts[2];
+    const text = cellText(t, parts);
+    const structural = verdict === "ModeUp" || verdict === "SplitRoute" || verdict === "Remove";
+
+    // The worked-out plan for whichever line was asked about last. Shown on that row
+    // rather than in a panel of our own, so the answer appears where the question was
+    // asked; every other row shows the short reason instead.
+    const plan = useBound("improvePlan", "");
+    const planFor = useBound("improvedLine", -1);
+    const planDrawn = useBound("improvedRouteDrawn", false);
+    const mine = planFor === id && plan !== "";
+
+    const title = t("Verdict." + verdict + (parts[3] ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
+        .replace("{0}", verdict === "ModeUp" || verdict === "ModeDown"
+            ? t("Mode." + parts[3], parts[3])
+            : verdict === "Schedule"
+                ? t("Schedule." + parts[3], SCHEDULE_FALLBACKS[parts[3]] || parts[3])
+                : (parts[3] || "").replace(/^-/, ""));
+
+    // A click does the part of the plan the game can apply by itself \u2014 a fleet or a
+    // schedule change, both of which the player could make in the line panel. A verdict
+    // that means building work is never acted on: the camera goes there, the mod works
+    // out what it would take, and the decision stays with the player. Which is which is
+    // decided in C#; this only sends the click.
+    const act = () => {
+        if (structural) {
+            trigger("improveLine", id);
+            trigger("focusLine", id);
+        } else {
+            trigger("applyPlan", id);
         }
+    };
 
-        return () => {
-            if (observer) {
-                observer.disconnect();
+    // The figure the verdict was reached on, so the row says what it rests on without
+    // being asked; a dash means no route pass has measured this line yet.
+    const load = parts[4] && parts[4] !== "-"
+        ? " \u00b7 " + t("CellLoad", "{0}% full at the recommended fleet").replace("{0}", parts[4])
+        : "";
+    const hint = mine
+        ? describePlan(t, plan) + (planDrawn ? " \u00b7 " + t("PlanDrawn", "the re-traced route is on the map") : "")
+        : title + load;
+
+    return h("div", {
+        className: (pageClasses.cellDouble || "") + " ta-cell",
+        onClick: text ? act : null,
+    },
+        h("div", {
+            className: "ta-cell-dot",
+            style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
+        }),
+        h("div", { className: "ta-cell-text" }, text),
+        // No header cell exists to label this column (the vanilla header is private),
+        // so the row carries its own explanation.
+        text ? h("div", { className: "ta-cell-hint" + (mine ? " ta-cell-plan" : "") }, hint) : null);
+}
+
+// Suggestions, under the vanilla list and in its shape. They are not game entities,
+// so they cannot be rows of that list; a section of our own below it is the honest
+// place for them.
+function SuggestionsSection() {
+    const t = useTranslate();
+    const raw = useBound("routeList", "");
+    const update = useBound("routeUpdate", "");
+    const selected = useBound("selectedRoute", -1);
+    const rows = (raw || "").split("\n").filter(Boolean);
+    if (!rows.length && !update) {
+        return null;
+    }
+
+    return h("div", { className: "ta-suggestions" },
+        h("div", { className: "ta-suggestions-head" },
+            h("div", { className: "ta-suggestions-title" }, t("SuggestedLines", "Suggested lines")),
+            update
+                ? h("button", {
+                    className: "ta-improve",
+                    onClick: () => trigger("applyRouteUpdate"),
+                }, t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
+                : null),
+        rows.map((row, index) => {
+            const parts = row.split("|");
+            const mode = parts[0] || "Bus";
+            return h("div", {
+                key: parts[6] || row,
+                className: "ta-suggestion" + (index === selected ? " ta-suggestion-on" : ""),
+                onClick: () => trigger("selectRoute", index),
+                onMouseEnter: () => trigger("highlightRoute", index),
+                onMouseLeave: () => trigger("highlightRoute", -1),
+            },
+                h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } }),
+                h("div", { className: (pageClasses.cellWide || "") + " ta-suggestion-name" }, t("Mode." + mode, mode)),
+                h("div", { className: (pageClasses.cellDouble || "") }, (parts[1] || "?") + " " + t("Km", "km")),
+                h("div", { className: (pageClasses.cellDouble || "") }, (parts[2] || "?") + " " + t("Stops", "stops")),
+                h("div", { className: (pageClasses.cellDouble || "") }, (parts[3] || "?") + " " + t("Vehicles", "veh")),
+                // When to run it. The game offers all day, day only or night only per
+                // line, and the recommendation rests on how full this line would be in
+                // each period on its own riders.
+                h("div", { className: (pageClasses.cellDouble || "") },
+                    t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
+                h("div", { className: (pageClasses.cellDouble || "") + " ta-suggestion-reach" },
+                    t("Reach", "unlocks {0}% of unserved travel").replace("{0}", parts[5] || "0")));
+        }));
+}
+
+// Wraps a vanilla line row so our cell sits BESIDE it rather than under it: a
+// sibling returned from the extension would land outside the row and become its own
+// entry in the list.
+function extendOverview(registry) {
+    pageClasses = readVanilla(registry, VANILLA.pageStyle, "classes") || {};
+
+    if (readVanilla(registry, VANILLA.lineItem, "TransportLineItem")) {
+        registry.extend(VANILLA.lineItem, "TransportLineItem", (Original) => (props) => {
+            const rows = useOverviewRows();
+            const entity = props && props.line && props.line.lineData ? props.line.lineData.entity : null;
+            const parts = entity && entity.index !== undefined ? rows[String(entity.index)] : null;
+            if (!parts) {
+                return h(Original, props);
             }
 
-            if (queued) {
-                cancelAnimationFrame(queued);
-            }
-        };
-    }, []);
+            return h("div", { className: "ta-overview-row" },
+                h("div", { className: "ta-overview-vanilla" }, h(Original, props)),
+                h(TransitCell, { parts }));
+        });
+    }
 
-    return null;
+    if (readVanilla(registry, VANILLA.page, "TransportationOverviewPage")) {
+        registry.extend(VANILLA.page, "TransportationOverviewPage", (Original) => (props) =>
+            h("div", { className: "ta-overview-page" },
+                h(Original, props),
+                h(SuggestionsSection, null)));
+    }
 }
 
 const register = (moduleRegistry) => {
@@ -705,7 +489,11 @@ const register = (moduleRegistry) => {
 
     moduleRegistry.append("Game", Panel);
     moduleRegistry.append("GameTopLeft", ToolbarButton);
-    moduleRegistry.append("Game", HideInfoviewMenuEntry);
+    // The infoview row is no longer hidden. It was, back when the mod spoke only
+    // through a window of its own; now that it offers a suitability heat map and a
+    // transit-access view of the buildings, a row in the game's own infoview menu is
+    // exactly where a player expects to find them.
+    extendOverview(moduleRegistry);
     console.info("[TransitArchitect] Control panel registered.");
 };
 

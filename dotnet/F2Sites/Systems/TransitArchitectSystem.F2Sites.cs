@@ -35,6 +35,29 @@ namespace TransitArchitect
         // Non-maximum suppression turns the gradient into discrete candidate sites,
         // then each survivor is re-scored with a real walk-distance expansion over
         // the landmass — affordable here precisely because there are only a handful.
+        // The chosen sites for the renderer, best first: where each one is and how it
+        // ranks. Computed on the spot from the tile index rather than kept as a second
+        // copy — a dozen sites once a frame is cheaper than a cache that can disagree
+        // with the map.
+        internal int SiteCount => m_SiteCount;
+
+        internal bool TryGetSite(int rank, out float3 position, out int total)
+        {
+            total = m_SiteCount;
+            position = default;
+            if (rank < 0 || rank >= m_SiteCount || m_IntensityGrid.x <= 0)
+            {
+                return false;
+            }
+
+            int index = m_SiteIndices[rank];
+            int x = index % m_IntensityGrid.x;
+            int y = index / m_IntensityGrid.x;
+            float2 world = m_ScoreWorldMin + new float2((x + 0.5f) * Assumptions.TileSize, (y + 0.5f) * Assumptions.TileSize);
+            position = new float3(world.x, 0f, world.y);
+            return true;
+        }
+
         private void ExtractSites(Setting settings)
         {
             if (m_Scores is null)

@@ -122,9 +122,13 @@ namespace TransitArchitect
                 $"{((int)to.x).ToString(CultureInfo.InvariantCulture)},{((int)to.y).ToString(CultureInfo.InvariantCulture)}";
         }
 
-        // One health row per existing line. The .mjs indexes fields by position, so a
-        // new field is appended and the old indices never move (ui-module.md).
-        public static string HealthRows(List<LineHealth> lines)
+        // One row per existing line for the VANILLA transport overview, which keys its
+        // own rows on the line entity: "entityIndex|id|verdict|argument|utilisation".
+        // The panel joins by the entity index and hands the id back, because an index
+        // is reused once a line is deleted. The utilisation is the figure the verdict
+        // was reached on, so the row can show what it rests on without being asked;
+        // everything else the plan would need arrives on demand through improveLine.
+        public static string OverviewRows(List<LineHealth> lines)
         {
             var builder = new StringBuilder();
             for (int i = 0; i < lines.Count; i++)
@@ -135,71 +139,19 @@ namespace TransitArchitect
                     _ = builder.Append('\n');
                 }
 
-                _ = builder.Append(health.m_Id);
+                _ = builder.Append(health.m_EntityIndex);
                 _ = builder.Append('|');
-                // The game's own name, so this list matches the Transportation
-                // Overview rather than using an invented index.
-                _ = builder.Append(string.IsNullOrEmpty(health.m_Name) ? health.m_Mode.ToString() : health.m_Name);
+                _ = builder.Append(health.m_Id);
                 _ = builder.Append('|');
                 _ = builder.Append(health.m_Verdict);
                 _ = builder.Append('|');
-                // Token plus argument, never a finished sentence: the panel is the only
-                // place that knows the player's language.
                 _ = builder.Append(LineHealthRules.VerdictArgument(health));
                 _ = builder.Append('|');
-                _ = builder.Append((health.m_Usage * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_Vehicles);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_Stops);
-                _ = builder.Append('|');
-                // How much evidence the verdict rests on. The percentage above is a
-                // mean over the rolling window once there are enough readings, and a
-                // player has no way to tell that from a single instantaneous count
-                // unless the panel says so.
-                _ = builder.Append(health.m_WindowSamples);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_WindowGameHours.ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append('|');
-                _ = builder.Append((health.m_PeakUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_Schedule);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_ScheduleAdvice);
-                _ = builder.Append('|');
-                _ = builder.Append((health.m_DayUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append('|');
-                _ = builder.Append((health.m_NightUsage * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_DaySamples);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_NightSamples);
-                _ = builder.Append('|');
-                // The plan (2026-09-06): demand utilisation at the recommended fleet ("-"
-                // before the first route pass), the recommended mode and fleet, the span
-                // the game allows (max 0 = unbounded), the planning load and the riders.
                 _ = builder.Append(health.HasDemand ? (health.m_Utilisation * 100f).ToString("F0", CultureInfo.InvariantCulture) : "-");
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_RecommendedMode);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_RecommendedFleet);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_FleetMin);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_FleetMax == int.MaxValue ? 0 : health.m_FleetMax);
-                _ = builder.Append('|');
-                _ = builder.Append(health.m_PlanningLoad);
-                _ = builder.Append('|');
-                _ = builder.Append(health.HasDemand ? health.m_RidersPerDay.ToString("F0", CultureInfo.InvariantCulture) : "-");
-                _ = builder.Append('|');
-                _ = builder.Append((health.m_DayUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
-                _ = builder.Append('|');
-                _ = builder.Append((health.m_NightUtilisation * 100f).ToString("F0", CultureInfo.InvariantCulture));
             }
 
             return builder.ToString();
         }
-
 
         // "coveredHours|readings|windowHours|observedJourneys|observedHours" — how much
         // observed history the verdicts and the served-demand discount rest on. Shown
