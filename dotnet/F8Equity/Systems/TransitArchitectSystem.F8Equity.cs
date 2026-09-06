@@ -70,7 +70,7 @@ namespace TransitArchitect
         {
             walkSeconds = 0;
             served = false;
-            byte[]? field = m_AccessByTile;
+            int[]? field = m_AccessWalkMs;
             int2 grid = m_AccessFieldGrid;
             if (field is null || grid.x <= 0 || grid.y <= 0 || field.Length != grid.x * grid.y || m_EquityHorizonMs <= 0)
             {
@@ -84,9 +84,16 @@ namespace TransitArchitect
                 return false;
             }
 
-            byte value = field[(z * grid.x) + x];
-            served = value < byte.MaxValue;
-            walkSeconds = (int)((long)value * m_EquityHorizonMs / (255L * 1000L));
+            int walk = field[(z * grid.x) + x];
+            if (walk == int.MaxValue)
+            {
+                // Beyond the search itself, not merely beyond the horizon: there is no
+                // number to give, and the caller says so.
+                return true;
+            }
+
+            walkSeconds = walk / 1000;
+            served = walk < m_EquityHorizonMs;
             return true;
         }
 
@@ -135,7 +142,15 @@ namespace TransitArchitect
             }
 
             SnapStops(m_TransitStops, access.Index, inputs.AccessMs, out int[] stopNodes, out int[] stopAccess);
-            m_ServedWalkMs = Equity.ServedWalkMs(inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length, m_EquityHorizonMs);
+            // Searched well past the equity horizon on purpose. Every "is this served"
+            // test compares against the horizon itself (Equity.EndServed), so the
+            // coverage figure is unchanged; what the extra range buys is a real number
+            // for the buildings beyond it. A house 12 minutes from the nearest stop and
+            // a house 40 minutes away are different problems, and "over 10 min" for both
+            // reads as a broken measurement rather than a long walk.
+            m_ServedWalkMs = Equity.ServedWalkMs(
+                inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length,
+                m_EquityHorizonMs * Assumptions.AccessFieldHorizonMultiple);
             BuildAccessField(access);
             RefreshCoverage(settings, "measured");
         }
@@ -188,11 +203,15 @@ namespace TransitArchitect
                 long walk = node >= 0 && node < served.Length && served[node] != Equity.NotServed
                     ? (long)served[node] + access.TileWalkMs[i]
                     : int.MaxValue;
-                walkMs[i] = walk >= m_EquityHorizonMs ? int.MaxValue : (int)walk;
+                walkMs[i] = walk >= int.MaxValue ? int.MaxValue : (int)walk;
             }
 
             SpreadAccessField(walkMs, m_AccessSpreadMs, grid);
 
+            // The COLOUR ramp still runs over the horizon and no further: past it every
+            // walk is equally bad to look at, and stretching the ramp to the longest
+            // walk on the map would wash out the difference between two and eight
+            // minutes, which is the difference that matters.
             byte[] field = m_AccessByTile;
             int reached = 0;
             for (int i = 0; i < count; i++)

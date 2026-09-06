@@ -4,12 +4,20 @@
  * and 1rem is about one design pixel, so every size is in rem and scales with the
  * game's UI scale exactly as a vanilla panel does.
  *
- * Colours are written out rather than taken from the game's CSS variables. Those are
- * declared on a game panel root, and everything here is either appended beside that
- * subtree or injected into a component whose ancestors are not ours — cohtml drops the
- * whole declaration when a custom variable does not resolve, which once left the
- * toolbar button with no width at all. The values below are read off the vanilla
- * panels so the result matches them without depending on them.
+ * Colours are written out rather than taken from the game's CSS variables, and the one
+ * time this file tried otherwise it printed 597 warnings into UI.log. Two reasons, and
+ * the second is the hard one:
+ *
+ *   1. A variable declared on a game panel root does not resolve in a subtree appended
+ *      beside it, and cohtml then drops the whole declaration rather than falling back —
+ *      which once left the toolbar button with no width at all.
+ *   2. cohtml does not support var()'s fallback argument. `var(--textColor, #dceaf8)` is
+ *      parsed as a variable literally named "textColor,#dceaf8", which resolves to
+ *      nothing and takes the declaration with it. There is no safe way to write "the
+ *      game's colour, or this one".
+ *
+ * So: literals, read off the vanilla panels, so the result matches them without
+ * depending on them.
  *
  * The mod has no window of its own. Everything styled here is a few rows injected into
  * panels the game already draws, which is why there is so little of it. */
@@ -68,8 +76,9 @@
    come from the game. What is left below is the handful of things it has no class for,
    plus fallbacks for when an export has moved.
 
-   Colours inside the overview may use the game's CSS variables: unlike the old toolbar
-   button, everything here is a child of a game panel, so they resolve. */
+   Colours are literals here too. Being inside a game panel does make the variables
+   resolvable, but writing them needs a fallback for the day an export moves and the
+   class is not applied — and cohtml has no fallback (see the note at the top). */
 
 /* A vanilla row and our note, stacked. The row is left entirely alone — it keeps its
    full width, so every one of its columns still lines up with the page's header. */
@@ -92,7 +101,7 @@
 
 .ta-note-action {
     justify-content: flex-start;
-    color: var(--textColor, #dceaf8);
+    color: #dceaf8;
     white-space: nowrap;
 }
 
@@ -112,7 +121,7 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    color: var(--normalTextColorDim, #9fb6cc);
+    color: #9fb6cc;
     white-space: normal;
 }
 
@@ -126,7 +135,7 @@
 }
 
 .ta-note:hover .ta-note-do {
-    color: var(--menuText1Normal, #6fb3ec);
+    color: #6fb3ec;
 }
 
 /* Our own page in the overview: the same two-column shape as the vanilla page, minus
@@ -173,7 +182,7 @@
 /* Column labels. The vanilla ones are buttons that sort; ours do not sort, so they are
    plain text in the same size and colour those buttons use. */
 .ta-cell-label {
-    color: var(--normalTextColorDim, #93a8bd);
+    color: #93a8bd;
     font-size: 12rem;
     text-transform: uppercase;
 }
@@ -232,5 +241,5 @@
 .ta-suggestions-empty {
     padding: 12rem;
     text-align: center;
-    color: var(--normalTextColorDim, #93a8bd);
+    color: #93a8bd;
 }

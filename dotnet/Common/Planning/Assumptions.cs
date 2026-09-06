@@ -52,6 +52,11 @@ namespace TransitArchitect
         // How many of the strongest tiles the combine pass names in the log. Three is
         // enough to tell "the whole map is bright" from "one spot is", and short enough
         // to stay one line.
+        // How much further than the equity horizon the served-walk search looks, so the
+        // buildings beyond it can be told how far they actually are. Purely a reporting
+        // range: every "is this served" test still compares against the horizon.
+        public const int AccessFieldHorizonMultiple = 4;
+
         // How far the transit-access field may carry a walk time onto tiles that have no
         // pedestrian node of their own: three tiles, about 96 m, which is a house to its
         // street and no further. The field is what colours the buildings, and a building

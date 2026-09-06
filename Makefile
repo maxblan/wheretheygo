@@ -24,6 +24,11 @@ UI_LOG      := $(USERDATA)/Logs/UI.log
 # build has to run as a Windows process rather than under WSL's dotnet.
 DOTNET_WIN  := powershell.exe -NoProfile -Command
 
+# Waits for Windows to release the deployed files. Must be a Windows process: WSL's
+# DrvFs ignores Windows share locks, so the same probe from bash reports every file as
+# free even while the game has it loaded.
+UNLOCK      := powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(shell wslpath -w tools/wait-for-unlock.ps1)" -Path "$(shell wslpath -w '$(USERDATA)/Mods/TransitArchitect')"
+
 .DEFAULT_GOAL := help
 .PHONY: help build compile debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
 
@@ -36,6 +41,7 @@ help: ## Show this help
 	@echo "  CONFIG=Debug changes the configuration (default: Release)."
 
 build: ## Compile and deploy to the game's Mods folder (close the game first)
+	@$(UNLOCK) || echo "Proceeding anyway; the build will say if it cannot write."
 	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG)"
 
 # Runs only the compiler (analyzers included): Mod.targets hooks the post-processor
@@ -59,6 +65,7 @@ verify: check-ui test build ## Everything a change should pass before a run
 # The compiler's TreatWarningsAsErrors covers C# diagnostics; MSBuild's own
 # --warnaserror also fails on warnings raised by build tasks outside the compiler.
 strict: check-ui format-check ## The full gate: locked restore, no warnings from anything, tests
+	@$(UNLOCK) || echo "Proceeding anyway; the build will say if it cannot write."
 	$(DOTNET_WIN) "dotnet restore $(PROJECT) --locked-mode"
 	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG) --no-restore --warnaserror"
 	dotnet build $(TESTS) --warnaserror
@@ -72,12 +79,16 @@ format-check: ## Fail if either project deviates from .editorconfig
 	$(DOTNET_WIN) "dotnet format $(PROJECT) --verify-no-changes"
 	dotnet format $(TESTS) --verify-no-changes
 
-# The game locks the deployed DLL, and ModPostProcessor returns a misleading exit
-# code if it runs too soon after the game closes. So: wait for the process to go,
-# let the filesystem settle, build, then judge the result by comparing sizes.
+# The game locks the deployed DLL, and building IS deploying: MSBuild starts by removing
+# the Mods folder, which Windows refuses while the game holds a handle on the DLLs it
+# loaded. So: wait for the process to go, wait for the handles to go, build, then judge
+# the result by comparing sizes.
+#
+# Both waits ASK rather than sleep. The old version slept 25 s after the process exited
+# and 20 s between retries, which is most of a minute of nothing on a machine where the
+# handles are usually free in under a second.
 deploy: wait-for-game ## Wait for the game to close, then build and confirm the deploy
-	@echo "Game closed; letting the filesystem settle..."
-	@sleep 25
+	@$(UNLOCK) || echo "Proceeding anyway; the build will say if it cannot write."
 	@for attempt in 1 2 3; do \
 		$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG)" || true; \
 		if [[ -f "$(DEPLOYED)" && -f "$(OUTPUT)" ]] \
@@ -86,16 +97,19 @@ deploy: wait-for-game ## Wait for the game to close, then build and confirm the 
 			exit 0; \
 		fi; \
 		echo "Attempt $$attempt did not land; retrying..."; \
-		sleep 20; \
+		$(UNLOCK) || true; \
+		sleep 2; \
 	done; \
 	echo "Deploy failed: $(DEPLOYED) does not match $(OUTPUT)." >&2; \
 	exit 1
 
+# Polls twice a second rather than every 15 s, and says so once instead of every tick.
 wait-for-game:
-	@while tasklist.exe 2>/dev/null | grep -qi 'Cities2.exe'; do \
+	@if tasklist.exe 2>/dev/null | grep -qi 'Cities2.exe'; then \
 		echo "Waiting for Cities: Skylines II to close..."; \
-		sleep 15; \
-	done
+		while tasklist.exe 2>/dev/null | grep -qi 'Cities2.exe'; do sleep 0.5; done; \
+		echo "Game closed."; \
+	fi
 
 status: ## Compare the built DLL against the deployed one
 	@if [[ ! -f "$(OUTPUT)" ]]; then echo "Not built: $(OUTPUT)"; exit 1; fi

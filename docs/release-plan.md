@@ -96,9 +96,24 @@ access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
       waiting passengers as unserved. `BuildAccessField` now spreads a tile's walk onto neighbours
       that have no node of their own, bounded to `Assumptions.AccessFieldSpreadTiles` (3 tiles, ~96 m
       — a house to its street and no further, so it cannot walk over a river)
-- [~] The bright blob next to the tram turning loop is very likely the same bug: the coverage penalty
-      reads the same field, so a tile beside a served stop was not being penalised for it. The
-      strongest-tiles log line will confirm which term it was on the next run
+- [x] The bright blob next to the tram turning loop is **not a fault**. The strongest-tiles log line
+      names it: `demand 1219, jobs 574, coverage 0.00, interchange 4.40`. Coverage is zero because the
+      map was scored for BUS and the stops there are trams; the interchange term is large for exactly
+      the same reason. The map is saying "a bus stop here would feed the tram terminus", which is what
+      it is for. Worth a look one day: whether the interchange weight should be lower where the
+      demand it would connect is already carried
+- [x] `var(--x, fallback)` does not work in cohtml — it parses the whole thing as a variable named
+      "x,fallback", drops the declaration, and writes a warning per element. 597 of them in one run.
+      Literals only; the note is in the CSS header
+- [x] The suggested lines stayed invisible in the Transportation Overview because opening that panel
+      switches the map to the game's own transport infoview, and the renderer suppressed itself under
+      a foreign infoview. That suppression no longer applies while the overview is open
+- [x] Walk times are searched to 4x the equity horizon so a building beyond it is told how far it
+      actually is. Every "is this served" test still compares against the horizon, so the coverage
+      figure is unchanged
+- [ ] A suggested line ends at its last positive-scoring stop rather than at a nearby existing
+      station. Explainable (corridor growth stops where the score does, and the trim follows), but a
+      terminus that ends 200 m short of an interchange is worth snapping to it
 
 ## 3. Repository hygiene
 

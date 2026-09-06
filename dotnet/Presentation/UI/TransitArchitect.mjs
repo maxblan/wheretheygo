@@ -511,9 +511,13 @@ function BuildingAccessRow({ walkSeconds, served, horizonMinutes }) {
     const t = useTranslate();
     const minutes = Math.round((walkSeconds || 0) / 60);
     const Label = vanillaLabel;
-    const value = served
+    // Three cases, and the third is why this is not one line: within the horizon, beyond
+    // it but measured, and beyond the search itself. "over 10 min" for the last two
+    // together is what made a 12-minute walk and no service at all look like the same
+    // broken reading.
+    const value = walkSeconds > 0
         ? t("WalkMinutes", "{0} min").replace("{0}", String(minutes))
-        : t("WalkBeyond", "over {0} min").replace("{0}", String(horizonMinutes || 0));
+        : t("WalkNone", "no stop in reach");
 
     // Deliberately the same words as the infomode this number colours the building
     // for, so a player who has both open sees one fact stated twice, not two facts.
@@ -526,7 +530,8 @@ function BuildingAccessRow({ walkSeconds, served, horizonMinutes }) {
         h("div", { className: "ta-figure-caption" },
             served
                 ? t("BuildingWalkServed", "to the nearest stop your lines serve")
-                : t("BuildingWalkUnserved", "no served stop within the walking horizon")));
+                : t("BuildingWalkUnserved", "further than the {0} min this city counts as served")
+                    .replace("{0}", String(horizonMinutes || 0))));
 }
 
 // Puts the two city-wide figures inside the game's infoview panel, under its heading.

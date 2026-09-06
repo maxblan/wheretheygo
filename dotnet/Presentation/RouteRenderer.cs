@@ -125,11 +125,16 @@ namespace TransitArchitect
 
             // Draw while our infoview is the active one, and also while the game's
             // Transportation Overview is open: that panel lists the suggestions, and a
-            // list of lines you cannot see on the map is half an answer. Still
-            // suppressed under somebody else's infoview, whose colours are not ours to
-            // draw over.
-            if (m_OverlaySystem.ForeignInfoviewActive
-                || (!m_OverlaySystem.IsInfoviewActive && !m_OverlaySystem.OverviewOpen))
+            // list of lines you cannot see on the map is half an answer.
+            //
+            // The foreign-infoview suppression does NOT apply to the overview, and that
+            // is the whole reason the suggestions stayed invisible there: opening the
+            // Transportation Overview switches the map to the game's own transport
+            // infoview, so "somebody else's infoview is up" was true exactly when the
+            // player was looking at our list. Outside the overview it still holds —
+            // another view's colours are not ours to draw over.
+            bool wanted = m_OverlaySystem.IsInfoviewActive || m_OverlaySystem.OverviewOpen;
+            if (!wanted || (m_OverlaySystem.ForeignInfoviewActive && !m_OverlaySystem.OverviewOpen))
             {
                 return;
             }

@@ -44,8 +44,12 @@ running game holds a lock on the deployed DLL. Close the game before building. T
 change compiles while the game is running, use `make compile`: it runs only the `Compile` target,
 which the post-processor and the deploy (both hooked onto `AfterBuild`) never see, so `bin/` and the
 Mods folder stay as they were. `ModPostProcessor`
-also returns a spurious exit code if it runs within ~25 s of the game closing, so **verify a deploy
-by comparing file sizes, not by trusting the exit code**. `make deploy` encodes the wait-and-compare.
+also returns a spurious exit code when it runs before the game has released its handles, so **verify
+a deploy by comparing file sizes, not by trusting the exit code**. `make deploy` encodes the
+wait-and-compare, and `build`, `deploy` and `strict` all wait for the handles first —
+`tools/wait-for-unlock.ps1` probes them four times a second and returns the moment they are free.
+That probe has to run as a WINDOWS process: WSL's DrvFs ignores Windows share locks, so the same
+test from bash reports every file as free even while the game has it loaded.
 
 **Tests.** `tests/TransitArchitect.Tests` is a hand-rolled harness with no test framework, so it
 runs offline with nothing to restore. It is deliberately **not** in `TransitArchitect.sln`, so

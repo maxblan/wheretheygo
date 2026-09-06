@@ -73,6 +73,8 @@ namespace TransitArchitect
             m_HorizonMinutes = m_Overlay.EquityHorizonMinutes;
         }
 
+        // walkSeconds is 0 with served false when the walk is beyond the search itself,
+        // which the UI shows as "no stop within reach" rather than as a zero-minute walk.
         public override void OnWriteProperties(IJsonWriter writer)
         {
             if (writer is null)
