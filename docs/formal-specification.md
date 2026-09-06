@@ -849,9 +849,11 @@ Model (`Daytime`):
 - **recommendation** (`Daytime.Recommend`): run by day only when the night period is
   under the utilisation floor while the day is not; by night only in the mirror
   case; otherwise all day. Both periods under the floor is not a schedule question.
-- **existing lines** (since 2026-09-06 the SAME rule, `Daytime.Recommend`, on the
-  riders the baseline routing attributes to the line in each period at the fleet §7e
-  recommends; user decision 17b). The readings' mean occupancy per period (only
+- **existing lines** (since 2026-09-06 the SAME rule on the riders the baseline
+  routing attributes to the line in each period at the fleet §7e recommends; user
+  decision 17b), with one guard (`Daytime.Advise`): both periods under the floor is not
+  a schedule question, so the line keeps the schedule it runs — the first Valmare run
+  advised three trains with zero routed riders to "run all day" before this guard. The readings' mean occupancy per period (only
   readings with vehicles out) is shown as evidence but decides nothing. `Daytime.Advise`
   (v1: period occupancy against the empty bar with ≥ 4 readings per period) is retired.
   Known limit (register A8.7): the routing does not know a line's schedule, so a
@@ -925,7 +927,9 @@ installed rung with `split` set; when no rung has a vehicle, the line's own mode
 c = its own seats and span [1, ∞). Then **v* = clamp(req, min, max)**,
 `interval* = interval(T, v*)`, `utilisation* = utilisation(B, interval*, c)` (−1 without
 demand), the period utilisations §7d on B_day / B_night at interval*, and the schedule
-advice `Recommend(u_day, u_night, floor)` (the line's own schedule without demand). The
+advice `Advise(schedule, u_day, u_night, floor)` = the line's own schedule when both
+periods are under the floor, else `Recommend(u_day, u_night, floor)`; the line's own
+schedule without demand. The
 game's own target fleet is `fleet(I_target, T)` (max(1, vehicles) when either is 0).
 
 **Verdict (A8.6), the first rule that applies:**

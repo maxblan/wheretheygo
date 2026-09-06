@@ -436,7 +436,7 @@ namespace TransitArchitect
             {
                 health.m_DayUtilisation = Daytime.UtilisationInPeriod(line.m_RidersByDay, headway, rung.Capacity, Assumptions.DayShareOfDay);
                 health.m_NightUtilisation = Daytime.UtilisationInPeriod(line.m_RidersByNight, headway, rung.Capacity, 1f - Assumptions.DayShareOfDay);
-                health.m_ScheduleAdvice = Daytime.Recommend(health.m_DayUtilisation, health.m_NightUtilisation, problem.UtilisationFloor);
+                health.m_ScheduleAdvice = Daytime.Advise(line.m_Schedule, health.m_DayUtilisation, health.m_NightUtilisation, problem.UtilisationFloor);
             }
 
             health.m_Verdict = VerdictOf(line, health, problem, reference, smallest, split, currentIndex, chosenIndex);

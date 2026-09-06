@@ -561,7 +561,7 @@ def _health_line(id_, mode, vehicles, per_vehicle, round_trip, stops, aboard, id
 
 
 def line_health_city():
-    """Nine lines, one per verdict plus a thin window, on the harness's facts (bus
+    """Eleven lines, one per verdict plus a thin window and a guard case, on the harness's facts (bus
     80 seats, 300 s prefab interval, slider span 1..13 for a 1000 s round trip):
       1 FleetUp   3 buses, planning load 205 -> 4 buses at 70 %
       2 ModeUp    load 1200 needs 22 buses of 13 allowed -> 8 trams
@@ -573,6 +573,8 @@ def line_health_city():
       8 Remove    empty by the readings (1..2 of 160) AND 10 riders a day under the floor as one bus
       9 Schedule  right-sized, 298 of 300 riders by day -> run by day
       10 thin     two readings: judged on the last one (200 aboard -> FleetUp)
+      11 Healthy  day-only line with zero routed demand: both periods under the floor is
+                  not a schedule question, the schedule stays
     No game answers: subject and evaluator must agree exactly; the verdicts are
     expected by id."""
     lines = [
@@ -586,6 +588,7 @@ def line_health_city():
         _health_line(8, "Bus", 2, 80, 1000.0, 20, [1, 2, 1, 2, 2, 1], riders=10.0, riders_day=8.0, riders_night=2.0),
         _health_line(9, "Bus", 2, 80, 1000.0, 20, [100, 105, 100, 104, 100, 102], riders=300.0, riders_day=298.0, riders_night=2.0),
         _health_line(10, "Bus", 2, 80, 1000.0, 20, [10, 200]),
+        _health_line(11, "Bus", 2, 80, 1000.0, 20, [100, 105, 100, 104, 100, 102], riders=0.0, schedule="Day"),
     ]
     inst = {
         "kind": "line_health", "name": "line-health-city",
@@ -598,7 +601,7 @@ def line_health_city():
         },
         "expect": {"subject_exact": True, "verdict_by_id": {
             "1": "FleetUp", "2": "ModeUp", "3": "ModeDown", "4": "SplitRoute", "5": "FleetShort",
-            "6": "FleetDown", "7": "Healthy", "8": "Remove", "9": "Schedule", "10": "FleetUp"}},
+            "6": "FleetDown", "7": "Healthy", "8": "Remove", "9": "Schedule", "10": "FleetUp", "11": "Healthy"}},
     }
     inst["data"].update(fleet_facts())
     return inst

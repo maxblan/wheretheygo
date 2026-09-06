@@ -94,6 +94,13 @@ def upper_median(values: list[float]) -> float:
     return s[len(s) // 2]
 
 
+def advise(current: str, day: float, night: float, floor: float) -> str:
+    """Existing lines: both periods under the floor is not a schedule question."""
+    if floor <= 0.0 or (day < floor and night < floor):
+        return current
+    return recommend(day, night, floor)
+
+
 def recommend(day: float, night: float, floor: float) -> str:
     if floor <= 0.0:
         return "DayAndNight"
@@ -157,7 +164,7 @@ def assess(line: dict, win: dict, facts: dict, policy: dict, floor: float, ceili
     if has_demand:
         day_util = fleet.utilisation_in_period(line["riders_day"], headway, chosen["cap"], DAY_SHARE)
         night_util = fleet.utilisation_in_period(line["riders_night"], headway, chosen["cap"], f32.sub(1.0, DAY_SHARE))
-        advice = recommend(day_util, night_util, floor)
+        advice = advise(line["schedule"], day_util, night_util, floor)
 
     if line["not_enough"] or (line["require"] and line["vehicles"] < game_target):
         verdict = "FleetShort"

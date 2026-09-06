@@ -2906,6 +2906,20 @@ namespace TransitArchitect.Tests
             judged = Judged(problem, 4);
             AssertTrue(judged.m_Verdict == LineVerdict.Healthy, "already running by day, nothing to advise");
 
+            // Both periods under the floor is not a schedule question: a day-only line
+            // with no routed demand keeps its schedule (Valmare 2026-09-06: three trains
+            // were told to run all day on zero riders).
+            daytime.m_RidersPerDay = 0f;
+            daytime.m_RidersByDay = 0f;
+            daytime.m_RidersByNight = 0f;
+            judged = Judged(problem, 4);
+            AssertTrue(judged.m_ScheduleAdvice == LineSchedule.Day && judged.m_Verdict == LineVerdict.Healthy, $"no demand in either period keeps the schedule, got {judged.m_ScheduleAdvice} {judged.m_Verdict}");
+            daytime.m_RidersPerDay = 600f;
+            daytime.m_RidersByDay = 400f;
+            daytime.m_RidersByNight = 200f;
+            judged = Judged(problem, 4);
+            AssertTrue(judged.m_ScheduleAdvice == LineSchedule.DayAndNight, $"demand in both periods extends a day-only line, got {judged.m_ScheduleAdvice}");
+
             // Demand can ask for more than the readings: 2000 riders a day on a bus with
             // a light planning load still need six buses under the ceiling.
             ExistingLine demanded = HealthLine(5, ModePreset.Bus, 2, 80, 1000f, 20);
@@ -3717,6 +3731,9 @@ namespace TransitArchitect.Tests
             AssertTrue(Daytime.Recommend(nightUtil, dayUtil, 0.15f) == LineSchedule.Night, "empty days: run by night");
             AssertTrue(Daytime.Recommend(dayUtil, dayUtil, 0.15f) == LineSchedule.DayAndNight, "both full: all day");
             AssertTrue(Daytime.Recommend(nightUtil, nightUtil, 0.15f) == LineSchedule.DayAndNight, "both empty is not a schedule question");
+            AssertTrue(Daytime.Advise(LineSchedule.Day, nightUtil, nightUtil, 0.15f) == LineSchedule.Day, "an existing line under the floor in both periods keeps its schedule");
+            AssertTrue(Daytime.Advise(LineSchedule.Day, dayUtil, dayUtil, 0.15f) == LineSchedule.DayAndNight, "demand in both periods extends it");
+            AssertTrue(Daytime.Advise(LineSchedule.DayAndNight, dayUtil, nightUtil, 0.15f) == LineSchedule.Day, "otherwise the same rule as for suggestions");
 
             // Period utilisation is the one formula on the period's share of a vehicle's seats.
             AssertEqual(Equity.Utilisation(500f, 300f, 80f * Assumptions.DayShareOfDay), dayUtil, 0f, "the period share scales the seats");
