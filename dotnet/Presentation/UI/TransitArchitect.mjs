@@ -33,22 +33,6 @@ function useTranslate() {
 
 const bindings = {};
 
-// Bindings the game itself publishes, read the same way as our own. Cached per
-// group+name because Api.bindValue makes a new subscription every call.
-const foreign = {};
-
-function foreignBinding(group, name, fallback) {
-    const key = group + "." + name;
-    if (!foreign[key]) {
-        foreign[key] = Api.bindValue(group, name, fallback);
-    }
-    return foreign[key];
-}
-
-function useForeign(group, name, fallback) {
-    return Api.useValue(foreignBinding(group, name, fallback));
-}
-
 function binding(name, fallback) {
     if (!bindings[name]) {
         bindings[name] = Api.bindValue(GROUP, name, fallback);
@@ -160,12 +144,70 @@ const VANILLA = {
     // is an Object.assign, so writing one key adds a section without disturbing the
     // hundred the game registers.
     sections: "game-ui/game/components/selected-info-panel/selected-info-sections/selected-info-sections.tsx",
+    // The generic tab strip. Extending Tab is how the suggestions get a tab of their
+    // own beside PUBLIC TRANSPORT and CARGO — the panel builds that strip inline, so
+    // there is no seam at the panel level, and Tab is the piece it builds it from.
+    tabs: "game-ui/common/tabs/tabs.tsx",
+    // The pieces the vanilla line list is made of. Borrowing them is what makes our
+    // table the same table: Section paints the panel body and holds a sticky header,
+    // Scrollable is the game's own scroll box, and the theme is the one the line list
+    // passes to Section.
+    section: "game-ui/common/section/section.tsx",
+    scrollable: "game-ui/common/scrolling/scrollable.tsx",
+    sectionTheme: "game-ui/common/section/themes/panel-section.module.scss",
+    lineItemStyle: "game-ui/game/components/transportation-overview-panel/transport-line-item/transport-line-item.module.scss",
 };
+
+// TransportationOverviewPanelTab is {PublicTransport: 0, Cargo: 1}. Ours is a value the
+// game will never use, held in a store of our own rather than in the panel's state: the
+// panel owns that state, and a third value in it would reach code that only knows two.
+const SUGGESTIONS_TAB = 900;
+
+const tabStore = { on: false, listeners: new Set() };
+
+function setSuggestionsTab(on) {
+    if (tabStore.on !== on) {
+        tabStore.on = on;
+        tabStore.listeners.forEach((listener) => listener());
+    }
+}
+
+function useSuggestionsTab() {
+    const [on, setOn] = React.useState(tabStore.on);
+    React.useEffect(() => {
+        const listener = () => setOn(tabStore.on);
+        tabStore.listeners.add(listener);
+        listener();
+        return () => { tabStore.listeners.delete(listener); };
+    }, []);
+    return on;
+}
+
+// Which of the transportation overview's two tabs this is, or null for every other tab
+// in the game — and there are many, in panels that have nothing to do with us.
+//
+// Keyed on the tab's LABEL, not on its numeric id: the ids are 0 and 1, and so are
+// CityInfoPanelTab's and EconomyPanelTab's. The transportation tabs render
+// Loc.Transport.TAB with hash "PublicTransport" or "Cargo", which nothing else does. If
+// the game ever changes that, the extra tab quietly fails to appear and every other tab
+// keeps working, which is the right way for this to break.
+function transportTabKind(props) {
+    const child = props && props.children && props.children.props ? props.children.props : null;
+    const hash = child ? child.hash : null;
+    return hash === "PublicTransport" || hash === "Cargo" ? hash : null;
+}
 
 let pageClasses = {};
 
 // The game's own label row, or null when the export has moved.
 let vanillaLabel = null;
+
+// The vanilla line list's own building blocks, resolved once at register time. Every one
+// of them is optional: a renamed export must cost a plainer table, never a missing one.
+let vanilla = {};
+
+// The vanilla line row's classes, for our own rows.
+let lineClasses = {};
 
 function readVanilla(registry, path, exportName) {
     try {
@@ -347,109 +389,118 @@ function TransitNote({ parts }) {
         }
     };
 
-    return h("div", { className: "ta-note", onClick: act },
-        h("div", {
-            className: "ta-note-dot",
-            style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
-        }),
-        h("div", { className: "ta-note-action" }, text),
+    // Laid out on the line list's own grid: the action under the Name column, the
+    // reason across the middle, the button where the row's own buttons are. The first
+    // cut was a free-floating strip of text, which is what made it read as somebody
+    // else's addition to the panel.
+    return h("div", {
+        className: (lineClasses.container || "") + " ta-note",
+        onClick: act,
+    },
+        h("div", { className: pageClasses.cellSingle || "" }),
+        h("div", { className: (pageClasses.cellWide || "") + " ta-note-action" },
+            h("div", {
+                className: "ta-note-dot",
+                style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
+            }),
+            h("div", null, text)),
         h("div", { className: "ta-note-reason" },
             mine
                 ? describePlan(t, plan) + (planDrawn ? " \u00b7 " + t("PlanDrawn", "the re-traced route is on the map") : "")
                 : why),
-        h("div", { className: "ta-note-do" },
+        h("div", { className: (pageClasses.cellDouble || "") + " ta-note-do" },
             structural ? t("NoteShow", "show me") : t("NoteApply", "apply")));
 }
 
-// The mod's mode names against the game's TransportType, which is what the overview's
-// tab strip is keyed by. Only the two that differ are interesting: a metro is a Subway
-// and a ferry is a Ship.
-const TRANSPORT_TYPE = { Bus: "Bus", Tram: "Tram", Metro: "Subway", Train: "Train", Ferry: "Ship" };
-
-// Suggestions, under the vanilla list and in its shape. They are not game entities, so
-// they cannot be rows of that list; a section of our own below it is the honest place.
+// The suggestions, as the whole body of their own tab (author's request 2026-09-06).
+// They were a section under the vanilla line list, which is where the room ran out: that
+// list is as long as the city has lines, so a table beneath it either clipped or pushed
+// the panel off the screen. A tab of its own has the whole panel.
 //
-// Filtered to the transport tab the player is on (author's request 2026-09-06): a list
-// mixing trams into BUS LINES is both confusing and too long for the room there is. The
-// tab comes from the game's own binding, so the two cannot disagree about which mode is
-// being looked at.
-//
-// It carries its own header row, unlike the verdict notes above: this IS our table, so
-// nothing stops it having headings, and without them "2.7 km · 8 · 6" is a puzzle. Every
-// cell is one line — the first cut wrapped the reach sentence onto a second line and
-// turned five rows into ten.
-function SuggestionsSection() {
+// Built from the same parts as the vanilla line list — its page classes, its Section, its
+// theme, its Scrollable, its cell widths — so it IS one of the game's tables rather than
+// something of ours that resembles one. Where a part cannot be resolved the table falls
+// back to plain markup, which looks plainer and works the same.
+function SuggestionsPage() {
     const t = useTranslate();
     const raw = useBound("routeList", "");
     const update = useBound("routeUpdate", "");
     const selected = useBound("selectedRoute", -1);
-    const tab = useForeign("transportationOverview", "selectedPassengerType", "Bus");
+    const rows = (raw || "").split("\n").filter(Boolean).map((row) => row.split("|"));
 
-    // While this section is mounted the overview is open, and the suggested lines are
-    // drawn on the map whether or not the mod's infoview is on. Looking at the list and
-    // not seeing the line it describes was the whole of the complaint.
-    React.useEffect(() => {
-        trigger("setOverviewOpen", true);
-        return () => trigger("setOverviewOpen", false);
-    }, []);
-
-    // The index is the row's position in the FULL list, because that is what C# keys
-    // its selection and highlight on.
-    const rows = (raw || "").split("\n")
-        .map((row, index) => ({ parts: row.split("|"), index }))
-        .filter((row) => row.parts.length > 1 && TRANSPORT_TYPE[row.parts[0]] === tab);
-
+    const cell = pageClasses.cell || "";
+    const single = pageClasses.cellSingle || "";
     const wide = pageClasses.cellWide || "";
-    const cell = pageClasses.cellDouble || "";
+    const double = pageClasses.cellDouble || "";
+    const Section = vanilla.section;
+    const Scrollable = vanilla.scrollable;
 
-    return h("div", { className: "ta-suggestions" },
-        h("div", { className: "ta-suggestions-head" },
-            h("div", { className: "ta-suggestions-title" }, t("SuggestedLines", "Suggested lines")),
+    // The header row, in the shape the vanilla one has: a centred title over a row of
+    // column labels using the same cell widths as the rows beneath it.
+    const header = h("div", { className: pageClasses.header || "ta-head" },
+        h("div", { className: pageClasses.title || "ta-title" }, t("SuggestedLines", "Suggested lines")),
+        h("div", { className: pageClasses.legends || "ta-legends" },
+            h("div", { className: single }),
+            h("div", { className: wide + " ta-cell-label" }, t("ColMode", "Mode")),
+            h("div", { className: double + " ta-cell-label" }, t("ColLength", "Length")),
+            h("div", { className: double + " ta-cell-label" }, t("ColStops", "Stops")),
+            h("div", { className: double + " ta-cell-label" }, t("ColVehicles", "Vehicles")),
+            h("div", { className: double + " ta-cell-label" }, t("ColSchedule", "Runs")),
+            h("div", { className: double + " ta-cell-label" }, t("ColReach", "Unlocks")),
+            h("div", { className: single })));
+
+    const list = rows.length === 0
+        ? h("div", { className: pageClasses.noLines || "ta-suggestions-empty" },
+            t("NoSuggestions", "nothing worth adding right now \u2014 let the city run"))
+        : rows.map((parts, index) => {
+            const mode = parts[0] || "Bus";
+            return h("div", {
+                key: parts[6] || index,
+                // The line list's own row class, which carries its padding, its hover
+                // and its text colours.
+                className: (lineClasses.container || "ta-suggestion")
+                    + (index === selected ? " selected" : ""),
+                onClick: () => trigger("selectRoute", index),
+                onMouseEnter: () => trigger("highlightRoute", index),
+                onMouseLeave: () => trigger("highlightRoute", -1),
+            },
+                h("div", { className: single },
+                    h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } })),
+                h("div", { className: wide }, t("Mode." + mode, mode)),
+                h("div", { className: double }, (parts[1] || "?") + " " + t("Km", "km")),
+                h("div", { className: double }, parts[2] || "?"),
+                h("div", { className: double }, parts[3] || "?"),
+                // When to run it. The game offers all day, day only or night only per
+                // line, and the recommendation rests on how full this line would be in
+                // each period on its own riders.
+                h("div", { className: double },
+                    t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
+                // The figure the list is ordered by, so the gap between the first row and
+                // the second is visible rather than implied.
+                h("div", { className: double }, (parts[5] || "0") + " %"),
+                h("div", { className: single }));
+        });
+
+    const body = Scrollable
+        ? h(Scrollable, { className: pageClasses.scrollable }, list)
+        : h("div", { className: "ta-suggestions-list" }, list);
+
+    const column = Section
+        ? h(Section, { theme: vanilla.sectionTheme, className: pageClasses.lines, header }, body)
+        : h("div", { className: (pageClasses.lines || "") + " ta-suggestions" }, header, body);
+
+    // The apply button is ours and has nowhere vanilla to sit, so it goes above the
+    // table rather than into its header, where it would push a column out of line.
+    return h("div", { className: pageClasses.transportationOverviewPage || "ta-suggestions-page" },
+        h("div", { className: "ta-suggestions-column" },
             update
-                ? h("button", {
-                    className: "ta-improve",
-                    onClick: () => trigger("applyRouteUpdate"),
-                }, t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update))
-                : null),
-
-        // Says so rather than vanishing: an empty space where a section was reads as a
-        // fault, and "none for this mode" is itself an answer.
-        rows.length === 0
-            ? h("div", { className: "ta-suggestions-empty" },
-                t("NoSuggestions", "nothing worth adding for this mode right now"))
-            : h(React.Fragment, null,
-                h("div", { className: "ta-suggestion ta-suggestion-head" },
-                    h("div", { className: "ta-swatch ta-swatch-blank" }),
-                    h("div", { className: wide + " ta-suggestion-name" }, t("ColMode", "Mode")),
-                    h("div", { className: cell }, t("ColLength", "Length")),
-                    h("div", { className: cell }, t("ColStops", "Stops")),
-                    h("div", { className: cell }, t("ColVehicles", "Vehicles")),
-                    h("div", { className: cell }, t("ColSchedule", "Runs")),
-                    h("div", { className: cell }, t("ColReach", "Unlocks"))),
-
-                rows.map(({ parts, index }) => {
-                    const mode = parts[0] || "Bus";
-                    return h("div", {
-                        key: parts[6] || index,
-                        className: "ta-suggestion" + (index === selected ? " ta-suggestion-on" : ""),
-                        onClick: () => trigger("selectRoute", index),
-                        onMouseEnter: () => trigger("highlightRoute", index),
-                        onMouseLeave: () => trigger("highlightRoute", -1),
-                    },
-                        h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } }),
-                        h("div", { className: wide + " ta-suggestion-name" }, t("Mode." + mode, mode)),
-                        h("div", { className: cell }, (parts[1] || "?") + " " + t("Km", "km")),
-                        h("div", { className: cell }, parts[2] || "?"),
-                        h("div", { className: cell }, parts[3] || "?"),
-                        // When to run it. The game offers all day, day only or night
-                        // only per line, and the recommendation rests on how full this
-                        // line would be in each period on its own riders.
-                        h("div", { className: cell },
-                            t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
-                        // The figure the list is ordered by, so the gap between the
-                        // first row and the second is visible rather than implied.
-                        h("div", { className: cell + " ta-suggestion-reach" }, (parts[5] || "0") + " %"));
-                })));
+                ? h("div", { className: "ta-update" },
+                    h("button", {
+                        className: "ta-improve",
+                        onClick: () => trigger("applyRouteUpdate"),
+                    }, t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update)))
+                : null,
+            column));
 }
 
 // The walk-to-transit row in the game's own selected-building window, drawn from what
@@ -522,6 +573,12 @@ function registerBuildingSection(registry) {
 // had, and the note reads as a remark about the line above it.
 function extendOverview(registry) {
     pageClasses = readVanilla(registry, VANILLA.pageStyle, "classes") || {};
+    lineClasses = readVanilla(registry, VANILLA.lineItemStyle, "classes") || {};
+    vanilla = {
+        section: readVanilla(registry, VANILLA.section, "Section"),
+        scrollable: readVanilla(registry, VANILLA.scrollable, "Scrollable"),
+        sectionTheme: readVanilla(registry, VANILLA.sectionTheme, "classes"),
+    };
 
     if (readVanilla(registry, VANILLA.lineItem, "TransportLineItem")) {
         registry.extend(VANILLA.lineItem, "TransportLineItem", (Original) => (props) => {
@@ -538,11 +595,65 @@ function extendOverview(registry) {
         });
     }
 
+    // The panel's body: the vanilla page, or ours when our tab is the one showing.
     if (readVanilla(registry, VANILLA.page, "TransportationOverviewPage")) {
-        registry.extend(VANILLA.page, "TransportationOverviewPage", (Original) => (props) =>
-            h("div", { className: "ta-overview-page" },
-                h("div", { className: "ta-overview-body" }, h(Original, props)),
-                h(SuggestionsSection, null)));
+        registry.extend(VANILLA.page, "TransportationOverviewPage", (Original) => (props) => {
+            const mine = useSuggestionsTab();
+
+            // While this page is mounted the overview is open, and the suggested lines
+            // are drawn on the map whether or not the mod's infoview is on. Looking at
+            // the list and not seeing the line it describes was the whole complaint.
+            // The reset closes our tab with the panel, so the tab strip and the body
+            // cannot come back disagreeing about which tab is selected.
+            React.useEffect(() => {
+                trigger("setOverviewOpen", true);
+                return () => {
+                    trigger("setOverviewOpen", false);
+                    setSuggestionsTab(false);
+                };
+            }, []);
+
+            return mine ? h(SuggestionsPage, null) : h(Original, props);
+        });
+    }
+
+    // And the tab that switches to it, beside the game's own two.
+    if (readVanilla(registry, VANILLA.tabs, "Tab")) {
+        registry.extend(VANILLA.tabs, "Tab", (Original) => (props) => {
+            const t = useTranslate();
+            const mine = useSuggestionsTab();
+            const kind = transportTabKind(props);
+            if (!kind) {
+                return h(Original, props);
+            }
+
+            // While our tab is showing, the game's two must not draw themselves as
+            // selected, and clicking either must hand the body back to them.
+            const patched = Object.assign({}, props, {
+                selectedId: mine ? SUGGESTIONS_TAB : props.selectedId,
+                onSelect: (id) => {
+                    setSuggestionsTab(false);
+                    if (props.onSelect) {
+                        props.onSelect(id);
+                    }
+                },
+            });
+
+            if (kind !== "Cargo") {
+                return h(Original, patched);
+            }
+
+            // Rendered through the game's own Tab, so it is the same button in the same
+            // strip rather than something of ours that looks nearly like one.
+            return h(React.Fragment, null,
+                h(Original, patched),
+                h(Original, {
+                    id: SUGGESTIONS_TAB,
+                    selectedId: mine ? SUGGESTIONS_TAB : props.selectedId,
+                    onSelect: () => setSuggestionsTab(true),
+                    children: t("SuggestionsTab", "Suggestions"),
+                }));
+        });
     }
 }
 

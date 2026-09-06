@@ -25,6 +25,13 @@ namespace TransitArchitect
 
         private int[]? m_ServedWalkMs;
 
+        // The access field before it is quantised to bytes, and how far each tile's
+        // value was carried to reach it. Fields rather than locals so the spread pass has
+        // somewhere to work without allocating on every refresh.
+        private int[]? m_AccessWalkMs;
+
+        private int[] m_AccessSpreadMs = System.Array.Empty<int>();
+
         private CoverageReport? m_Coverage;
 
         private int m_EquityHorizonMs;
@@ -133,11 +140,19 @@ namespace TransitArchitect
             RefreshCoverage(settings, "measured");
         }
 
-        // The served-walk field rasterised onto the heat map's own tile grid, reusing
-        // the tile-to-node snap the access pass already made (WalkAccessOutput.TileNode
-        // / TileWalkMs). A tile off the network, or one whose nearest stop is beyond the
-        // horizon, is 255 — the far end of the gradient rather than "no data", because
-        // "no service within ten minutes" is exactly what the player wants to see.
+        // The served-walk field rasterised onto the heat map's own tile grid: how long a
+        // walk from each tile to the nearest stop the city's lines actually serve, as 0
+        // (at a stop) to 255 (at or beyond the walking horizon). This is what colours the
+        // buildings and what the selected-building row reports.
+        //
+        // Two steps, and the second one is the point. WalkAccessOutput.TileNode only
+        // holds a node for a tile within the ACCESS budget of the pedestrian network —
+        // 8110 of 200704 tiles on Valmare — because that budget answers a different
+        // question: how far a STOP may stand from a road. Reading it as "this tile has no
+        // transit" put a house at one minute and the house next door at over ten, all
+        // over the city, and painted a tram terminus as unserved. So tiles without a node
+        // of their own take the walk of a nearby tile that has one, plus the walk between
+        // them.
         private void BuildAccessField(WalkAccessOutput access)
         {
             int[]? served = m_ServedWalkMs;
@@ -148,35 +163,134 @@ namespace TransitArchitect
             }
 
             int count = access.TileNode.Length;
+            int2 grid = m_PlayableGridAtCompute;
+            if (grid.x <= 0 || grid.y <= 0 || grid.x * grid.y != count)
+            {
+                m_AccessByTile = null;
+                return;
+            }
+
+            if (m_AccessWalkMs is null || m_AccessWalkMs.Length != count)
+            {
+                m_AccessWalkMs = new int[count];
+                m_AccessSpreadMs = new int[count];
+            }
+
             if (m_AccessByTile is null || m_AccessByTile.Length != count)
             {
                 m_AccessByTile = new byte[count];
             }
 
-            byte[] field = m_AccessByTile;
-            int reached = 0;
+            int[] walkMs = m_AccessWalkMs;
             for (int i = 0; i < count; i++)
             {
                 int node = access.TileNode[i];
                 long walk = node >= 0 && node < served.Length && served[node] != Equity.NotServed
                     ? (long)served[node] + access.TileWalkMs[i]
-                    : m_EquityHorizonMs;
-                if (walk >= m_EquityHorizonMs)
+                    : int.MaxValue;
+                walkMs[i] = walk >= m_EquityHorizonMs ? int.MaxValue : (int)walk;
+            }
+
+            SpreadAccessField(walkMs, m_AccessSpreadMs, grid);
+
+            byte[] field = m_AccessByTile;
+            int reached = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (walkMs[i] == int.MaxValue || walkMs[i] >= m_EquityHorizonMs)
                 {
                     field[i] = 255;
                     continue;
                 }
 
                 reached++;
-                field[i] = (byte)(walk * 255L / m_EquityHorizonMs);
+                field[i] = (byte)((long)walkMs[i] * 255L / m_EquityHorizonMs);
             }
 
-            m_AccessFieldGrid = m_PlayableGridAtCompute;
+            m_AccessFieldGrid = grid;
             m_AccessFieldWorldMin = m_ScoreWorldMin;
             m_AccessFieldVersion++;
             DeferredLog.Info(
                 $"Transit access field: {(reached).ToString(CultureInfo.InvariantCulture)} of {(count).ToString(CultureInfo.InvariantCulture)} tiles within " +
                 $"{(m_EquityHorizonMs / 60_000).ToString(CultureInfo.InvariantCulture)} min of a served stop (grid {(m_AccessFieldGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_AccessFieldGrid.y).ToString(CultureInfo.InvariantCulture)}, version {(m_AccessFieldVersion).ToString(CultureInfo.InvariantCulture)})");
+        }
+
+        // Fills in tiles that have no pedestrian node of their own from tiles that do,
+        // charging the walk between tile centres. Two sweeps of a chamfer distance
+        // transform — forward over increasing indices, backward over decreasing — which
+        // is exact for this cost pattern and costs two passes over the grid.
+        //
+        // Bounded to Assumptions.AccessFieldSpreadTiles deliberately. Unbounded, it would
+        // walk straight over a river to a stop on the far bank and report a walk nobody
+        // can make; bounded, it bridges a house to its own street and no further.
+        private static void SpreadAccessField(int[] walkMs, int[] spreadMs, int2 grid)
+        {
+            int straight = (int)(Assumptions.TileSize / Assumptions.WalkSpeed * 1000f);
+            // A diagonal step is sqrt(2) tiles, charged as such rather than as one:
+            // rounding it down is what turns a distance transform into a square.
+            int diagonal = (int)(Assumptions.TileSize * 1.41421356f / Assumptions.WalkSpeed * 1000f);
+            int budget = Assumptions.AccessFieldSpreadTiles * straight;
+
+            for (int i = 0; i < walkMs.Length; i++)
+            {
+                spreadMs[i] = walkMs[i] == int.MaxValue ? int.MaxValue : 0;
+            }
+
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool forward = pass == 0;
+                for (int step = 0; step < grid.y; step++)
+                {
+                    int z = forward ? step : grid.y - 1 - step;
+                    for (int inner = 0; inner < grid.x; inner++)
+                    {
+                        int x = forward ? inner : grid.x - 1 - inner;
+                        int index = (z * grid.x) + x;
+                        for (int dz = -1; dz <= 1; dz++)
+                        {
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                if (dx == 0 && dz == 0)
+                                {
+                                    continue;
+                                }
+
+                                int nx = x + dx;
+                                int nz = z + dz;
+                                if (nx < 0 || nz < 0 || nx >= grid.x || nz >= grid.y)
+                                {
+                                    continue;
+                                }
+
+                                int from = (nz * grid.x) + nx;
+                                if (spreadMs[from] == int.MaxValue)
+                                {
+                                    continue;
+                                }
+
+                                int cost = dx != 0 && dz != 0 ? diagonal : straight;
+                                // The budget is on the SPREAD, not on the walk: a tile
+                                // may inherit a long walk from its street, but only over
+                                // a few tiles of open ground. Without this the field
+                                // would carry a walk straight over a river to a stop on
+                                // the far bank and report a walk nobody can make.
+                                long carried = (long)spreadMs[from] + cost;
+                                if (carried > budget)
+                                {
+                                    continue;
+                                }
+
+                                long candidate = (long)walkMs[from] + cost;
+                                if (candidate < walkMs[index])
+                                {
+                                    walkMs[index] = (int)candidate;
+                                    spreadMs[index] = (int)carried;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         private static void SnapStops(List<float2Like> stops, WalkNodeIndex index, int accessMs, out int[] nodes, out int[] access)

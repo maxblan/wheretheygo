@@ -72,21 +72,33 @@ access), 11a, 12a, 13a, 14a, 15a, 16a, 17a, 18a, 19a.
       exactly like every vanilla infoview
 - [x] Suggested lines are drawn while the Transportation Overview is open, not only under our infoview:
       a list of lines you cannot see on the map is half an answer
-- [x] Suggestions are filtered to the transport tab being looked at, from the game's own
-      `transportationOverview.selectedPassengerType`
+- [x] Suggestions live in a third HORIZONTAL tab of their own beside PUBLIC TRANSPORT and CARGO
+      (author's request 2026-09-06), added by extending the game's `Tab` component. The per-mode
+      filter that preceded it is gone: a tab of its own has room for every mode at once
 - [x] The Options page lost its two read-only status lines, and calibration moved behind the developer
       switch: fitting regression weights is not a thing to ask a player to judge
-- [ ] Fourth in-game run: the building row, the per-tab suggestions, the routes drawn from the overview
+- [x] The suggestions table and the health notes are built from the vanilla line list's own parts —
+      its Section, Scrollable, theme, page classes and row classes — rather than styled to resemble
+      them (author, 2026-09-06)
+- [ ] Fourth in-game run: the building row, the fixed walk times, the rebuilt table and notes, the
+      routes drawn from the overview
 
 ## 1b. Algorithm faults found in play
 
 - [x] Stops were placed on motorways. Highways were already barred from being GROWN along, but a
       corridor routed OVER one could still take stops there; `MaterialisePath` now reports which
       segments of the drawn path are unstoppable and the stop planner refuses them outright
-- [ ] A bright suitability blob on empty ground away from the city (2026-09-06 14:34 screenshot).
-      Not yet explained: the score is a weighted sum of seven measurements and the map shows only the
-      sum. The combine pass now logs the three strongest tiles with their world position and every
-      term, so the next run says which measurement it was
+- [x] **The transit-access field was wrong, and it explains both open faults.**
+      `WalkAccessOutput.TileNode` only holds a node for a tile within the ACCESS budget of the
+      pedestrian network — 8110 of 200704 tiles on Valmare — because that budget answers a different
+      question (how far a STOP may stand from a road). Reading it as "no transit here" put one house
+      at 1 min and its neighbour at over 10, all over the city, and reported a tram terminus with 22
+      waiting passengers as unserved. `BuildAccessField` now spreads a tile's walk onto neighbours
+      that have no node of their own, bounded to `Assumptions.AccessFieldSpreadTiles` (3 tiles, ~96 m
+      — a house to its street and no further, so it cannot walk over a river)
+- [~] The bright blob next to the tram turning loop is very likely the same bug: the coverage penalty
+      reads the same field, so a tile beside a served stop was not being penalised for it. The
+      strongest-tiles log line will confirm which term it was on the next run
 
 ## 3. Repository hygiene
 

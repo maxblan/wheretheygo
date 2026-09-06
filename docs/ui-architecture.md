@@ -314,3 +314,32 @@ no longer collide with each other, which the shared green-yellow-red ramp did.
 
 The two font-missing glyphs (`▴`, `✕`) that rendered as tofu went with the window. Anything
 added later must use the game's own icon SVGs rather than box-drawing characters.
+
+## A third horizontal tab (2026-09-06, author's request)
+
+The suggestions are no longer a section under the vanilla line list. They are the body of
+their own tab, beside PUBLIC TRANSPORT and CARGO, because under the list is where the room
+ran out: that list is as long as the city has lines, so a table beneath it either clipped
+or pushed the panel off the screen.
+
+How, since the panel builds its tab strip inline and offers no seam:
+
+- `TransportationOverviewPanel` takes `selectedTab`/`onSelectTab` as props, so the tab
+  state belongs to its parent and a third value in it would reach code that only knows
+  two. Our tab's state lives in a small store in the module instead, with a subscription
+  hook, and both extensions below read it.
+- `game-ui/common/tabs/tabs.tsx` exports `Tab`, `TabBar` and `TabNav`. Extending **`Tab`**
+  is what adds the button: for the Cargo tab we render the original plus one more, through
+  the same component, so it is the same button in the same strip. While our tab is showing
+  we hand the game's two tabs a `selectedId` they do not match, and wrap their `onSelect`
+  to hand the body back.
+- Extending `TransportationOverviewPage` swaps the body.
+
+The discriminator matters. `Tab` renders in a dozen panels, and the transportation ids are
+0 and 1 — so are `CityInfoPanelTab`'s and `EconomyPanelTab`'s. The test is the tab's
+LABEL: `props.children.props.hash` is "PublicTransport" or "Cargo", which nothing else
+renders. If the game changes that, the extra tab quietly fails to appear and every other
+tab in the game keeps working, which is the right way for this to break.
+
+`TabNav` needed no change: it only wires the keyboard "Switch Tab" action and renders its
+children.
