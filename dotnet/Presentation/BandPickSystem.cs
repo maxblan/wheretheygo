@@ -47,10 +47,9 @@ namespace WhereTheyGo
 
         protected override void OnUpdate()
         {
-            BandSet? bands = m_Overlay.Bands;
             Camera? camera = m_CameraSystem?.activeCamera;
             InputManager? input = InputManager.instance;
-            if (!m_Overlay.AreBandsShown || bands is null || bands.Bands.Length == 0
+            if (!m_Overlay.AreBandsShown || m_Overlay.CurrentBandView.Drawn.Length == 0
                 || camera == null || input is null || input.mouseOverUI || !input.mouseOnScreen)
             {
                 WhereTheyGoSystem.SetHoveredBand(band: null);
@@ -63,7 +62,7 @@ namespace WhereTheyGo
                 return;
             }
 
-            WhereTheyGoSystem.SetHoveredBand(NearestBand(bands, px, pz));
+            WhereTheyGoSystem.SetHoveredBand(NearestBand(px, pz));
         }
 
         // Where the pointer meets the ground. The ray is intersected with a horizontal
@@ -103,28 +102,20 @@ namespace WhereTheyGo
         // The nearest band the player can actually see: the threshold, the purposes and
         // the hour all decide what is on screen, and pointing at something invisible
         // would be a lie.
-        private Band? NearestBand(BandSet bands, float px, float pz)
+        private Band? NearestBand(float px, float pz)
         {
-            float threshold = m_Overlay.BandThresholdShare;
-            int hour = m_Overlay.SelectedHour;
-            int purposes = m_Overlay.PurposeFilter;
+            // The same view the renderer draws from, so what the pointer can find and
+            // what the eye can see are one list rather than two agreeing by luck.
+            BandView view = m_Overlay.CurrentBandView;
             Band? best = null;
             float bestDistance = float.MaxValue;
-            for (int i = 0; i < bands.Bands.Length; i++)
+            // Lightest first, matching the draw order: where a thin band lies over a
+            // thick one, the thin one is what the player is looking at.
+            for (int i = view.Drawn.Length - 1; i >= 0; i--)
             {
-                Band band = bands.Bands[i];
-                if ((band.PurposeMask & purposes) == 0)
-                {
-                    continue;
-                }
-
-                float weight = band.WeightAtHour(hour);
-                if (!BandGeometry.IsVisible(weight, bands.HeaviestWeight, threshold))
-                {
-                    continue;
-                }
-
-                float reach = (BandGeometry.Width(weight, bands.HeaviestWeight) * 0.5f) + PickSlackMetres;
+                DrawnBand drawn = view.Drawn[i];
+                Band band = drawn.Band;
+                float reach = (BandView.WidthOf(drawn.WidthClass) * 0.5f) + PickSlackMetres;
                 float distanceSq = BandGeometry.DistanceSqToArc(band.Ax, band.Az, band.Bx, band.Bz, px, pz, PickSamples);
                 if (distanceSq <= reach * reach && distanceSq < bestDistance)
                 {

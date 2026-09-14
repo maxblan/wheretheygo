@@ -84,18 +84,18 @@ namespace WhereTheyGo.Tests
 
             // The reversed journey belongs to the same band but to the other direction:
             // it leaves the far end at 07:00 and comes back at 16:00.
-            AssertEqual(60f, heavy.HourlyAtoB[8] + heavy.HourlyAtoB[9], 1e-3f, "the two morning departures leave A for B");
-            AssertEqual(10f, heavy.HourlyAtoB[16], 1e-3f, "the reversed journey's RETURN leaves A at 16:00");
-            AssertEqual(10f, heavy.HourlyBtoA[7], 1e-3f, "and its outbound leaves B at 07:00");
-            AssertEqual(60f, heavy.HourlyBtoA[17] + heavy.HourlyBtoA[18], 1e-3f, "the evening flow runs the other way");
-            AssertTrue(heavy.PeakHour is 17 or 8, $"the peak hour is one of the two commuting hours, got {heavy.PeakHour.ToString(CultureInfo.InvariantCulture)}");
+            AssertEqual(60f, heavy.AtoB((int)JourneyPurpose.Work, 8) + heavy.AtoB((int)JourneyPurpose.Work, 9), 1e-3f, "the two morning departures leave A for B");
+            AssertEqual(10f, heavy.AtoB((int)JourneyPurpose.Work, 16), 1e-3f, "the reversed journey's RETURN leaves A at 16:00");
+            AssertEqual(10f, heavy.BtoA((int)JourneyPurpose.Work, 7), 1e-3f, "and its outbound leaves B at 07:00");
+            AssertEqual(60f, heavy.BtoA((int)JourneyPurpose.Work, 17) + heavy.BtoA((int)JourneyPurpose.Work, 18), 1e-3f, "the evening flow runs the other way");
+            AssertTrue(heavy.PeakHour(Band.AllPurposes) is 17 or 8, $"the peak hour is one of the two commuting hours, got {heavy.PeakHour(Band.AllPurposes).ToString(CultureInfo.InvariantCulture)}");
             // Every journey is made twice a day, so the hours hold twice the band's
             // weight — once leaving, once coming back. That is the whole reason the
             // map can breathe with the clock.
             float hourly = 0f;
             for (int h = 0; h < Band.HoursPerDay; h++)
             {
-                hourly += heavy.HourlyAtoB[h] + heavy.HourlyBtoA[h];
+                hourly += heavy.WeightAtHour(h, Band.AllPurposes);
             }
 
             AssertEqual(2f * heavy.Weight, hourly, 1e-3f, "the hours hold both rides of every journey");
@@ -190,10 +190,10 @@ namespace WhereTheyGo.Tests
             BandSet set = BundleOf(journeys, null, Assumptions.BandMergeMetres, Assumptions.MaxBands);
             Band band = set.Bands[0];
 
-            AssertTrue(band.DirectionAtHour(8) == 1, "at eight the traffic leaves A for B");
-            AssertTrue(band.DirectionAtHour(17) == -1, "at five it comes back");
-            AssertTrue(band.DirectionAtHour(12) == 0, "an hour with no traffic has no direction");
-            AssertTrue(band.DirectionAtHour(-1) == 0, "and neither has the whole day, which is the point");
+            AssertTrue(band.DirectionAtHour(8, Band.AllPurposes) == 1, "at eight the traffic leaves A for B");
+            AssertTrue(band.DirectionAtHour(17, Band.AllPurposes) == -1, "at five it comes back");
+            AssertTrue(band.DirectionAtHour(12, Band.AllPurposes) == 0, "an hour with no traffic has no direction");
+            AssertTrue(band.DirectionAtHour(-1, Band.AllPurposes) == 0, "and neither has the whole day, which is the point");
 
             // An hour that is nearly even must not invent a rush: half in each
             // direction is no direction at all.
@@ -203,7 +203,7 @@ namespace WhereTheyGo.Tests
                 Commute(3000f, 100f, 100f, 100f, 10f, 8, 9),
             };
             Band mixed = BundleOf(even, null, Assumptions.BandMergeMetres, Assumptions.MaxBands).Bands[0];
-            AssertTrue(mixed.DirectionAtHour(8) == 0, "an evenly split hour has no direction");
+            AssertTrue(mixed.DirectionAtHour(8, Band.AllPurposes) == 0, "an evenly split hour has no direction");
 
             // The whole day always balances, whatever the city does, because every
             // journey is made twice.
@@ -219,14 +219,14 @@ namespace WhereTheyGo.Tests
             float btoA = 0f;
             for (int hour = 0; hour < Band.HoursPerDay; hour++)
             {
-                atoB += day.HourlyAtoB[hour];
-                btoA += day.HourlyBtoA[hour];
+                atoB += day.AtoB((int)JourneyPurpose.Work, hour);
+                btoA += day.BtoA((int)JourneyPurpose.Work, hour);
             }
 
             AssertEqual(atoB, btoA, 1e-3f, "over a day the two directions carry the same traffic");
         }
 
-        private static void BandGeometryBowsLeftAndScalesByLog()
+        private static void BandGeometryBowsLeftAndCasesTheFill()
         {
             // A band running due east. Left of travel in the map plane is +z, which is
             // north in the game's world.
@@ -251,16 +251,157 @@ namespace WhereTheyGo.Tests
             BandGeometry.Arc(5f, 5f, 5f, 5f, out float dx, out float dz, out _, out _);
             AssertTrue(dx == 5f && dz == 5f, "a band of no length is its own control points");
 
-            AssertEqual(Assumptions.BandMinWidthMetres, BandGeometry.Width(0f, 100f), 1e-4f, "no weight is the minimum width");
-            AssertEqual(Assumptions.BandMaxWidthMetres, BandGeometry.Width(100f, 100f), 1e-3f, "the heaviest band is the maximum width");
-            AssertEqual(Assumptions.BandMinWidthMetres, BandGeometry.Width(10f, 0f), 1e-4f, "and a city with no traffic does not divide by zero");
-            float half = BandGeometry.Width(50f, 100f);
-            float tenth = BandGeometry.Width(10f, 100f);
-            AssertTrue(half < Assumptions.BandMaxWidthMetres && half > tenth, "widths grow with weight");
-            // The point of the log scale: a band of a tenth the traffic is far more
-            // than a tenth as wide, so it is still visible beside the trunk.
-            float linearTenth = Assumptions.BandMinWidthMetres + ((Assumptions.BandMaxWidthMetres - Assumptions.BandMinWidthMetres) * 0.1f);
-            AssertTrue(tenth > linearTenth, $"a tenth of the traffic is wider than a tenth of the width: {tenth.ToString("F1", CultureInfo.InvariantCulture)}");
+            // The tangent an arrowhead is turned by. On a bowed band the straight A-to-B
+            // heading is visibly wrong near the ends, which is the whole reason this
+            // exists rather than reusing the chord.
+            BandGeometry.DirectionOnArc(0f, 0f, 1000f, 0f, 0.5f, out float mdx, out float mdz);
+            AssertTrue(Math.Abs(mdx - 1f) < 1e-3f && Math.Abs(mdz) < 1e-3f, "at the middle of a symmetric bow the heading is the chord's");
+            BandGeometry.DirectionOnArc(0f, 0f, 1000f, 0f, 0f, out float sdx, out float sdz);
+            AssertTrue(sdx > 0f && sdz > 0f, "leaving A it already heads into the bow, which is +z on an eastward band");
+            AssertTrue(Math.Abs((sdx * sdx) + (sdz * sdz) - 1f) < 1e-4f, "and the heading is a unit vector, or the arrow would be scaled by it");
+            BandGeometry.DirectionOnArc(5f, 5f, 5f, 5f, 0.5f, out float ddx, out float ddz);
+            AssertTrue(!float.IsNaN(ddx) && !float.IsNaN(ddz), "a band of no length still has a finite heading");
+
+            // The casing is the band's own colour driven down, not black: a neutral
+            // outline would read as a fifth colour on a map that already carries a ramp.
+            BandGeometry.Colour(0.5f, out float fr, out float fg, out float fb);
+            BandGeometry.OutlineColour(0.5f, out float or_, out float og, out float ob);
+            AssertTrue(or_ < fr && og < fg && ob < fb, "the casing is darker than the fill in every channel");
+            AssertTrue(or_ > 0f || og > 0f || ob > 0f, "but it is not black");
+        }
+
+        // What the map actually draws, under the three filters that decide it.
+        private static void BandViewFiltersExactlyAndClassesWidths()
+        {
+            var journeys = new List<Journey>
+            {
+                // One corridor carrying both commuters and shoppers, so the purpose
+                // filter has something to be exact about.
+                Commute(100f, 100f, 3000f, 100f, 100f, 8, 17),
+                Commute(100f, 100f, 3000f, 100f, 25f, 10, 12, JourneyPurpose.Shopping),
+                // A second, lighter corridor elsewhere.
+                Commute(100f, 3000f, 3000f, 3000f, 8f, 8, 17),
+                // And a hair, to be cut by the threshold.
+                Commute(100f, 2000f, 3000f, 2000f, 1f, 8, 17),
+            };
+
+            BandSet set = BundleOf(journeys, carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            AssertTrue(set.Bands.Length == 3, $"three corridors, got {set.Bands.Length.ToString(CultureInfo.InvariantCulture)}");
+
+            // Switching shopping off must take its 25 journeys OFF the heavy band, not
+            // merely leave the band in place at its full weight. The band is drawn at a
+            // number, and the number has to be the one the filter describes.
+            Band heavy = set.Bands[0];
+            AssertEqual(125f, heavy.DayWeight(Band.AllPurposes), 1e-3f, "all purposes is every journey on the band");
+            AssertEqual(100f, heavy.DayWeight(1 << (int)JourneyPurpose.Work), 1e-3f, "work alone is the commuters");
+            AssertEqual(25f, heavy.DayWeight(1 << (int)JourneyPurpose.Shopping), 1e-3f, "shopping alone is the shoppers");
+            AssertEqual(125f, heavy.Weight, 1e-3f, "and the two together are what the routing weighed");
+
+            // The hour and the purpose compose: at ten in the morning only the shoppers
+            // are out on this band.
+            AssertEqual(25f, heavy.WeightAtHour(10, Band.AllPurposes), 1e-3f, "ten in the morning is the shopping trip");
+            AssertEqual(0f, heavy.WeightAtHour(10, 1 << (int)JourneyPurpose.Work), 1e-3f, "and none of it is work");
+
+            // The threshold is a share of the heaviest band UNDER THE SAME FILTERS.
+            BandView all = BandView.Of(set, hour: -1, Band.AllPurposes, thresholdShare: 0.05f);
+            AssertTrue(all.Drawn.Length == 2, $"the hair is under five percent of 125, got {all.Drawn.Length.ToString(CultureInfo.InvariantCulture)} drawn");
+            AssertTrue(all.HiddenCount == 1, "and it is counted rather than forgotten");
+            AssertEqual(1f, all.HiddenWeight, 1e-3f, "with the journeys it stands for");
+            AssertTrue(all.TotalCount == 3, "drawn plus hidden is every band there is");
+            AssertEqual(125f, all.Heaviest, 1e-3f, "the scale is the heaviest band under these filters");
+
+            // Heaviest first out of the view, which is the order the renderer relies on
+            // to put light bands on top of heavy ones.
+            AssertTrue(all.Drawn[0].Weight >= all.Drawn[1].Weight, "the view is heaviest first");
+
+            // With only shopping ticked the scale follows: the heavy band is now 25
+            // journeys, and the other corridors carry no shopping at all.
+            BandView shopping = BandView.Of(set, hour: -1, 1 << (int)JourneyPurpose.Shopping, thresholdShare: 0.05f);
+            AssertTrue(shopping.Drawn.Length == 1, $"only the corridor with shoppers on it, got {shopping.Drawn.Length.ToString(CultureInfo.InvariantCulture)}");
+            AssertEqual(25f, shopping.Heaviest, 1e-3f, "and the scale is 25, not the city's 125");
+            AssertEqual(25f, shopping.Drawn[0].Weight, 1e-3f, "the band is drawn at what shopping weighs on it");
+
+            // Degenerate: nothing at all must not divide by zero or throw.
+            BandView empty = BandView.Of(null, hour: -1, Band.AllPurposes, thresholdShare: 0.05f);
+            AssertTrue(empty.Drawn.Length == 0 && empty.Heaviest == 0f, "no bands is an empty view");
+            BandView nobody = BandView.Of(set, hour: 3, Band.AllPurposes, thresholdShare: 0.05f);
+            AssertTrue(nobody.Drawn.Length == 0, "an hour nobody travels in draws nothing");
+        }
+
+        // Widths come in classes with a legend, which is what every flow map in the
+        // cartographic survey does and what a continuous ramp cannot offer: a width
+        // that can be read rather than only compared.
+        private static void BandWidthClassesAreOrderedAndReadable()
+        {
+            var journeys = new List<Journey>();
+            // Weights spread over two orders of magnitude, each its own corridor.
+            float[] weights = { 1000f, 300f, 90f, 30f, 12f };
+            for (int i = 0; i < weights.Length; i++)
+            {
+                journeys.Add(Commute(100f, 100f + (i * 600f), 3000f, 100f + (i * 600f), weights[i], 8, 17));
+            }
+
+            BandSet set = BundleOf(journeys, carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            BandView view = BandView.Of(set, hour: -1, Band.AllPurposes, thresholdShare: 0f);
+            AssertTrue(view.Drawn.Length == weights.Length, "every corridor is drawn when nothing is thresholded away");
+
+            // The class boundaries are readable numbers, strictly increasing, and they
+            // separate the corridors rather than lumping them together.
+            float[] breaks = view.ClassBreaks;
+            AssertTrue(breaks.Length == BandView.ClassCount - 1, "one boundary fewer than there are classes");
+            for (int i = 1; i < breaks.Length; i++)
+            {
+                AssertTrue(breaks[i] > breaks[i - 1], $"the boundaries increase: {breaks[i - 1].ToString("F0", CultureInfo.InvariantCulture)} then {breaks[i].ToString("F0", CultureInfo.InvariantCulture)}");
+            }
+
+            foreach (float edge in breaks)
+            {
+                AssertTrue(IsReadableNumber(edge), $"a legend prints {edge.ToString("F0", CultureInfo.InvariantCulture)}, which has to be a number a player can hold");
+            }
+
+            // The heaviest corridor is in the top class, the lightest in the bottom,
+            // and the classes never run backwards against weight.
+            AssertTrue(view.Drawn[0].WidthClass == BandView.ClassCount - 1, "the city's biggest corridor is in the widest class");
+            AssertTrue(view.Drawn[^1].WidthClass == 0, "and the lightest band drawn is in the thinnest");
+            for (int i = 1; i < view.Drawn.Length; i++)
+            {
+                AssertTrue(view.Drawn[i].WidthClass <= view.Drawn[i - 1].WidthClass, "a lighter band is never in a wider class");
+            }
+
+            // Widths themselves increase with the class, or the classes would say
+            // nothing on the map.
+            for (int i = 1; i < BandView.ClassCount; i++)
+            {
+                AssertTrue(BandView.WidthOf(i) > BandView.WidthOf(i - 1), "each class is wider than the one below");
+            }
+
+            AssertEqual(BandView.WidthOf(0), BandView.WidthOf(-3), 1e-6f, "a class below the first clamps rather than throwing");
+            AssertEqual(BandView.WidthOf(BandView.ClassCount - 1), BandView.WidthOf(99), 1e-6f, "and one above the last");
+
+            // Degenerate: every band the same weight. One class is the honest answer,
+            // and nothing may be promoted out of it.
+            var flat = new List<Journey>
+            {
+                Commute(100f, 100f, 3000f, 100f, 50f, 8, 17),
+                Commute(100f, 1000f, 3000f, 1000f, 50f, 8, 17),
+            };
+            BandView same = BandView.Of(BundleOf(flat, carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands), hour: -1, Band.AllPurposes, thresholdShare: 0f);
+            AssertTrue(same.Drawn[0].WidthClass == same.Drawn[1].WidthClass, "two bands of equal weight are drawn the same width");
+        }
+
+        // 1, 2 or 5 times a power of ten: the numbers a legend can print.
+        private static bool IsReadableNumber(float value)
+        {
+            if (value <= 0f)
+            {
+                return false;
+            }
+
+            double magnitude = Math.Pow(10.0, Math.Floor(Math.Log10(value)));
+            double normalised = value / magnitude;
+            return Math.Abs(normalised - 1.0) < 1e-6
+                || Math.Abs(normalised - 2.0) < 1e-6
+                || Math.Abs(normalised - 5.0) < 1e-6;
         }
 
         // Pointing at a band. The hit test runs on the same arc the renderer draws, so
@@ -322,9 +463,6 @@ namespace WhereTheyGo.Tests
             BandGeometry.Colour(2f, out _, out _, out float bHigh);
             AssertTrue(rLow == r0 && bHigh == b1, "a share outside 0..1 clamps rather than running off the ramp");
 
-            AssertTrue(BandGeometry.IsVisible(10f, 100f, 0.02f) && !BandGeometry.IsVisible(1f, 100f, 0.02f),
-                "the threshold is a share of the heaviest band, so it means the same in any city");
-            AssertTrue(!BandGeometry.IsVisible(10f, 0f, 0.02f), "and nothing is visible in a city with no traffic");
         }
     }
 }

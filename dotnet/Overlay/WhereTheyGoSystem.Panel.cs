@@ -45,8 +45,9 @@ namespace WhereTheyGo
 
         private float m_LastHourAdvance;
 
-        // Every purpose switched on: the four bits of JourneyPurpose.
-        public const int AllPurposes = 0xF;
+        // Every purpose switched on. Named once, on the type that sizes the arrays by
+        // it, so a fifth purpose cannot be half-added.
+        public const int AllPurposes = Band.AllPurposes;
 
         public static void RequestInfoview(bool on) => s_InfoviewRequest = on ? 1 : 0;
 
@@ -80,6 +81,45 @@ namespace WhereTheyGo
 
         internal float BandThresholdShare => s_BandThresholdPercent / 100f;
 
+        internal int BandThresholdPercent => s_BandThresholdPercent;
+
+        // What the map is drawing, worked out once and handed to everyone who needs it:
+        // the renderer, the hit test, the panel's band count and the legend. Rebuilt
+        // only when one of its four inputs moves, which is on a player's click or a
+        // finished routing pass — never per frame, and never twice for one frame.
+        internal BandView CurrentBandView
+        {
+            get
+            {
+                BandSet? set = Bands;
+                if (m_BandView is not null
+                    && ReferenceEquals(set, m_BandViewOf)
+                    && m_BandViewHour == s_SelectedHour
+                    && m_BandViewPurposes == s_PurposeFilter
+                    && m_BandViewThreshold == s_BandThresholdPercent)
+                {
+                    return m_BandView;
+                }
+
+                m_BandViewOf = set;
+                m_BandViewHour = s_SelectedHour;
+                m_BandViewPurposes = s_PurposeFilter;
+                m_BandViewThreshold = s_BandThresholdPercent;
+                m_BandView = BandView.Of(set, s_SelectedHour, s_PurposeFilter, BandThresholdShare);
+                return m_BandView;
+            }
+        }
+
+        private BandView? m_BandView;
+
+        private BandSet? m_BandViewOf;
+
+        private int m_BandViewHour = int.MinValue;
+
+        private int m_BandViewPurposes = -1;
+
+        private int m_BandViewThreshold = -1;
+
         public static void SelectLine(int lineId) => s_SelectedLineId = lineId;
 
         // The band under the pointer, as the panel reads it:
@@ -98,12 +138,12 @@ namespace WhereTheyGo
                 return;
             }
 
-            float weight = band.WeightAtHour(s_SelectedHour);
+            float weight = band.WeightAtHour(s_SelectedHour, s_PurposeFilter);
             float carried = band.CarriedShare;
             s_HoveredBand =
                 $"{weight.ToString("F0", CultureInfo.InvariantCulture)}|" +
                 $"{((1f - carried) * 100f).ToString("F0", CultureInfo.InvariantCulture)}|" +
-                $"{band.PeakHour.ToString(CultureInfo.InvariantCulture)}|" +
+                $"{band.PeakHour(s_PurposeFilter).ToString(CultureInfo.InvariantCulture)}|" +
                 $"{(carried * 100f).ToString("F0", CultureInfo.InvariantCulture)}";
         }
 

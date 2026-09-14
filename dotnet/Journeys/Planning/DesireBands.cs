@@ -6,9 +6,10 @@ namespace WhereTheyGo
     // One band on the map: everybody travelling between roughly these two places.
     //
     // A band is undirected — the two ends are just A and B — but its traffic is not,
-    // so the two hourly profiles are kept apart. HourlyAtoB[7] is how many journeys
-    // leave A for B at seven in the morning. That is what lets the map breathe with
-    // the clock instead of drawing one arrow per pair of buildings.
+    // so the two flows are kept apart. The departures are held per purpose AND per
+    // hour, not summed: the panel's two filters are meant to compose, and a band that
+    // draws its whole weight when only shopping is ticked is a wrong number on the
+    // map, not a rounding.
     internal sealed class Band
     {
         public float Ax;
@@ -27,11 +28,12 @@ namespace WhereTheyGo
         // makes the highlight disappear again.
         public float TargetWeight;
 
-        // Which purposes travel here, as bits of 1 << (int)JourneyPurpose.
-        public byte PurposeMask;
-
-        public readonly float[] HourlyAtoB = new float[HoursPerDay];
-        public readonly float[] HourlyBtoA = new float[HoursPerDay];
+        // Departures by purpose and hour, one array per direction, indexed
+        // [purpose * HoursPerDay + hour]. Every journey appears twice — its outbound
+        // hour in one direction, its way home in the other — so a whole-day weight is
+        // half of the sum (DayWeight).
+        private readonly float[] m_AtoB = new float[PurposeCount * HoursPerDay];
+        private readonly float[] m_BtoA = new float[PurposeCount * HoursPerDay];
 
         // How many zone pairs were merged into this band. Not shown; logged, because a
         // band of one pair and a band of forty read the same on screen.
@@ -39,59 +41,137 @@ namespace WhereTheyGo
 
         public const int HoursPerDay = 24;
 
+        // The four JourneyPurpose values. Named here rather than counted from the enum
+        // because the arrays above are sized by it.
+        public const int PurposeCount = 4;
+
+        public const int AllPurposes = (1 << PurposeCount) - 1;
+
         public float CarriedShare => Weight > 0f ? CarriedWeight / Weight : 0f;
 
         public bool CarriesTarget => TargetWeight > 0f;
 
         public float LengthMetres => (float)Math.Sqrt(((Bx - Ax) * (Bx - Ax)) + ((Bz - Az) * (Bz - Az)));
 
-        // The busiest hour of the day over both directions, and what travels in it.
-        public int PeakHour
+        // Which purposes travel here at all, as bits of 1 << (int)JourneyPurpose.
+        public int PurposeMask
         {
             get
             {
-                int peak = 0;
-                float best = -1f;
-                for (int h = 0; h < HoursPerDay; h++)
+                int mask = 0;
+                for (int purpose = 0; purpose < PurposeCount; purpose++)
                 {
-                    float total = HourlyAtoB[h] + HourlyBtoA[h];
-                    if (total > best)
+                    if (DayWeight(1 << purpose) > 0f)
                     {
-                        best = total;
-                        peak = h;
+                        mask |= 1 << purpose;
                     }
                 }
 
-                return peak;
+                return mask;
             }
         }
 
-        public float WeightAtHour(int hour)
+        public float AtoB(int purpose, int hour) => m_AtoB[(purpose * HoursPerDay) + hour];
+
+        public float BtoA(int purpose, int hour) => m_BtoA[(purpose * HoursPerDay) + hour];
+
+        public void Add(int purpose, int hour, float atoB, float btoA)
         {
-            return hour is < 0 or >= HoursPerDay ? Weight : HourlyAtoB[hour] + HourlyBtoA[hour];
+            m_AtoB[(purpose * HoursPerDay) + hour] += atoB;
+            m_BtoA[(purpose * HoursPerDay) + hour] += btoA;
+        }
+
+        // Journeys a day between the two ends for the chosen purposes. Half the sum of
+        // the departures, because each journey departs twice.
+        public float DayWeight(int purposeMask)
+        {
+            float sum = 0f;
+            for (int purpose = 0; purpose < PurposeCount; purpose++)
+            {
+                if ((purposeMask & (1 << purpose)) == 0)
+                {
+                    continue;
+                }
+
+                int start = purpose * HoursPerDay;
+                for (int hour = 0; hour < HoursPerDay; hour++)
+                {
+                    sum += m_AtoB[start + hour] + m_BtoA[start + hour];
+                }
+            }
+
+            return sum * 0.5f;
+        }
+
+        // What the band weighs at one hour, or over the whole day when no hour is
+        // chosen. An hour's weight is the departures in it — not halved, because a
+        // departure at seven is a journey being made at seven.
+        public float WeightAtHour(int hour, int purposeMask)
+        {
+            if (hour is < 0 or >= HoursPerDay)
+            {
+                return DayWeight(purposeMask);
+            }
+
+            float sum = 0f;
+            for (int purpose = 0; purpose < PurposeCount; purpose++)
+            {
+                if ((purposeMask & (1 << purpose)) != 0)
+                {
+                    sum += m_AtoB[(purpose * HoursPerDay) + hour] + m_BtoA[(purpose * HoursPerDay) + hour];
+                }
+            }
+
+            return sum;
+        }
+
+        // The busiest hour of the day over both directions, for the chosen purposes.
+        public int PeakHour(int purposeMask)
+        {
+            int peak = 0;
+            float best = -1f;
+            for (int hour = 0; hour < HoursPerDay; hour++)
+            {
+                float total = WeightAtHour(hour, purposeMask);
+                if (total > best)
+                {
+                    best = total;
+                    peak = hour;
+                }
+            }
+
+            return peak;
         }
 
         // Which way the traffic runs at this hour: +1 from A to B, -1 from B to A, 0
         // when neither dominates or no hour is chosen. Over a whole day the two
         // directions balance by construction — every journey is made both ways — so
         // there is a direction to show only once an hour is picked.
-        public int DirectionAtHour(int hour)
+        public int DirectionAtHour(int hour, int purposeMask)
         {
             if (hour is < 0 or >= HoursPerDay)
             {
                 return 0;
             }
 
-            float atoB = HourlyAtoB[hour];
-            float btoA = HourlyBtoA[hour];
+            float atoB = 0f;
+            float btoA = 0f;
+            for (int purpose = 0; purpose < PurposeCount; purpose++)
+            {
+                if ((purposeMask & (1 << purpose)) != 0)
+                {
+                    atoB += m_AtoB[(purpose * HoursPerDay) + hour];
+                    btoA += m_BtoA[(purpose * HoursPerDay) + hour];
+                }
+            }
+
             float total = atoB + btoA;
             if (total <= 0f)
             {
                 return 0;
             }
 
-            // A near-even hour has no story to tell, and dots drifting one way would
-            // invent one.
+            // A near-even hour has no story to tell, and an arrow would invent one.
             float lead = Math.Abs(atoB - btoA) / total;
             return lead < Assumptions.BandDirectionLead ? 0 : atoB > btoA ? 1 : -1;
         }
@@ -111,6 +191,58 @@ namespace WhereTheyGo
         public int MergedPairs;
 
         public float HeaviestWeight;
+
+        // The city's departures hour by hour, for the chosen purposes. Summed from the
+        // same bands the map draws, so the panel's hour strip and the map can never
+        // tell two different stories about the same hour.
+        public float[] HourlyProfile(int purposeMask)
+        {
+            var profile = new float[Band.HoursPerDay];
+            for (int i = 0; i < Bands.Length; i++)
+            {
+                for (int hour = 0; hour < Band.HoursPerDay; hour++)
+                {
+                    profile[hour] += Bands[i].WeightAtHour(hour, purposeMask);
+                }
+            }
+
+            return profile;
+        }
+
+        // Journeys a day per purpose, in JourneyPurpose order. What the panel's four
+        // switches are worth, so they carry their own weight beside their name.
+        public float[] PurposeWeights()
+        {
+            var weights = new float[Band.PurposeCount];
+            for (int purpose = 0; purpose < weights.Length; purpose++)
+            {
+                for (int i = 0; i < Bands.Length; i++)
+                {
+                    weights[purpose] += Bands[i].DayWeight(1 << purpose);
+                }
+            }
+
+            return weights;
+        }
+
+        // The heaviest band under the filters in force. The width scale and the
+        // threshold both hang off this rather than off the unfiltered maximum: with
+        // three purposes switched off, scaling against the city's biggest commuter
+        // corridor leaves every remaining band a hairline.
+        public float HeaviestAt(int hour, int purposeMask)
+        {
+            float heaviest = 0f;
+            for (int i = 0; i < Bands.Length; i++)
+            {
+                float weight = Bands[i].WeightAtHour(hour, purposeMask);
+                if (weight > heaviest)
+                {
+                    heaviest = weight;
+                }
+            }
+
+            return heaviest;
+        }
     }
 
     // Bundling the city's journeys into the bands the map draws.
@@ -137,9 +269,9 @@ namespace WhereTheyGo
             public float Weight;
             public float Carried;
             public float Target;
-            public byte PurposeMask;
-            public float[]? HourlyAtoB;
-            public float[]? HourlyBtoA;
+            // Departures by purpose and hour, as Band holds them.
+            public float[]? AtoB;
+            public float[]? BtoA;
         }
 
         // The journeys as the routing left them: `pairs` holds where each door-to-door
@@ -218,16 +350,16 @@ namespace WhereTheyGo
                 }
 
                 Bucket entry = buckets[bucket];
-                entry.HourlyAtoB ??= new float[Band.HoursPerDay];
-                entry.HourlyBtoA ??= new float[Band.HoursPerDay];
-                entry.PurposeMask |= (byte)(1 << (int)journey.m_Purpose);
+                entry.AtoB ??= new float[Band.PurposeCount * Band.HoursPerDay];
+                entry.BtoA ??= new float[Band.PurposeCount * Band.HoursPerDay];
                 // A journey's outbound ride goes A to B unless its origin was the end
                 // that sorted second, in which case it is the return direction that
                 // leaves A.
-                float[] outbound = flipped ? entry.HourlyBtoA : entry.HourlyAtoB;
-                float[] homeward = flipped ? entry.HourlyAtoB : entry.HourlyBtoA;
-                outbound[journey.m_OutHour] += journey.m_Weight;
-                homeward[journey.m_BackHour] += journey.m_Weight;
+                float[] outbound = flipped ? entry.BtoA : entry.AtoB;
+                float[] homeward = flipped ? entry.AtoB : entry.BtoA;
+                int row = (int)journey.m_Purpose * Band.HoursPerDay;
+                outbound[row + journey.m_OutHour] += journey.m_Weight;
+                homeward[row + journey.m_BackHour] += journey.m_Weight;
                 buckets[bucket] = entry;
             }
         }
@@ -400,14 +532,20 @@ namespace WhereTheyGo
             band.Weight += entry.Weight;
             band.CarriedWeight += entry.Carried;
             band.TargetWeight += entry.Target;
-            band.PurposeMask |= entry.PurposeMask;
             band.Pairs++;
-            float[]? atoB = crossed ? entry.HourlyBtoA : entry.HourlyAtoB;
-            float[]? btoA = crossed ? entry.HourlyAtoB : entry.HourlyBtoA;
-            for (int h = 0; h < Band.HoursPerDay; h++)
+            float[]? atoB = crossed ? entry.BtoA : entry.AtoB;
+            float[]? btoA = crossed ? entry.AtoB : entry.BtoA;
+            for (int purpose = 0; purpose < Band.PurposeCount; purpose++)
             {
-                band.HourlyAtoB[h] += atoB is null ? 0f : atoB[h];
-                band.HourlyBtoA[h] += btoA is null ? 0f : btoA[h];
+                for (int hour = 0; hour < Band.HoursPerDay; hour++)
+                {
+                    int slot = (purpose * Band.HoursPerDay) + hour;
+                    band.Add(
+                        purpose,
+                        hour,
+                        atoB is null ? 0f : atoB[slot],
+                        btoA is null ? 0f : btoA[slot]);
+                }
             }
         }
     }

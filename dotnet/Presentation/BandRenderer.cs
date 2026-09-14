@@ -8,7 +8,7 @@ using UnityEngine;
 namespace WhereTheyGo
 {
     // Draws the desire bands: one flat arc per band, over the terrain, coloured by how
-    // much of its traffic the network already carries.
+    // much of its traffic the network already carries and as wide as its width class.
     //
     // Separate from the overlay system because of phase ordering. OverlayRenderSystem
     // drains and clears its buffer during SystemUpdatePhase.Rendering; the overlay
@@ -37,19 +37,16 @@ namespace WhereTheyGo
         // is not swallowed by the terrain it follows.
         private const float TerrainOffset = 4f;
 
-        // Enough to read against the city, little enough to read the city through it.
-        private const float BandOpacity = 0.55f;
-
-        private const int MaxDots = 6;
-
-        private const float DotOpacity = 0.7f;
-
-        private const float DotShareOfWidth = 0.55f;
+        // Near enough to opaque to read as one shape where bands cross, near enough to
+        // transparent to see the street underneath. Flow maps are drawn opaque almost
+        // without exception (Jenny et al. 2016: 89 % of their sample); the casing does
+        // the separating, so the fill no longer has to be see-through to be legible.
+        private const float BandOpacity = 0.88f;
 
         // While a line is selected: what it carries, and everything else.
-        private const float HighlightOpacity = 0.85f;
+        private const float HighlightOpacity = 1f;
 
-        private const float DimmedOpacity = 0.18f;
+        private const float DimmedOpacity = 0.16f;
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
@@ -59,6 +56,11 @@ namespace WhereTheyGo
         private TerrainSystem m_TerrainSystem;
         private WhereTheyGoSystem m_OverlaySystem;
 #pragma warning restore CS8618
+
+        // The sampled arc of the band being drawn. Kept here rather than allocated per
+        // band because both passes over it — casing then fill — want the same points,
+        // and sampling the terrain twice for the same metre is wasted work.
+        private readonly float3[] m_Arc = new float3[MaxArcSegments + 1];
 
         protected override void OnCreate()
         {
@@ -83,8 +85,8 @@ namespace WhereTheyGo
                 return;
             }
 
-            BandSet? bands = m_OverlaySystem.Bands;
-            if (bands is null || bands.Bands.Length == 0 || bands.HeaviestWeight <= 0f)
+            BandView view = m_OverlaySystem.CurrentBandView;
+            if (view.Drawn.Length == 0)
             {
                 return;
             }
@@ -93,39 +95,30 @@ namespace WhereTheyGo
             dependencies.Complete();
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(waitForPending: false);
 
-            float threshold = m_OverlaySystem.BandThresholdShare;
             int hour = m_OverlaySystem.SelectedHour;
             int purposes = m_OverlaySystem.PurposeFilter;
             // With a line selected, the bands it carries stay as they are and every
             // other band steps back. Without one, nothing is dimmed.
-            bool highlighting = AnyBandCarriesTheSelectedLine(bands);
+            bool highlighting = AnyBandCarriesTheSelectedLine(view);
             Band? hovered = WhereTheyGoSystem.HoveredBand;
-            // Lightest first, so the city's real corridors end up ON TOP of the hair
-            // rather than under it: the bands come out of the bundling heaviest first.
-            for (int i = bands.Bands.Length - 1; i >= 0; i--)
+
+            // HEAVIEST FIRST, so the light bands end up on top of the heavy ones.
+            // Cartographic practice since Dent: a thin flow hidden under a thick one
+            // is gone, while a thin flow crossing a thick one costs the thick one
+            // nothing — it is still the widest thing on the map.
+            for (int i = 0; i < view.Drawn.Length; i++)
             {
-                Band band = bands.Bands[i];
-                if ((band.PurposeMask & purposes) == 0)
-                {
-                    continue;
-                }
-
-                // What the band weighs right now: the whole day, or the hour the
-                // player has the slider on.
-                float weight = band.WeightAtHour(hour);
-                if (!BandGeometry.IsVisible(weight, bands.HeaviestWeight, threshold))
-                {
-                    continue;
-                }
-
-                float opacity = !highlighting ? BandOpacity : band.CarriesTarget ? HighlightOpacity : DimmedOpacity;
-                if (ReferenceEquals(band, hovered))
+                DrawnBand drawn = view.Drawn[i];
+                float opacity = !highlighting ? BandOpacity
+                    : drawn.Band.CarriesTarget ? HighlightOpacity
+                    : DimmedOpacity;
+                if (ReferenceEquals(drawn.Band, hovered))
                 {
                     opacity = HighlightOpacity;
                 }
 
-                DrawBand(buffer, ref heightData, band, weight, bands.HeaviestWeight, opacity);
-                DrawDirection(buffer, ref heightData, band, hour, weight, bands.HeaviestWeight);
+                DrawBand(buffer, ref heightData, drawn, opacity);
+                DrawDirection(buffer, ref heightData, drawn, hour, purposes, opacity);
             }
 
             // The buffer was written on the main thread with the prior writers already
@@ -135,11 +128,11 @@ namespace WhereTheyGo
         // Whether any band carries the line the player has selected. Asked once per
         // frame rather than per band: a line whose bands all fell under the threshold
         // must not dim the whole map for nothing.
-        private static bool AnyBandCarriesTheSelectedLine(BandSet bands)
+        private static bool AnyBandCarriesTheSelectedLine(BandView view)
         {
-            for (int i = 0; i < bands.Bands.Length; i++)
+            for (int i = 0; i < view.Drawn.Length; i++)
             {
-                if (bands.Bands[i].CarriesTarget)
+                if (view.Drawn[i].Band.CarriesTarget)
                 {
                     return true;
                 }
@@ -148,53 +141,95 @@ namespace WhereTheyGo
             return false;
         }
 
-        private static void DrawBand(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, Band band, float weight, float heaviest, float opacity)
+        private void DrawBand(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, DrawnBand drawn, float opacity)
         {
+            Band band = drawn.Band;
             BandGeometry.Colour(band.CarriedShare, out float r, out float g, out float b);
-            var colour = new Color(r, g, b, opacity);
-            float width = BandGeometry.Width(weight, heaviest);
+            BandGeometry.OutlineColour(band.CarriedShare, out float dr, out float dg, out float db);
+            var fill = new Color(r, g, b, opacity);
+            var casing = new Color(dr, dg, db, opacity);
+            float width = BandView.WidthOf(drawn.WidthClass);
+            int segments = Sample(ref heightData, band);
 
+            // Two passes rather than DrawLine's own outline argument: the arc is drawn
+            // as a chain of straight pieces, and an outline per piece would draw a
+            // dark seam across every joint. Casing first for the whole band, fill over
+            // it, and the seams land under the band's own colour.
+            float casingWidth = width + (2f * Assumptions.BandOutlineMetres);
+            for (int step = 0; step < segments; step++)
+            {
+                buffer.DrawLine(casing, new Line3.Segment(m_Arc[step], m_Arc[step + 1]), casingWidth);
+            }
+
+            for (int step = 0; step < segments; step++)
+            {
+                buffer.DrawLine(fill, new Line3.Segment(m_Arc[step], m_Arc[step + 1]), width);
+            }
+
+            // A dot at each end. Flows anchored at point symbols were read with fewer
+            // errors and faster than flows floating between areas, and our ends are
+            // the weighted middle of a district with nothing to mark them.
+            float dot = width * Assumptions.BandEndDotShareOfWidth;
+            buffer.DrawCircle(casing, m_Arc[0], dot + (2f * Assumptions.BandOutlineMetres));
+            buffer.DrawCircle(casing, m_Arc[segments], dot + (2f * Assumptions.BandOutlineMetres));
+            buffer.DrawCircle(fill, m_Arc[0], dot);
+            buffer.DrawCircle(fill, m_Arc[segments], dot);
+        }
+
+        // The band's arc, sampled onto the ground into m_Arc. Returns how many straight
+        // pieces it came to, so m_Arc[0..segments] are the points.
+        private int Sample(ref TerrainHeightData heightData, Band band)
+        {
             int segments = math.clamp((int)(band.LengthMetres / ArcMetresPerSegment), MinArcSegments, MaxArcSegments);
-            float3 previous = Ground(ref heightData, band.Ax, band.Az);
+            m_Arc[0] = Ground(ref heightData, band.Ax, band.Az);
             for (int step = 1; step <= segments; step++)
             {
                 BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, step / (float)segments, out float x, out float z);
-                float3 next = Ground(ref heightData, x, z);
-                buffer.DrawLine(colour, new Line3.Segment(previous, next), width);
-                previous = next;
+                m_Arc[step] = Ground(ref heightData, x, z);
             }
+
+            return segments;
         }
 
-        // Which way the band's traffic runs at the chosen hour, as a few dots drifting
-        // along it. Dots rather than a dashed line with a moving phase: the overlay
-        // buffer's dashes have no phase to move (DrawDashedLine takes lengths only),
-        // and an arrow head at one end would be a claim about the whole band rather
-        // than about this hour.
-        private void DrawDirection(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, Band band, int hour, float weight, float heaviest)
+        // Which way the band's traffic runs at the chosen hour, as one arrowhead near
+        // the end it is running towards.
+        //
+        // An arrowhead rather than the travelling dots this used to draw: of the flow
+        // maps that show direction at all, every single one uses arrowheads, and in the
+        // user study behind that count arrowheads beat every alternative tested. They
+        // also hold still, which the product plan asks of everything on this map.
+        private void DrawDirection(
+            OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData,
+            DrawnBand drawn, int hour, int purposes, float opacity)
         {
-            int direction = band.DirectionAtHour(hour);
+            Band band = drawn.Band;
+            int direction = band.DirectionAtHour(hour, purposes);
             if (direction == 0)
             {
                 return;
             }
 
-            float length = band.LengthMetres;
-            int dots = math.clamp((int)(length / Assumptions.BandDotSpacingMetres), 1, MaxDots);
-            float width = BandGeometry.Width(weight, heaviest);
-            // Bright enough to see against the band it rides on, and never wider.
-            var colour = new Color(1f, 1f, 1f, DotOpacity);
-            float phase = Daytime.Frac(UnityEngine.Time.realtimeSinceStartup / Assumptions.BandDotSeconds);
-            for (int i = 0; i < dots; i++)
+            // Set back from the end so the head sits ON the band rather than over the
+            // end dot, and pointed along the arc's own tangent — on a bowed band the
+            // straight A-to-B heading is visibly wrong near the ends.
+            float t = direction > 0 ? 1f - Assumptions.BandArrowInsetShare : Assumptions.BandArrowInsetShare;
+            BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float x, out float z);
+            BandGeometry.DirectionOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float dx, out float dz);
+            if (direction < 0)
             {
-                float t = Daytime.Frac(phase + (i / (float)dots));
-                if (direction < 0)
-                {
-                    t = 1f - t;
-                }
-
-                BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float x, out float z);
-                buffer.DrawCircle(colour, Ground(ref heightData, x, z), width * DotShareOfWidth);
+                dx = -dx;
+                dz = -dz;
             }
+
+            float size = BandView.WidthOf(drawn.WidthClass) * Assumptions.BandArrowShareOfWidth;
+            float3 position = Ground(ref heightData, x, z);
+            BandGeometry.OutlineColour(band.CarriedShare, out float dr, out float dg, out float db);
+            var colour = new Color(dr, dg, db, opacity);
+            var rotation = Quaternion.LookRotation(new Vector3(dx, 0f, dz), Vector3.up);
+            // Drawn twice, once with the height negated: the mesh is one-sided, and
+            // this is how the game's own GuideLinesSystem makes it readable either way.
+            buffer.DrawCustomMesh(colour, position, size, size, OverlayRenderSystem.CustomMeshType.Arrow, rotation);
+            buffer.DrawCustomMesh(colour, position, 0f - size, size, OverlayRenderSystem.CustomMeshType.Arrow, rotation);
         }
 
         private static float3 Ground(ref TerrainHeightData heightData, float x, float z)

@@ -58,25 +58,30 @@ namespace WhereTheyGo
             z = (w0 * az) + (w1 * c1z) + (w2 * c2z) + (w3 * bz);
         }
 
-        // Width in metres, on the square root of the traffic.
-        //
-        // Not linear: the heaviest corridor is a hundred times the lightest band drawn,
-        // and linearly it eats the map while everything else is a hairline. Not
-        // logarithmic either, which was the first attempt and made the map unreadable
-        // (2026-09-14): log puts a band of a TENTH the traffic at two thirds of the
-        // full width, so nearly every band came out fat and the picture was a smear of
-        // overlapping blobs. The square root is the middle: a tenth of the traffic is
-        // a third of the width, which still reads as "much less" while staying visible.
-        public static float Width(float weight, float heaviestWeight)
+        // Which way the arc is heading at `t`, normalised, in the map plane. The
+        // arrowhead that shows an hour's direction has to sit along the curve; on a
+        // bowed band the straight A→B direction is visibly wrong at the ends.
+        public static void DirectionOnArc(
+            float ax, float az, float bx, float bz, float t,
+            out float dx, out float dz)
         {
-            if (weight <= 0f || heaviestWeight <= 0f)
+            Arc(ax, az, bx, bz, out float c1x, out float c1z, out float c2x, out float c2z);
+            float u = 1f - t;
+            // Derivative of the cubic: 3[(1-t)²(c1-a) + 2(1-t)t(c2-c1) + t²(b-c2)].
+            float rawX = (3f * u * u * (c1x - ax)) + (6f * u * t * (c2x - c1x)) + (3f * t * t * (bx - c2x));
+            float rawZ = (3f * u * u * (c1z - az)) + (6f * u * t * (c2z - c1z)) + (3f * t * t * (bz - c2z));
+            float length = (float)Math.Sqrt((rawX * rawX) + (rawZ * rawZ));
+            if (length <= 1e-4f)
             {
-                return Assumptions.BandMinWidthMetres;
+                // A band whose ends coincide has no heading; pointing along +x is
+                // arbitrary but never NaN.
+                dx = 1f;
+                dz = 0f;
+                return;
             }
 
-            double scale = Math.Sqrt(Math.Min(weight, heaviestWeight) / (double)heaviestWeight);
-            return Assumptions.BandMinWidthMetres
-                + ((Assumptions.BandMaxWidthMetres - Assumptions.BandMinWidthMetres) * (float)scale);
+            dx = rawX / length;
+            dz = rawZ / length;
         }
 
         // Warm where nobody rides, cool where everybody does. The ramp runs from a
@@ -133,12 +138,19 @@ namespace WhereTheyGo
             return ((px - cx) * (px - cx)) + ((pz - cz) * (pz - cz));
         }
 
-        // Whether a band clears the panel's threshold: a share of the heaviest band,
-        // so the slider means the same thing in a village and in a metropolis.
-        public static bool IsVisible(float weight, float heaviestWeight, float thresholdShare)
+        // The casing colour for a band of this fill: the same hue driven well down in
+        // lightness. A neutral black outline would read as a fifth colour on a map
+        // that already carries a ramp; this one disappears into its own band and only
+        // does its job where two bands overlap.
+        public static void OutlineColour(float carriedShare, out float r, out float g, out float b)
         {
-            return heaviestWeight > 0f && weight >= heaviestWeight * thresholdShare;
+            Colour(carriedShare, out float fillR, out float fillG, out float fillB);
+            r = fillR * OutlineDarkening;
+            g = fillG * OutlineDarkening;
+            b = fillB * OutlineDarkening;
         }
+
+        private const float OutlineDarkening = 0.28f;
 
         private static float Lerp(float from, float to, float t) => from + ((to - from) * t);
     }

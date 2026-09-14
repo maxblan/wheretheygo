@@ -163,12 +163,32 @@ namespace WhereTheyGo
         // not fit is counted and logged, never quietly dropped.
         public const int MaxBands = 400;
 
-        // Band widths in metres on the ground, between the lightest band drawn and the
-        // heaviest in the city (BandGeometry.Width, on the square root between them).
-        // 110 m was a blob at any zoom a player actually uses.
-        public const float BandMinWidthMetres = 5f;
+        // Band widths in metres on the ground, one per width class, thinnest first
+        // (BandView). Four classes rather than a continuous ramp, because a width that
+        // cannot be read off a legend can only be compared, and comparing needs the
+        // whole map at once. The steps widen towards the top so the classes stay
+        // apart: 6 and 11 differ as clearly as 26 and 44.
+        public static readonly float[] BandClassWidthsMetres = { 6f, 11f, 22f, 40f };
 
-        public const float BandMaxWidthMetres = 48f;
+        // The dark casing drawn around every band, in metres. Two bands of the same
+        // colour crossing are one shape without it; this is the standard cartographic
+        // answer and the overlay buffer has had an outline colour all along
+        // (OverlayRenderSystem.Buffer.DrawCurve).
+        public const float BandOutlineMetres = 1.6f;
+
+        // The dot drawn at each end of a band, as a share of the band's own width.
+        // Flow maps that anchor their flows at point symbols were read with fewer
+        // errors than flows floating between areas (Jenny et al. 2016, 74 % of the
+        // sample), and our ends are zone centroids with nothing to mark them.
+        public const float BandEndDotShareOfWidth = 1.35f;
+
+        // The arrowhead that says which way an hour's traffic runs: how long it is as
+        // a share of the band's width, and how far before the far end it sits.
+        // Arrowheads beat every other direction cue in the user study behind those
+        // design principles, and unlike the travelling dots they hold still.
+        public const float BandArrowShareOfWidth = 2.2f;
+
+        public const float BandArrowInsetShare = 0.12f;
 
         // How far a band bows out of the straight line, as a share of its length and
         // capped in metres, so a cross-city band does not swing out over the sea. Just
@@ -187,15 +207,9 @@ namespace WhereTheyGo
         // whole day in about half a minute. Nothing in this mod moves fast.
         public const float HourPlaySeconds = 1.4f;
 
-        // The travelling dots that show which way a band's traffic runs at the chosen
-        // hour: how long one takes to cross the whole band, and how far apart they sit.
-        public const float BandDotSeconds = 6f;
-
-        public const float BandDotSpacingMetres = 700f;
-
         // How far one direction must lead the other before a band is drawn as flowing
-        // that way: a tenth of the hour's traffic. Below it the hour is even and the
-        // dots would invent a rush hour that is not there.
+        // that way: a tenth of the hour's traffic. Below it the hour is even and an
+        // arrow would invent a rush hour that is not there.
         public const float BandDirectionLead = 0.1f;
 
         // ---- Line insight
