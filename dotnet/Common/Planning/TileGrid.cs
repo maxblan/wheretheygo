@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // The rasters this mod lays over the map: how many cells cover a size, which cell
     // a world position falls in (clamped to the grid), and a cell's centre. The 32 m

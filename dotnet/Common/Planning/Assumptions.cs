@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // Every number the mod computes with, in one place (user decision 2026-09-06): a
     // value that lives in one file cannot drift between two. Each entry carries the
@@ -374,12 +374,12 @@ namespace TransitArchitect
         // count as the same alignment.
         public const float DuplicateLineMatchMetres = 150f;
 
-        public const long LineSetNodeBudget = 20_000;
+        public const long JourneyRoutingNodeBudget = 20_000;
 
         // Wall-clock budget for the line-set search on the worker. Past it the search
         // keeps the best set found and reports the open bound as the ceiling
-        // (LineSet.Solve); the log says which regime the result is in.
-        public const int LineSetTimeBudgetSeconds = 15;
+        // (JourneyRouting.Solve); the log says which regime the result is in.
+        public const int JourneyRoutingTimeBudgetSeconds = 15;
 
         // Riders of a line may already have an equally fast route without it: above this
         // share of them the line duplicates the set it sits in (register A4.3).
@@ -482,9 +482,8 @@ namespace TransitArchitect
         // ---- Options defaults
         public const int HighlightShareDefaultPercent = 5;
 
-        public const int EquityWalkMinutesDefault = 10;
+        public const int CoverageWalkMinutesDefault = 10;
 
-        public const int EquityFloorDefaultPercent = 80;
 
         public const int UtilisationFloorDefaultPercent = 15;
 

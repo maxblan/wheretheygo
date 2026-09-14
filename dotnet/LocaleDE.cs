@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // German translation. Falls back to the en-US source for any key not listed
     // here, so a missing entry degrades to English rather than showing a raw key.
@@ -19,7 +19,7 @@ namespace TransitArchitect
         {
             var entries = new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                { m_Setting.GetSettingsLocaleID(), "Transit Architect" },
+                { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Allgemein" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planung" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Angebotsstandards" },
@@ -28,29 +28,29 @@ namespace TransitArchitect
 
 
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EquityWalkMinutes)), "Gerechtigkeit: Gehzeit-Horizont (min)" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EquityWalkMinutes)), "Ein Weg gilt als bedient, wenn beide Enden innerhalb so vieler Gehminuten einer bedienten Haltestelle liegen." },
-                { "TransitArchitect.Panel[BuildingWalk]", "Fu\u00dfweg zum \u00d6PNV" },
-                { "TransitArchitect.Panel[BuildingWalkServed]", "zur n\u00e4chsten Haltestelle, die deine Linien bedienen" },
-                { "TransitArchitect.Panel[BuildingWalkUnserved]", "weiter als die {0} min, die hier als bedient gelten" },
-                { "TransitArchitect.Panel[WalkNone]", "keine Haltestelle erreichbar" },
-                { "TransitArchitect.Panel[WalkMinutes]", "{0} min" },
-                { "TransitArchitect.Panel[Equity]", "Bediente Wege" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Gerechtigkeit: Gehzeit-Horizont (min)" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "Ein Weg gilt als bedient, wenn beide Enden innerhalb so vieler Gehminuten einer bedienten Haltestelle liegen." },
+                { "WhereTheyGo.Panel[BuildingWalk]", "Fu\u00dfweg zum \u00d6PNV" },
+                { "WhereTheyGo.Panel[BuildingWalkServed]", "zur n\u00e4chsten Haltestelle, die deine Linien bedienen" },
+                { "WhereTheyGo.Panel[BuildingWalkUnserved]", "weiter als die {0} min, die hier als bedient gelten" },
+                { "WhereTheyGo.Panel[WalkNone]", "keine Haltestelle erreichbar" },
+                { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
+                { "WhereTheyGo.Panel[Coverage]", "Bediente Wege" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Infoansicht anzeigen" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Öffnet die Infoansicht der Mod. Im Infoansichts-Menü des Spiels liegt derselbe Schalter." },
 
 
-                { "TransitArchitect.Infomode", "Transit Architect" },
-                { "Infoviews.INFOVIEW[TransitArchitect]", "Transit Architect" },
-                { "Infoviews.INFOVIEW_TOOLTIP[TransitArchitect]", "Wie weit jedes Gebäude vom heutigen Angebot entfernt liegt." },
+                { "WhereTheyGo.Infomode", "Where They Go" },
+                { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
+                { "Infoviews.INFOVIEW_TOOLTIP[WhereTheyGo]", "Wie weit jedes Gebäude vom heutigen Angebot entfernt liegt." },
 
-                { "Infoviews.INFOMODE[TransitArchitectTransitAccess]", "Fußweg zum ÖPNV (Gebäude)" },
-                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectTransitAccess]", "Färbt jedes Gebäude nach dem Fußweg von seiner Tür zur nächsten Haltestelle, die deine Linien wirklich bedienen: grün ist kurz, rot liegt am oder jenseits des Gehweg-Horizonts aus den Angebotsstandards." },
+                { "Infoviews.INFOMODE[WhereTheyGoTransitAccess]", "Fußweg zum ÖPNV (Gebäude)" },
+                { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoTransitAccess]", "Färbt jedes Gebäude nach dem Fußweg von seiner Tür zur nächsten Haltestelle, die deine Linien wirklich bedienen: grün ist kurz, rot liegt am oder jenseits des Gehweg-Horizonts aus den Angebotsstandards." },
 
-                { "Infoviews.LABEL[TransitArchitect.Legend.Low]", "Niedrig" },
-                { "Infoviews.LABEL[TransitArchitect.Legend.Medium]", "Mittel" },
-                { "Infoviews.LABEL[TransitArchitect.Legend.High]", "Hoch" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.Low]", "Niedrig" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.Medium]", "Mittel" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.High]", "Hoch" },
             };
 
             foreach (KeyValuePair<string, string> panel in PanelEntries())
@@ -63,7 +63,7 @@ namespace TransitArchitect
 
         // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
         // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by TransitArchitect.mjs.
+        // game's Options UI, these by WhereTheyGo.mjs.
         private static Dictionary<string, string> PanelEntries()
         {
             return new Dictionary<string, string>(StringComparer.Ordinal)
@@ -72,13 +72,13 @@ namespace TransitArchitect
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Statuszeilen, die die Optionsseite unverändert ausgibt (siehe Loc).
-                { "TransitArchitect.Panel[EquityCaption]", "erreichen an beiden Enden eine bediente Haltestelle in {0} min \u00b7 Ziel {1} % \u00b7 Gini {2}" },
-                { "TransitArchitect.Panel[DataBasisCaption]", "der letzten {0} h \u00b7 {1} Messungen" },
-                { "TransitArchitect.Panel[DataBasisNone]", "noch nichts" },
-                { "TransitArchitect.Panel[DataBasis]", "Datenbasis" },
-                { "TransitArchitect.Panel[DataBasisEmpty]", "Messungen beginnen mit deiner ersten Linie" },
-                { "TransitArchitect.Panel[ObservedTrips]", "{0} Einkaufs-/Freizeitwege in {1} h beobachtet" },
-                { "TransitArchitect.Panel[ObservedTripsEmpty]", "noch keine Einkaufs-/Freizeitwege beobachtet" },
+                { "WhereTheyGo.Panel[CoverageCaption]", "erreichen an beiden Enden eine bediente Haltestelle in {0} min \u00b7 Ziel {1} % \u00b7 Gini {2}" },
+                { "WhereTheyGo.Panel[DataBasisCaption]", "der letzten {0} h \u00b7 {1} Messungen" },
+                { "WhereTheyGo.Panel[DataBasisNone]", "noch nichts" },
+                { "WhereTheyGo.Panel[DataBasis]", "Datenbasis" },
+                { "WhereTheyGo.Panel[DataBasisEmpty]", "Messungen beginnen mit deiner ersten Linie" },
+                { "WhereTheyGo.Panel[ObservedTrips]", "{0} Einkaufs-/Freizeitwege in {1} h beobachtet" },
+                { "WhereTheyGo.Panel[ObservedTripsEmpty]", "noch keine Einkaufs-/Freizeitwege beobachtet" },
             };
         }
 

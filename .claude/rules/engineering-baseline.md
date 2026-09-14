@@ -18,7 +18,7 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
 - Three things are never skippable: the purity and determinism rules for the testable core
   (`pure-math.md`) — a Unity or ECS type in those files breaks every test in them; verifying a game
   API against the decompiled assembly before writing code against it (`ecs-systems.md`); and the
-  prohibition on weakening or deleting a test in `tests/TransitArchitect.Tests` to make a change
+  prohibition on weakening or deleting a test in `tests/WhereTheyGo.Tests` to make a change
   pass.
 - Never justify a change by naming a pattern. State the problem in this repo's own terms first;
   if you cannot state it without the pattern's name, do not make the change.
@@ -200,7 +200,7 @@ exists, and prefer a logged rejection over a suggestion nobody can justify.
 - Cover rejected candidates, boundary values, empty and degenerate input (no stops, one node, all
   scores zero), not only the happy path. Several shipped bugs were the degenerate case: a percentile
   over a set with no positive member turned the whole map red.
-- Never weaken, delete or skip a test in `tests/TransitArchitect.Tests` to make a change pass. A
+- Never weaken, delete or skip a test in `tests/WhereTheyGo.Tests` to make a change pass. A
   failure there means behavior changed — find out why.
 - Static "unused" signals lie here. Anything the game reaches by reflection or by name — an infomode
   field, a settings property rendered by the Options UI, a locale key, an `.mjs` export, a binding

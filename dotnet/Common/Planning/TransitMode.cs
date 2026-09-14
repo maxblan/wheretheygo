@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Globalization;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // The transit modes this mod can plan, and what a suggested line is grown for.
     //

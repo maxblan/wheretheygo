@@ -1,4 +1,4 @@
-# Makefile for TransitArchitect.
+﻿# Makefile for WhereTheyGo.
 #
 # Wraps the awkward parts of this project's build: the C# toolchain is Windows-only
 # and has to be driven through PowerShell from WSL, building is also deploying, and
@@ -9,15 +9,15 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-PROJECT     := dotnet/TransitArchitect.csproj
-TESTS       := tests/TransitArchitect.Tests
-UI_MODULE   := dotnet/Presentation/UI/TransitArchitect.mjs
+PROJECT     := dotnet/WhereTheyGo.csproj
+TESTS       := tests/WhereTheyGo.Tests
+UI_MODULE   := dotnet/Presentation/UI/WhereTheyGo.mjs
 CONFIG      ?= Release
-OUTPUT      := dotnet/bin/$(CONFIG)/net48/TransitArchitect.dll
+OUTPUT      := dotnet/bin/$(CONFIG)/net48/WhereTheyGo.dll
 
 USERDATA    := /mnt/c/Users/maxbl/AppData/LocalLow/Colossal Order/Cities Skylines II
-DEPLOYED    := $(USERDATA)/Mods/TransitArchitect/TransitArchitect.dll
-MOD_LOG     := $(USERDATA)/Logs/TransitArchitect.Mod.log
+DEPLOYED    := $(USERDATA)/Mods/WhereTheyGo/WhereTheyGo.dll
+MOD_LOG     := $(USERDATA)/Logs/WhereTheyGo.Mod.log
 UI_LOG      := $(USERDATA)/Logs/UI.log
 
 # The toolchain resolves CSII_TOOLPATH from the Windows user environment, so the
@@ -27,13 +27,13 @@ DOTNET_WIN  := powershell.exe -NoProfile -Command
 # Waits for Windows to release the deployed files. Must be a Windows process: WSL's
 # DrvFs ignores Windows share locks, so the same probe from bash reports every file as
 # free even while the game has it loaded.
-UNLOCK      := powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(shell wslpath -w tools/wait-for-unlock.ps1)" -Path "$(shell wslpath -w '$(USERDATA)/Mods/TransitArchitect')"
+UNLOCK      := powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(shell wslpath -w tools/wait-for-unlock.ps1)" -Path "$(shell wslpath -w '$(USERDATA)/Mods/WhereTheyGo')"
 
 .DEFAULT_GOAL := help
 .PHONY: help build compile debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
 
 help: ## Show this help
-	@echo "TransitArchitect — targets:"
+	@echo "WhereTheyGo — targets:"
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
 		| sed -e 's/:.*## /\t/' \
 		| awk -F'\t' '{ printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }'
@@ -132,7 +132,7 @@ logs: ## Follow the mod log
 	@tail -f "$(MOD_LOG)"
 
 errors: ## Show warnings and errors from the mod and UI logs
-	@echo "== TransitArchitect.Mod.log =="
+	@echo "== WhereTheyGo.Mod.log =="
 	@grep -nE 'ERROR|WARN|Exception' "$(MOD_LOG)" || echo "  (none)"
 	@echo "== UI.log =="
 	@grep -inE 'error|exception' "$(UI_LOG)" || echo "  (none)"

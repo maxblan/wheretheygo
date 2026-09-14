@@ -8,11 +8,11 @@ using Game.Modding;
 using Game.Rendering;
 using Game.SceneFlow;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     public class Mod : IMod
     {
-        public static readonly ILog Log = LogManager.GetLogger(name: $"{nameof(TransitArchitect)}.{nameof(Mod)}").SetShowsErrorsInUI(showsErrorsInUI: false);
+        public static readonly ILog Log = LogManager.GetLogger(name: $"{nameof(WhereTheyGo)}.{nameof(Mod)}").SetShowsErrorsInUI(showsErrorsInUI: false);
         public static Setting? Settings { get; private set; }
 
         public void OnLoad(UpdateSystem updateSystem)
@@ -43,9 +43,9 @@ namespace TransitArchitect
             {
                 Log.Info($"Current mod asset at {asset.path}");
 
-                // Serve the mod's icons at coui://transitarchitect/.
+                // Serve the mod's icons at coui://wheretheygo/.
                 string iconsPath = Path.Combine(Path.GetDirectoryName(asset.path), "Icons");
-                UIManager.defaultUISystem.AddHostLocation("transitarchitect", iconsPath, shouldWatch: false);
+                UIManager.defaultUISystem.AddHostLocation("wheretheygo", iconsPath, shouldWatch: false);
             }
 
             Settings = new Setting(this);
@@ -56,13 +56,13 @@ namespace TransitArchitect
             // Zero the tuning fields so ClampAll can distinguish "loaded from file"
             // from "absent in a pre-1.1 file" and fill in mode-aware defaults.
             Settings.MarkTuningUnset();
-            AssetDatabase.global.LoadSettings(nameof(TransitArchitect), Settings, new Setting(this));
+            AssetDatabase.global.LoadSettings(nameof(WhereTheyGo), Settings, new Setting(this));
             Settings.ClampAll();
 
             // Must run in PreCulling between OverlayInfomodeSystem (which clears the
             // terrain override overlay every frame) and TerrainRenderSystem (which
             // consumes it into the terrain material).
-            updateSystem.UpdateAt<TransitArchitectSystem>(SystemUpdatePhase.PreCulling);
+            updateSystem.UpdateAt<WhereTheyGoSystem>(SystemUpdatePhase.PreCulling);
 
             // BOTH of these are ordered against a named game system, not merely put in
             // the right phase. Game.UpdateSystem keeps its own list sorted by
@@ -85,7 +85,7 @@ namespace TransitArchitect
             updateSystem.UpdateAt<BuildingAccessSection>(SystemUpdatePhase.UIUpdate);
 
             // Bindings for the in-game control panel. The panel's own code ships as
-            // TransitArchitect.mjs beside the DLL, which the game loads by
+            // WhereTheyGo.mjs beside the DLL, which the game loads by
             // matching the assembly name.
             updateSystem.UpdateAt<PanelUISystem>(SystemUpdatePhase.UIUpdate);
         }

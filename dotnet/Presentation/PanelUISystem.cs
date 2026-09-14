@@ -1,7 +1,7 @@
 ﻿using Colossal.UI.Binding;
 using Game.UI;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // Bindings for what the mod shows in the game.
     //
@@ -15,18 +15,18 @@ namespace TransitArchitect
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
         // every use site for a state (OnCreate not yet run) in which nothing works anyway.
-        private TransitArchitectSystem m_OverlaySystem;
+        private WhereTheyGoSystem m_OverlaySystem;
 #pragma warning restore CS8618
 
         protected override void OnCreate()
         {
             base.OnCreate();
-            m_OverlaySystem = World.GetOrCreateSystemManaged<TransitArchitectSystem>();
+            m_OverlaySystem = World.GetOrCreateSystemManaged<WhereTheyGoSystem>();
 
             AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
                 m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => TransitArchitectSystem.DataCoverageText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "equity", static () => TransitArchitectSystem.EquityText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => WhereTheyGoSystem.DataCoverageText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "coverage", static () => WhereTheyGoSystem.CoverageText));
         }
     }
 }

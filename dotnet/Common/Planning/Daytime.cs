@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // When a line runs, as the game offers it on a line: all day, by day only, by
     // night only (Game.Routes.RouteOption.Day / .Night policies; the game's own
@@ -58,7 +58,7 @@ namespace TransitArchitect
                 return 0f;
             }
 
-            return Equity.Utilisation(ridersInPeriod, headwaySeconds, (double)vehicleCapacity * periodShareOfDay);
+            return Coverage.Utilisation(ridersInPeriod, headwaySeconds, (double)vehicleCapacity * periodShareOfDay);
         }
 
         // The schedule a line should run, suggested or existing (register A8, decided

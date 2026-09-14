@@ -7,11 +7,11 @@ using Game.UI;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // One tab: after the 2026-09-14 recut there are two settings, and neither of
     // them needs explaining.
-    [FileLocation(nameof(TransitArchitect))]
+    [FileLocation(nameof(WhereTheyGo))]
     [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup)]
     [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup)]
     public sealed class Setting : ModSetting
@@ -26,10 +26,10 @@ namespace TransitArchitect
 
         // The walking horizon "served" means: a door this far in walking time from a
         // stop a line calls at counts as connected (register A1.8).
-        public const int kEquityMinutesMin = 5;
-        public const int kEquityMinutesMax = 20;
+        public const int kCoverageMinutesMin = 5;
+        public const int kCoverageMinutesMax = 20;
 
-        private int m_EquityWalkMinutes;
+        private int m_CoverageWalkMinutes;
         private bool m_ShowHeatmap = true;
 
         public Setting(IMod mod) : base(mod)
@@ -37,12 +37,12 @@ namespace TransitArchitect
             SetDefaults();
         }
 
-        [SettingsUISlider(min = kEquityMinutesMin, max = kEquityMinutesMax, step = 1, scalarMultiplier = 1, unit = Unit.kInteger)]
+        [SettingsUISlider(min = kCoverageMinutesMin, max = kCoverageMinutesMax, step = 1, scalarMultiplier = 1, unit = Unit.kInteger)]
         [SettingsUISection(kSection, kStandardsGroup)]
-        public int EquityWalkMinutes
+        public int CoverageWalkMinutes
         {
-            get => m_EquityWalkMinutes;
-            set => m_EquityWalkMinutes = ClampInt(value, kEquityMinutesMin, kEquityMinutesMax);
+            get => m_CoverageWalkMinutes;
+            set => m_CoverageWalkMinutes = ClampInt(value, kCoverageMinutesMin, kCoverageMinutesMax);
         }
 
         // The infoview itself. The game's infoview menu switches it too — this is the
@@ -55,14 +55,14 @@ namespace TransitArchitect
             set
             {
                 m_ShowHeatmap = value;
-                TransitArchitectSystem.RequestInfoview(value);
+                WhereTheyGoSystem.RequestInfoview(value);
             }
         }
 
         public override void SetDefaults()
         {
             m_ShowHeatmap = true;
-            m_EquityWalkMinutes = Assumptions.EquityWalkMinutesDefault;
+            m_CoverageWalkMinutes = Assumptions.CoverageWalkMinutesDefault;
         }
 
         // Called before LoadSettings: zeroing the tuning fields lets ClampAll tell
@@ -70,7 +70,7 @@ namespace TransitArchitect
         // didn't persist tuning keys, so nothing overwrites the zeros).
         public void MarkTuningUnset()
         {
-            m_EquityWalkMinutes = 0;
+            m_CoverageWalkMinutes = 0;
         }
 
         // Called once after settings are loaded from disk to sanitize persisted
@@ -78,7 +78,7 @@ namespace TransitArchitect
         // default.
         public void ClampAll()
         {
-            m_EquityWalkMinutes = m_EquityWalkMinutes == 0 ? Assumptions.EquityWalkMinutesDefault : ClampInt(m_EquityWalkMinutes, kEquityMinutesMin, kEquityMinutesMax);
+            m_CoverageWalkMinutes = m_CoverageWalkMinutes == 0 ? Assumptions.CoverageWalkMinutesDefault : ClampInt(m_CoverageWalkMinutes, kCoverageMinutesMin, kCoverageMinutesMax);
         }
 
         // The game targets .NET Framework, which has no Math.Clamp.
@@ -101,7 +101,7 @@ namespace TransitArchitect
         {
             var entries = new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                { m_Setting.GetSettingsLocaleID(), "Transit Architect" },
+                { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "General" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Service standards" },
@@ -110,30 +110,30 @@ namespace TransitArchitect
 
 
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EquityWalkMinutes)), "Equity: walking horizon (min)" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EquityWalkMinutes)), "A journey counts as served when both its ends are within this many minutes' walk of a served stop." },
-                { "TransitArchitect.Panel[BuildingWalk]", "Walk to transit" },
-                { "TransitArchitect.Panel[BuildingWalkServed]", "to the nearest stop your lines serve" },
-                { "TransitArchitect.Panel[BuildingWalkUnserved]", "further than the {0} min this city counts as served" },
-                { "TransitArchitect.Panel[WalkNone]", "no stop in reach" },
-                { "TransitArchitect.Panel[WalkMinutes]", "{0} min" },
-                { "TransitArchitect.Panel[Equity]", "Served journeys" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Walking horizon for \"served\" (min)" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "A journey counts as served when both its ends are within this many minutes' walk of a served stop." },
+                { "WhereTheyGo.Panel[BuildingWalk]", "Walk to transit" },
+                { "WhereTheyGo.Panel[BuildingWalkServed]", "to the nearest stop your lines serve" },
+                { "WhereTheyGo.Panel[BuildingWalkUnserved]", "further than the {0} min this city counts as served" },
+                { "WhereTheyGo.Panel[WalkNone]", "no stop in reach" },
+                { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
+                { "WhereTheyGo.Panel[Coverage]", "Served journeys" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Show the infoview" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Opens the mod's infoview. The game's infoview menu holds the same switch." },
 
-                { "TransitArchitect.Infomode", "Transit Architect" },
-                { "Infoviews.INFOVIEW[TransitArchitect]", "Transit Architect" },
-                { "Infoviews.INFOVIEW_TOOLTIP[TransitArchitect]", "How far each building is from the service you already run." },
+                { "WhereTheyGo.Infomode", "Where They Go" },
+                { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
+                { "Infoviews.INFOVIEW_TOOLTIP[WhereTheyGo]", "How far each building is from the service you already run." },
 
-                { "Infoviews.INFOMODE[TransitArchitectTransitAccess]", "Walk to transit (buildings)" },
-                { "Infoviews.INFOMODE_TOOLTIP[TransitArchitectTransitAccess]", "Colours every building by the walk from its door to the nearest stop your lines actually serve: green is a short walk, red is at or beyond the walking horizon set under Service standards." },
+                { "Infoviews.INFOMODE[WhereTheyGoTransitAccess]", "Walk to transit (buildings)" },
+                { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoTransitAccess]", "Colours every building by the walk from its door to the nearest stop your lines actually serve: green is a short walk, red is at or beyond the walking horizon set under Service standards." },
 
                 // The infoview panel composes gradient legend label keys as
                 // Infoviews.LABEL[<labelId>].
-                { "Infoviews.LABEL[TransitArchitect.Legend.Low]", "Low" },
-                { "Infoviews.LABEL[TransitArchitect.Legend.Medium]", "Medium" },
-                { "Infoviews.LABEL[TransitArchitect.Legend.High]", "High" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.Low]", "Low" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.Medium]", "Medium" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.High]", "High" },
             };
 
             foreach (KeyValuePair<string, string> panel in PanelEntries())
@@ -146,7 +146,7 @@ namespace TransitArchitect
 
         // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
         // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by TransitArchitect.mjs.
+        // game's Options UI, these by WhereTheyGo.mjs.
         private static Dictionary<string, string> PanelEntries()
         {
             return new Dictionary<string, string>(StringComparer.Ordinal)
@@ -155,13 +155,13 @@ namespace TransitArchitect
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Status lines the Options page prints verbatim (see Loc).
-                { "TransitArchitect.Panel[EquityCaption]", "reach a served stop within {0} min at both ends \u00b7 target {1} % \u00b7 Gini {2}" },
-                { "TransitArchitect.Panel[DataBasisCaption]", "of the last {0} h \u00b7 {1} readings" },
-                { "TransitArchitect.Panel[DataBasisNone]", "nothing yet" },
-                { "TransitArchitect.Panel[DataBasis]", "Data collected" },
-                { "TransitArchitect.Panel[DataBasisEmpty]", "readings start with your first line" },
-                { "TransitArchitect.Panel[ObservedTrips]", "{0} shopping/leisure journeys seen over {1} h" },
-                { "TransitArchitect.Panel[ObservedTripsEmpty]", "no shopping/leisure journeys seen yet" },
+                { "WhereTheyGo.Panel[CoverageCaption]", "reach a served stop within {0} min at both ends \u00b7 target {1} % \u00b7 Gini {2}" },
+                { "WhereTheyGo.Panel[DataBasisCaption]", "of the last {0} h \u00b7 {1} readings" },
+                { "WhereTheyGo.Panel[DataBasisNone]", "nothing yet" },
+                { "WhereTheyGo.Panel[DataBasis]", "Data collected" },
+                { "WhereTheyGo.Panel[DataBasisEmpty]", "readings start with your first line" },
+                { "WhereTheyGo.Panel[ObservedTrips]", "{0} shopping/leisure journeys seen over {1} h" },
+                { "WhereTheyGo.Panel[ObservedTripsEmpty]", "no shopping/leisure journeys seen yet" },
             };
         }
 

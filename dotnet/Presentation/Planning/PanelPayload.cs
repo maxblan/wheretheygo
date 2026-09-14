@@ -2,7 +2,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace TransitArchitect
+namespace WhereTheyGo
 {
     // The delimited-string payloads the panel module reads (ui-module.md): `|` between
     // fields, newline between rows, and anything a player typed sanitised of both
@@ -25,7 +25,7 @@ namespace TransitArchitect
         }
 
         // "sharePercent|walkMinutes|giniWalk".
-        public static string EquityRow(float share, int walkMinutes, double giniWalk)
+        public static string CoverageRow(float share, int walkMinutes, double giniWalk)
         {
             return
                 $"{(share * 100f).ToString("F1", CultureInfo.InvariantCulture)}|" +
