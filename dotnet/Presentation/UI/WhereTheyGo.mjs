@@ -18,6 +18,7 @@ const React = window.React;
 const Api = window["cs2/api"];
 const L10n = window["cs2/l10n"];
 const CsUi = window["cs2/ui"] || {};
+const CsInput = window["cs2/input"] || {};
 
 const GROUP = "wheretheygo";
 // Every panel string is looked up under this prefix. The English text stays inline as
@@ -185,7 +186,17 @@ const PURPOSES = [
 
 function Check({ label, on, onChange }) {
     if (V.Checkbox) {
-        return h(V.Checkbox, { checked: on, onChange, className: "wtg-check" });
+        // FOCUS_DISABLED, exactly as vanilla's own InfomodeItem passes it to this
+        // component. Without it each checkbox claims a focus key of its own, and the
+        // row it sits in is a PassThroughFocusController, which can host only one
+        // child: four purposes meant four "Cannot register second focus key" errors in
+        // UI.log on every render.
+        return h(V.Checkbox, {
+            checked: on,
+            onChange,
+            focusKey: CsInput.FOCUS_DISABLED,
+            className: "wtg-check",
+        });
     }
 
     return h("div", {
