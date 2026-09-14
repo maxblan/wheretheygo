@@ -130,7 +130,7 @@ namespace WhereTheyGo
 
             for (int i = 0; i < count; i++)
             {
-                Trip trip = m_Journeys[i];
+                Journey trip = m_Journeys[i];
                 m_JourneyOriginNode[i] = WalkAccess.SnapPoint(snap.Index, trip.m_Origin.x, trip.m_Origin.y, Assumptions.AccessWalkMs, out m_JourneyOriginAccess[i]);
                 m_JourneyDestinationNode[i] = WalkAccess.SnapPoint(snap.Index, trip.m_Destination.x, trip.m_Destination.y, Assumptions.AccessWalkMs, out m_JourneyDestinationAccess[i]);
                 m_JourneyWeight[i] = trip.m_Weight;
@@ -333,7 +333,7 @@ namespace WhereTheyGo
                 m_ServedWalkMs, m_CoverageHorizonMs,
                 m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
                 m_JourneyWeight, m_Journeys.Count);
-            s_CoverageFigures = PanelPayload.CoverageRow(m_Coverage.Share, settings.CoverageWalkMinutes, m_Coverage.GiniWalk);
+            s_CoverageFigures = PanelPayload.CoverageRow(m_Coverage.Share, settings.CoverageWalkMinutes, m_Coverage.GiniWalk, m_CarriedReport.Share);
             DeferredLog.Info(
                 $"Coverage ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
                 $"{settings.CoverageWalkMinutes.ToString(CultureInfo.InvariantCulture)} min, " +

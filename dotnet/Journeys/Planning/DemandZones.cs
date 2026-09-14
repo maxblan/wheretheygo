@@ -3,16 +3,32 @@ using System.Collections.Generic;
 
 namespace WhereTheyGo
 {
-    // One journey somebody wants to make.
-    internal struct Trip
+    // Why somebody travels. The four the mod can tell apart: the first two are read
+    // out of the save (Worker/Student), the other two are what the observation sees
+    // (Game.Citizens.Purpose, several of whose members are all "leisure" here).
+    internal enum JourneyPurpose : byte
+    {
+        Work = 0,
+        School = 1,
+        Shopping = 2,
+        Leisure = 3,
+    }
+
+    // One journey somebody wants to make, and when. Both rides are carried: the hour
+    // out and the hour back, because every journey is made twice and a band that only
+    // ever pointed one way would be half the truth.
+    internal struct Journey
     {
         public float2Like m_Origin;
         public float2Like m_Destination;
         public float m_Weight;
-        // Share of this journey's rides that fall in the day period (06:00–22:00,
-        // Daytime): 1 for a day-shift commute, 0.5 for one whose two rides straddle
-        // the night, 0 for a shopping trip seen at 23:00.
-        public float m_DayShare;
+        public JourneyPurpose m_Purpose;
+        // Whole hours since midnight (Daytime.HourOf).
+        public byte m_OutHour;
+        public byte m_BackHour;
+
+        // Share of this journey's two rides that fall in the day period (06:00–22:00).
+        public readonly float DayShare => Daytime.DayShareOfHours(m_OutHour, m_BackHour);
     }
 
     // Aggregated demand between two zones. Individual trips are collapsed into
@@ -31,12 +47,12 @@ namespace WhereTheyGo
         // Collapses trips into zone-to-zone flows. Returns the total trip weight so
         // the caller can sanity-check the extraction against the city's population.
         public static float Aggregate(
-            List<Trip> trips,
+            List<Journey> trips,
             float2Like worldMin,
             int2Like zoneGrid,
             List<ZoneFlow> flows,
             out int tripCount,
-            List<Trip>? journeys = null)
+            List<Journey>? journeys = null)
         {
             flows.Clear();
             journeys?.Clear();
@@ -48,7 +64,7 @@ namespace WhereTheyGo
 
             for (int t = 0; t < trips.Count; t++)
             {
-                Trip trip = trips[t];
+                Journey trip = trips[t];
                 int origin = ZoneOf(trip.m_Origin, worldMin, zoneGrid);
                 int destination = ZoneOf(trip.m_Destination, worldMin, zoneGrid);
                 if (origin < 0 || destination < 0 || origin == destination)

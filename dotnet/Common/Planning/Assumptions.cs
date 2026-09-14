@@ -137,10 +137,26 @@ namespace WhereTheyGo
         // "already served" as a tile gets.
         public const float MaxCoveragePenalty = 1.5f;
 
-        // ---- S3 demand
+        // ---- Journeys
+        // How many game days of shopping and leisure journeys the observation keeps
+        // (author's decision 2026-09-14). Three rather than one: the hour-by-hour
+        // picture a single day gives jumps about, because an hour of one day is a few
+        // hundred observations. Averaging three days steadies it at three times the
+        // memory.
+        public const int ObservationWindowDays = 3;
+
+        public const uint ObservationWindowFrames = FramesPerGameDay * ObservationWindowDays;
+
         // Backstop against a player leaving the game running for days at speed; far
-        // above what a day of a large city produces.
-        public const int ObservedTripCapacity = 200_000;
+        // above what the window's days of a large city produce.
+        public const int ObservedTripCapacity = 200_000 * ObservationWindowDays;
+
+        // How long an observed journey's maker stays before travelling back, by
+        // purpose. Only the RETURN hour rests on it: the outbound hour is the clock
+        // the journey was actually seen at. Shopping is an errand, leisure an outing.
+        public const int ShoppingStayHours = 1;
+
+        public const int LeisureStayHours = 2;
 
         // The per-day scale stops growing once the window is shorter than this
         // fraction of a day, so six minutes of readings cannot be multiplied into a

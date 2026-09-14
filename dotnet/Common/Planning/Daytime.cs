@@ -37,15 +37,55 @@ namespace WhereTheyGo
             return value - (float)Math.Floor(value);
         }
 
-        // Share of a commuter's two daily rides that fall in the day period, for the
-        // shift (0 day, 1 evening, 2 night — Game.Companies.Workshift) and the city's
-        // working hours (EconomyParameterData.m_WorkDayStart/End as day fractions).
-        public static float CommuteDayShare(byte shift, float workDayStart, float workDayEnd)
+        // Whole hours since midnight, 0..23. The hour is what a journey carries and
+        // what the time-of-day slider selects: a finer clock would pretend to a
+        // precision the shift model does not have.
+        //
+        // The epsilon is not decoration. 23/24 is not representable, so a time of
+        // exactly 23:00 arrives as 0.95833331f and floors to 22 — an hour early, for
+        // every journey seen on the hour.
+        public static byte HourOf(float timeOfDay)
+        {
+            int hour = (int)Math.Floor((Frac(timeOfDay) * 24.0) + HourEpsilon);
+            return (byte)(hour < 0 ? 0 : hour > 23 ? 23 : hour);
+        }
+
+        private const double HourEpsilon = 1e-6;
+
+        public static bool IsNightHour(byte hour)
+        {
+            return IsNight(hour / 24f);
+        }
+
+        // The hour a commuter leaves home and the hour they leave work, for the shift
+        // (0 day, 1 evening, 2 night — Game.Companies.Workshift) and the city's working
+        // hours. The per-citizen ±1 h offset is not modelled; see the note above.
+        //
+        // The rounding is the GAME's, not a tidy-up of ours: WorkerSystem.GetTimeToWork
+        // computes frac(RoundToInt(24 · (workDayStart + offset)) / 24), so the evening
+        // shift's 0.33 of a day lands on a whole 17:00 rather than on 16:92. Dropping
+        // the rounding put every evening commute an hour early.
+        public static void CommuteHours(byte shift, float workDayStart, float workDayEnd, out byte outHour, out byte backHour)
         {
             float offset = shift == 1 ? Assumptions.EveningShiftOffset : shift == 2 ? Assumptions.NightShiftOffset : 0f;
-            float outbound = Frac(workDayStart + offset);
-            float homeward = Frac(workDayEnd + offset);
-            return (IsNight(outbound) ? 0f : 0.5f) + (IsNight(homeward) ? 0f : 0.5f);
+            outHour = WholeHour(workDayStart + offset);
+            backHour = WholeHour(workDayEnd + offset);
+        }
+
+        // The game's own hour: 24 · t rounded to the nearest whole hour, then wrapped.
+        private static byte WholeHour(float timeOfDay)
+        {
+            int hour = (int)Math.Round(24.0 * timeOfDay, MidpointRounding.ToEven);
+            hour %= 24;
+            return (byte)(hour < 0 ? hour + 24 : hour);
+        }
+
+        // The share of a journey's two rides that fall in the day period, from the two
+        // hours it is made at. Same rule as CommuteDayShare, over hours rather than
+        // day fractions, so a journey carries one fact about its timing and not two.
+        public static float DayShareOfHours(byte outHour, byte backHour)
+        {
+            return (IsNightHour(outHour) ? 0f : 0.5f) + (IsNightHour(backHour) ? 0f : 0.5f);
         }
 
         // Boardings over the seats a line offers during one period only: the seats of a

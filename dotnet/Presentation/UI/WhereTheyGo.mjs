@@ -73,37 +73,41 @@ function InfoviewFigures() {
     // vanilla infoview, so this component renders for all of them and returns nothing
     // for the ones that are not ours.
     const ours = useBound("heatmap", false);
-    const equityRaw = useBound("coverage", "");
-    const coverageRaw = useBound("dataCoverage", "");
+    const figuresRaw = useBound("coverage", "");
+    const historyRaw = useBound("dataCoverage", "");
     if (!ours) {
         return null;
     }
 
     const rows = [];
 
-    const equity = (equityRaw || "").split("|");
-    if (equity.length >= 3) {
+    const figures = (figuresRaw || "").split("|");
+    if (figures.length >= 4) {
         rows.push(figureRow(
-            t("Coverage", "Served journeys"),
-            equity[0] + " %",
+            t("Carried", "Carried by transit"),
+            figures[3] + " %",
+            t("CarriedCaption", "of all journeys, counting those transit makes faster than walking")));
+        rows.push(figureRow(
+            t("Coverage", "Within walking distance"),
+            figures[0] + " %",
             t("CoverageCaption", "reach a served stop within {0} min at both ends · Gini {1}")
-                .replace("{0}", equity[1]).replace("{1}", equity[2])));
+                .replace("{0}", figures[1]).replace("{1}", figures[2])));
     }
 
-    const coverage = (coverageRaw || "").split("|");
-    const readings = parseInt(coverage[1], 10) || 0;
-    const observedTrips = parseInt(coverage[3], 10) || 0;
+    const history = (historyRaw || "").split("|");
+    const readings = parseInt(history[1], 10) || 0;
+    const observedTrips = parseInt(history[3], 10) || 0;
     const observed = (observedTrips
         ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
         : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
         .replace("{0}", String(observedTrips))
-        .replace("{1}", coverage[4] || "0");
+        .replace("{1}", history[4] || "0");
     rows.push(figureRow(
         t("DataBasis", "Data collected"),
-        readings ? (coverage[0] || "0") + " h" : t("DataBasisNone", "nothing yet"),
+        readings ? (history[0] || "0") + " h" : t("DataBasisNone", "nothing yet"),
         (readings
             ? t("DataBasisCaption", "of the last {0} h · {1} readings")
-                .replace("{0}", coverage[2] || "24")
+                .replace("{0}", history[2] || "72")
                 .replace("{1}", String(readings))
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
 

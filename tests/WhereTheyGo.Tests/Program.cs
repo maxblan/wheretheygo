@@ -72,8 +72,8 @@ namespace WhereTheyGo.Tests
             Run("Zones: trips aggregate per pair in total order, self and off-map trips drop", ZonesAggregate);
 
             // F3 steps 3–4, the panel contract and the disagreement pass, pure since 2026-09-05.
-            Run("Served demand: zones map to the nearest stop in reach, pairs drop same-stop and unmapped flows, carried journeys are discounted", ServedDemandMapsPairsAndDiscounts);
             Run("Journeys route door to door over the existing lines, and each line gets its riders", JourneysRouteOverTheExistingNetwork);
+            Run("Carried counts the journeys transit makes faster, under this city's own ceiling", CarriedIsFasterThanWalkingAndUnderTheCeiling);
             Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
 
             // F1's grid pass and F2's candidate set, pure since 2026-09-05.
@@ -836,13 +836,29 @@ namespace WhereTheyGo.Tests
             AssertTrue(!Daytime.IsNight(0.9166f) && Daytime.IsNight(11f / 12f) && Daytime.IsNight(0.99f), "night starts at 22:00");
             AssertTrue(Daytime.IsNight(1.1f) && !Daytime.IsNight(1.5f), "times wrap around the day");
 
-            // A 9-to-17 city: day shift rides both by day; evening shift (+8 h) leaves at
-            // 17:00 and returns at 01:00; night shift (+16 h) leaves at 01:00, returns at 09:00.
+            // The hour a journey carries, and the two rides of a commute.
+            AssertTrue(Daytime.HourOf(0f) == 0 && Daytime.HourOf(9f / 24f) == 9 && Daytime.HourOf(0.9999f) == 23, "whole hours since midnight");
+            AssertTrue(Daytime.HourOf(1f + (7f / 24f)) == 7 && Daytime.HourOf(-1f / 24f) == 23, "hours wrap around the day");
+            AssertTrue(Daytime.HourOf(23f / 24f) == 23 && Daytime.HourOf(7f / 24f) == 7, "a time exactly on the hour is that hour, float arithmetic notwithstanding");
+            AssertTrue(Daytime.IsNightHour(23) && Daytime.IsNightHour(5) && !Daytime.IsNightHour(6) && !Daytime.IsNightHour(21), "night is 22:00-06:00, by the hour");
+
+            // A 9-to-17 city. The shift offsets are 0.33 and 0.67 of a day, which the
+            // game ROUNDS to whole hours (WorkerSystem.GetTimeToWork): the evening shift
+            // leaves at 17:00 and returns at 01:00, the night shift at 01:00 and 09:00.
+            // Without that rounding both land an hour early.
             const float start = 9f / 24f;
             const float end = 17f / 24f;
-            AssertEqual(1f, Daytime.CommuteDayShare(0, start, end), 1e-6f, "day shift");
-            AssertEqual(0.5f, Daytime.CommuteDayShare(1, start, end), 1e-6f, "evening shift straddles the night");
-            AssertEqual(0.5f, Daytime.CommuteDayShare(2, start, end), 1e-6f, "night shift straddles the night");
+            Daytime.CommuteHours(0, start, end, out byte dayOut, out byte dayBack);
+            AssertTrue(dayOut == 9 && dayBack == 17, $"the day shift leaves at 9 and returns at 17, got {dayOut.ToString(CultureInfo.InvariantCulture)}/{dayBack.ToString(CultureInfo.InvariantCulture)}");
+            Daytime.CommuteHours(1, start, end, out byte eveOut, out byte eveBack);
+            AssertTrue(eveOut == 17 && eveBack == 1, $"the evening shift is eight hours later, got {eveOut.ToString(CultureInfo.InvariantCulture)}/{eveBack.ToString(CultureInfo.InvariantCulture)}");
+            Daytime.CommuteHours(2, start, end, out byte nightOut, out byte nightBack);
+            AssertTrue(nightOut == 1 && nightBack == 9, $"and the night shift sixteen, got {nightOut.ToString(CultureInfo.InvariantCulture)}/{nightBack.ToString(CultureInfo.InvariantCulture)}");
+
+            AssertEqual(1f, Daytime.DayShareOfHours(dayOut, dayBack), 1e-6f, "day shift");
+            AssertEqual(0.5f, Daytime.DayShareOfHours(eveOut, eveBack), 1e-6f, "evening shift straddles the night");
+            AssertEqual(0.5f, Daytime.DayShareOfHours(nightOut, nightBack), 1e-6f, "night shift straddles the night");
+            AssertEqual(1f, new Journey { m_OutHour = dayOut, m_BackHour = dayBack }.DayShare, 1e-6f, "a journey states its own day share from its two hours");
 
             // 4369 s a day at 300 s and 80 seats both ways = 2330 seats a day, 1553 of
             // them by day (16 h) and 777 by night; 500 riders by day = 1000 boardings /

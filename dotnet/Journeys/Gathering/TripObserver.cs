@@ -37,7 +37,7 @@ namespace WhereTheyGo
         }
 
         // The window of journeys seen; the save state writes and restores it.
-        public ObservedTripWindow Window { get; } = new ObservedTripWindow(Assumptions.FramesPerGameDay);
+        public ObservedTripWindow Window { get; } = new ObservedTripWindow(Assumptions.ObservationWindowFrames);
 
         // What the last Drain handed over, and how the scans since have cost the frame.
         public int LastDemandCount => m_ObservedLastDemand;
@@ -100,6 +100,21 @@ namespace WhereTheyGo
         // Purposes that count as shopping or leisure (register A0.1). Working,
         // studying and going home are covered by the save's own home-work/school pairs;
         // service trips (hospital, mail, garbage, crime) are not passenger demand.
+        // The game's purposes the observation watches, as the four the mod shows.
+        // Everything that is not an errand is an outing.
+        private static JourneyPurpose PurposeOf(Purpose purpose)
+        {
+            return purpose == Purpose.Shopping ? JourneyPurpose.Shopping : JourneyPurpose.Leisure;
+        }
+
+        // The hour the journey is made in the other direction: the outbound hour plus
+        // how long its maker stays (Assumptions), wrapped round midnight.
+        private static byte ReturnHour(byte outHour, JourneyPurpose purpose)
+        {
+            int stay = purpose == JourneyPurpose.Shopping ? Assumptions.ShoppingStayHours : Assumptions.LeisureStayHours;
+            return (byte)((outHour + stay) % 24);
+        }
+
         private static bool IsShoppingOrLeisure(Purpose purpose)
         {
             return purpose is Purpose.Shopping or Purpose.Leisure or Purpose.Relaxing
@@ -390,7 +405,7 @@ namespace WhereTheyGo
 
         // The observed window joins the save's home-work/school journeys in the same
         // queue, each observed journey weighted so the window reads as one day.
-        public void Drain(NativeQueue<Trip> trips)
+        public void Drain(NativeQueue<Journey> trips)
         {
             float scale = Window.ScaleFor(Assumptions.FramesPerGameDay);
             m_ObservedLastDemand = Window.Count;
@@ -398,12 +413,16 @@ namespace WhereTheyGo
             for (int i = 0; i < Window.Count; i++)
             {
                 ObservedTrip observed = Window[i];
-                var trip = new Trip
+                JourneyPurpose purpose = PurposeOf((Purpose)observed.m_Purpose);
+                byte outHour = Daytime.HourOf(observed.m_TimeOfDay);
+                var trip = new Journey
                 {
-                    m_DayShare = Daytime.IsNight(observed.m_TimeOfDay) ? 0f : 1f,
                     m_Origin = new float2Like(observed.m_OriginX, observed.m_OriginZ),
                     m_Destination = new float2Like(observed.m_DestinationX, observed.m_DestinationZ),
                     m_Weight = scale,
+                    m_Purpose = purpose,
+                    m_OutHour = outHour,
+                    m_BackHour = ReturnHour(outHour, purpose),
                 };
                 if (float2Like.DistanceSq(trip.m_Origin, trip.m_Destination) < 1f)
                 {

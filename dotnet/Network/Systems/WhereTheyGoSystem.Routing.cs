@@ -9,9 +9,20 @@ namespace WhereTheyGo
     // line carries.
     public sealed partial class WhereTheyGoSystem
     {
-        // Door-to-door seconds of every pair in the table over the existing network,
-        // float.MaxValue where the network cannot carry it.
+        // Door-to-door seconds of every pair in the table over the existing network:
+        // the better of its transit itinerary and walking the whole way.
         private float[]? m_Baseline;
+
+        // What the last routing found, kept for the figures and the bands that read it.
+        private RoutingResult? m_Routed;
+
+        private RoutingProblem? m_RoutedProblem;
+
+        private CarriedReport m_CarriedReport;
+
+        private float[] m_CeilingScratch = System.Array.Empty<float>();
+
+        internal CarriedReport Carried => m_CarriedReport;
 
         private RoutingProblem? m_PairTable;
 
@@ -31,12 +42,12 @@ namespace WhereTheyGo
             var dayWeight = new List<float>();
             for (int i = 0; i < m_Journeys.Count; i++)
             {
-                Trip trip = m_Journeys[i];
+                Journey trip = m_Journeys[i];
                 var key = (trip.m_Origin.x, trip.m_Origin.y, trip.m_Destination.x, trip.m_Destination.y);
                 if (pairIndex.TryGetValue(key, out int existing))
                 {
                     weight[existing] += trip.m_Weight;
-                    dayWeight[existing] += trip.m_Weight * trip.m_DayShare;
+                    dayWeight[existing] += trip.m_Weight * trip.DayShare;
                     continue;
                 }
 
@@ -46,7 +57,7 @@ namespace WhereTheyGo
                 dx.Add(trip.m_Destination.x);
                 dz.Add(trip.m_Destination.y);
                 weight.Add(trip.m_Weight);
-                dayWeight.Add(trip.m_Weight * trip.m_DayShare);
+                dayWeight.Add(trip.m_Weight * trip.DayShare);
             }
 
             var dayShare = new float[ox.Count];
@@ -111,6 +122,14 @@ namespace WhereTheyGo
             RoutingProblem problem = BuildRoutingProblem();
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             RoutingResult routed = JourneyRouting.Evaluate(problem, before: null);
+            if (m_CeilingScratch.Length < problem.PairCount)
+            {
+                m_CeilingScratch = new float[problem.PairCount];
+            }
+
+            m_CarriedReport = JourneyRouting.MarkCarried(problem, routed, m_CeilingScratch);
+            m_Routed = routed;
+            m_RoutedProblem = problem;
             m_Baseline = routed.After;
             m_ExistingLineRiders.Clear();
             for (int i = 0; i < routed.BaseRiders.Length && i < m_ExistingLines.Count; i++)
@@ -123,7 +142,11 @@ namespace WhereTheyGo
                 $"Door-to-door routing: {(problem.PairCount).ToString(CultureInfo.InvariantCulture)} pairs from " +
                 $"{(JourneyRouting.GeometryOf(problem).ZoneCount).ToString(CultureInfo.InvariantCulture)} doors over " +
                 $"{(problem.BaseLines.Count).ToString(CultureInfo.InvariantCulture)} existing lines in " +
-                $"{(stopwatch.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms");
+                $"{(stopwatch.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms; " +
+                $"carried {(m_CarriedReport.CarriedPairs).ToString(CultureInfo.InvariantCulture)} pairs = " +
+                $"{(m_CarriedReport.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight " +
+                $"(faster than walking and under {(m_CarriedReport.CeilingSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                $"{(m_CarriedReport.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median of {m_CarriedReport.MedianSeconds.ToString("F0", CultureInfo.InvariantCulture)}s")})");
             for (int i = 0; i < problem.BaseLines.Count && i < m_ExistingLines.Count; i++)
             {
                 DeferredLog.Info(

@@ -33,11 +33,11 @@ namespace WhereTheyGo
         public float WorkTripWeight;
         public float SchoolTripWeight;
         // EconomyParameterData.m_WorkDayStart/End, day fractions; the shift decides
-        // when a commuter rides (Daytime.CommuteDayShare).
+        // when a commuter rides (Daytime.CommuteHours).
         public float WorkDayStart;
         public float WorkDayEnd;
 
-        public NativeQueue<Trip>.ParallelWriter Trips;
+        public NativeQueue<Journey>.ParallelWriter Trips;
 
         public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
         {
@@ -69,20 +69,25 @@ namespace WhereTheyGo
 
                 Entity citizen = entities[i];
                 float weight;
-                float dayShare;
+                JourneyPurpose purpose;
+                byte outHour;
+                byte backHour;
                 Entity destinationOwner;
                 if (WorkerLookup.HasComponent(citizen))
                 {
                     Worker worker = WorkerLookup[citizen];
                     destinationOwner = worker.m_Workplace;
                     weight = WorkTripWeight;
-                    dayShare = Daytime.CommuteDayShare((byte)worker.m_Shift, WorkDayStart, WorkDayEnd);
+                    purpose = JourneyPurpose.Work;
+                    Daytime.CommuteHours((byte)worker.m_Shift, WorkDayStart, WorkDayEnd, out outHour, out backHour);
                 }
                 else if (StudentLookup.HasComponent(citizen))
                 {
                     destinationOwner = StudentLookup[citizen].m_School;
                     weight = SchoolTripWeight;
-                    dayShare = Daytime.CommuteDayShare(0, WorkDayStart, WorkDayEnd);
+                    purpose = JourneyPurpose.School;
+                    // Students keep the day shift's hours (StudentSystem.GetTimeToStudy).
+                    Daytime.CommuteHours(0, WorkDayStart, WorkDayEnd, out outHour, out backHour);
                 }
                 else
                 {
@@ -104,12 +109,14 @@ namespace WhereTheyGo
                     continue;
                 }
 
-                Trips.Enqueue(new Trip
+                Trips.Enqueue(new Journey
                 {
                     m_Origin = new float2Like(from.x, from.y),
                     m_Destination = new float2Like(to.x, to.y),
                     m_Weight = weight,
-                    m_DayShare = dayShare,
+                    m_Purpose = purpose,
+                    m_OutHour = outHour,
+                    m_BackHour = backHour,
                 });
             }
         }
@@ -149,15 +156,15 @@ namespace WhereTheyGo
         // them (DemandZones.Aggregate). The order is thread-dependent, which is
         // why the aggregation sorts the flows totally before anything reads them.
         public static float Aggregate(
-            NativeQueue<Trip> trips,
+            NativeQueue<Journey> trips,
             float2 worldMin,
             int2 zoneGrid,
             List<ZoneFlow> flows,
             out int tripCount,
-            List<Trip>? journeys = null)
+            List<Journey>? journeys = null)
         {
-            var drained = new List<Trip>(trips.Count);
-            while (trips.TryDequeue(out Trip trip))
+            var drained = new List<Journey>(trips.Count);
+            while (trips.TryDequeue(out Journey trip))
             {
                 drained.Add(trip);
             }

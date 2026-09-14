@@ -63,16 +63,16 @@ namespace WhereTheyGo.Tests
         {
             var worldMin = new float2Like(0f, 0f);
             var grid = new int2Like(4, 4);
-            var trips = new List<Trip>
+            var trips = new List<Journey>
             {
-                new Trip { m_Origin = new float2Like(100f, 100f), m_Destination = new float2Like(900f, 100f), m_Weight = 2f, m_DayShare = 1f },
-                new Trip { m_Origin = new float2Like(900f, 900f), m_Destination = new float2Like(100f, 100f), m_Weight = 1f, m_DayShare = 0f },
-                new Trip { m_Origin = new float2Like(120f, 120f), m_Destination = new float2Like(910f, 110f), m_Weight = 3f, m_DayShare = 1f },
-                new Trip { m_Origin = new float2Like(100f, 100f), m_Destination = new float2Like(200f, 200f), m_Weight = 5f, m_DayShare = 1f },
-                new Trip { m_Origin = new float2Like(-5f, 100f), m_Destination = new float2Like(900f, 100f), m_Weight = 7f, m_DayShare = 1f },
+                new Journey { m_Origin = new float2Like(100f, 100f), m_Destination = new float2Like(900f, 100f), m_Weight = 2f, m_OutHour = 9, m_BackHour = 17 },
+                new Journey { m_Origin = new float2Like(900f, 900f), m_Destination = new float2Like(100f, 100f), m_Weight = 1f, m_OutHour = 1, m_BackHour = 4 },
+                new Journey { m_Origin = new float2Like(120f, 120f), m_Destination = new float2Like(910f, 110f), m_Weight = 3f, m_OutHour = 9, m_BackHour = 17 },
+                new Journey { m_Origin = new float2Like(100f, 100f), m_Destination = new float2Like(200f, 200f), m_Weight = 5f, m_OutHour = 9, m_BackHour = 17 },
+                new Journey { m_Origin = new float2Like(-5f, 100f), m_Destination = new float2Like(900f, 100f), m_Weight = 7f, m_OutHour = 9, m_BackHour = 17 },
             };
             var flows = new List<ZoneFlow>();
-            var journeys = new List<Trip>();
+            var journeys = new List<Journey>();
             float total = DemandZones.Aggregate(trips, worldMin, grid, flows, out int count, journeys);
             AssertTrue(count == 3 && total == 6f, $"three trips survive (self-zone and off-map dropped): count {count.ToString(CultureInfo.InvariantCulture)}, weight {total.ToString(CultureInfo.InvariantCulture)}");
             AssertTrue(journeys.Count == 3, "the surviving trips are handed back as journeys");

@@ -117,7 +117,9 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingWalkUnserved]", "further than the {0} min this city counts as served" },
                 { "WhereTheyGo.Panel[WalkNone]", "no stop in reach" },
                 { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
-                { "WhereTheyGo.Panel[Coverage]", "Served journeys" },
+                { "WhereTheyGo.Panel[Carried]", "Carried by transit" },
+                { "WhereTheyGo.Panel[CarriedCaption]", "of all journeys, counting those transit makes faster than walking" },
+                { "WhereTheyGo.Panel[Coverage]", "Within walking distance" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Show the infoview" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Opens the mod's infoview. The game's infoview menu holds the same switch." },
@@ -155,7 +157,7 @@ namespace WhereTheyGo
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Status lines the Options page prints verbatim (see Loc).
-                { "WhereTheyGo.Panel[CoverageCaption]", "reach a served stop within {0} min at both ends \u00b7 target {1} % \u00b7 Gini {2}" },
+                { "WhereTheyGo.Panel[CoverageCaption]", "reach a served stop within {0} min at both ends \u00b7 Gini {1}" },
                 { "WhereTheyGo.Panel[DataBasisCaption]", "of the last {0} h \u00b7 {1} readings" },
                 { "WhereTheyGo.Panel[DataBasisNone]", "nothing yet" },
                 { "WhereTheyGo.Panel[DataBasis]", "Data collected" },

@@ -24,13 +24,18 @@ namespace WhereTheyGo
                 $"{observedHours.ToString("F1", CultureInfo.InvariantCulture)}";
         }
 
-        // "sharePercent|walkMinutes|giniWalk".
-        public static string CoverageRow(float share, int walkMinutes, double giniWalk)
+        // "walkablePercent|walkMinutes|giniWalk|carriedPercent": the two city-wide
+        // figures the infoview panel shows. The first is how much of the city's travel
+        // has BOTH ends in walking time of a served stop; the last is how much of it
+        // the network actually carries (JourneyRouting.MarkCarried). Fields grow at the
+        // END, so the panel's indices never move.
+        public static string CoverageRow(float share, int walkMinutes, double giniWalk, float carriedShare)
         {
             return
                 $"{(share * 100f).ToString("F1", CultureInfo.InvariantCulture)}|" +
                 $"{walkMinutes.ToString(CultureInfo.InvariantCulture)}|" +
-                $"{giniWalk.ToString("F2", CultureInfo.InvariantCulture)}";
+                $"{giniWalk.ToString("F2", CultureInfo.InvariantCulture)}|" +
+                $"{(carriedShare * 100f).ToString("F1", CultureInfo.InvariantCulture)}";
         }
     }
 }

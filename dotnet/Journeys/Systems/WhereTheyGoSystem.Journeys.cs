@@ -43,26 +43,15 @@ namespace WhereTheyGo
         private readonly List<ZoneFlow> m_ZoneFlows = new List<ZoneFlow>();
         // Zone-to-stop reach, the routable pairs and the served-demand discount (F3
         // steps 3 and 4), rebuilt with the transit model on every demand refresh.
-        private readonly ServedDemand m_ServedDemand = new ServedDemand();
-
         // The equity measure (register A1.8/A1.9): every journey of the last demand
         // refresh with its ends snapped to the pedestrian network, the walk from each
         // network node to the nearest served stop, and the coverage that gives.
-        private readonly List<Trip> m_Journeys = new List<Trip>();
+        private readonly List<Journey> m_Journeys = new List<Journey>();
 
         private int2 m_ZoneGrid;
 
         private float m_LastDemandRefresh;
 
-        // Journey weight still looking for a service once the existing network has
-        // taken its share — the pool every candidate is scored against, and therefore
-        // the only honest denominator for a candidate's reach.
-        //
-        // This used to be the PRE-discount total while the credit in the numerator was
-        // drawn from the post-discount weights, so a reach of "7% of city travel" was
-        // really 17% of the demand it was competing for. Two different pools, one
-        // ratio.
-        private float m_UnservedTravelWeight;
 
         // The city's working hours as day fractions (EconomyParameterData); the game's
         // shifts sit on them (Daytime). Logged once so the classification is auditable.
@@ -86,8 +75,19 @@ namespace WhereTheyGo
                     $"Work day from EconomyParameterData: {(start * 24f).ToString("F1", CultureInfo.InvariantCulture)}h to {(end * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
                     $"evening shift +{(Assumptions.EveningShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h, night shift +{(Assumptions.NightShiftOffset * 24f).ToString("F1", CultureInfo.InvariantCulture)}h; " +
                     $"night is {(Assumptions.NightStart * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00–{(Assumptions.NightEnd * 24f).ToString("F0", CultureInfo.InvariantCulture)}:00 (TransportLineSystem); " +
-                    $"day-shift rides by day {(Daytime.CommuteDayShare(0, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, evening {(Daytime.CommuteDayShare(1, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %, night {(Daytime.CommuteDayShare(2, start, end) * 100f).ToString("F0", CultureInfo.InvariantCulture)} %");
+                    $"commute hours by shift: {ShiftHours(0, start, end)}, evening {ShiftHours(1, start, end)}, night {ShiftHours(2, start, end)}");
             }
+        }
+
+        // "07:00 out, 16:00 back (100 % by day)" for one shift, so the log says what
+        // every commute of that shift was stamped with.
+        private static string ShiftHours(byte shift, float start, float end)
+        {
+            Daytime.CommuteHours(shift, start, end, out byte outHour, out byte backHour);
+            float dayShare = Daytime.DayShareOfHours(outHour, backHour);
+            return $"{(outHour).ToString("00", CultureInfo.InvariantCulture)}:00 out, " +
+                $"{(backHour).ToString("00", CultureInfo.InvariantCulture)}:00 back " +
+                $"({(dayShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} % by day)";
         }
 
         // The whole demand pipeline: extract real journeys, aggregate them, load
@@ -104,7 +104,7 @@ namespace WhereTheyGo
 
             int tripCount;
             float totalWeight;
-            var trips = new NativeQueue<Trip>(Allocator.TempJob);
+            var trips = new NativeQueue<Journey>(Allocator.TempJob);
             try
             {
                 m_WorkerLookup.Update(this);
@@ -146,8 +146,6 @@ namespace WhereTheyGo
             long extractMs = clock.ElapsedMilliseconds;
             BuildTransitModel(settings, gridSize);
             MeasureCoverage(settings);
-            DiscountServedDemand();
-            m_UnservedTravelWeight = ServedDemand.RemainingWeight(m_ZoneFlows);
             long modelMs = clock.ElapsedMilliseconds - extractMs;
 
             RouteJourneys();
@@ -217,36 +215,10 @@ namespace WhereTheyGo
             m_TransitWorkspace ??= new DijkstraWorkspace(0);
             m_TransitWorkspace.Resize(m_TransitNetwork.Graph.NodeCount);
 
-            m_ServedDemand.MapZonesToStops(xs, zs, new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y), new int2Like(m_ZoneGrid.x, m_ZoneGrid.y));
-            m_ServedDemand.BuildPairs(m_ZoneFlows);
-
             DeferredLog.Info(
                 $"Transit model: lines={m_ExistingLines.Count}, stops={m_TransitStops.Count}, " +
-                $"graphNodes={(m_TransitNetwork.Graph.NodeCount).ToString(CultureInfo.InvariantCulture)}, routablePairs={(m_ServedDemand.PairCount).ToString(CultureInfo.InvariantCulture)}");
+                $"graphNodes={(m_TransitNetwork.Graph.NodeCount).ToString(CultureInfo.InvariantCulture)}");
         }
 
-        // Unserved demand, decided by ROUTING each journey over the existing network
-        // rather than by how close its ends are to a stop (ServedDemand.TryDiscount). A
-        // journey the network can already carry within a reasonable time is
-        // discounted; one it cannot is left at full weight to drive a suggestion.
-        private void DiscountServedDemand()
-        {
-            if (m_TransitNetwork is null || m_TransitWorkspace is null)
-            {
-                return;
-            }
-
-            if (!m_ServedDemand.TryDiscount(m_TransitNetwork, m_TransitWorkspace, m_ZoneFlows, out DiscountReport report))
-            {
-                return;
-            }
-
-            DeferredLog.Info(
-                $"Served-demand discount: {(report.ServedPairs).ToString(CultureInfo.InvariantCulture)} of {(report.PairCount).ToString(CultureInfo.InvariantCulture)} routable pairs already carried, " +
-                $"median carried journey {(report.MedianSeconds).ToString("F0", CultureInfo.InvariantCulture)}s -> ceiling {(report.CeilingSeconds).ToString("F0", CultureInfo.InvariantCulture)}s " +
-                $"({(report.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median, or a slow network" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median")}); " +
-                $"weight {(report.WeightBefore).ToString("F0", CultureInfo.InvariantCulture)} -> {(report.WeightAfter).ToString("F0", CultureInfo.InvariantCulture)} " +
-                $"({((report.WeightBefore > 0f ? (1f - report.WeightAfter / report.WeightBefore) * 100f : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% absorbed by existing lines)");
-        }
     }
 }

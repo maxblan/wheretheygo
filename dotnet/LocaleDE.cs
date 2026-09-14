@@ -35,7 +35,9 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingWalkUnserved]", "weiter als die {0} min, die hier als bedient gelten" },
                 { "WhereTheyGo.Panel[WalkNone]", "keine Haltestelle erreichbar" },
                 { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
-                { "WhereTheyGo.Panel[Coverage]", "Bediente Wege" },
+                { "WhereTheyGo.Panel[Carried]", "Vom ÖPNV getragen" },
+                { "WhereTheyGo.Panel[CarriedCaption]", "aller Wege — gezählt werden die, für die der ÖPNV schneller ist als Gehen" },
+                { "WhereTheyGo.Panel[Coverage]", "In Gehweite" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Infoansicht anzeigen" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Öffnet die Infoansicht der Mod. Im Infoansichts-Menü des Spiels liegt derselbe Schalter." },
@@ -72,7 +74,7 @@ namespace WhereTheyGo
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Statuszeilen, die die Optionsseite unverändert ausgibt (siehe Loc).
-                { "WhereTheyGo.Panel[CoverageCaption]", "erreichen an beiden Enden eine bediente Haltestelle in {0} min \u00b7 Ziel {1} % \u00b7 Gini {2}" },
+                { "WhereTheyGo.Panel[CoverageCaption]", "erreichen an beiden Enden eine bediente Haltestelle in {0} min \u00b7 Gini {1}" },
                 { "WhereTheyGo.Panel[DataBasisCaption]", "der letzten {0} h \u00b7 {1} Messungen" },
                 { "WhereTheyGo.Panel[DataBasisNone]", "noch nichts" },
                 { "WhereTheyGo.Panel[DataBasis]", "Datenbasis" },

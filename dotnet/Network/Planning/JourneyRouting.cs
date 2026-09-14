@@ -56,13 +56,57 @@ namespace WhereTheyGo
         public double[] BaseRiders = Array.Empty<double>();
         public double[] BaseRidersByDay = Array.Empty<double>();
         public double[] BaseRidersByNight = Array.Empty<double>();
-        // Door-to-door time of every pair under this set (float.MaxValue = not carried).
+        // Door-to-door time of every pair: the better of transit and walking.
         public float[] After = Array.Empty<float>();
+        // The transit itinerary's own time per pair, float.MaxValue where the network
+        // offers none. MarkCarried reads it; After cannot, because a journey faster on
+        // foot has the walk in it.
+        public float[] Transit = Array.Empty<float>();
+        // Straight-line walking time per pair, the alternative every journey always has.
+        public float[] WalkOnly = Array.Empty<float>();
+        // Whether the network carries each pair (JourneyRouting.MarkCarried).
+        public bool[] Carried = Array.Empty<bool>();
         // Time-weighted components over all pairs for the realism diagnostic
         // (walk 2.2, wait 2.1, ride 1 — TCQSM): what the set's journeys spend.
         public double WalkSeconds;
         public double WaitSeconds;
         public double RideSeconds;
+    }
+
+    // What "the network carries this journey" means, and how much of the city's travel
+    // it adds up to (author's decision 2026-09-14). Two conditions, both nameable in a
+    // tooltip:
+    //
+    //   1. the transit itinerary is faster than walking the whole way, and
+    //   2. it stays under the ceiling — a multiple of this city's own median carried
+    //      journey, so a 20-minute city and a 60-minute one are judged by their own
+    //      standard rather than by a number chosen here.
+    //
+    // The median is taken over the journeys that pass condition 1, which is why this
+    // is two passes and not one.
+    internal readonly struct CarriedReport
+    {
+        public CarriedReport(float ceilingSeconds, float medianSeconds, int carriedPairs, double carriedWeight, double totalWeight)
+        {
+            CeilingSeconds = ceilingSeconds;
+            MedianSeconds = medianSeconds;
+            CarriedPairs = carriedPairs;
+            CarriedWeight = carriedWeight;
+            TotalWeight = totalWeight;
+        }
+
+        public float CeilingSeconds { get; }
+
+        public float MedianSeconds { get; }
+
+        public int CarriedPairs { get; }
+
+        public double CarriedWeight { get; }
+
+        public double TotalWeight { get; }
+
+        // The share of the city's travel the network carries: the headline figure.
+        public float Share => TotalWeight > 0.0 ? (float)(CarriedWeight / TotalWeight) : 0f;
     }
 
     internal static class JourneyRouting
@@ -94,6 +138,8 @@ namespace WhereTheyGo
                 BaseRidersByDay = new double[problem.BaseLines.Count],
                 BaseRidersByNight = new double[problem.BaseLines.Count],
                 After = new float[problem.PairCount],
+                Transit = new float[problem.PairCount],
+                WalkOnly = geometry.WalkOnly,
             };
             bool hasShares = problem.PairDayShare.Length >= problem.PairCount;
             int lineCount = problem.BaseLines.Count;
@@ -116,6 +162,7 @@ namespace WhereTheyGo
             for (int i = 0; i < problem.PairCount; i++)
             {
                 evaluation.After[i] = legs.After[i];
+                evaluation.Transit[i] = legs.Transit[i];
                 double weight = problem.PairWeight[i];
                 evaluation.WalkSeconds += weight * legs.Walk[i];
                 evaluation.WaitSeconds += weight * legs.Wait[i];
@@ -140,6 +187,44 @@ namespace WhereTheyGo
             }
 
             return evaluation;
+        }
+
+        // Fills `result.Carried` and reports what it adds up to. `scratch` is reordered
+        // in place by the median (SelectKth), so it is the caller's buffer and never
+        // the times themselves.
+        public static CarriedReport MarkCarried(RoutingProblem problem, RoutingResult result, float[] scratch)
+        {
+            int count = problem.PairCount;
+            result.Carried = new bool[count];
+            int faster = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (result.Transit[i] < result.WalkOnly[i])
+                {
+                    scratch[faster++] = result.Transit[i];
+                }
+            }
+
+            float ceiling = TransitGraph.ServedCeiling(
+                scratch, faster, Assumptions.ServedCeilingMultiple, Assumptions.MaxJourneySeconds,
+                Assumptions.MinPairsForServedMedian, out float median);
+
+            int carriedPairs = 0;
+            double carriedWeight = 0.0;
+            double totalWeight = 0.0;
+            for (int i = 0; i < count; i++)
+            {
+                double weight = problem.PairWeight[i];
+                totalWeight += weight;
+                if (result.Transit[i] < result.WalkOnly[i] && result.Transit[i] <= ceiling)
+                {
+                    result.Carried[i] = true;
+                    carriedPairs++;
+                    carriedWeight += weight;
+                }
+            }
+
+            return new CarriedReport(ceiling, median, carriedPairs, carriedWeight, totalWeight);
         }
 
         // The stops each door can walk to, with the walking time as the specification's
@@ -237,6 +322,7 @@ namespace WhereTheyGo
                 }
 
                 legs.After[pair] = Math.Min(walkOnly, transit);
+                legs.Transit[pair] = transit;
                 if (transit < walkOnly)
                 {
                     legs.Walk[pair] += alightWalk;
@@ -253,6 +339,9 @@ namespace WhereTheyGo
         private sealed class PairLegs
         {
             public readonly float[] After;
+            // The best transit itinerary's own time, float.MaxValue where there is
+            // none — apart from After, which is the better of transit and walking.
+            public readonly float[] Transit;
             public readonly double[] Walk;
             public readonly double[] Wait;
             public readonly double[] Ride;
@@ -261,6 +350,7 @@ namespace WhereTheyGo
             public PairLegs(int pairCount)
             {
                 After = new float[pairCount];
+                Transit = new float[pairCount];
                 Walk = new double[pairCount];
                 Wait = new double[pairCount];
                 Ride = new double[pairCount];
