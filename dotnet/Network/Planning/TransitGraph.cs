@@ -211,6 +211,7 @@ namespace WhereTheyGo
             var edgeCost = new List<float>();
             var kinds = new List<TransitEdgeKind>();
             var edgeLines = new List<int>();
+            var forwardOnly = new List<bool>();
 
             int nextNode = stopCount;
 
@@ -221,6 +222,10 @@ namespace WhereTheyGo
                 edgeCost.Add(Math.Max(0.01f, cost));
                 kinds.Add(kind);
                 edgeLines.Add(line);
+                // Riding is one-way: a line is a loop driven in one direction, and the
+                // game's own transit edge carries EdgeFlags.Forward and nothing else.
+                // Walking between stops and stepping on or off a vehicle go both ways.
+                forwardOnly.Add(kind == TransitEdgeKind.Ride);
             }
 
             // Walking between nearby stops. This is what turns a bus stop beside a
@@ -304,7 +309,7 @@ namespace WhereTheyGo
             {
                 StopCount = stopCount,
                 ZoneNodeStart = zoneCount > 0 ? zoneStart : int.MaxValue,
-                Graph = CompactGraph.Build(nextNode, edgeA.ToArray(), edgeB.ToArray(), edgeCost.ToArray(), edgeA.Count),
+                Graph = CompactGraph.Build(nextNode, edgeA.ToArray(), edgeB.ToArray(), edgeCost.ToArray(), edgeA.Count, forwardOnly.ToArray()),
                 EdgeKind = kinds.ToArray(),
                 EdgeLine = edgeLines.ToArray(),
             };

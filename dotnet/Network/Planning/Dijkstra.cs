@@ -18,7 +18,23 @@ namespace WhereTheyGo
         public int[] AdjEdge = Array.Empty<int>();
         public int[] AdjOther = Array.Empty<int>();
 
+        // Per edge: true where the edge may only be walked from its A end to its B end.
+        // Empty means every edge is two-way, which is what the walk graph wants.
+        //
+        // It exists for one thing: riding a transit line. A line in this game is a
+        // closed loop driven in one direction, and the game's own pathfinder builds
+        // its transit edge with EdgeFlags.Forward alone
+        // (PathUtils.GetTransportLineSpecification). Two-way ride edges let a rider
+        // step one stop BACKWARDS along a loop for the price of the forward hop, where
+        // the real answer is to ride the whole loop round.
+        public bool[] EdgeForwardOnly = Array.Empty<bool>();
+
         public static CompactGraph Build(int nodeCount, int[] edgeA, int[] edgeB, float[] edgeCost, int edgeCount)
+        {
+            return Build(nodeCount, edgeA, edgeB, edgeCost, edgeCount, forwardOnly: null);
+        }
+
+        public static CompactGraph Build(int nodeCount, int[] edgeA, int[] edgeB, float[] edgeCost, int edgeCount, bool[]? forwardOnly)
         {
             var graph = new CompactGraph
             {
@@ -27,6 +43,7 @@ namespace WhereTheyGo
                 EdgeA = edgeA,
                 EdgeB = edgeB,
                 EdgeCost = edgeCost,
+                EdgeForwardOnly = forwardOnly ?? Array.Empty<bool>(),
             };
 
             graph.NodeOffsets = new int[graph.NodeCount + 1];
@@ -228,6 +245,14 @@ namespace WhereTheyGo
                 for (int i = start; i < end; i++)
                 {
                     int edge = graph.AdjEdge[i];
+                    // A one-way edge is in both nodes' adjacency, because the
+                    // adjacency is what makes the walk graph cheap to build; the
+                    // direction is enforced here, on the one traversal that matters.
+                    if (edge < graph.EdgeForwardOnly.Length && graph.EdgeForwardOnly[edge] && graph.EdgeA[edge] != node)
+                    {
+                        continue;
+                    }
+
                     int next = graph.AdjOther[i];
                     float candidate = nodeDist + graph.EdgeCost[edge];
                     if (candidate > maxCost || (wanted is not null && next >= expandBelow && !wanted[next]))

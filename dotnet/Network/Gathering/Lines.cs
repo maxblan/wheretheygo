@@ -118,7 +118,7 @@ namespace WhereTheyGo
 
                 // Mirrors TransportLineSystem.RefreshLineSegments' stableDuration and
                 // the target interval it feeds to CalculateVehicleCount.
-                line.m_StableDurationSeconds = line.m_LineDurationSeconds + (line.m_StopIndices.Count * dwell);
+                line.m_StableDurationSeconds = line.m_PathDurationSeconds + (line.m_StopIndices.Count * dwell);
                 line.m_TargetInterval = TargetInterval(entityManager, lineEntity, lineData);
                 line.m_StopDuration = dwell;
 
@@ -276,11 +276,34 @@ namespace WhereTheyGo
                 }
 
                 // Segment w is the hop from waypoint w to waypoint w+1.
-                if (w < segments.Length && entityManager.TryGetComponent(segments[w].m_Segment, out PathInformation path))
+                //
+                // TWO durations sit on that segment and they are not the same number.
+                // PathInformation.m_Duration is what the pathfinder found: free-flow,
+                // no traffic, no dwell. RouteInfo.m_Duration is that same figure scaled
+                // by what the vehicles actually achieve — TransportLineSystem writes it
+                // as pathDuration x max(1, (max(idealLeg, averageTravelTime) + dwell) /
+                // idealLeg) — and it is the ONLY one a rider ever pays: the game's own
+                // pathfinder builds its transit edge from it
+                // (PathUtils.GetTransportLineSpecification: maxSpeed = RouteInfo
+                // .m_Distance / RouteInfo.m_Duration). Reading the ideal instead made
+                // every line three to ten times too fast.
+                if (w < segments.Length)
                 {
-                    pendingSeconds += path.m_Duration;
-                    line.m_LengthMetres += path.m_Distance;
-                    line.m_LineDurationSeconds += path.m_Duration;
+                    Entity segment = segments[w].m_Segment;
+                    if (entityManager.TryGetComponent(segment, out PathInformation path))
+                    {
+                        line.m_LengthMetres += path.m_Distance;
+                        line.m_PathDurationSeconds += path.m_Duration;
+                    }
+
+                    // Before the vehicles have run once RouteInfo is still zero, and
+                    // the ideal is then the best figure there is. The two durations are
+                    // logged side by side, so a line where they are equal says so.
+                    float ridden = entityManager.TryGetComponent(segment, out Game.Routes.RouteInfo info) && info.m_Duration > 0f
+                        ? info.m_Duration
+                        : path.m_Duration;
+                    pendingSeconds += ridden;
+                    line.m_LineDurationSeconds += ridden;
                 }
             }
         }

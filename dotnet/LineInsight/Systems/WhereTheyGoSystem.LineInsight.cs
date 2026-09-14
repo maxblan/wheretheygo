@@ -160,7 +160,8 @@ namespace WhereTheyGo
                 ExistingLine line = m_ExistingLines[i];
                 DeferredLog.Info(
                     $"Line {(i + 1).ToString(CultureInfo.InvariantCulture)} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
-                    $"loop={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, roundTrip={(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                    $"loop={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, " +
+                    $"roundTrip={(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s ridden (free-flow ideal {(line.m_PathDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, fleet-sizing {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"gameInterval={(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s (planned, not measured; target {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"routerWait={(line.ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)} ({(line.CapacityPerVehicle).ToString(CultureInfo.InvariantCulture)} seats each), " +

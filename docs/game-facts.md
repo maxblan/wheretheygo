@@ -49,11 +49,34 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
   (`VehicleCountSection`); the game turns it into a slider position on the vehicle-count
   policy prefab, lerps that onto the `VehicleInterval` modifier's range and applies the
   modifier to the prefab interval, so the two ends of the slider bound the fleet.
+- **A route segment carries TWO durations and they are not the same number.** This has
+  cost us a round of wrong ridership, so it is worth stating plainly:
+  - `PathInformation.m_Duration` is what the pathfinder found — free-flow, no traffic,
+    no dwell. The game uses it for exactly one thing: `stableDuration`, which sizes the
+    fleet. Never for a rider.
+  - `RouteInfo.m_Duration`, on the same segment entity, is that figure scaled by what
+    the vehicles actually achieve. `TransportLineSystem.RefreshLineSegments` walks the
+    line leg by leg, sets `num = max(Σ pathDuration over the leg, VehicleTiming
+    .m_AverageTravelTime) + stopDuration`, accumulates that into `lineDuration`, and
+    writes back `RouteInfo.m_Duration = pathDuration × max(1, num / Σ pathDuration)`.
+    So the dwell and the real achieved speed are both inside it, and summing
+    `RouteInfo.m_Duration` over a line gives `lineDuration` exactly.
+  - **The citizens' own pathfinder uses `RouteInfo`**:
+    `PathUtils.GetTransportLineSpecification` sets
+    `m_MaxSpeed = RouteInfo.m_Distance / RouteInfo.m_Duration`. Anything modelling what
+    a rider experiences must read `RouteInfo`. On a real city the two differ by a factor
+    of **3 to 11** — measured on Valmare's sixteen lines, 2026-09-14.
+- **A transit edge is one-way.** The same method sets `m_Flags |= EdgeFlags.Forward` and
+  no backward flag. A line is a closed loop driven in one direction: stepping one stop
+  "backwards" is not a cheap shortcut, it is riding the whole loop round.
 - `TransportLine.m_VehicleInterval` is **not** a measured headway: it is
-  `min(10 × target, pathDuration / targetFleet)` — the planned interval on a running
-  line, and the whole path duration on an inactive one. A metro with no vehicles
-  therefore reports an interval of thirteen hours, which is why the router charges it a
-  wait nobody would sit through: the line genuinely does not run.
+  `min(10 × target, lineDuration / targetFleet)` — note `lineDuration`, the RIDDEN one
+  above, not the pathfinder's ideal. On a running line it is the planned interval, on an
+  inactive one the whole duration. A metro with no vehicles therefore reports an
+  interval of thirteen hours, which is why the router charges it a wait nobody would sit
+  through: the line genuinely does not run. When the interval sits at exactly
+  `10 × target` it is CLAMPED, and the line's real duration can only be read as "at
+  least `10 × target × fleet`".
 - `RequireVehicles` / `NotEnoughVehicles` mean "fewer out than the target" and "a request
   the game could not fill" — supply, not demand.
 - `WaitingPassengers.m_AverageWaitingTime` is a pathfinder accumulator, not seconds; one

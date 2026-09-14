@@ -62,6 +62,7 @@ namespace WhereTheyGo.Tests
             Run("The served ceiling follows the city's own median journey", ServedCeilingScalesToTheCity);
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
 
+            Run("A loop is driven one way, so riding it backwards is not a shortcut", RidingALoopBackwardsIsNotAShortcut);
             Run("Interchange weight is capacity relative to a bus, zero when unknown", CapacityWeightIsRelativeToBus);
 
             // F4/F5 — the alignment stage, pure since 2026-09-05 (float2Like). The pinned
@@ -511,6 +512,46 @@ namespace WhereTheyGo.Tests
 
             // Two boardings, each paying the extra wait: the gap is about 2x.
             AssertTrue(dearTime > cheapTime + 1000f, $"longer headways must cost more ({dearTime} vs {cheapTime})");
+        }
+
+        // A line is a loop driven ONE way. Riding it backwards is not a shortcut, it is
+        // impossible, and the game's own transit edge says so (EdgeFlags.Forward alone,
+        // PathUtils.GetTransportLineSpecification).
+        private static void RidingALoopBackwardsIsNotAShortcut()
+        {
+            // Three stops on a loop that closes back onto the first. The closing hop is
+            // cheap and the two forward hops are dear, so an undirected graph would
+            // happily send a rider from stop 0 to stop 2 "backwards" over the cheap hop.
+            var xs = new[] { 0f, 1000f, 2000f };
+            var zs = new[] { 0f, 0f, 0f };
+            var lines = new List<TransitLine>
+            {
+                new TransitLine
+                {
+                    m_Stops = new[] { 0, 1, 2, 0 },
+                    // Index i is the ride INTO m_Stops[i], so index 0 is unused.
+                    m_RideSeconds = new[] { 0f, 300f, 300f, 10f },
+                    m_ExpectedWait = 60f,
+                    m_SpeedMetresPerSecond = 10f,
+                },
+            };
+
+            TransitNetwork net = TransitGraph.Build(xs, zs, 3, lines, 1f, 5f);
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+
+            ws.Run(net.Graph, 0, 100000f);
+            AssertTrue(TransitGraph.Inspect(net, ws, 0, 2, -1, out int boardings, out _, out float forward),
+                "the long way round is still a way round");
+            AssertEqual(1, boardings, 0, "and it is one ride, not a change");
+            AssertTrue(forward >= 600f, $"riding two dear hops must cost both of them, got {forward.ToString("F0", CultureInfo.InvariantCulture)}s");
+
+            // The other way round proves the direction is enforced rather than the hop
+            // simply being unreachable: 2 -> 0 IS the cheap closing hop.
+            ws.Run(net.Graph, 2, 100000f);
+            AssertTrue(TransitGraph.Inspect(net, ws, 2, 0, -1, out _, out _, out float closing),
+                "the closing hop is routable in its own direction");
+            AssertTrue(closing < 200f, $"and it costs the cheap hop plus a boarding, got {closing.ToString("F0", CultureInfo.InvariantCulture)}s");
+            AssertTrue(forward > closing * 3f, "the two directions of a loop are not the same journey");
         }
 
         private static void WalkLinksStops()

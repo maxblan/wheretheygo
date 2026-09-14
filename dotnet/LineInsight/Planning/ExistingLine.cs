@@ -12,6 +12,11 @@ namespace WhereTheyGo
         // Overview agree instead of the mod inventing its own numbering.
         public string m_Name = string.Empty;
         public readonly List<int> m_StopIndices = new List<int>();
+        // Seconds from the previous stop to this one, as a RIDER experiences them:
+        // Game.Routes.RouteInfo.m_Duration, which is the pathfinder's free-flow
+        // duration scaled by what the vehicles actually achieve and with the stop's
+        // dwell already inside it. Not PathInformation.m_Duration — see
+        // m_PathDurationSeconds.
         public readonly List<float> m_RideSeconds = new List<float>();
         // Dwell at each stop, from TransportLineData.m_StopDuration. Kept because the
         // rider's wait is derived from it rather than stamped at collection.
@@ -23,10 +28,23 @@ namespace WhereTheyGo
         // pathfinder charges as a wait, which is why the transit router reads it; no
         // verdict does (decompiled TransportLineSystem, 2026-09-06).
         public float m_VehicleInterval;
+        // The whole loop as the vehicles actually run it: the sum of the route
+        // segments' RouteInfo.m_Duration, which is exactly TransportLineSystem's own
+        // `lineDuration` (dwell included, because the scale factor RouteInfo carries
+        // has the dwell folded into it). This is what the game's pathfinder charges a
+        // citizen for riding, so it is what the router charges too.
         public float m_LineDurationSeconds;
+
+        // The same loop as the PATHFINDER idealises it: the sum of the segments'
+        // PathInformation.m_Duration, free-flow, no traffic, no dwell. The game uses
+        // this for one thing only — sizing the fleet — and never for a rider. Kept
+        // because the fleet arithmetic below mirrors that use, and logged beside the
+        // ridden duration so the gap between them stays visible.
+        public float m_PathDurationSeconds;
         // The round trip the way TransportLineSystem measures it for fleet sizing:
-        // path durations PLUS the dwell at every stop. Leaving the dwell out made this
-        // roughly 2.3x too small, which produced fleet targets of 1 against fleets of 9.
+        // IDEAL path durations plus the dwell at every stop. Leaving the dwell out made
+        // this roughly 2.3x too small, which produced fleet targets of 1 against fleets
+        // of 9. It is not a time anybody spends travelling.
         public float m_StableDurationSeconds;
         // The interval the player has asked for (prefab default plus the line's own
         // modifier). The game derives the fleet from this, so it is what a fleet
