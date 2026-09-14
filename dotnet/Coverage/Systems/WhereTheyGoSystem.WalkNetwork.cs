@@ -43,9 +43,6 @@ namespace WhereTheyGo
 
         private int2 m_PlayableGridAtCompute;
 
-        private float m_LastComputeFinish;
-
-        private float m_LastCollectionRebuild;
 
         // The worker writes here and the main thread reads it once the task is done;
         // a field rather than the task's result so nothing has to be awaited.
@@ -137,7 +134,6 @@ namespace WhereTheyGo
                 $"{(edgeA.Length).ToString(CultureInfo.InvariantCulture)} edges with a pavement, " +
                 $"{(offGround).ToString(CultureInfo.InvariantCulture)} nodes in tunnels or on bridges (walkable, not sites)");
             m_RoadCacheDirty = false;
-            m_LastCollectionRebuild = UnityEngine.Time.realtimeSinceStartup;
         }
 
         private void FinishComputeIfReady()
@@ -152,7 +148,6 @@ namespace WhereTheyGo
             m_JobPending = false;
             m_PendingSnap = null;
             m_PendingBox = null;
-            m_LastComputeFinish = UnityEngine.Time.realtimeSinceStartup;
             if (pending.IsFaulted || pending.IsCanceled || snap is null)
             {
                 // A fault here is a defect in the pure core, not a game condition, so

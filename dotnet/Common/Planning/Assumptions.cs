@@ -498,24 +498,11 @@ namespace WhereTheyGo
         // normal speed — sees every stay and most departures.
         public const float TripObservationSeconds = 1f;
 
-        // A route pass is started at most this often unless the objective or the line
-        // count changed or there are no suggestions yet. The demand refresh itself
-        // stays at DemandRefreshSeconds for the panel; the pass is the expensive part
-        // and its inputs move slowly.
-        public const float RoutePassIntervalSeconds = 300f;
 
         public const float DebounceSeconds = 0.3f;
 
-        public const float PeriodicRefreshSeconds = 10f;
 
-        // Road, workplace and zoning collections are cached and rebuilt from change
-        // detection; this is the backstop for inputs that change with no
-        // Created/Updated tag.
-        public const float CollectionRefreshSeconds = 60f;
 
-        // Terrain barely ever changes, and the mask costs a full-grid sampling pass
-        // plus a flood fill, so it is refreshed far less often than the scores.
-        public const float MaskRefreshSeconds = 120f;
 
         // Travel demand extraction walks every citizen and runs many shortest-path
         // searches, so it is far slower than the per-tile scoring.

@@ -215,7 +215,7 @@ function InfoviewFigures() {
         readings ? (history[0] || "0") + " h" : t("DataBasisNone", "nothing yet"),
         (readings
             ? t("DataBasisCaption", "of the last {0} h · {1} readings")
-                .replace("{0}", history[2] || "72")
+                .replace("{0}", history[2] || "24")
                 .replace("{1}", String(readings))
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
 

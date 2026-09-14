@@ -63,23 +63,12 @@ namespace WhereTheyGo
 
         private EntityQuery m_StopQuery;
 
-        private EntityQuery m_StopChangedQuery;
-
         private EntityQuery m_NodeQuery;
-
-        private EntityQuery m_RoadEdgeQuery;
-
-        private EntityQuery m_WorkplaceQuery;
-
-        private EntityQuery m_BlockQuery;
 
         private EntityQuery m_NodeChangedQuery;
 
         private EntityQuery m_EdgeChangedQuery;
 
-        private EntityQuery m_WorkplaceChangedQuery;
-
-        private EntityQuery m_BlockChangedQuery;
         private EntityQuery m_ActiveInfomodeQuery;
         private EntityQuery m_PlaceableInfoviewQuery;
         private EntityQuery m_PlaceableInfoviewChangedQuery;
@@ -95,8 +84,6 @@ namespace WhereTheyGo
         private bool m_RecomputeRequested;
 
         private float m_RecomputeAt;
-
-        private int m_LastStopCount;
 
         // The game clock, for stamping observed journeys and line readings with the
         // time of day (Daytime), and the city's working hours for the commute shifts.
@@ -130,38 +117,9 @@ namespace WhereTheyGo
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
-            m_StopChangedQuery = GetEntityQuery(new EntityQueryDesc
-            {
-                All = new[]
-                {
-                    ComponentType.ReadOnly<Game.Routes.TransportStop>(),
-                    ComponentType.ReadOnly<PrefabRef>(),
-                },
-                Any = new[] { ComponentType.ReadOnly<Created>(), ComponentType.ReadOnly<Updated>(), ComponentType.ReadOnly<Deleted>() },
-                None = new[] { ComponentType.ReadOnly<Temp>() },
-            });
-
             m_NodeQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[] { ComponentType.ReadOnly<Node>() },
-                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
-            });
-
-            m_RoadEdgeQuery = GetEntityQuery(new EntityQueryDesc
-            {
-                All = new[] { ComponentType.ReadOnly<Edge>(), ComponentType.ReadOnly<Road>() },
-                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
-            });
-
-            m_WorkplaceQuery = GetEntityQuery(new EntityQueryDesc
-            {
-                All = new[] { ComponentType.ReadOnly<WorkProvider>() },
-                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
-            });
-
-            m_BlockQuery = GetEntityQuery(new EntityQueryDesc
-            {
-                All = new[] { ComponentType.ReadOnly<Block>(), ComponentType.ReadOnly<Cell>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
@@ -170,6 +128,11 @@ namespace WhereTheyGo
                 All = new[] { ComponentType.ReadOnly<Edge>(), ComponentType.ReadOnly<Curve>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
+
+            // The city's working hours, which place every commute's two rides
+            // (Daytime.CommuteHours). Created here since the fleet reader that used to
+            // own this query went with the suggestions.
+            m_EconomyQuery = GetEntityQuery(ComponentType.ReadOnly<EconomyParameterData>());
 
             m_LineQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -182,7 +145,6 @@ namespace WhereTheyGo
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
-
             m_NodeChangedQuery = ChangedQuery(ComponentType.ReadOnly<Node>());
             m_EdgeChangedQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -190,8 +152,6 @@ namespace WhereTheyGo
                 Any = new[] { ComponentType.ReadOnly<Created>(), ComponentType.ReadOnly<Updated>(), ComponentType.ReadOnly<Deleted>() },
                 None = new[] { ComponentType.ReadOnly<Temp>() },
             });
-            m_WorkplaceChangedQuery = ChangedQuery(ComponentType.ReadOnly<WorkProvider>());
-            m_BlockChangedQuery = ChangedQuery(ComponentType.ReadOnly<Block>());
 
             m_CitizenQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -211,8 +171,6 @@ namespace WhereTheyGo
             m_ZoneDataLookup = GetComponentLookup<ZoneData>(isReadOnly: true);
 
             CreateInfoview();
-
-            m_LastStopCount = m_StopQuery.CalculateEntityCount();
 
         }
 
@@ -309,24 +267,13 @@ namespace WhereTheyGo
             // Nothing below is gated on `active` (the infoview being open): the walk
             // pass and the demand refresh run whenever a city is loaded, because the
             // figures are read from the panel with the map off as often as on.
-            int stopCount = m_StopQuery.CalculateEntityCount();
-            if (stopCount != m_LastStopCount)
-            {
-                m_LastStopCount = stopCount;
-                ScheduleRecompute(Assumptions.DebounceSeconds);
-            }
-            else if (!m_StopChangedQuery.IsEmptyIgnoreFilter)
-            {
-                ScheduleRecompute(Assumptions.DebounceSeconds);
-            }
-
+            // The tile snap depends on the pedestrian network and on the size of the
+            // map, and on nothing else. It used to be re-run every ten seconds with
+            // the old scoring pass, which on a 448x448 grid is two hundred thousand
+            // nearest-node queries a stop-watch tick — for an answer that only changes
+            // when somebody builds a road. Roads are watched by TrackInputChanges;
+            // what is left here is the map itself.
             float now = UnityEngine.Time.realtimeSinceStartup;
-            if (!m_JobPending && !m_RecomputeRequested && m_TileSnap is not null
-                && now - m_LastComputeFinish >= Assumptions.PeriodicRefreshSeconds)
-            {
-                ScheduleRecompute(0f);
-            }
-
             int2 currentSize = GetGridSize();
             if (!m_JobPending && (m_TileSnap is null || !m_PlayableGridAtCompute.Equals(currentSize)))
             {
@@ -390,21 +337,19 @@ namespace WhereTheyGo
 
         // Change tags live for a single frame, so the caches must be invalidated
         // from a per-frame check rather than sampled when a compute starts.
+        // Change tags live for a single frame, so the pedestrian network is watched
+        // from a per-frame check rather than sampled when a snap starts. Nodes and
+        // edges both carry Created/Updated/Deleted, so there is nothing here that
+        // needs a timed backstop — and the snap is far too expensive to run on one.
         private void TrackInputChanges()
         {
-            if (!m_NodeChangedQuery.IsEmptyIgnoreFilter || !m_EdgeChangedQuery.IsEmptyIgnoreFilter)
+            if (m_NodeChangedQuery.IsEmptyIgnoreFilter && m_EdgeChangedQuery.IsEmptyIgnoreFilter)
             {
-                m_RoadCacheDirty = true;
+                return;
             }
 
-            float now = UnityEngine.Time.realtimeSinceStartup;
-            // Measured from the last actual REBUILD, not the last compute. Stamping
-            // this per compute would keep pushing the deadline out every ten seconds
-            // and the backstop would never fire at all.
-            if (now - m_LastCollectionRebuild >= Assumptions.CollectionRefreshSeconds)
-            {
-                m_RoadCacheDirty = true;
-            }
+            m_RoadCacheDirty = true;
+            ScheduleRecompute(Assumptions.DebounceSeconds);
         }
 
         private void ScheduleRecompute(float delaySeconds)
