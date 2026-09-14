@@ -82,6 +82,35 @@ namespace WhereTheyGo
 
         public static void SelectLine(int lineId) => s_SelectedLineId = lineId;
 
+        // The band under the pointer, as the panel reads it:
+        // "journeys|withoutTransitPercent|peakHour|carriedPercent", or empty for none.
+        // The figures are the band's own, at the hour the map is showing.
+        public static string HoveredBandText => s_HoveredBand;
+
+        internal static Band? HoveredBand => s_Hovered;
+
+        internal static void SetHoveredBand(Band? band)
+        {
+            s_Hovered = band;
+            if (band is null)
+            {
+                s_HoveredBand = string.Empty;
+                return;
+            }
+
+            float weight = band.WeightAtHour(s_SelectedHour);
+            float carried = band.CarriedShare;
+            s_HoveredBand =
+                $"{weight.ToString("F0", CultureInfo.InvariantCulture)}|" +
+                $"{((1f - carried) * 100f).ToString("F0", CultureInfo.InvariantCulture)}|" +
+                $"{band.PeakHour.ToString(CultureInfo.InvariantCulture)}|" +
+                $"{(carried * 100f).ToString("F0", CultureInfo.InvariantCulture)}";
+        }
+
+        private static string s_HoveredBand = string.Empty;
+
+        private static Band? s_Hovered;
+
         internal static int SelectedLineId => s_SelectedLineId;
 
         // A newly selected line is worth a pass of its own: the reading is what the

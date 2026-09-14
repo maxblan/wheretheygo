@@ -263,6 +263,37 @@ namespace WhereTheyGo.Tests
             AssertTrue(tenth > linearTenth, $"a tenth of the traffic is wider than a tenth of the width: {tenth.ToString("F1", CultureInfo.InvariantCulture)}");
         }
 
+        // Pointing at a band. The hit test runs on the same arc the renderer draws, so
+        // what the player grabs is what they see.
+        private static void PointingAtABandFindsTheArcNotTheChord()
+        {
+            // A band running due east bows to the left (+z), so its middle is NOT on
+            // the straight line between its ends.
+            const float ax = 0f;
+            const float az = 0f;
+            const float bx = 1000f;
+            const float bz = 0f;
+
+            BandGeometry.PointOnArc(ax, az, bx, bz, 0.5f, out float mx, out float mz);
+            float onArc = BandGeometry.DistanceSqToArc(ax, az, bx, bz, mx, mz, 20);
+            AssertTrue(onArc < 1f, $"a point on the arc is on the arc, got {Math.Sqrt(onArc).ToString("F1", CultureInfo.InvariantCulture)} m away");
+
+            // The midpoint of the CHORD is a good way off it — which is the whole
+            // reason the test is here: a hit test against the chord would grab the
+            // wrong band wherever two bands cross.
+            float onChord = BandGeometry.DistanceSqToArc(ax, az, bx, bz, 500f, 0f, 20);
+            AssertTrue(Math.Sqrt(onChord) > 20f, $"the chord's middle is off the arc by {Math.Sqrt(onChord).ToString("F1", CultureInfo.InvariantCulture)} m");
+
+            // The ends are always on it, and a point far away is far away.
+            AssertTrue(BandGeometry.DistanceSqToArc(ax, az, bx, bz, ax, az, 20) < 1f, "the A end is on the arc");
+            AssertTrue(BandGeometry.DistanceSqToArc(ax, az, bx, bz, bx, bz, 20) < 1f, "and so is the B end");
+            float far = BandGeometry.DistanceSqToArc(ax, az, bx, bz, 500f, -400f, 20);
+            AssertTrue(Math.Sqrt(far) > 350f, "a point off the band is off the band");
+
+            // A band of no length still answers rather than dividing by zero.
+            AssertTrue(BandGeometry.DistanceSqToArc(5f, 5f, 5f, 5f, 5f, 5f, 20) < 1f, "a band with no length is its own position");
+        }
+
         private static void BandColourRunsWarmToCoolAndMonotone()
         {
             BandGeometry.Colour(0f, out float r0, out float g0, out float b0);

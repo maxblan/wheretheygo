@@ -95,6 +95,11 @@ namespace WhereTheyGo
             // Bindings for the in-game control panel. The panel's own code ships as
             // WhereTheyGo.mjs beside the DLL, which the game loads by
             // matching the assembly name.
+            // Which band the pointer is over. UIUpdate because that is where the
+            // answer is consumed, and because it must run after the camera has moved
+            // for the frame rather than before it.
+            updateSystem.UpdateAt<BandPickSystem>(SystemUpdatePhase.UIUpdate);
+
             updateSystem.UpdateAt<PanelUISystem>(SystemUpdatePhase.UIUpdate);
         }
 

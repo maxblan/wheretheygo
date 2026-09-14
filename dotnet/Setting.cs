@@ -134,6 +134,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[LineDuplicateCaption]", "of those journeys would be no slower if this line did not exist" },
                 { "WhereTheyGo.Panel[LineHours]", "How full it runs, hour by hour" },
                 { "WhereTheyGo.Panel[LineHoursEmpty]", "no readings yet \u2014 they start once the line runs" },
+                { "WhereTheyGo.Panel[BandJourneys]", "Journeys on this band" },
+                { "WhereTheyGo.Panel[BandWithout]", "{0} % of them with no transit \u00b7 busiest at {1}:00" },
                 { "WhereTheyGo.Panel[Carried]", "Carried by transit" },
                 { "WhereTheyGo.Panel[CarriedCaption]", "of all journeys, counting those transit makes faster than walking" },
                 { "WhereTheyGo.Panel[Coverage]", "Within walking distance" },

@@ -52,6 +52,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[LineDuplicateCaption]", "dieser Wege wären genauso schnell, wenn es die Linie nicht gäbe" },
                 { "WhereTheyGo.Panel[LineHours]", "Auslastung Stunde für Stunde" },
                 { "WhereTheyGo.Panel[LineHoursEmpty]", "noch keine Messungen \u2014 sie beginnen, sobald die Linie fährt" },
+                { "WhereTheyGo.Panel[BandJourneys]", "Wege auf diesem Band" },
+                { "WhereTheyGo.Panel[BandWithout]", "{0} % davon ohne ÖPNV \u00b7 Spitze um {1}:00 Uhr" },
                 { "WhereTheyGo.Panel[Carried]", "Vom ÖPNV getragen" },
                 { "WhereTheyGo.Panel[CarriedCaption]", "aller Wege — gezählt werden die, für die der ÖPNV schneller ist als Gehen" },
                 { "WhereTheyGo.Panel[Coverage]", "In Gehweite" },

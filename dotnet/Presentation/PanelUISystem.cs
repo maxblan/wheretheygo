@@ -31,6 +31,7 @@ namespace WhereTheyGo
             // What the map is showing: the hour, the purposes and the threshold. Owned
             // in C# so the panel's controls and the map cannot disagree about it.
             AddUpdateBinding(new GetterValueBinding<string>(Group, "mapState", static () => WhereTheyGoSystem.MapStateText));
+            AddUpdateBinding(new GetterValueBinding<string>(Group, "hoveredBand", static () => WhereTheyGoSystem.HoveredBandText));
 
             AddBinding(new TriggerBinding<int>(Group, "selectHour", static hour => WhereTheyGoSystem.SelectHour(hour)));
             AddBinding(new TriggerBinding<int>(Group, "setPurposes", static mask => WhereTheyGoSystem.SetPurposeFilter(mask)));

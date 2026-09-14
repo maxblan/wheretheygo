@@ -99,6 +99,7 @@ namespace WhereTheyGo
             // With a line selected, the bands it carries stay as they are and every
             // other band steps back. Without one, nothing is dimmed.
             bool highlighting = AnyBandCarriesTheSelectedLine(bands);
+            Band? hovered = WhereTheyGoSystem.HoveredBand;
             // Lightest first, so the city's real corridors end up ON TOP of the hair
             // rather than under it: the bands come out of the bundling heaviest first.
             for (int i = bands.Bands.Length - 1; i >= 0; i--)
@@ -118,6 +119,11 @@ namespace WhereTheyGo
                 }
 
                 float opacity = !highlighting ? BandOpacity : band.CarriesTarget ? HighlightOpacity : DimmedOpacity;
+                if (ReferenceEquals(band, hovered))
+                {
+                    opacity = HighlightOpacity;
+                }
+
                 DrawBand(buffer, ref heightData, band, weight, bands.HeaviestWeight, opacity);
                 DrawDirection(buffer, ref heightData, band, hour, weight, bands.HeaviestWeight);
             }

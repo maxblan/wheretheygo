@@ -92,6 +92,47 @@ namespace WhereTheyGo
             b = Lerp(0.24f, 0.55f, t);
         }
 
+        // How far a point lies from the band's arc, squared, in metres. Sampled along
+        // the same curve the renderer draws, so what the player points at is what they
+        // see — a closed-form distance to a cubic would be exact about a curve nobody
+        // is looking at.
+        public static float DistanceSqToArc(float ax, float az, float bx, float bz, float px, float pz, int samples)
+        {
+            if (samples < 1)
+            {
+                samples = 1;
+            }
+
+            float best = float.MaxValue;
+            PointOnArc(ax, az, bx, bz, 0f, out float lastX, out float lastZ);
+            for (int i = 1; i <= samples; i++)
+            {
+                PointOnArc(ax, az, bx, bz, i / (float)samples, out float x, out float z);
+                float distance = DistanceSqToSegment(lastX, lastZ, x, z, px, pz);
+                if (distance < best)
+                {
+                    best = distance;
+                }
+
+                lastX = x;
+                lastZ = z;
+            }
+
+            return best;
+        }
+
+        private static float DistanceSqToSegment(float x1, float z1, float x2, float z2, float px, float pz)
+        {
+            float dx = x2 - x1;
+            float dz = z2 - z1;
+            float lengthSq = (dx * dx) + (dz * dz);
+            float t = lengthSq <= 0f ? 0f : (((px - x1) * dx) + ((pz - z1) * dz)) / lengthSq;
+            t = t < 0f ? 0f : t > 1f ? 1f : t;
+            float cx = x1 + (t * dx);
+            float cz = z1 + (t * dz);
+            return ((px - cx) * (px - cx)) + ((pz - cz) * (pz - cz));
+        }
+
         // Whether a band clears the panel's threshold: a share of the heaviest band,
         // so the slider means the same thing in a village and in a metropolis.
         public static bool IsVisible(float weight, float heaviestWeight, float thresholdShare)

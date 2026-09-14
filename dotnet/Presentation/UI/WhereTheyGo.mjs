@@ -195,6 +195,7 @@ function InfoviewFigures() {
     const figuresRaw = useBound("coverage", "");
     const historyRaw = useBound("dataCoverage", "");
     const stateRaw = useBound("mapState", "");
+    const hoveredRaw = useBound("hoveredBand", "");
     if (!ours) {
         return null;
     }
@@ -230,6 +231,20 @@ function InfoviewFigures() {
                 .replace("{0}", history[2] || "24")
                 .replace("{1}", String(readings))
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
+
+    // The band under the pointer takes the place of the city-wide figures while it is
+    // there: the player is asking about that band, and two sets of numbers in one
+    // panel is one set too many.
+    const hovered = (hoveredRaw || "").split("|");
+    if (hovered.length >= 4) {
+        rows.length = 0;
+        rows.push(figureRow(
+            t("BandJourneys", "Journeys on this band"),
+            hovered[0],
+            t("BandWithout", "{0} % of them with no transit · busiest at {1}:00")
+                .replace("{0}", hovered[1])
+                .replace("{1}", String(hovered[2]).padStart(2, "0"))));
+    }
 
     const state = (stateRaw || "").split("|");
     const hour = parseInt(state[0], 10);
