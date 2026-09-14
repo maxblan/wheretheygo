@@ -79,6 +79,16 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
 - The overlay buffer draws lines, curves, dashed variants of both, circles and custom
   meshes. **There is no text primitive.** `DrawCurve` takes one height for the whole
   curve, so anything following the ground has to be sampled into segments.
+- Every line and curve call has a **second signature with an outline**:
+  `DrawLine(outlineColor, fillColor, outlineWidth, styleFlags, line, width, roundness)`.
+  Useful for a casing, but not for a curve sampled into pieces — the outline is drawn
+  per call, so a chain of segments comes out with a dark seam at every joint. Two passes
+  (all casings, then all fills) is the way.
+- `CustomMeshType` is `Cylinder`, `Arrow`, `Plane`. `GuideLinesSystem` is the only
+  vanilla caller of `DrawCustomMesh` with `Arrow`, and it establishes the convention:
+  `Quaternion.LookRotation(new Vector3(dir.x, 0f, dir.z), Vector3.up)` points the mesh
+  along `dir`, and it is drawn **twice, the second time with the height negated**,
+  because the mesh is one-sided.
 - `ToolRaycastSystem.CalculateRaycastLine` and `CameraRayPlaneIntersect` are public
   statics, so a mod can compute the pointer's ray without owning a tool. Note that
   `CameraRayPlaneIntersect` uses the CAMERA's forward as the plane normal — it is not a
@@ -104,3 +114,37 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
 - Cities: Skylines II keeps no per-stop ridership history. `WaitingPassengers` is an
   instantaneous queue re-tallied every few hundred simulation frames, and the city
   statistics only expose per-mode totals for the whole city.
+
+## The UI bundle
+
+The game's entire UI ships as readable JavaScript in
+`Cities2_Data/Content/Game/UI/index.js` (2.2 MB) with its CSS beside it. Modules are
+registered as `Q.add("game-ui/…", { get Export() {…} })`, which is the same registry
+`moduleRegistry.registry.get(path)` reads — so every export name and every prop can be
+read off rather than guessed.
+
+- `window` carries `React`, `ReactDOM`, `cs2/api`, `cs2/bindings`, `cs2/l10n`, `cs2/ui`,
+  `cs2/utils`, `cs2/input`, `cs2/modding`, `cohtml/cohtml` and **`chart.js`**.
+- `cs2/ui` exports `Button`, `ConfirmationDialog`, `Dropdown`, `DropdownItem`,
+  `DropdownToggle`, `FloatingButton`, `FormattedParagraphs`, `FormattedText`, `Icon`,
+  `MarkdownRenderer`, `MarkupRenderer`, `MenuButton`, `Panel`, `PanelFoldout`,
+  `PanelSection`, `PanelSectionRow`, `Portal`, `Scrollable`, `Tooltip`. `PanelSection`
+  and `PanelSectionRow` resolve to the **same values** as the selected-info panel's
+  `InfoSection` and `InfoRow`.
+- `InfoRow` takes `{icon, left, center, right, tooltip, link, uppercase, subRow,
+  subRowDimmed, disableFocus, className, noShrinkRight, justifyLeft}`. A vanilla section
+  is `InfoSection > InfoRow(uppercase, title) > InfoRow(subRow, left/right)` — that is
+  what `LineSection` does for "Länge / Haltestellen / Passagiere".
+- `ResponsiveChart({type, data, options, mergeCallback, …divProps})` is a Chart.js
+  canvas. The game sets `Chart.defaults.events = []`, `animation = false` and disables
+  the legend and tooltip plugins globally, so a chart drawn here has no hover behaviour
+  of its own.
+- `ValueBarSection({title, value: {min, current, max}, gradient: {stops}, tooltip,
+  children})` with `InfoviewPanelLabel({small, uppercase, text, rightText})` is how every
+  vanilla infoview panel shows a city-wide figure.
+- `FloatingMouseTooltip({tooltip, position, screenSpacePosition, alwaysVisible, …})`
+  follows the pointer; with `screenSpacePosition: true` it binds to `document.body`
+  itself, so no position has to be supplied.
+- Each `*.module.scss` module exports `classes`, the generated class-name map, so vanilla
+  class names are reachable where a component is not.
+- `Q.get` **throws** on an unknown module path — every lookup needs a try/catch.

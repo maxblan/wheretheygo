@@ -120,10 +120,15 @@ pass running every ten seconds for an answer that changes when somebody builds a
 C# ECS systems compile to `WhereTheyGo.dll`. The panel's UI is a **hand-written ES
 module**, `dotnet/Presentation/UI/WhereTheyGo.mjs` plus `.css`, flattened out of
 `Presentation/UI/` on copy because the game loads `<AssemblyName>.mjs` from the mod root.
-It uses `window.React` and `window["cs2/api"]` (`bindValue`/`useValue`/`trigger`) — no
-build step, no JSX, and cohtml supports neither `<select>`, `<input type=range>`,
-checkboxes, nor CSS `gap`. `PanelUISystem` supplies the bindings; a value binding must be
-registered with `AddUpdateBinding`, since plain `AddBinding` never re-polls.
+No build step and no JSX: `window.React`, `window["cs2/api"]`
+(`bindValue`/`useValue`/`trigger`), and — the part worth knowing before writing any
+control — **the game's own components**, from `window["cs2/ui"]` and from the module
+registry. The slider, the checkbox, the section and its rows, the gradient figure bar,
+the stacked bar chart, the Chart.js wrapper and the cursor tooltip are all the game's;
+`docs/game-facts.md` lists what is there and `.claude/rules/ui-module.md` how to reach it
+safely. `PanelUISystem` supplies the bindings as JSON through `RawValueBinding`, and a
+value binding must be registered with `AddUpdateBinding`, since plain `AddBinding` never
+re-polls.
 
 ### Five systems, and why each phase matters
 
@@ -148,13 +153,13 @@ against a named game system.
 
 | Folder | Planning (pure) | Gathering (reads the game) | Systems |
 |---|---|---|---|
-| `Journeys` | `Journey`/`DemandZones`, `ObservedTrips`, `DesireBands`, `BandGeometry` | `TravelDemand` (Burst job), `TripObserver` | `.Journeys`, `.Observed` |
+| `Journeys` | `Journey`/`DemandZones`, `ObservedTrips`, `DesireBands`, `BandView`, `BandGeometry` | `TravelDemand` (Burst job), `TripObserver` | `.Journeys`, `.Observed` |
 | `Network` | `TransitGraph`, `JourneyRouting`, `Dijkstra` | `Lines` | `.Routing` |
 | `Coverage` | `WalkAccess` (graph, Dijkstra, snap), `WalkBridging`, `Coverage` | `WalkNetwork` | `.WalkNetwork`, `.Coverage`, `BuildingAccessColorSystem`, `BuildingAccessSection` |
 | `LineInsight` | `ExistingLine`, `LineHistory`, `LineWindow` | — | `.LineInsight`, `LineInsightSection` |
 | `Common` | `Assumptions` (EVERY numeric constant), `float2Like`/`int2Like`, `TileGrid`, `Daytime`, `TransitMode`, `DeferredLog` | — | — |
 | `Overlay` | — | — | `WhereTheyGoSystem`, `.Panel`, `.SaveState`, `Infoview`, `InfomodePrefab` |
-| `Presentation` | `PanelPayload` | — | `BandRenderer`, `BandPickSystem`, `PanelUISystem`, `UI/` |
+| `Presentation` | `PanelFigures` | — | `BandRenderer`, `BandPickSystem`, `PanelUISystem`, `UI/` |
 
 ### The purity rule
 
@@ -190,7 +195,10 @@ can be linked into the offline test project.
    AND under the ceiling), and the riders each line gets. With a line selected, the same
    pass routes the city again without it, which is what the line's window reports.
 4. **Bundling** (`Journeys`) — the routed pairs summed per zone pair and folded into
-   bands, heaviest first, capped and counted.
+   bands, heaviest first, capped and counted. What the map then actually draws is one
+   `BandView`: the bands that clear the hour, the purposes and the threshold, each with
+   the weight it is drawn at and its width class. The renderer, the hit test and the
+   panel all read that one answer.
 5. **Coverage** (`Coverage`) — journey ends and served stops snapped to the walk graph,
    the walk to the nearest served stop rasterised onto the tile grid, and the buildings
    coloured from it.

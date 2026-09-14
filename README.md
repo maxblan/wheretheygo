@@ -19,21 +19,25 @@ and no button anywhere in it that changes your city.
 Every journey the mod knows — home to work and home to school out of the save, shopping
 and leisure from watching the city run — drawn as a band between its two ends.
 
-- **Width** is how many journeys. On the square root of the count, so the city's biggest
-  corridor does not eat the map and a tenth of the traffic is still visible beside it.
+- **Width** is how many journeys, in four classes with a legend that names what each
+  one means in journeys a day. Classed rather than continuous because a class can be
+  read off a band on its own; a continuous ramp can only be compared against the rest of
+  the map.
 - **Colour** is how much of it your network already carries. Warm means those people are
   in their cars; cool means they are already on your metro. That is the mod's whole
   answer in one glance.
 - **Bundling.** Journeys are summed per 256 m zone pair, and zone pairs whose two ends
   lie close together fold into one band, heaviest corridor first. A slider in the panel
-  hides the thin ones.
-- **Time of day.** Pick an hour, or press play and watch the day go by: bands swell and
-  fade, and travelling dots show which way the traffic runs in that hour. Over a whole
-  day there is no direction to show — every journey is made twice — which is why the dots
-  appear only once you pick an hour.
-- **Purposes.** Work, school, shopping and leisure switch on and off separately.
-- **Point at a band** and the panel names its numbers: journeys on it, how many of them
-  travel without transit, and its busiest hour.
+  hides the thin ones and says how many that is.
+- **Time of day.** The panel draws the city's day as twenty-four columns — that alone
+  tells you when it travels. Click one and the map shows that hour, with an arrowhead on
+  each band saying which way the traffic runs; press play and watch the day go by. Over a
+  whole day there is no direction to show, because every journey is made twice.
+- **Purposes.** Work, school, shopping and leisure switch on and off separately, each
+  carrying what it is worth, and switching one off takes its journeys out of the widths
+  rather than merely hiding whole bands.
+- **Point at a band** and a tooltip at the cursor names its numbers: journeys on it, how
+  many of them travel without transit, and its busiest hour.
 
 ### Walk to transit
 
