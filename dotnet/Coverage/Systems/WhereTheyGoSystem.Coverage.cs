@@ -36,6 +36,18 @@ namespace WhereTheyGo
 
         private int m_CoverageHorizonMs;
 
+        // What the served-walk field was built for: the stops, the pedestrian network
+        // and the horizon. Unchanged means there is nothing to rebuild.
+        private long m_FieldSignature = -1;
+
+        // Where the coverage pass spent its milliseconds, for the log: it runs on the
+        // main thread every demand refresh and is the largest thing left there.
+        private long m_SnapMs;
+
+        private long m_FieldMs;
+
+        private bool m_FieldRebuilt;
+
         private IntDijkstra? m_CoverageDijkstra;
 
         // How far each 32 m tile is from a served stop, as 0 (at a stop) to 255 (at or
@@ -117,6 +129,7 @@ namespace WhereTheyGo
                 return;
             }
 
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             m_CoverageHorizonMs = settings.CoverageWalkMinutes * 60_000;
             int count = m_Journeys.Count;
             if (m_JourneyWeight.Length < count)
@@ -136,26 +149,65 @@ namespace WhereTheyGo
                 m_JourneyWeight[i] = trip.m_Weight;
             }
 
+            m_SnapMs = clock.ElapsedMilliseconds;
             if (m_CoverageDijkstra is null || m_CoverageDijkstra.Dist.Length != graph.NodeCount)
             {
                 m_CoverageDijkstra = new IntDijkstra(graph.NodeCount);
             }
 
-            SnapStops(m_TransitStops, snap.Index, Assumptions.AccessWalkMs, out int[] stopNodes, out int[] stopAccess);
-            // Searched well past the equity horizon on purpose. Every "is this served"
-            // test compares against the horizon itself (Coverage.EndServed), so the
-            // coverage figure is unchanged; what the extra range buys is a real number
-            // for the buildings beyond it. A house 12 minutes from the nearest stop and
-            // a house 40 minutes away are different problems, and "over 10 min" for both
-            // reads as a broken measurement rather than a long walk.
-            m_ServedWalkMs = Coverage.ServedWalkMs(
-                graph, m_CoverageDijkstra, stopNodes, stopAccess, stopNodes.Length,
-                m_CoverageHorizonMs * Assumptions.AccessFieldHorizonMultiple);
-            BuildAccessField(snap);
+            // The walk to the nearest served stop, and the field the buildings are
+            // coloured from, depend on the STOPS and the pedestrian network — not on
+            // the journeys. Rebuilding them every demand refresh was one Dijkstra per
+            // served stop plus a pass over every tile of the map, thirty seconds apart,
+            // for an answer that had not moved: in the log the field's version counted
+            // up while its own figure stayed at 87.1 % to the decimal.
+            long fieldSignature = CoverageSignature(graph);
+            m_FieldRebuilt = m_ServedWalkMs is null || fieldSignature != m_FieldSignature;
+            if (m_FieldRebuilt)
+            {
+                m_FieldSignature = fieldSignature;
+                SnapStops(m_TransitStops, snap.Index, Assumptions.AccessWalkMs, out int[] stopNodes, out int[] stopAccess);
+                // Searched well past the coverage horizon on purpose. Every "is this
+                // served" test compares against the horizon itself (Coverage.EndServed),
+                // so the coverage figure is unchanged; what the extra range buys is a
+                // real number for the buildings beyond it. A house 12 minutes from the
+                // nearest stop and a house 40 minutes away are different problems, and
+                // "over 10 min" for both reads as a broken measurement rather than a
+                // long walk.
+                m_ServedWalkMs = Coverage.ServedWalkMs(
+                    graph, m_CoverageDijkstra, stopNodes, stopAccess, stopNodes.Length,
+                    m_CoverageHorizonMs * Assumptions.AccessFieldHorizonMultiple);
+                BuildAccessField(snap);
+            }
+
+            m_FieldMs = clock.ElapsedMilliseconds - m_SnapMs;
+
+            // The SHARE does follow the journeys, so it is measured every refresh — it
+            // is a lookup per journey end into the field above.
             RefreshCoverage(settings, "measured");
         }
 
-        // The served-walk field rasterised onto the heat map's own tile grid: how long a
+        // Enough of the inputs to tell one field from another: how many stops there
+        // are and where, the graph the walk runs over, and the horizon the player set.
+        private long CoverageSignature(WalkGraph graph)
+        {
+            unchecked
+            {
+                long signature = m_TransitStops.Count;
+                for (int i = 0; i < m_TransitStops.Count; i++)
+                {
+                    signature = (signature * 31) + (long)Math.Round(m_TransitStops[i].x, MidpointRounding.ToEven);
+                    signature = (signature * 31) + (long)Math.Round(m_TransitStops[i].y, MidpointRounding.ToEven);
+                }
+
+                signature = (signature * 31) + graph.NodeCount;
+                signature = (signature * 31) + graph.EdgeMetres.Length;
+                signature = (signature * 31) + m_CoverageHorizonMs;
+                return signature;
+            }
+        }
+
+        // The served-walk field rasterised onto the tile grid: how long a
         // walk from each tile to the nearest stop the city's lines actually serve, as 0
         // (at a stop) to 255 (at or beyond the walking horizon). This is what colours the
         // buildings and what the selected-building row reports.
@@ -340,7 +392,9 @@ namespace WhereTheyGo
                 $"{(m_Coverage.TripsCovered).ToString(CultureInfo.InvariantCulture)}/{(m_Coverage.Trips).ToString(CultureInfo.InvariantCulture)} journeys, " +
                 $"{(m_Coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
                 $"Gini of access walk {m_Coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +
-                $"served stops {(m_TransitStops.Count).ToString(CultureInfo.InvariantCulture)}");
+                $"served stops {(m_TransitStops.Count).ToString(CultureInfo.InvariantCulture)}; " +
+                $"main thread {(m_SnapMs).ToString(CultureInfo.InvariantCulture)} ms snapping {(m_Journeys.Count).ToString(CultureInfo.InvariantCulture)} journey ends, " +
+                $"{(m_FieldMs).ToString(CultureInfo.InvariantCulture)} ms {(m_FieldRebuilt ? "rebuilding the served-walk field" : "(field unchanged, not rebuilt)")}");
         }
     }
 }
