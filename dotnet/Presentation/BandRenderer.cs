@@ -1,4 +1,5 @@
-﻿using Colossal.Mathematics;
+﻿using System;
+using Colossal.Mathematics;
 using Game;
 using Game.Rendering;
 using Game.Simulation;
@@ -47,6 +48,16 @@ namespace WhereTheyGo
         private const float HighlightOpacity = 1f;
 
         private const float DimmedOpacity = 0.16f;
+
+        // The arrowhead's barbs, 35 degrees back from the tip either side, and how
+        // thick they are drawn relative to the band they sit on.
+        private const float ArrowCos = 0.819f;
+
+        private const float ArrowSin = 0.574f;
+
+        private const float ArrowStrokeShare = 0.28f;
+
+        private const float MinArrowStrokeMetres = 2.5f;
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
@@ -198,6 +209,12 @@ namespace WhereTheyGo
         // maps that show direction at all, every single one uses arrowheads, and in the
         // user study behind that count arrowheads beat every alternative tested. They
         // also hold still, which the product plan asks of everything on this map.
+        //
+        // Two lines rather than the game's own Arrow mesh. The mesh exists, but its
+        // local orientation is undocumented and the only vanilla caller stands it up
+        // vertically for the water tool; drawn flat it came out pointing across the
+        // band instead of along it, and far too large. A chevron of two segments is
+        // aimed and sized by arithmetic that is right here in front of us.
         private void DrawDirection(
             OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData,
             DrawnBand drawn, int hour, int purposes, float opacity)
@@ -210,10 +227,10 @@ namespace WhereTheyGo
             }
 
             // Set back from the end so the head sits ON the band rather than over the
-            // end dot, and pointed along the arc's own tangent — on a bowed band the
+            // end dot, and aimed along the arc's own tangent — on a bowed band the
             // straight A-to-B heading is visibly wrong near the ends.
             float t = direction > 0 ? 1f - Assumptions.BandArrowInsetShare : Assumptions.BandArrowInsetShare;
-            BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float x, out float z);
+            BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float tipX, out float tipZ);
             BandGeometry.DirectionOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float dx, out float dz);
             if (direction < 0)
             {
@@ -221,15 +238,26 @@ namespace WhereTheyGo
                 dz = -dz;
             }
 
-            float size = BandView.WidthOf(drawn.WidthClass) * Assumptions.BandArrowShareOfWidth;
-            float3 position = Ground(ref heightData, x, z);
-            BandGeometry.OutlineColour(band.CarriedShare, out float dr, out float dg, out float db);
-            var colour = new Color(dr, dg, db, opacity);
-            var rotation = Quaternion.LookRotation(new Vector3(dx, 0f, dz), Vector3.up);
-            // Drawn twice, once with the height negated: the mesh is one-sided, and
-            // this is how the game's own GuideLinesSystem makes it readable either way.
-            buffer.DrawCustomMesh(colour, position, size, size, OverlayRenderSystem.CustomMeshType.Arrow, rotation);
-            buffer.DrawCustomMesh(colour, position, 0f - size, size, OverlayRenderSystem.CustomMeshType.Arrow, rotation);
+            float width = BandView.WidthOf(drawn.WidthClass);
+            float arm = width * Assumptions.BandArrowShareOfWidth;
+            // The two barbs run back from the tip at 35 degrees either side.
+            float backX = -dx * ArrowCos;
+            float backZ = -dz * ArrowCos;
+            float sideX = -dz * ArrowSin;
+            float sideZ = dx * ArrowSin;
+
+            // White rather than the band's own colour: the head has to read against the
+            // band it sits on, and it is the one mark on this map that answers "which
+            // way" rather than "how much" or "how well carried". Held back a little on
+            // the cool end of the ramp, which is already light.
+            var colour = new Color(1f, 1f, 1f, opacity * (0.55f + (0.45f * (1f - band.CarriedShare))));
+
+            float3 tip = Ground(ref heightData, tipX, tipZ);
+            float3 left = Ground(ref heightData, tipX + ((backX + sideX) * arm), tipZ + ((backZ + sideZ) * arm));
+            float3 right = Ground(ref heightData, tipX + ((backX - sideX) * arm), tipZ + ((backZ - sideZ) * arm));
+            float stroke = Math.Max(width * ArrowStrokeShare, MinArrowStrokeMetres);
+            buffer.DrawLine(colour, new Line3.Segment(left, tip), stroke);
+            buffer.DrawLine(colour, new Line3.Segment(right, tip), stroke);
         }
 
         private static float3 Ground(ref TerrainHeightData heightData, float x, float z)

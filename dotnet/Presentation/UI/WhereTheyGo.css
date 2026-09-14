@@ -34,10 +34,12 @@
     margin: 0 10rem 6rem 10rem;
 }
 
+/* flex-end rather than baseline: cohtml cannot parse `align-items: baseline` and
+   drops the whole declaration, which left the fallback row unaligned. */
 .wtg-row {
     display: flex;
     flex-direction: row;
-    align-items: baseline;
+    align-items: flex-end;
 }
 
 .wtg-row-label {

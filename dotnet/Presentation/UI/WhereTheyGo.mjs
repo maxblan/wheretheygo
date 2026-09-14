@@ -473,16 +473,24 @@ function DataBasis({ figures }) {
 // It belongs at the cursor: the player is pointing at one band out of hundreds, and a
 // number that appears somewhere else entirely has to be matched up by eye. The game has
 // a tooltip that follows the pointer in screen space, which is exactly this job.
-function HoveredBand({ band }) {
+function HoveredBand({ band, hour }) {
     const t = useTranslate();
     const hourText = useHourText();
     if (!band || !V.MouseTooltip) {
         return null;
     }
 
+    // With an hour picked, `journeys` is that hour's departures, not the day's total —
+    // and saying "a day" over an hour's number is simply a wrong label.
+    const head = hour < 0
+        ? t("BandJourneys", "{0} journeys a day").replace("{0}", String(Math.round(band.dayJourneys)))
+        : t("BandJourneysAtHour", "{0} journeys at {1}")
+            .replace("{0}", String(Math.round(band.journeys)))
+            .replace("{1}", hourText(hour));
     const content = h("div", { className: "wtg-tip" },
-        h("div", { className: "wtg-tip-head" },
-            t("BandJourneys", "{0} journeys a day").replace("{0}", String(Math.round(band.journeys)))),
+        h("div", { className: "wtg-tip-head" }, head),
+        hour < 0 ? null : h("div", { className: "wtg-tip-line" },
+            t("BandJourneysDay", "{0} a day in all").replace("{0}", String(Math.round(band.dayJourneys)))),
         h("div", { className: "wtg-tip-line" },
             t("BandWithout", "{0} % travel without transit")
                 .replace("{0}", String(Math.round((1 - band.carriedShare) * 100)))),
@@ -536,7 +544,7 @@ function InfoviewFigures() {
             ramp: state.bandRamp,
         })),
         h(DataBasis, { figures }),
-        h(HoveredBand, { band }));
+        h(HoveredBand, { band, hour: state.hour }));
 }
 
 // ---------------------------------------------------------------------------

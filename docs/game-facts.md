@@ -22,10 +22,19 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
   ±1 h plus **0.33 of a day for the evening shift and 0.67 for the night shift**.
   **The game rounds to whole hours.** Without that rounding the evening shift lands on
   16:92 instead of 17:00, and every evening commute is stamped an hour early
-  (`Daytime.CommuteHours` mirrors the formula).
-- Students keep the day shift's hours (`StudentSystem.GetTimeToStudy`).
-- The per-citizen ±1 h offset is deliberately not modelled: a journey is classed by its
-  shift's nominal time.
+  (`Daytime.WorkHours` mirrors the formula).
+- The per-citizen offset is
+  `WorkerSystem.GetWorkOffset(citizen) = (-10922 + citizen.GetPseudoRandom(
+  CitizenPseudoRandom.WorkOffset).NextInt(21845)) / 262144f` — exactly **±1 hour**, and
+  deterministic from `Citizen.m_PseudoRandom`, so it can be reproduced in a Burst job
+  (`Unity.Mathematics.Random` is plain integer arithmetic). It is not a detail: after the
+  rounding it spreads a city's day shift across **three** departure hours. Leaving it out
+  gave the panel's hour strip one spike where the game has a rush hour.
+- Students draw the **same** offset (`StudentSystem.GetStudyOffset` reads the same
+  `CitizenPseudoRandom.WorkOffset`) and keep the day shift's hours, but
+  `GetTimeToStudy` is `frac(m_WorkDayStart + offset)` with **no RoundToInt** — so a
+  student's hour is the one their time falls in, not a rounded one
+  (`Daytime.StudyHours`).
 
 ## Lines, stops and vehicles
 

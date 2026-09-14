@@ -32,12 +32,22 @@ namespace WhereTheyGo
 
         public float WorkTripWeight;
         public float SchoolTripWeight;
-        // EconomyParameterData.m_WorkDayStart/End, day fractions; the shift decides
-        // when a commuter rides (Daytime.CommuteHours).
+        // EconomyParameterData.m_WorkDayStart/End, day fractions; the shift and the
+        // citizen's own offset decide when a commuter rides (Daytime.WorkHours).
         public float WorkDayStart;
         public float WorkDayEnd;
 
         public NativeQueue<Journey>.ParallelWriter Trips;
+
+        // The citizen's own shift of the working day, in days: ±1 h, mirrored from
+        // WorkerSystem.GetWorkOffset (StudentSystem.GetStudyOffset is the same draw).
+        // Deterministic from the citizen's own pseudo-random seed, so two runs over the
+        // same city stagger the same people the same way — and Burst-safe, because
+        // Unity.Mathematics.Random is plain integer arithmetic.
+        private static float WorkOffsetDays(Citizen citizen)
+        {
+            return (-10922 + citizen.GetPseudoRandom(CitizenPseudoRandom.WorkOffset).NextInt(21845)) / 262144f;
+        }
 
         public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
         {
@@ -79,15 +89,16 @@ namespace WhereTheyGo
                     destinationOwner = worker.m_Workplace;
                     weight = WorkTripWeight;
                     purpose = JourneyPurpose.Work;
-                    Daytime.CommuteHours((byte)worker.m_Shift, WorkDayStart, WorkDayEnd, out outHour, out backHour);
+                    Daytime.WorkHours((byte)worker.m_Shift, WorkDayStart, WorkDayEnd, WorkOffsetDays(citizens[i]), out outHour, out backHour);
                 }
                 else if (StudentLookup.HasComponent(citizen))
                 {
                     destinationOwner = StudentLookup[citizen].m_School;
                     weight = SchoolTripWeight;
                     purpose = JourneyPurpose.School;
-                    // Students keep the day shift's hours (StudentSystem.GetTimeToStudy).
-                    Daytime.CommuteHours(0, WorkDayStart, WorkDayEnd, out outHour, out backHour);
+                    // Students keep the day shift's hours and the same offset, but the
+                    // game does not round theirs (StudentSystem.GetTimeToStudy).
+                    Daytime.StudyHours(WorkDayStart, WorkDayEnd, WorkOffsetDays(citizens[i]), out outHour, out backHour);
                 }
                 else
                 {

@@ -57,25 +57,50 @@ namespace WhereTheyGo
             return IsNight(hour / 24f);
         }
 
-        // The hour a commuter leaves home and the hour they leave work, for the shift
-        // (0 day, 1 evening, 2 night — Game.Companies.Workshift) and the city's working
-        // hours. The per-citizen ±1 h offset is not modelled; see the note above.
+        // The hour a worker leaves home and the hour they leave work, for the shift
+        // (0 day, 1 evening, 2 night — Game.Companies.Workshift), the city's working
+        // hours, and that citizen's OWN offset in days.
         //
         // The rounding is the GAME's, not a tidy-up of ours: WorkerSystem.GetTimeToWork
         // computes frac(RoundToInt(24 · (workDayStart + offset)) / 24), so the evening
         // shift's 0.33 of a day lands on a whole 17:00 rather than on 16:92. Dropping
         // the rounding put every evening commute an hour early.
-        public static void CommuteHours(byte shift, float workDayStart, float workDayEnd, out byte outHour, out byte backHour)
+        //
+        // `citizenOffsetDays` is WorkerSystem.GetWorkOffset: ±1 h, drawn from the
+        // citizen's own pseudo-random seed. It used to be left out as a detail, and the
+        // hour strip in the panel is what showed that it is not one — without it every
+        // commuter in the city leaves in the same single hour, and the day has one
+        // spike where the game has a rush hour three hours wide.
+        public static void WorkHours(byte shift, float workDayStart, float workDayEnd, float citizenOffsetDays, out byte outHour, out byte backHour)
         {
-            float offset = shift == 1 ? Assumptions.EveningShiftOffset : shift == 2 ? Assumptions.NightShiftOffset : 0f;
+            float offset = citizenOffsetDays
+                + (shift == 1 ? Assumptions.EveningShiftOffset : shift == 2 ? Assumptions.NightShiftOffset : 0f);
             outHour = WholeHour(workDayStart + offset);
             backHour = WholeHour(workDayEnd + offset);
+        }
+
+        // The same for a student. Students carry the same ±1 h offset — StudentSystem
+        // reads it from the same CitizenPseudoRandom.WorkOffset draw — but their times
+        // are NOT rounded to the hour: GetTimeToStudy is frac(workDayStart + offset)
+        // with no RoundToInt. So the hour is simply the one the time falls in.
+        public static void StudyHours(float workDayStart, float workDayEnd, float citizenOffsetDays, out byte outHour, out byte backHour)
+        {
+            outHour = HourContaining(workDayStart + citizenOffsetDays);
+            backHour = HourContaining(workDayEnd + citizenOffsetDays);
         }
 
         // The game's own hour: 24 · t rounded to the nearest whole hour, then wrapped.
         private static byte WholeHour(float timeOfDay)
         {
             int hour = (int)Math.Round(24.0 * timeOfDay, MidpointRounding.ToEven);
+            hour %= 24;
+            return (byte)(hour < 0 ? hour + 24 : hour);
+        }
+
+        // The hour a time of day falls inside, wrapped: 07:40 is the seven o'clock hour.
+        private static byte HourContaining(float timeOfDay)
+        {
+            int hour = (int)Math.Floor(24.0 * timeOfDay);
             hour %= 24;
             return (byte)(hour < 0 ? hour + 24 : hour);
         }

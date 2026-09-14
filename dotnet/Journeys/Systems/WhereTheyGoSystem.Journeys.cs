@@ -79,11 +79,12 @@ namespace WhereTheyGo
             }
         }
 
-        // "07:00 out, 16:00 back (100 % by day)" for one shift, so the log says what
-        // every commute of that shift was stamped with.
+        // "07:00 out, 16:00 back (100 % by day)" for one shift at no offset, so the log
+        // says what the MIDDLE of that shift's hour spread is. Each citizen's own
+        // ±1 h moves them off it (Daytime.WorkHours).
         private static string ShiftHours(byte shift, float start, float end)
         {
-            Daytime.CommuteHours(shift, start, end, out byte outHour, out byte backHour);
+            Daytime.WorkHours(shift, start, end, 0f, out byte outHour, out byte backHour);
             float dayShare = Daytime.DayShareOfHours(outHour, backHour);
             return $"{(outHour).ToString("00", CultureInfo.InvariantCulture)}:00 out, " +
                 $"{(backHour).ToString("00", CultureInfo.InvariantCulture)}:00 back " +

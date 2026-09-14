@@ -858,12 +858,31 @@ namespace WhereTheyGo.Tests
             // Without that rounding both land an hour early.
             const float start = 9f / 24f;
             const float end = 17f / 24f;
-            Daytime.CommuteHours(0, start, end, out byte dayOut, out byte dayBack);
+            Daytime.WorkHours(0, start, end, 0f, out byte dayOut, out byte dayBack);
             AssertTrue(dayOut == 9 && dayBack == 17, $"the day shift leaves at 9 and returns at 17, got {dayOut.ToString(CultureInfo.InvariantCulture)}/{dayBack.ToString(CultureInfo.InvariantCulture)}");
-            Daytime.CommuteHours(1, start, end, out byte eveOut, out byte eveBack);
+            Daytime.WorkHours(1, start, end, 0f, out byte eveOut, out byte eveBack);
             AssertTrue(eveOut == 17 && eveBack == 1, $"the evening shift is eight hours later, got {eveOut.ToString(CultureInfo.InvariantCulture)}/{eveBack.ToString(CultureInfo.InvariantCulture)}");
-            Daytime.CommuteHours(2, start, end, out byte nightOut, out byte nightBack);
+            Daytime.WorkHours(2, start, end, 0f, out byte nightOut, out byte nightBack);
             AssertTrue(nightOut == 1 && nightBack == 9, $"and the night shift sixteen, got {nightOut.ToString(CultureInfo.InvariantCulture)}/{nightBack.ToString(CultureInfo.InvariantCulture)}");
+
+            // The per-citizen offset spans a whole hour either way, so a city's day
+            // shift departs across THREE hours, not one. This is what the panel's hour
+            // strip draws, and leaving the offset out gave the city a single spike
+            // where the game has a rush hour.
+            Daytime.WorkHours(0, start, end, -1f / 24f, out byte earlyOut, out _);
+            Daytime.WorkHours(0, start, end, 1f / 24f, out byte lateOut, out _);
+            AssertTrue(earlyOut == 8 && lateOut == 10, $"the offset moves a worker a whole hour either way, got {earlyOut.ToString(CultureInfo.InvariantCulture)}/{lateOut.ToString(CultureInfo.InvariantCulture)}");
+            Daytime.WorkHours(0, start, end, 0.4f / 24f, out byte nudgedOut, out _);
+            AssertTrue(nudgedOut == 9, "and less than half an hour rounds back to the nominal hour, as the game rounds it");
+
+            // Students carry the same offset but the game does NOT round their times
+            // (StudentSystem.GetTimeToStudy has no RoundToInt), so the hour is the one
+            // the time falls in: 09:24 is still the nine o'clock hour, 09:36 too.
+            Daytime.StudyHours(start, end, 0.4f / 24f, out byte studyEarly, out _);
+            Daytime.StudyHours(start, end, 0.6f / 24f, out byte studyLate, out _);
+            AssertTrue(studyEarly == 9 && studyLate == 9, $"a student's hour is the one containing the time, got {studyEarly.ToString(CultureInfo.InvariantCulture)}/{studyLate.ToString(CultureInfo.InvariantCulture)}");
+            Daytime.StudyHours(start, end, -0.5f / 24f, out byte studyBefore, out _);
+            AssertTrue(studyBefore == 8, "and half an hour early is the eight o'clock hour, not a rounded nine");
 
             AssertEqual(1f, Daytime.DayShareOfHours(dayOut, dayBack), 1e-6f, "day shift");
             AssertEqual(0.5f, Daytime.DayShareOfHours(eveOut, eveBack), 1e-6f, "evening shift straddles the night");

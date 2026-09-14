@@ -64,6 +64,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingSection]", "Fußweg zum ÖPNV" },
                 { "WhereTheyGo.Panel[LineSection]", "Wohin sie fahren" },
                 { "WhereTheyGo.Panel[LineSavedCaption]", "{0} min je Weg, gegenüber Gehen und dem übrigen Netz" },
+                { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} Wege um {1}" },
+                { "WhereTheyGo.Panel[BandJourneysDay]", "{0} am Tag insgesamt" },
                 { "WhereTheyGo.Panel[Carried]", "Vom ÖPNV getragen" },
                 { "WhereTheyGo.Panel[CarriedCaption]", "aller Wege — gezählt werden die, für die der ÖPNV schneller ist als Gehen" },
                 { "WhereTheyGo.Panel[Coverage]", "In Gehweite" },

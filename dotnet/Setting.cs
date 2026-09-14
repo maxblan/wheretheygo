@@ -146,6 +146,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingSection]", "Walk to transit" },
                 { "WhereTheyGo.Panel[LineSection]", "Where they go" },
                 { "WhereTheyGo.Panel[LineSavedCaption]", "{0} min per journey, against walking and the rest of your network" },
+                { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} journeys at {1}" },
+                { "WhereTheyGo.Panel[BandJourneysDay]", "{0} a day in all" },
                 { "WhereTheyGo.Panel[Carried]", "Carried by transit" },
                 { "WhereTheyGo.Panel[CarriedCaption]", "of all journeys — counting those transit makes faster than walking" },
                 { "WhereTheyGo.Panel[Coverage]", "Within walking distance" },

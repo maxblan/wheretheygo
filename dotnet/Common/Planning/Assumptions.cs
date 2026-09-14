@@ -182,13 +182,16 @@ namespace WhereTheyGo
         // sample), and our ends are zone centroids with nothing to mark them.
         public const float BandEndDotShareOfWidth = 1.35f;
 
-        // The arrowhead that says which way an hour's traffic runs: how long it is as
-        // a share of the band's width, and how far before the far end it sits.
-        // Arrowheads beat every other direction cue in the user study behind those
-        // design principles, and unlike the travelling dots they hold still.
-        public const float BandArrowShareOfWidth = 2.2f;
+        // The arrowhead that says which way an hour's traffic runs: how long each barb
+        // is as a share of the band's width, and how far before the far end the tip
+        // sits. Arrowheads beat every other direction cue in the user study behind
+        // those design principles, and unlike the travelling dots they hold still.
+        //
+        // 1.1 rather than the 2.2 first tried: a head twice the band's width reads as
+        // a second object lying on the map rather than as a mark on the band.
+        public const float BandArrowShareOfWidth = 1.1f;
 
-        public const float BandArrowInsetShare = 0.12f;
+        public const float BandArrowInsetShare = 0.16f;
 
         // How far a band bows out of the straight line, as a share of its length and
         // capped in metres, so a cross-city band does not swing out over the sea. Just

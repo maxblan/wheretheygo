@@ -198,8 +198,17 @@ namespace WhereTheyGo
             {
                 edge *= ratio;
                 breaks[i] = Nice((float)edge);
-                // Rounding can collapse two boundaries onto each other; nudging the
-                // second up keeps every class reachable.
+                // Rounding UP can push the top boundary past the heaviest band, which
+                // leaves the widest class empty and the legend promising a width
+                // nothing on the map has. Seen in a real city: the heaviest band at
+                // 9736 and the legend offering "10000 and more".
+                if (breaks[i] >= heaviest)
+                {
+                    breaks[i] = NiceBelow(heaviest);
+                }
+
+                // Rounding can also collapse two boundaries onto each other; nudging
+                // the second up keeps every class reachable.
                 if (i > 0 && breaks[i] <= breaks[i - 1])
                 {
                     breaks[i] = Nice(breaks[i - 1] * 1.5f);
@@ -207,6 +216,23 @@ namespace WhereTheyGo
             }
 
             return breaks;
+        }
+
+        // The largest of 1, 2 or 5 times a power of ten that is strictly below `value`.
+        private static float NiceBelow(float value)
+        {
+            float nice = Nice(value);
+            if (nice < value)
+            {
+                return nice;
+            }
+
+            double magnitude = Math.Pow(10.0, Math.Floor(Math.Log10(nice)));
+            double normalised = nice / magnitude;
+            return normalised > 5.0 ? (float)(5.0 * magnitude)
+                : normalised > 2.0 ? (float)(2.0 * magnitude)
+                : normalised > 1.0 ? (float)magnitude
+                : (float)(5.0 * magnitude / 10.0);
         }
 
         // The smallest of 1, 2 or 5 times a power of ten that is at least `value`.

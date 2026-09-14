@@ -382,7 +382,27 @@ namespace WhereTheyGo.Tests
             foreach (float edge in breaks)
             {
                 AssertTrue(IsReadableNumber(edge), $"a legend prints {edge.ToString("F0", CultureInfo.InvariantCulture)}, which has to be a number a player can hold");
+                AssertTrue(edge < view.Heaviest, $"and no boundary may sit above the heaviest band, or the top class is empty: {edge.ToString("F0", CultureInfo.InvariantCulture)} vs {view.Heaviest.ToString("F0", CultureInfo.InvariantCulture)}");
             }
+
+            // The case that produced an empty top class in a real city: a heaviest band
+            // just under a round number, which rounding UP pushed the boundary past.
+            var nearlyRound = new List<Journey>();
+            float[] awkward = { 9736f, 4000f, 900f, 120f };
+            for (int i = 0; i < awkward.Length; i++)
+            {
+                nearlyRound.Add(Commute(100f, 100f + (i * 600f), 3000f, 100f + (i * 600f), awkward[i], 8, 17));
+            }
+
+            BandView awkwardView = BandView.Of(
+                BundleOf(nearlyRound, carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands),
+                hour: -1, Band.AllPurposes, thresholdShare: 0f);
+            foreach (float edge in awkwardView.ClassBreaks)
+            {
+                AssertTrue(edge < awkwardView.Heaviest, $"9736 must not be offered a class starting at {edge.ToString("F0", CultureInfo.InvariantCulture)}");
+            }
+
+            AssertTrue(awkwardView.Drawn[0].WidthClass == BandView.ClassCount - 1, "and the heaviest band still lands in the widest class");
 
             // The heaviest corridor is in the top class, the lightest in the bottom,
             // and the classes never run backwards against weight.
