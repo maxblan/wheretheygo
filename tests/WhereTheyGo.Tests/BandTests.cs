@@ -321,6 +321,31 @@ namespace WhereTheyGo.Tests
             AssertEqual(25f, shopping.Heaviest, 1e-3f, "and the scale is 25, not the city's 125");
             AssertEqual(25f, shopping.Drawn[0].Weight, 1e-3f, "the band is drawn at what shopping weighs on it");
 
+            // The day's shape, which the panel's hour strip draws. It must sum to both
+            // rides of every journey the purposes let through, and it must NOT follow
+            // the threshold: a picture of the day that changed when the slider moved
+            // would be describing the slider.
+            float profileTotal = 0f;
+            foreach (float value in all.HourlyProfile)
+            {
+                profileTotal += value;
+            }
+
+            AssertEqual(2f * (100f + 25f + 8f + 1f), profileTotal, 1e-3f, "the strip holds both rides of every journey, hidden bands included");
+            BandView harsh = BandView.Of(set, hour: -1, Band.AllPurposes, thresholdShare: 0.5f);
+            float harshTotal = 0f;
+            foreach (float value in harsh.HourlyProfile)
+            {
+                harshTotal += value;
+            }
+
+            AssertEqual(profileTotal, harshTotal, 1e-3f, "and raising the threshold does not reshape the day");
+
+            // The four switches carry their weight whether they are on or off, or a
+            // switch could not say what it would let back in.
+            AssertEqual(100f + 8f + 1f, shopping.PurposeWeights[(int)JourneyPurpose.Work], 1e-3f, "work still weighs what it weighs with only shopping ticked");
+            AssertEqual(25f, shopping.PurposeWeights[(int)JourneyPurpose.Shopping], 1e-3f, "and so does shopping");
+
             // Degenerate: nothing at all must not divide by zero or throw.
             BandView empty = BandView.Of(null, hour: -1, Band.AllPurposes, thresholdShare: 0.05f);
             AssertTrue(empty.Drawn.Length == 0 && empty.Heaviest == 0f, "no bands is an empty view");

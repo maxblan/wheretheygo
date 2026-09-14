@@ -66,8 +66,11 @@ namespace WhereTheyGo
         // and the map cannot drift apart.
         private void WriteMapState(IJsonWriter writer)
         {
+            // One cached view, rebuilt only when a filter moves or a pass finishes.
+            // This runs every frame the panel is open, and summing four hundred bands
+            // over twenty-four hours here would be an expensive answer to a question
+            // whose answer does not change.
             BandView view = m_OverlaySystem.CurrentBandView;
-            BandSet? set = m_OverlaySystem.Bands;
             int purposes = m_OverlaySystem.PurposeFilter;
 
             writer.TypeBegin("WhereTheyGo.MapState");
@@ -84,12 +87,12 @@ namespace WhereTheyGo
             // its scale. Under the purposes in force, so switching shopping off
             // reshapes the strip rather than leaving it describing a different map.
             writer.PropertyName("hourly");
-            WriteFloats(writer, set is null ? null : set.HourlyProfile(purposes), Band.HoursPerDay);
+            WriteFloats(writer, view.HourlyProfile, Band.HoursPerDay);
 
             // What the four switches are worth, so each carries its own weight beside
             // its name.
             writer.PropertyName("purposeWeights");
-            WriteFloats(writer, set?.PurposeWeights(), Band.PurposeCount);
+            WriteFloats(writer, view.PurposeWeights, Band.PurposeCount);
 
             // How much of the map the threshold is currently hiding. Said out loud:
             // a map that quietly dropped a third of the city's travel reads as a map of
