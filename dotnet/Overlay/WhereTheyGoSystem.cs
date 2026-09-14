@@ -253,6 +253,7 @@ namespace WhereTheyGo
             m_Infoview.SweepPlaceableInfoviews();
             TrackInputChanges();
             HandleInfoviewRequest();
+            AdvanceHourIfPlaying();
             FinishComputeIfReady();
             FinishRoutingIfReady();
 

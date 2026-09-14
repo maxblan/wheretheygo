@@ -117,6 +117,7 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingWalkUnserved]", "further than the {0} min this city counts as served" },
                 { "WhereTheyGo.Panel[WalkNone]", "no stop in reach" },
                 { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
+                { "WhereTheyGo.Panel[PlayDay]", "Play the day" },
                 { "WhereTheyGo.Panel[TimeOfDay]", "Time of day" },
                 { "WhereTheyGo.Panel[WholeDay]", "All day" },
                 { "WhereTheyGo.Panel[AtHour]", "{0}:00" },

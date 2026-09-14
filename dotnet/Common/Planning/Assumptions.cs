@@ -183,6 +183,21 @@ namespace WhereTheyGo
         // hair; two showed every one of the four hundred at once.
         public const int BandThresholdDefaultPercent = 5;
 
+        // Real seconds per hour of the day while the time-of-day slider is playing: a
+        // whole day in about half a minute. Nothing in this mod moves fast.
+        public const float HourPlaySeconds = 1.4f;
+
+        // The travelling dots that show which way a band's traffic runs at the chosen
+        // hour: how long one takes to cross the whole band, and how far apart they sit.
+        public const float BandDotSeconds = 6f;
+
+        public const float BandDotSpacingMetres = 700f;
+
+        // How far one direction must lead the other before a band is drawn as flowing
+        // that way: a tenth of the hour's traffic. Below it the hour is even and the
+        // dots would invent a rush hour that is not there.
+        public const float BandDirectionLead = 0.1f;
+
         // How long an observed journey's maker stays before travelling back, by
         // purpose. Only the RETURN hour rests on it: the outbound hour is the clock
         // the journey was actually seen at. Shopping is an errand, leisure an outing.

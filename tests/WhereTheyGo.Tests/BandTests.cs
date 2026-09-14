@@ -169,6 +169,53 @@ namespace WhereTheyGo.Tests
             AssertTrue(empty.Bands.Length == 0 && empty.HiddenPairs == 0, "a city with no journeys has no bands");
         }
 
+        // The direction the map shows at an hour, and why there is none over a day.
+        private static void BandDirectionFollowsTheHour()
+        {
+            var journeys = new List<Journey>
+            {
+                // A commute: out at 08:00, back at 17:00.
+                Commute(100f, 100f, 3000f, 100f, 40f, 8, 17),
+            };
+            BandSet set = BundleOf(journeys, null, Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            Band band = set.Bands[0];
+
+            AssertTrue(band.DirectionAtHour(8) == 1, "at eight the traffic leaves A for B");
+            AssertTrue(band.DirectionAtHour(17) == -1, "at five it comes back");
+            AssertTrue(band.DirectionAtHour(12) == 0, "an hour with no traffic has no direction");
+            AssertTrue(band.DirectionAtHour(-1) == 0, "and neither has the whole day, which is the point");
+
+            // An hour that is nearly even must not invent a rush: half in each
+            // direction is no direction at all.
+            var even = new List<Journey>
+            {
+                Commute(100f, 100f, 3000f, 100f, 10f, 8, 9),
+                Commute(3000f, 100f, 100f, 100f, 10f, 8, 9),
+            };
+            Band mixed = BundleOf(even, null, Assumptions.BandMergeMetres, Assumptions.MaxBands).Bands[0];
+            AssertTrue(mixed.DirectionAtHour(8) == 0, "an evenly split hour has no direction");
+
+            // The whole day always balances, whatever the city does, because every
+            // journey is made twice.
+            var random = new Random(3);
+            var many = new List<Journey>();
+            for (int i = 0; i < 50; i++)
+            {
+                many.Add(Commute(100f, 100f, 3000f, 100f, 1f + (i % 3), (byte)random.Next(0, 24), (byte)random.Next(0, 24)));
+            }
+
+            Band day = BundleOf(many, null, Assumptions.BandMergeMetres, Assumptions.MaxBands).Bands[0];
+            float atoB = 0f;
+            float btoA = 0f;
+            for (int hour = 0; hour < Band.HoursPerDay; hour++)
+            {
+                atoB += day.HourlyAtoB[hour];
+                btoA += day.HourlyBtoA[hour];
+            }
+
+            AssertEqual(atoB, btoA, 1e-3f, "over a day the two directions carry the same traffic");
+        }
+
         private static void BandGeometryBowsLeftAndScalesByLog()
         {
             // A band running due east. Left of travel in the map plane is +z, which is

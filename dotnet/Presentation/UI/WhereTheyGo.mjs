@@ -109,7 +109,7 @@ function Slider({ value, min, max, onChange }) {
 
 // The hour the map is showing, or the whole day. Twenty-four steps and an off
 // position: the slider's left end is "all day", which is where the map opens.
-function TimeOfDay({ hour }) {
+function TimeOfDay({ hour, playing }) {
     const t = useTranslate();
     const label = hour < 0
         ? t("WholeDay", "All day")
@@ -117,12 +117,24 @@ function TimeOfDay({ hour }) {
     return h("div", { className: "ta-control" },
         h("div", { className: "ta-control-row" },
             h("div", { className: "ta-control-label" }, t("TimeOfDay", "Time of day")),
+            h("div", {
+                className: "ta-play" + (playing ? " ta-play-on" : ""),
+                onClick: () => trigger("setHourPlay", !playing),
+            }, playing ? "\u25A0" : "\u25B6"),
             h("div", { className: "ta-control-value" }, label)),
         h(Slider, {
             value: hour < 0 ? 0 : hour + 1,
             min: 0,
             max: 24,
-            onChange: (step) => trigger("selectHour", step <= 0 ? -1 : step - 1),
+            onChange: (step) => {
+                // Touching the slider takes the day back off automatic: otherwise the
+                // playback would move the hour out from under the pointer.
+                if (playing) {
+                    trigger("setHourPlay", false);
+                }
+
+                trigger("selectHour", step <= 0 ? -1 : step - 1);
+            },
         }));
 }
 
@@ -226,7 +238,7 @@ function InfoviewFigures() {
 
     return h("div", { className: "ta-figures" },
         rows,
-        h(TimeOfDay, { hour: isNaN(hour) ? -1 : hour }),
+        h(TimeOfDay, { hour: isNaN(hour) ? -1 : hour, playing: state[3] === "1" }),
         h(Purposes, { mask: isNaN(purposes) ? 0xF : purposes }),
         h(Threshold, { percent: isNaN(threshold) ? 2 : threshold }));
 }

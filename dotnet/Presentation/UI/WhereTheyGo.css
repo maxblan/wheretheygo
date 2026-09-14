@@ -174,3 +174,27 @@
     font-size: 11rem;
     color: rgb(222, 234, 248);
 }
+
+/* Play/pause for the time of day, between the label and the hour. A square and a
+   triangle rather than an icon: the game's own icon atlas is not ours to borrow. */
+.ta-play {
+    width: 14rem;
+    height: 14rem;
+    margin: 0 6rem;
+    line-height: 14rem;
+    text-align: center;
+    font-size: 9rem;
+    color: rgb(190, 205, 218);
+    background-color: rgba(190, 205, 218, 0.18);
+}
+
+.ta-play-on {
+    color: rgb(16, 22, 30);
+    background-color: rgb(75, 195, 241);
+}
+
+/* The label and the hour sit at the two ends with the button between them, so the
+   row keeps its shape whether the day is playing or not. */
+.ta-control-row .ta-control-value {
+    margin-left: auto;
+}

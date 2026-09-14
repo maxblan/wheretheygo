@@ -35,6 +35,7 @@ namespace WhereTheyGo
             AddBinding(new TriggerBinding<int>(Group, "selectHour", static hour => WhereTheyGoSystem.SelectHour(hour)));
             AddBinding(new TriggerBinding<int>(Group, "setPurposes", static mask => WhereTheyGoSystem.SetPurposeFilter(mask)));
             AddBinding(new TriggerBinding<int>(Group, "setBandThreshold", static percent => WhereTheyGoSystem.SetBandThreshold(percent)));
+            AddBinding(new TriggerBinding<bool>(Group, "setHourPlay", static playing => WhereTheyGoSystem.SetHourPlay(playing)));
         }
     }
 }

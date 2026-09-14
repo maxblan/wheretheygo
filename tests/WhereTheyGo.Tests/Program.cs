@@ -77,7 +77,8 @@ namespace WhereTheyGo.Tests
             Run("Bands: neighbouring corridors bundle into one, in both directions", BandsBundleNeighbouringCorridors);
             Run("Bands: the bundling is deterministic, heaviest first, and says what the cap left out", BandsAreDeterministicAndBounded);
             Run("Bands: a journey inside one zone or off the map is not a band", BandsDropWhatIsNotAJourney);
-            Run("Bands: the arc bows left, the width is logarithmic", BandGeometryBowsLeftAndScalesByLog);
+            Run("Bands: the direction follows the hour, and a whole day has none", BandDirectionFollowsTheHour);
+            Run("Bands: the arc bows left, the width follows the square root", BandGeometryBowsLeftAndScalesByLog);
             Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
             Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
 

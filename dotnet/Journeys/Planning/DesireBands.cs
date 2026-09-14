@@ -63,6 +63,31 @@ namespace WhereTheyGo
         {
             return hour is < 0 or >= HoursPerDay ? Weight : HourlyAtoB[hour] + HourlyBtoA[hour];
         }
+
+        // Which way the traffic runs at this hour: +1 from A to B, -1 from B to A, 0
+        // when neither dominates or no hour is chosen. Over a whole day the two
+        // directions balance by construction — every journey is made both ways — so
+        // there is a direction to show only once an hour is picked.
+        public int DirectionAtHour(int hour)
+        {
+            if (hour is < 0 or >= HoursPerDay)
+            {
+                return 0;
+            }
+
+            float atoB = HourlyAtoB[hour];
+            float btoA = HourlyBtoA[hour];
+            float total = atoB + btoA;
+            if (total <= 0f)
+            {
+                return 0;
+            }
+
+            // A near-even hour has no story to tell, and dots drifting one way would
+            // invent one.
+            float lead = Math.Abs(atoB - btoA) / total;
+            return lead < Assumptions.BandDirectionLead ? 0 : atoB > btoA ? 1 : -1;
+        }
     }
 
     // What one bundling produced, with what it had to leave out.

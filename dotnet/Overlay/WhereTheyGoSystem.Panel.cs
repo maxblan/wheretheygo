@@ -30,6 +30,12 @@ namespace WhereTheyGo
 
         private static int s_BandThresholdPercent = Assumptions.BandThresholdDefaultPercent;
 
+        // Playing the day through, an hour at a time. The advance lives on this side
+        // rather than in the panel because the hour does: two clocks would drift.
+        private static bool s_PlayingHours;
+
+        private float m_LastHourAdvance;
+
         // Every purpose switched on: the four bits of JourneyPurpose.
         public const int AllPurposes = 0xF;
 
@@ -49,7 +55,8 @@ namespace WhereTheyGo
         public static string MapStateText =>
             $"{s_SelectedHour.ToString(CultureInfo.InvariantCulture)}|" +
             $"{s_PurposeFilter.ToString(CultureInfo.InvariantCulture)}|" +
-            $"{s_BandThresholdPercent.ToString(CultureInfo.InvariantCulture)}";
+            $"{s_BandThresholdPercent.ToString(CultureInfo.InvariantCulture)}|" +
+            $"{(s_PlayingHours ? 1 : 0).ToString(CultureInfo.InvariantCulture)}";
 
         // -1 (the whole day) or an hour of it.
         public static void SelectHour(int hour) => s_SelectedHour = hour is >= 0 and < Band.HoursPerDay ? hour : -1;
@@ -63,6 +70,36 @@ namespace WhereTheyGo
         internal int PurposeFilter => s_PurposeFilter;
 
         internal float BandThresholdShare => s_BandThresholdPercent / 100f;
+
+        // Pressing play on the whole day starts at midnight rather than leaving the
+        // map on "all day", which has no direction to show.
+        public static void SetHourPlay(bool playing)
+        {
+            s_PlayingHours = playing;
+            if (playing && s_SelectedHour < 0)
+            {
+                s_SelectedHour = 0;
+            }
+        }
+
+        // One hour every HourPlaySeconds of real time, so a whole day takes about half
+        // a minute. Slow on purpose: the bands are the thing to read, not the motion.
+        private void AdvanceHourIfPlaying()
+        {
+            if (!s_PlayingHours)
+            {
+                return;
+            }
+
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            if (now - m_LastHourAdvance < Assumptions.HourPlaySeconds)
+            {
+                return;
+            }
+
+            m_LastHourAdvance = now;
+            s_SelectedHour = (s_SelectedHour + 1) % Band.HoursPerDay;
+        }
 
         // Opens or closes our infoview on behalf of the Options page. Activation goes
         // through ToolSystem.infoview, which is what assigns the terrain overlay

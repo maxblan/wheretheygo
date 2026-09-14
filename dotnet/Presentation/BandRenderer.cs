@@ -40,6 +40,12 @@ namespace WhereTheyGo
         // Enough to read against the city, little enough to read the city through it.
         private const float BandOpacity = 0.55f;
 
+        private const int MaxDots = 6;
+
+        private const float DotOpacity = 0.7f;
+
+        private const float DotShareOfWidth = 0.55f;
+
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
         // every use site for a state in which nothing works anyway.
@@ -104,6 +110,7 @@ namespace WhereTheyGo
                 }
 
                 DrawBand(buffer, ref heightData, band, weight, bands.HeaviestWeight);
+                DrawDirection(buffer, ref heightData, band, hour, weight, bands.HeaviestWeight);
             }
 
             // The buffer was written on the main thread with the prior writers already
@@ -124,6 +131,38 @@ namespace WhereTheyGo
                 float3 next = Ground(ref heightData, x, z);
                 buffer.DrawLine(colour, new Line3.Segment(previous, next), width);
                 previous = next;
+            }
+        }
+
+        // Which way the band's traffic runs at the chosen hour, as a few dots drifting
+        // along it. Dots rather than a dashed line with a moving phase: the overlay
+        // buffer's dashes have no phase to move (DrawDashedLine takes lengths only),
+        // and an arrow head at one end would be a claim about the whole band rather
+        // than about this hour.
+        private void DrawDirection(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, Band band, int hour, float weight, float heaviest)
+        {
+            int direction = band.DirectionAtHour(hour);
+            if (direction == 0)
+            {
+                return;
+            }
+
+            float length = band.LengthMetres;
+            int dots = math.clamp((int)(length / Assumptions.BandDotSpacingMetres), 1, MaxDots);
+            float width = BandGeometry.Width(weight, heaviest);
+            // Bright enough to see against the band it rides on, and never wider.
+            var colour = new Color(1f, 1f, 1f, DotOpacity);
+            float phase = Daytime.Frac(UnityEngine.Time.realtimeSinceStartup / Assumptions.BandDotSeconds);
+            for (int i = 0; i < dots; i++)
+            {
+                float t = Daytime.Frac(phase + (i / (float)dots));
+                if (direction < 0)
+                {
+                    t = 1f - t;
+                }
+
+                BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float x, out float z);
+                buffer.DrawCircle(colour, Ground(ref heightData, x, z), width * DotShareOfWidth);
             }
         }
 

@@ -35,6 +35,7 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingWalkUnserved]", "weiter als die {0} min, die hier als bedient gelten" },
                 { "WhereTheyGo.Panel[WalkNone]", "keine Haltestelle erreichbar" },
                 { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
+                { "WhereTheyGo.Panel[PlayDay]", "Tag abspielen" },
                 { "WhereTheyGo.Panel[TimeOfDay]", "Tageszeit" },
                 { "WhereTheyGo.Panel[WholeDay]", "Ganzer Tag" },
                 { "WhereTheyGo.Panel[AtHour]", "{0}:00 Uhr" },
