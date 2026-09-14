@@ -299,6 +299,66 @@ function BuildingAccessRow({ walkSeconds, served, horizonMinutes }) {
                     .replace("{0}", String(horizonMinutes || 0))));
 }
 
+// The reading in the window of a line the player clicked, drawn from what
+// LineInsightSection wrote. A reading, never a verdict: no advice, no buttons.
+function LineInsightRow({ measured, riders, minutesSaved, duplicatePercent, hourlyLoad }) {
+    const t = useTranslate();
+    const Label = vanillaLabel;
+    const row = (label, value) => Label
+        ? h(Label, { small: true, text: label, rightText: value })
+        : h("div", { className: "ta-figure-row" },
+            h("div", { className: "ta-figure-label" }, label),
+            h("div", { className: "ta-figure-value" }, value));
+
+    if (!measured) {
+        return h("div", { className: "ta-building" },
+            row(t("LineRiders", "Journeys using this line"), t("LineMeasuring", "measuring…")),
+            h("div", { className: "ta-figure-caption" },
+                t("LineMeasuringCaption", "routing the city again without this line")));
+    }
+
+    return h("div", { className: "ta-building" },
+        row(t("LineRiders", "Journeys using this line"), String(riders || 0)),
+        h("div", { className: "ta-figure-caption" },
+            t("LineSaved", "saving {0} passenger-minutes a day against walking and the rest of your network")
+                .replace("{0}", String(minutesSaved || 0))),
+        row(t("LineDuplicate", "No slower without it"), (duplicatePercent || 0) + " %"),
+        h("div", { className: "ta-figure-caption" },
+            t("LineDuplicateCaption", "of those journeys would be no slower if this line did not exist")),
+        h(HourlyLoad, { hourlyLoad }));
+}
+
+// Load hour by hour against the seats that were actually out in that hour. An hour
+// the window never watched is a gap, not a zero.
+function HourlyLoad({ hourlyLoad }) {
+    const t = useTranslate();
+    const hours = Array.isArray(hourlyLoad) ? hourlyLoad : [];
+    if (!hours.length) {
+        return null;
+    }
+
+    let seen = 0;
+    for (let i = 0; i < hours.length; i++) {
+        if (hours[i] >= 0) {
+            seen++;
+        }
+    }
+
+    return h("div", { className: "ta-hours" },
+        h("div", { className: "ta-figure-caption" },
+            seen
+                ? t("LineHours", "How full it runs, hour by hour")
+                : t("LineHoursEmpty", "no readings yet — they start once the line runs")),
+        h("div", { className: "ta-hours-bars" },
+            hours.map((share, hour) => h("div", {
+                key: hour,
+                className: "ta-hour" + (share < 0 ? " ta-hour-gap" : ""),
+                // A bar is at least a sliver so an hour with almost nobody aboard is
+                // still visibly an hour that was watched.
+                style: share >= 0 ? { height: Math.max(2, Math.min(100, share * 100)) + "%" } : null,
+            }))));
+}
+
 // Puts the two city-wide figures inside the game's infoview panel, under its heading.
 function extendInfoview(registry) {
     vanillaLabel = readVanilla(registry, VANILLA.infoLabels, "InfoviewPanelLabel");
@@ -309,7 +369,7 @@ function extendInfoview(registry) {
     }
 }
 
-// Adds one entry to the game's section map, keyed by the C# type name the section
+// Adds our entries to the game's section map, keyed by the C# type name each section
 // writes — the map reads {"Game.UI.InGame.DescriptionSection": …}, not by the section's
 // `group`.
 //
@@ -329,6 +389,7 @@ function registerBuildingSection(registry) {
         const merged = {};
         Object.keys(current).forEach((key) => { merged[key] = current[key]; });
         merged["WhereTheyGo.BuildingAccessSection"] = BuildingAccessRow;
+        merged["WhereTheyGo.LineInsightSection"] = LineInsightRow;
         module.selectedInfoSectionComponents = merged;
     } catch (error) {
         console.warn("[WhereTheyGo] the selected-info section map has moved: " + error);

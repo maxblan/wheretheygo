@@ -314,6 +314,13 @@ namespace WhereTheyGo
 
             MaybeUpdateTravelDemand(settings, now);
 
+            // Clicking a line asks its question straight away rather than waiting for
+            // the next demand refresh, which is up to thirty seconds off.
+            if (LineSelectionChanged() && !m_RoutingPending && m_TileSnap is not null)
+            {
+                _ = StartRoutingPass();
+            }
+
         }
 
         // The demand pipeline needs the tile snap to exist (for the served discount

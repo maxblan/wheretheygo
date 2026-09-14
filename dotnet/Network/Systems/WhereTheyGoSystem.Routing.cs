@@ -33,11 +33,17 @@ namespace WhereTheyGo
             public CarriedReport Carried;
             public BandSet? Bands;
             public float2Like WorldMin;
+            // The line the player has selected, as its index in BaseLines, and what
+            // taking it out of the network would cost its riders.
+            public int TargetLine = -1;
+            public int TargetLineId = -1;
+            public LineContribution Contribution;
             public int2Like ZoneGrid;
             public List<Journey> Journeys = new List<Journey>();
             public readonly List<DeferredLogLine> Log = new List<DeferredLogLine>();
             public long RouteMs;
             public long BandMs;
+            public long ContributionMs;
         }
 
         private System.Threading.Tasks.Task? m_PendingRouting;
@@ -50,6 +56,19 @@ namespace WhereTheyGo
 
         // What the renderer and the picker read. Null until the first refresh lands.
         internal BandSet? Bands => m_Bands;
+
+        // The reading for the line the player has selected, and which line it belongs
+        // to. -1 means nothing measured yet — the section then says so rather than
+        // showing somebody else's numbers.
+        private LineContribution m_LineContribution;
+
+        private int m_ContributionLineId = -1;
+
+        internal bool TryGetLineContribution(int lineId, out LineContribution contribution)
+        {
+            contribution = m_LineContribution;
+            return lineId >= 0 && lineId == m_ContributionLineId;
+        }
 
         private RoutingProblem? m_PairTable;
 
@@ -163,7 +182,10 @@ namespace WhereTheyGo
                 Problem = BuildRoutingProblem(),
                 WorldMin = new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y),
                 ZoneGrid = new int2Like(m_ZoneGrid.x, m_ZoneGrid.y),
+                TargetLineId = SelectedLineId,
             };
+            pass.TargetLine = IndexOfLine(pass.TargetLineId);
+            pass.Problem.TargetLine = pass.TargetLine;
             pass.Journeys.AddRange(m_Journeys);
             m_PendingPass = pass;
             m_RoutingPending = true;
@@ -184,8 +206,31 @@ namespace WhereTheyGo
             return true;
         }
 
+        // Which of the collected lines carries this id, or -1. The line the player
+        // clicked may have been deleted, or may be one of the lines the collection
+        // drops (fewer than two stops inside the city).
+        private int IndexOfLine(int lineId)
+        {
+            if (lineId < 0)
+            {
+                return -1;
+            }
+
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                if (m_ExistingLines[i].m_Id == lineId)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
         // The worker's half: route every journey over the network as it stands, decide
-        // what the network carries, and bundle the result into bands.
+        // what the network carries, bundle the result into bands, and — when the player
+        // has a line selected — route the whole city a second time without that line,
+        // which is the only honest way to say what it is worth.
         private static void RunRoutingPass(RoutingPass pass)
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -194,14 +239,56 @@ namespace WhereTheyGo
             pass.Result = routed;
             pass.RouteMs = clock.ElapsedMilliseconds;
 
+            if (pass.TargetLine >= 0)
+            {
+                clock.Restart();
+                pass.Contribution = MeasureTargetLine(pass, routed);
+                pass.ContributionMs = clock.ElapsedMilliseconds;
+            }
+
             clock.Restart();
             pass.Bands = DesireBands.Build(
-                pass.Journeys,
-                pass.Problem.PairOx, pass.Problem.PairOz, pass.Problem.PairDx, pass.Problem.PairDz, pass.Problem.PairWeight,
-                routed.Carried, pass.Problem.PairCount,
+                pass.Journeys, pass.Problem, routed,
                 pass.WorldMin, pass.ZoneGrid,
                 Assumptions.BandMergeMetres, Assumptions.MaxBands);
             pass.BandMs = clock.ElapsedMilliseconds;
+        }
+
+        // The same city routed again with one line taken out. Two evaluations rather
+        // than one clever pass: each is around twenty milliseconds on the worker, and
+        // the alternative — attributing time saved from inside a single search — was
+        // exactly the kind of arithmetic that hid the free-transfer bug.
+        private static LineContribution MeasureTargetLine(RoutingPass pass, RoutingResult routed)
+        {
+            RoutingProblem full = pass.Problem;
+            var reduced = new RoutingProblem
+            {
+                PairCount = full.PairCount,
+                PairOx = full.PairOx,
+                PairOz = full.PairOz,
+                PairDx = full.PairDx,
+                PairDz = full.PairDz,
+                PairWeight = full.PairWeight,
+                PairDayShare = full.PairDayShare,
+                Geometry = full.Geometry,
+                BaseStopCount = full.BaseStopCount,
+                BaseStopX = full.BaseStopX,
+                BaseStopZ = full.BaseStopZ,
+                WalkRadius = full.WalkRadius,
+                BoardPenaltySeconds = full.BoardPenaltySeconds,
+                MaxTravelSeconds = full.MaxTravelSeconds,
+                ZoneReachMetres = full.ZoneReachMetres,
+            };
+            for (int i = 0; i < full.BaseLines.Count; i++)
+            {
+                if (i != pass.TargetLine)
+                {
+                    reduced.BaseLines.Add(full.BaseLines[i]);
+                }
+            }
+
+            RoutingResult without = JourneyRouting.Evaluate(reduced, before: null);
+            return JourneyRouting.Measure(full, routed, without);
         }
 
         // Adopts a finished pass: its log lines first, in order, then the fields the
@@ -226,6 +313,8 @@ namespace WhereTheyGo
                 return;
             }
 
+            m_ContributionLineId = pass.TargetLine >= 0 ? pass.TargetLineId : -1;
+            m_LineContribution = pass.Contribution;
             m_Routed = pass.Result;
             m_RoutedProblem = pass.Problem;
             m_CarriedReport = pass.Carried;
@@ -273,6 +362,17 @@ namespace WhereTheyGo
                 (bands.HiddenPairs > 0
                     ? $"; NOT SHOWN: {(bands.HiddenPairs).ToString(CultureInfo.InvariantCulture)} zone pairs past the cap of {(Assumptions.MaxBands).ToString(CultureInfo.InvariantCulture)} bands, together {(bands.HiddenWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day"
                     : string.Empty));
+            if (pass.TargetLine >= 0 && pass.TargetLine < m_ExistingLines.Count)
+            {
+                ExistingLine target = m_ExistingLines[pass.TargetLine];
+                DeferredLog.Info(
+                    $"Line reading for \"{target.m_Name}\" ({target.m_Mode}): " +
+                    $"{(pass.Contribution.RiderWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day ride it, " +
+                    $"saving {(pass.Contribution.MinutesSaved).ToString("F0", CultureInfo.InvariantCulture)} passenger-minutes/day against the rest of the network and walking; " +
+                    $"{(pass.Contribution.DuplicateShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} % of them would be no slower without it " +
+                    $"(measured by routing the city again without the line, {(pass.ContributionMs).ToString(CultureInfo.InvariantCulture)} ms)");
+            }
+
             for (int i = 0; i < problem.BaseLines.Count && i < m_ExistingLines.Count; i++)
             {
                 DeferredLog.Info(

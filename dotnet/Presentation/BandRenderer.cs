@@ -46,6 +46,11 @@ namespace WhereTheyGo
 
         private const float DotShareOfWidth = 0.55f;
 
+        // While a line is selected: what it carries, and everything else.
+        private const float HighlightOpacity = 0.85f;
+
+        private const float DimmedOpacity = 0.18f;
+
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
         // every use site for a state in which nothing works anyway.
@@ -91,6 +96,9 @@ namespace WhereTheyGo
             float threshold = m_OverlaySystem.BandThresholdShare;
             int hour = m_OverlaySystem.SelectedHour;
             int purposes = m_OverlaySystem.PurposeFilter;
+            // With a line selected, the bands it carries stay as they are and every
+            // other band steps back. Without one, nothing is dimmed.
+            bool highlighting = AnyBandCarriesTheSelectedLine(bands);
             // Lightest first, so the city's real corridors end up ON TOP of the hair
             // rather than under it: the bands come out of the bundling heaviest first.
             for (int i = bands.Bands.Length - 1; i >= 0; i--)
@@ -109,7 +117,8 @@ namespace WhereTheyGo
                     continue;
                 }
 
-                DrawBand(buffer, ref heightData, band, weight, bands.HeaviestWeight);
+                float opacity = !highlighting ? BandOpacity : band.CarriesTarget ? HighlightOpacity : DimmedOpacity;
+                DrawBand(buffer, ref heightData, band, weight, bands.HeaviestWeight, opacity);
                 DrawDirection(buffer, ref heightData, band, hour, weight, bands.HeaviestWeight);
             }
 
@@ -117,10 +126,26 @@ namespace WhereTheyGo
             // completed, so there is no new job handle to register.
         }
 
-        private static void DrawBand(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, Band band, float weight, float heaviest)
+        // Whether any band carries the line the player has selected. Asked once per
+        // frame rather than per band: a line whose bands all fell under the threshold
+        // must not dim the whole map for nothing.
+        private static bool AnyBandCarriesTheSelectedLine(BandSet bands)
+        {
+            for (int i = 0; i < bands.Bands.Length; i++)
+            {
+                if (bands.Bands[i].CarriesTarget)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void DrawBand(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, Band band, float weight, float heaviest, float opacity)
         {
             BandGeometry.Colour(band.CarriedShare, out float r, out float g, out float b);
-            var colour = new Color(r, g, b, BandOpacity);
+            var colour = new Color(r, g, b, opacity);
             float width = BandGeometry.Width(weight, heaviest);
 
             int segments = math.clamp((int)(band.LengthMetres / ArcMetresPerSegment), MinArcSegments, MaxArcSegments);

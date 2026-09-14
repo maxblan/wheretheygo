@@ -18,6 +18,10 @@ namespace WhereTheyGo
         // Share of each pair's rides in the day period (Daytime); empty = all day.
         public float[] PairDayShare = Array.Empty<float>();
         public int PairCount;
+        // One line to report on, as its index in BaseLines, or -1. Set when the player
+        // has a line selected: Evaluate then records which pairs ride it, which is the
+        // one thing the fold cannot reconstruct afterwards.
+        public int TargetLine = -1;
         public float WalkRadius;
         public float BoardPenaltySeconds;
         public float MaxTravelSeconds;
@@ -66,6 +70,8 @@ namespace WhereTheyGo
         public float[] WalkOnly = Array.Empty<float>();
         // Whether the network carries each pair (JourneyRouting.MarkCarried).
         public bool[] Carried = Array.Empty<bool>();
+        // Whether each pair's fastest itinerary rides RoutingProblem.TargetLine.
+        public bool[] RidesTarget = Array.Empty<bool>();
         // Time-weighted components over all pairs for the realism diagnostic
         // (walk 2.2, wait 2.1, ride 1 — TCQSM): what the set's journeys spend.
         public double WalkSeconds;
@@ -109,6 +115,35 @@ namespace WhereTheyGo
         public float Share => TotalWeight > 0.0 ? (float)(CarriedWeight / TotalWeight) : 0f;
     }
 
+    // What one line does for the journeys that ride it, measured by taking it away.
+    // The reading the player gets when they click a line (product plan 3.5): not a
+    // verdict, not a recommendation, just the two numbers a line's value rests on.
+    internal readonly struct LineContribution
+    {
+        public LineContribution(double riderWeight, double secondsSaved, double noSlowerWeight)
+        {
+            RiderWeight = riderWeight;
+            SecondsSaved = secondsSaved;
+            NoSlowerWeight = noSlowerWeight;
+        }
+
+        // Journeys a day whose fastest route rides this line.
+        public double RiderWeight { get; }
+
+        // Passenger-seconds a day those journeys save by it, against the best they
+        // could do without it — which is the rest of the network, or walking.
+        public double SecondsSaved { get; }
+
+        // How much of RiderWeight would be no slower without the line at all. High
+        // means the line runs beside something that already carries those journeys:
+        // the answer to "why is my line empty".
+        public double NoSlowerWeight { get; }
+
+        public float DuplicateShare => RiderWeight > 0.0 ? (float)(NoSlowerWeight / RiderWeight) : 0f;
+
+        public double MinutesSaved => SecondsSaved / 60.0;
+    }
+
     internal static class JourneyRouting
     {
 
@@ -140,6 +175,7 @@ namespace WhereTheyGo
                 After = new float[problem.PairCount],
                 Transit = new float[problem.PairCount],
                 WalkOnly = geometry.WalkOnly,
+                RidesTarget = problem.TargetLine >= 0 ? new bool[problem.PairCount] : Array.Empty<bool>(),
             };
             bool hasShares = problem.PairDayShare.Length >= problem.PairCount;
             int lineCount = problem.BaseLines.Count;
@@ -177,6 +213,10 @@ namespace WhereTheyGo
                         evaluation.BaseRiders[line] += weight;
                         evaluation.BaseRidersByDay[line] += weight * dayShare;
                         evaluation.BaseRidersByNight[line] += weight * (1.0 - dayShare);
+                        if (line == problem.TargetLine)
+                        {
+                            evaluation.RidesTarget[i] = true;
+                        }
                     }
                 }
 
@@ -187,6 +227,41 @@ namespace WhereTheyGo
             }
 
             return evaluation;
+        }
+
+        // Compares the network as it stands with the same network minus one line.
+        //
+        // `with` is the full network's door-to-door times and which pairs ride the
+        // line; `without` is the times when it is taken out. Removing a line can never
+        // make a journey faster, so the difference is what the line is worth — and a
+        // journey that rides it while losing nothing by its removal is riding a line
+        // that duplicates something else.
+        public static LineContribution Measure(RoutingProblem problem, RoutingResult with, RoutingResult without)
+        {
+            double riders = 0.0;
+            double seconds = 0.0;
+            double noSlower = 0.0;
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                if (i >= with.RidesTarget.Length || !with.RidesTarget[i])
+                {
+                    continue;
+                }
+
+                double weight = problem.PairWeight[i];
+                riders += weight;
+                float lost = without.After[i] - with.After[i];
+                if (lost > Assumptions.NoSlowerSeconds)
+                {
+                    seconds += weight * lost;
+                }
+                else
+                {
+                    noSlower += weight;
+                }
+            }
+
+            return new LineContribution(riders, seconds, noSlower);
         }
 
         // Fills `result.Carried` and reports what it adds up to. `scratch` is reordered

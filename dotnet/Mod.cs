@@ -89,6 +89,9 @@ namespace WhereTheyGo
             // has to exist and be updated.
             updateSystem.UpdateAt<BuildingAccessSection>(SystemUpdatePhase.UIUpdate);
 
+            // And the reading in the window of a line the player clicks.
+            updateSystem.UpdateAt<LineInsightSection>(SystemUpdatePhase.UIUpdate);
+
             // Bindings for the in-game control panel. The panel's own code ships as
             // WhereTheyGo.mjs beside the DLL, which the game loads by
             // matching the assembly name.

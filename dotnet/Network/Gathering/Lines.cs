@@ -230,7 +230,11 @@ namespace WhereTheyGo
         // Packed into one int because the panel round-trips this value through a
         // binding and back through the improveLine trigger. 24 bits is far more index
         // than a city's entity count reaches.
-        private static int IdentityOf(Entity line)
+        // A line's own id: the entity index with the version folded in, so an index
+        // the game reuses after a deletion does not silently point at the new line.
+        // The selected-line section resolves the clicked entity through the same
+        // function, which is why it is internal rather than private.
+        internal static int IdentityOf(Entity line)
         {
             return (line.Index & 0xFFFFFF) | ((line.Version & 0xFF) << 24);
         }

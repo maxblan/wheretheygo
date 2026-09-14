@@ -22,6 +22,11 @@ namespace WhereTheyGo
         public float Weight;
         public float CarriedWeight;
 
+        // Of that weight, how much rides the line the player has selected
+        // (RoutingProblem.TargetLine). Zero when no line is selected, which is what
+        // makes the highlight disappear again.
+        public float TargetWeight;
+
         // Which purposes travel here, as bits of 1 << (int)JourneyPurpose.
         public byte PurposeMask;
 
@@ -35,6 +40,8 @@ namespace WhereTheyGo
         public const int HoursPerDay = 24;
 
         public float CarriedShare => Weight > 0f ? CarriedWeight / Weight : 0f;
+
+        public bool CarriesTarget => TargetWeight > 0f;
 
         public float LengthMetres => (float)Math.Sqrt(((Bx - Ax) * (Bx - Ax)) + ((Bz - Az) * (Bz - Az)));
 
@@ -129,20 +136,18 @@ namespace WhereTheyGo
             public double SumBz;
             public float Weight;
             public float Carried;
+            public float Target;
             public byte PurposeMask;
             public float[]? HourlyAtoB;
             public float[]? HourlyBtoA;
         }
 
+        // The journeys as the routing left them: `pairs` holds where each door-to-door
+        // pair runs and what it weighs, `routed` what the network does with it.
         public static BandSet Build(
             IReadOnlyList<Journey> journeys,
-            float[] pairOx,
-            float[] pairOz,
-            float[] pairDx,
-            float[] pairDz,
-            float[] pairWeight,
-            bool[] carried,
-            int pairCount,
+            RoutingProblem pairs,
+            RoutingResult routed,
             float2Like worldMin,
             int2Like zoneGrid,
             float mergeMetres,
@@ -150,7 +155,7 @@ namespace WhereTheyGo
         {
             var buckets = new List<Bucket>();
             var index = new Dictionary<long, int>();
-            SumPairs(buckets, index, pairOx, pairOz, pairDx, pairDz, pairWeight, carried, pairCount, worldMin, zoneGrid);
+            SumPairs(buckets, index, pairs, routed, worldMin, zoneGrid);
             AddHours(buckets, index, journeys, worldMin, zoneGrid);
             return Agglomerate(buckets, mergeMetres, maxBands);
         }
@@ -160,13 +165,14 @@ namespace WhereTheyGo
         // districts should start where the people are, not on a grid line.
         private static void SumPairs(
             List<Bucket> buckets, Dictionary<long, int> index,
-            float[] pairOx, float[] pairOz, float[] pairDx, float[] pairDz, float[] pairWeight,
-            bool[] carried, int pairCount, float2Like worldMin, int2Like zoneGrid)
+            RoutingProblem pairs, RoutingResult routed, float2Like worldMin, int2Like zoneGrid)
         {
-            for (int i = 0; i < pairCount; i++)
+            bool[] carried = routed.Carried;
+            bool[] ridesTarget = routed.RidesTarget;
+            for (int i = 0; i < pairs.PairCount; i++)
             {
-                var origin = new float2Like(pairOx[i], pairOz[i]);
-                var destination = new float2Like(pairDx[i], pairDz[i]);
+                var origin = new float2Like(pairs.PairOx[i], pairs.PairOz[i]);
+                var destination = new float2Like(pairs.PairDx[i], pairs.PairDz[i]);
                 if (!TryKey(origin, destination, worldMin, zoneGrid, out int keyA, out int keyB, out bool flipped))
                 {
                     continue;
@@ -174,7 +180,7 @@ namespace WhereTheyGo
 
                 int bucket = Ensure(buckets, index, keyA, keyB);
                 Bucket entry = buckets[bucket];
-                float weight = pairWeight[i];
+                float weight = pairs.PairWeight[i];
                 float2Like a = flipped ? destination : origin;
                 float2Like b = flipped ? origin : destination;
                 entry.SumAx += (double)a.x * weight;
@@ -185,6 +191,11 @@ namespace WhereTheyGo
                 if (carried is not null && i < carried.Length && carried[i])
                 {
                     entry.Carried += weight;
+                }
+
+                if (ridesTarget is not null && i < ridesTarget.Length && ridesTarget[i])
+                {
+                    entry.Target += weight;
                 }
 
                 buckets[bucket] = entry;
@@ -388,6 +399,7 @@ namespace WhereTheyGo
 
             band.Weight += entry.Weight;
             band.CarriedWeight += entry.Carried;
+            band.TargetWeight += entry.Target;
             band.PurposeMask |= entry.PurposeMask;
             band.Pairs++;
             float[]? atoB = crossed ? entry.HourlyBtoA : entry.HourlyAtoB;

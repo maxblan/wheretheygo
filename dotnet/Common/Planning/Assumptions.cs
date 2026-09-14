@@ -198,6 +198,12 @@ namespace WhereTheyGo
         // dots would invent a rush hour that is not there.
         public const float BandDirectionLead = 0.1f;
 
+        // ---- Line insight
+        // Under this many seconds, a journey is "no slower without the line". Half a
+        // minute: the difference a rider would not notice, and well under the
+        // granularity of anything else the mod measures.
+        public const float NoSlowerSeconds = 30f;
+
         // How long an observed journey's maker stays before travelling back, by
         // purpose. Only the RETURN hour rests on it: the outbound hour is the clock
         // the journey was actually seen at. Shopping is an errand, leisure an outing.

@@ -34,6 +34,15 @@ namespace WhereTheyGo
         // rather than in the panel because the hour does: two clocks would drift.
         private static bool s_PlayingHours;
 
+        // The line whose window is open, by the line's own id (index|version), or -1.
+        // Written by the section in the selected-line window and read by the routing
+        // pass, which measures what that line is worth by taking it out.
+        private static int s_SelectedLineId = -1;
+
+        // The id the last started pass was asked about, so selecting a line asks for
+        // a fresh pass exactly once.
+        private int m_RequestedLineId = -1;
+
         private float m_LastHourAdvance;
 
         // Every purpose switched on: the four bits of JourneyPurpose.
@@ -70,6 +79,23 @@ namespace WhereTheyGo
         internal int PurposeFilter => s_PurposeFilter;
 
         internal float BandThresholdShare => s_BandThresholdPercent / 100f;
+
+        public static void SelectLine(int lineId) => s_SelectedLineId = lineId;
+
+        internal static int SelectedLineId => s_SelectedLineId;
+
+        // A newly selected line is worth a pass of its own: the reading is what the
+        // player clicked for, and a pass is some fifty milliseconds on the worker.
+        private bool LineSelectionChanged()
+        {
+            if (m_RequestedLineId == s_SelectedLineId)
+            {
+                return false;
+            }
+
+            m_RequestedLineId = s_SelectedLineId;
+            return true;
+        }
 
         // Pressing play on the whole day starts at midnight rather than leaving the
         // map on "all day", which has no direction to show.

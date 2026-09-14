@@ -44,7 +44,17 @@ namespace WhereTheyGo.Tests
                 weight[i] = journeys[i].m_Weight;
             }
 
-            return DesireBands.Build(journeys, ox, oz, dx, dz, weight, carried ?? new bool[n], n, BandWorldMin, BandGrid, mergeMetres, maxBands);
+            var pairs = new RoutingProblem
+            {
+                PairCount = n,
+                PairOx = ox,
+                PairOz = oz,
+                PairDx = dx,
+                PairDz = dz,
+                PairWeight = weight,
+            };
+            var routed = new RoutingResult { Carried = carried ?? new bool[n] };
+            return DesireBands.Build(journeys, pairs, routed, BandWorldMin, BandGrid, mergeMetres, maxBands);
         }
 
         private static void BandsBundleNeighbouringCorridors()

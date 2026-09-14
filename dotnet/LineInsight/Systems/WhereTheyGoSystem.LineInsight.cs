@@ -145,6 +145,14 @@ namespace WhereTheyGo
             UpdateDataCoverage();
         }
 
+        // What one line carried in each hour of the day, for the section in its own
+        // window. Reads the window the observation keeps; an hour with no readings
+        // comes back with no samples.
+        internal void ReadHourlyLoad(int lineId, float[] riders, float[] capacity, int[] samples)
+        {
+            m_LineHistory.HourlyLoad(lineId, riders, capacity, samples);
+        }
+
         private void LogLineHealth(uint frame)
         {
             for (int i = 0; i < m_ExistingLines.Count; i++)

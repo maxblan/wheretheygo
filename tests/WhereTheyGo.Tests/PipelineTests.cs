@@ -125,6 +125,76 @@ namespace WhereTheyGo.Tests
             }
         }
 
+        // What a line is worth, measured by taking it away. The two numbers the
+        // section shows rest entirely on this.
+        private static void LineContributionComesFromTakingTheLineOut()
+        {
+            // Three journeys ride the line. One saves ten minutes by it, one saves
+            // nothing (something else is just as fast), one is not on it at all.
+            var problem = new RoutingProblem
+            {
+                PairCount = 4,
+                PairWeight = new[] { 10f, 5f, 3f, 100f },
+            };
+            var with = new RoutingResult
+            {
+                After = new[] { 600f, 800f, 900f, 100f },
+                RidesTarget = new[] { true, true, true, false },
+            };
+            var without = new RoutingResult
+            {
+                // The first loses ten minutes, the second is one second worse (which is
+                // "no slower"), the third cannot be carried at all any more.
+                After = new[] { 1200f, 801f, 3600f, 100f },
+            };
+
+            LineContribution contribution = JourneyRouting.Measure(problem, with, without);
+
+            AssertEqual(18f, (float)contribution.RiderWeight, 1e-3f, "only the journeys that ride the line count as its riders");
+            AssertEqual((10f * 600f) + (3f * 2700f), (float)contribution.SecondsSaved, 1e-1f, "each rider saves what it would lose without the line");
+            AssertEqual(5f, (float)contribution.NoSlowerWeight, 1e-3f, "a rider that loses a second by its removal is no slower without it");
+            AssertTrue(Math.Abs(contribution.DuplicateShare - (5f / 18f)) < 1e-5f, "the duplicate share is that weight over the riders");
+            AssertEqual((float)((10f * 600f) + (3f * 2700f)) / 60f, (float)contribution.MinutesSaved, 1e-1f, "and the panel reads it in minutes");
+
+            // A line nobody rides is not a division by zero.
+            var nobody = new RoutingResult { After = new[] { 600f }, RidesTarget = new[] { false } };
+            LineContribution empty = JourneyRouting.Measure(
+                new RoutingProblem { PairCount = 1, PairWeight = new[] { 9f } },
+                nobody,
+                new RoutingResult { After = new[] { 600f } });
+            AssertTrue(empty.RiderWeight == 0.0 && empty.DuplicateShare == 0f && empty.MinutesSaved == 0.0, "a line nobody rides reads as nothing, not as a crash");
+        }
+
+        // The load a line's own readings show, hour by hour — and the difference
+        // between an hour nobody watched and an hour nobody rode.
+        private static void HourlyLoadSeparatesQuietHoursFromUnwatchedOnes()
+        {
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
+            // Two readings at 08:00 with 40 and 60 aboard of 100 seats, one at 03:00
+            // with nobody aboard, and one at 12:00 while the line stood still.
+            history.Record(7, new LineObservation { m_Frame = 10, m_Passengers = 40, m_Capacity = 100, m_Vehicles = 2, m_TimeOfDay = 8f / 24f });
+            history.Record(7, new LineObservation { m_Frame = 20, m_Passengers = 60, m_Capacity = 100, m_Vehicles = 2, m_TimeOfDay = 8f / 24f });
+            history.Record(7, new LineObservation { m_Frame = 30, m_Passengers = 0, m_Capacity = 100, m_Vehicles = 2, m_TimeOfDay = 3f / 24f });
+            history.Record(7, new LineObservation { m_Frame = 40, m_Passengers = 0, m_Capacity = 0, m_Vehicles = 0, m_TimeOfDay = 12f / 24f });
+
+            var riders = new float[Band.HoursPerDay];
+            var capacity = new float[Band.HoursPerDay];
+            var samples = new int[Band.HoursPerDay];
+            history.HourlyLoad(7, riders, capacity, samples);
+
+            AssertTrue(samples[8] == 2 && riders[8] == 50f && capacity[8] == 100f, "an hour averages its readings");
+            AssertTrue(samples[3] == 1 && riders[3] == 0f, "an hour watched with nobody aboard is a measured zero");
+            AssertTrue(samples[12] == 0, "a reading taken while the line stood still says nothing about its load");
+            AssertTrue(samples[9] == 0 && riders[9] == 0f, "an hour nobody watched has no samples, which the panel draws as a gap");
+
+            // Reused buffers must not carry the last line's numbers into this one.
+            history.HourlyLoad(99, riders, capacity, samples);
+            for (int hour = 0; hour < Band.HoursPerDay; hour++)
+            {
+                AssertTrue(samples[hour] == 0 && riders[hour] == 0f && capacity[hour] == 0f, "a line with no readings clears the buffers it was handed");
+            }
+        }
+
         private static void PanelPayloadRowsKeepTheirFieldOrder()
         {
             AssertTrue(PanelPayload.DataCoverageRow(1.5f, 4, 24f, 12, 3.2f) == "1.5|4|24|12|3.2", "data coverage row");

@@ -198,3 +198,30 @@
 .ta-control-row .ta-control-value {
     margin-left: auto;
 }
+
+/* The hour-by-hour load in a line's own window. Twenty-four bars, each as tall as
+   that hour's riders against the seats that were out. An hour nobody watched is a
+   flat marker rather than an empty column: no readings is not no riders. */
+.ta-hours {
+    margin-top: 4rem;
+}
+
+.ta-hours-bars {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    height: 28rem;
+    margin-top: 3rem;
+}
+
+.ta-hour {
+    width: 4rem;
+    margin-right: 1rem;
+    min-height: 1rem;
+    background-color: rgb(75, 195, 241);
+}
+
+.ta-hour-gap {
+    height: 1rem;
+    background-color: rgba(190, 205, 218, 0.3);
+}

@@ -134,6 +134,49 @@ namespace WhereTheyGo
 
         // Wipes the history. Loading a different save rewinds the frame counter, and
         // readings from the previous city must not be averaged into this one.
+        // What one line carried in each hour of the day, over every reading in the
+        // window: the mean riders aboard and the mean seats offered. Hours the window
+        // never saw come back with no samples, which the panel draws as a gap rather
+        // than as an empty hour — a line nobody has watched at 03:00 is not a line
+        // nobody rides at 03:00.
+        //
+        // Only readings with vehicles out count (LineObservation.Active): a reading
+        // taken while the line stood still says nothing about its load.
+        public void HourlyLoad(int lineId, float[] riders, float[] capacity, int[] samples)
+        {
+            Array.Clear(riders, 0, riders.Length);
+            Array.Clear(capacity, 0, capacity.Length);
+            Array.Clear(samples, 0, samples.Length);
+            IReadOnlyList<LineObservation> observations = SamplesOf(lineId);
+            for (int i = 0; i < observations.Count; i++)
+            {
+                LineObservation observation = observations[i];
+                if (!observation.Active)
+                {
+                    continue;
+                }
+
+                int hour = Daytime.HourOf(observation.m_TimeOfDay);
+                if (hour < 0 || hour >= samples.Length)
+                {
+                    continue;
+                }
+
+                riders[hour] += observation.m_Passengers;
+                capacity[hour] += observation.m_Capacity;
+                samples[hour]++;
+            }
+
+            for (int hour = 0; hour < samples.Length; hour++)
+            {
+                if (samples[hour] > 0)
+                {
+                    riders[hour] /= samples[hour];
+                    capacity[hour] /= samples[hour];
+                }
+            }
+        }
+
         public void Clear()
         {
             m_ByLine.Clear();
