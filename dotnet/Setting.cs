@@ -134,6 +134,7 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[LineHoursEmpty]", "no readings yet \u2014 they start once the line runs" },
                 { "WhereTheyGo.Panel[BandJourneys]", "{0} journeys a day" },
                 { "WhereTheyGo.Panel[BandWithout]", "{0} % travel without transit" },
+                { "WhereTheyGo.Panel[ToolbarTooltip]", "Where They Go: where people want to go, and who already rides" },
                 { "WhereTheyGo.Panel[Purposes]", "Journeys by purpose" },
                 { "WhereTheyGo.Panel[Bands]", "Bands" },
                 { "WhereTheyGo.Panel[BandsShown]", "{0} of {1}" },

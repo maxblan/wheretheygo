@@ -52,6 +52,7 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[LineHoursEmpty]", "noch keine Messungen \u2014 sie beginnen, sobald die Linie fährt" },
                 { "WhereTheyGo.Panel[BandJourneys]", "{0} Wege am Tag" },
                 { "WhereTheyGo.Panel[BandWithout]", "{0} % davon ohne ÖPNV" },
+                { "WhereTheyGo.Panel[ToolbarTooltip]", "Where They Go: wohin die Leute wollen, und wer schon fährt" },
                 { "WhereTheyGo.Panel[Purposes]", "Wege nach Zweck" },
                 { "WhereTheyGo.Panel[Bands]", "Bänder" },
                 { "WhereTheyGo.Panel[BandsShown]", "{0} von {1}" },

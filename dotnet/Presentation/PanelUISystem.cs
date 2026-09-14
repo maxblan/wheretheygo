@@ -35,6 +35,15 @@ namespace WhereTheyGo
             AddBinding(new TriggerBinding<int>(Group, "setPurposes", static mask => WhereTheyGoSystem.SetPurposeFilter(mask)));
             AddBinding(new TriggerBinding<int>(Group, "setBandThreshold", static percent => WhereTheyGoSystem.SetBandThreshold(percent)));
             AddBinding(new TriggerBinding<bool>(Group, "setHourPlay", static playing => WhereTheyGoSystem.SetHourPlay(playing)));
+            // The toolbar button, which is a toggle rather than a setter: the button
+            // has no state of its own, it reads `infoviewActive` back like everything
+            // else in the panel does.
+            AddBinding(new TriggerBinding(Group, "toggleInfoview", ToggleInfoview));
+        }
+
+        private void ToggleInfoview()
+        {
+            m_OverlaySystem.SetInfoviewActive(!m_OverlaySystem.IsInfoviewActive);
         }
 
         // The city-wide figures and what they rest on.

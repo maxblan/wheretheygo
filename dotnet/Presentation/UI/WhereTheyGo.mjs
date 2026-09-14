@@ -760,18 +760,50 @@ function registerSections(registry) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The button beside the infoview menu, top left.
+
+// The mod's own icon, served from the mod folder by Mod.OnLoad — the same file the
+// infoview carries in the Infoansicht menu, so the two ways in look like one thing.
+// It is drawn as a MASK rather than as an image, which is how the buttons in this row
+// take their colour from the button and not from the file.
+const ICON = "coui://wheretheygo/WhereTheyGo.svg";
+
+// Opens and closes the infoview. It is a TOGGLE and holds no state of its own:
+// `selected` comes straight back from C#, so the button cannot disagree with the map.
+function ToolbarButton() {
+    const t = useTranslate();
+    const active = useBound("infoviewActive", false);
+    const button = h(CsUi.Button, {
+        id: "WhereTheyGoIcon",
+        variant: "floating",
+        className: "wtg-toolbar-button" + (active ? " wtg-toolbar-button-on" : ""),
+        onSelect: () => trigger("toggleInfoview"),
+    }, h("img", { style: { maskImage: "url(" + ICON + ")" } }));
+
+    return CsUi.Tooltip
+        ? h(CsUi.Tooltip, { tooltip: t("ToolbarTooltip", "Where They Go") }, button)
+        : button;
+}
+
 const register = (moduleRegistry) => {
     if (!React || !Api || !moduleRegistry || !moduleRegistry.append) {
         console.error("[WhereTheyGo] UI module could not register.");
         return;
     }
 
-    // No window and no toolbar button of the mod's own. Everything it has to say lives
-    // where the player is already looking: the figures in the game's infoview panel
-    // (reached from the infoview menu like every vanilla one), one section in the
+    // No window of the mod's own. Everything it has to say lives where the player is
+    // already looking: the figures in the game's infoview panel, one section in the
     // selected-building window, one in the selected-line window, and every setting on
-    // the Options page.
+    // the Options page. The one mark it makes on the screen is a toggle in the top-left
+    // row, beside the other mods' — the infoview is still in the Infoansicht menu too,
+    // so losing the row to a game update costs convenience rather than the mod.
+    //
+    // "GameTopLeft" is the game's own name for the slot next to the infoview menu
+    // button: index.js renders <ModdingHook name="GameTopLeft"/> inside the same
+    // infoMenuLayout div. It is where the other mods with a button put theirs.
     resolveVanilla(moduleRegistry);
+    moduleRegistry.append("GameTopLeft", ToolbarButton);
     extendInfoview(moduleRegistry);
     registerSections(moduleRegistry);
     console.info("[WhereTheyGo] UI registered.");

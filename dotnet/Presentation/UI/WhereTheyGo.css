@@ -364,3 +364,23 @@
     height: 2rem;
     background-color: rgba(255, 255, 255, 0.12);
 }
+
+/* The button beside the infoview menu. A floating button is a bare round-cornered
+   square, so the fill and the lit state are ours to give it — the same two rules the
+   other mods in this row use, against the game's own accent colour. */
+.wtg-toolbar-button {
+    background-color: var(--accentColorNormal);
+    transition: background-color 0.15s;
+}
+
+.wtg-toolbar-button:hover {
+    background-color: var(--accentColorNormal-hover);
+}
+
+.wtg-toolbar-button-on {
+    background-color: #ffffff;
+}
+
+.wtg-toolbar-button-on img {
+    background-color: var(--accentColorNormal);
+}
