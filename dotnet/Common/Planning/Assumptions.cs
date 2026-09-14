@@ -170,10 +170,10 @@ namespace WhereTheyGo
         // apart: 6 and 11 differ as clearly as 26 and 44.
         public static readonly float[] BandClassWidthsMetres = { 6f, 11f, 22f, 40f };
 
-        // The dark casing drawn around every band, in metres. Two bands of the same
-        // colour crossing are one shape without it; this is the standard cartographic
-        // answer and the overlay buffer has had an outline colour all along
-        // (OverlayRenderSystem.Buffer.DrawCurve).
+        // The dark casing drawn around the dot at each end of a band, in metres. The
+        // bands themselves no longer carry one: a tube in the air is separated from
+        // the tube it crosses by depth, which reads better than any outline. The dots
+        // lie flat on the ground among the streets and still need theirs.
         public const float BandOutlineMetres = 1.6f;
 
         // The dot drawn at each end of a band, as a share of the band's own width.
@@ -193,13 +193,15 @@ namespace WhereTheyGo
 
         public const float BandArrowInsetShare = 0.16f;
 
-        // How far a band bows out of the straight line, as a share of its length and
-        // capped in metres, so a cross-city band does not swing out over the sea. Just
-        // enough to separate two bands between the same districts; more than this and
-        // a band stops reading as a connection between its two ends.
-        public const float BandBowShare = 0.06f;
+        // How high a band's arc flies over its middle: a share of its length, capped
+        // in metres. The arc rises into the AIR rather than bowing sideways, so a band
+        // stands over the straight line between its two ends and two bands between the
+        // same districts are told apart by how high they fly rather than by which way
+        // they swing. Eighteen percent puts a two-kilometre corridor well above the
+        // tallest tower without burying the city under it.
+        public const float BandArcHeightShare = 0.18f;
 
-        public const float BandBowMaxMetres = 250f;
+        public const float BandArcMaxHeightMetres = 400f;
 
         // Bands under this share of the heaviest band are hidden until the player
         // moves the panel's slider. Five percent leaves the corridors and drops the

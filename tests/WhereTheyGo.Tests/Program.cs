@@ -78,10 +78,10 @@ namespace WhereTheyGo.Tests
             Run("Bands: the bundling is deterministic, heaviest first, and says what the cap left out", BandsAreDeterministicAndBounded);
             Run("Bands: a journey inside one zone or off the map is not a band", BandsDropWhatIsNotAJourney);
             Run("Bands: the direction follows the hour, and a whole day has none", BandDirectionFollowsTheHour);
-            Run("Bands: the arc bows left, the tangent turns the arrow, the casing darkens the fill", BandGeometryBowsLeftAndCasesTheFill);
+            Run("Bands: the arc rises over its middle, the tangent turns the arrow, the casing darkens the fill", BandArcRisesAndAimsAlongItself);
             Run("Bands: the view draws exactly what the hour and the purposes describe", BandViewFiltersExactlyAndClassesWidths);
             Run("Bands: the width classes are ordered and their boundaries readable", BandWidthClassesAreOrderedAndReadable);
-            Run("Bands: pointing at one measures against the arc, not the chord", PointingAtABandFindsTheArcNotTheChord);
+            Run("Bands: pointing at one measures against the arc, not the chord", PointingMeasuresAgainstTheArcNotTheChord);
             Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
             Run("A line's worth is what its riders lose when it is taken out", LineContributionComesFromTakingTheLineOut);
             Run("Hourly load tells an unwatched hour from a quiet one", HourlyLoadSeparatesQuietHoursFromUnwatchedOnes);

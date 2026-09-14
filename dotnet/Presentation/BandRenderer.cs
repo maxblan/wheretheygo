@@ -8,8 +8,8 @@ using UnityEngine;
 
 namespace WhereTheyGo
 {
-    // Draws the desire bands: one flat arc per band, over the terrain, coloured by how
-    // much of its traffic the network already carries and as wide as its width class.
+    // Draws the desire bands: one arc per band, flying from A to B over the city and
+    // coloured by how much of its traffic the network already carries.
     //
     // Separate from the overlay system because of phase ordering. OverlayRenderSystem
     // drains and clears its buffer during SystemUpdatePhase.Rendering; the overlay
@@ -21,27 +21,39 @@ namespace WhereTheyGo
     // is invisible here: the bands only change when the demand pipeline reruns.
     public sealed partial class BandRenderer : GameSystemBase
     {
-        // The arc is sampled into straight pieces. A curve primitive exists (DrawCurve
-        // takes a Bezier4x3), but it takes ONE height for the whole curve, and a band
-        // crosses hills; sampling lets every piece sit on the ground under it.
+        // The arc is a chain of TUBES, not a curve primitive.
         //
-        // Sampled by LENGTH rather than at a fixed count: four hundred bands at
-        // sixteen pieces each is six thousand draw calls a frame, and a 400 m band
-        // does not need sixteen.
+        // The overlay has a curve (DrawCurve takes a Bezier4x3), and it cannot do
+        // this. Its length is the length in the map plane, and a piece with no extent
+        // there is dropped outright; and an unprojected curve is one flat quad whose
+        // plane is fitted from the control points, a fit that falls back on a
+        // horizontal plane for exactly the case where the bow is vertical. What does
+        // work is CustomMeshType.Cylinder: a 64-sided tube whose axis is its local Y,
+        // freely rotated, with `width` its RADIUS and `height` its full length. All of
+        // them go out in one instanced draw call, so a chain costs less than the two
+        // passes the flat band used to take. Both facts are in docs/game-facts.md.
         private const float ArcMetresPerSegment = 200f;
 
-        private const int MinArcSegments = 3;
+        // Enough pieces that the arc reads as a curve rather than as a folded rule:
+        // a band turns through some seventy degrees between its two ends, so ten is
+        // the floor however short it is.
+        private const int MinArcSegments = 10;
 
-        private const int MaxArcSegments = 14;
+        private const int MaxArcSegments = 20;
 
-        // Lifted off the ground by the same margin the route polylines used, so a band
-        // is not swallowed by the terrain it follows.
+        // The tube has no end caps, so consecutive pieces would show a wedge of empty
+        // air at every joint. Each piece is lengthened by this share of its own radius,
+        // which closes the wedge by letting neighbours interpenetrate.
+        private const float JointOverlapShareOfRadius = 0.5f;
+
+        // Lifted off the ground by the same margin the route polylines used, so the
+        // feet of an arc are not swallowed by the terrain they stand on.
         private const float TerrainOffset = 4f;
 
-        // Near enough to opaque to read as one shape where bands cross, near enough to
-        // transparent to see the street underneath. Flow maps are drawn opaque almost
-        // without exception (Jenny et al. 2016: 89 % of their sample); the casing does
-        // the separating, so the fill no longer has to be see-through to be legible.
+        // Near enough to opaque to read as one solid thing, near enough to transparent
+        // that a band behind another is still there. Flow maps are drawn opaque almost
+        // without exception (Jenny et al. 2016: 89 % of their sample); where two arcs
+        // cross, depth now does the separating that a casing used to do.
         private const float BandOpacity = 0.88f;
 
         // While a line is selected: what it carries, and everything else.
@@ -50,7 +62,7 @@ namespace WhereTheyGo
         private const float DimmedOpacity = 0.16f;
 
         // The arrowhead's barbs, 35 degrees back from the tip either side, and how
-        // thick they are drawn relative to the band they sit on.
+        // thick they are drawn relative to the tube they sit on.
         private const float ArrowCos = 0.819f;
 
         private const float ArrowSin = 0.574f;
@@ -68,9 +80,8 @@ namespace WhereTheyGo
         private WhereTheyGoSystem m_OverlaySystem;
 #pragma warning restore CS8618
 
-        // The sampled arc of the band being drawn. Kept here rather than allocated per
-        // band because both passes over it — casing then fill — want the same points,
-        // and sampling the terrain twice for the same metre is wasted work.
+        // The sampled arc of the band being drawn, kept here rather than allocated
+        // once per band per frame.
         private readonly float3[] m_Arc = new float3[MaxArcSegments + 1];
 
         protected override void OnCreate()
@@ -113,23 +124,30 @@ namespace WhereTheyGo
             bool highlighting = AnyBandCarriesTheSelectedLine(view);
             Band? hovered = WhereTheyGoSystem.HoveredBand;
 
-            // HEAVIEST FIRST, so the light bands end up on top of the heavy ones.
-            // Cartographic practice since Dent: a thin flow hidden under a thick one
-            // is gone, while a thin flow crossing a thick one costs the thick one
-            // nothing — it is still the widest thing on the map.
+            // Heaviest first. It no longer decides what covers what — the tubes are
+            // solid and depth sorts them, which is the whole point of drawing them in
+            // the air — but the hit test walks the same list backwards, so the two
+            // agree about which band is in front by construction.
             for (int i = 0; i < view.Drawn.Length; i++)
             {
                 DrawnBand drawn = view.Drawn[i];
+                Band band = drawn.Band;
                 float opacity = !highlighting ? BandOpacity
-                    : drawn.Band.CarriesTarget ? HighlightOpacity
+                    : band.CarriesTarget ? HighlightOpacity
                     : DimmedOpacity;
-                if (ReferenceEquals(drawn.Band, hovered))
+                if (ReferenceEquals(band, hovered))
                 {
                     opacity = HighlightOpacity;
                 }
 
-                DrawBand(buffer, ref heightData, drawn, opacity);
-                DrawDirection(buffer, ref heightData, drawn, hour, purposes, opacity);
+                // Only the two feet touch the ground now; everything between them
+                // hangs in the air, so the terrain is asked twice per band instead of
+                // once per piece of arc.
+                float footA = GroundHeight(ref heightData, band.Ax, band.Az);
+                float footB = GroundHeight(ref heightData, band.Bx, band.Bz);
+                int segments = Sample(band, footA, footB);
+                DrawBand(buffer, drawn, opacity, segments);
+                DrawDirection(buffer, drawn, hour, purposes, opacity, footA, footB);
             }
 
             // The buffer was written on the main thread with the prior writers already
@@ -152,7 +170,7 @@ namespace WhereTheyGo
             return false;
         }
 
-        private void DrawBand(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData, DrawnBand drawn, float opacity)
+        private void DrawBand(OverlayRenderSystem.Buffer buffer, DrawnBand drawn, float opacity, int segments)
         {
             Band band = drawn.Band;
             BandGeometry.Colour(band.CarriedShare, out float r, out float g, out float b);
@@ -160,26 +178,17 @@ namespace WhereTheyGo
             var fill = new Color(r, g, b, opacity);
             var casing = new Color(dr, dg, db, opacity);
             float width = BandView.WidthOf(drawn.WidthClass);
-            int segments = Sample(ref heightData, band);
+            float radius = width * 0.5f;
 
-            // Two passes rather than DrawLine's own outline argument: the arc is drawn
-            // as a chain of straight pieces, and an outline per piece would draw a
-            // dark seam across every joint. Casing first for the whole band, fill over
-            // it, and the seams land under the band's own colour.
-            float casingWidth = width + (2f * Assumptions.BandOutlineMetres);
+            float overlap = radius * JointOverlapShareOfRadius;
             for (int step = 0; step < segments; step++)
             {
-                buffer.DrawLine(casing, new Line3.Segment(m_Arc[step], m_Arc[step + 1]), casingWidth);
+                DrawTube(buffer, fill, m_Arc[step], m_Arc[step + 1], radius, overlap);
             }
 
-            for (int step = 0; step < segments; step++)
-            {
-                buffer.DrawLine(fill, new Line3.Segment(m_Arc[step], m_Arc[step + 1]), width);
-            }
-
-            // A dot at each end. Flows anchored at point symbols were read with fewer
-            // errors and faster than flows floating between areas, and our ends are
-            // the weighted middle of a district with nothing to mark them.
+            // A dot on the ground at each foot. Flows anchored at point symbols were
+            // read with fewer errors and faster than flows floating between areas, and
+            // an arc that starts in mid-air says nothing about where it starts.
             float dot = width * Assumptions.BandEndDotShareOfWidth;
             buffer.DrawCircle(casing, m_Arc[0], dot + (2f * Assumptions.BandOutlineMetres));
             buffer.DrawCircle(casing, m_Arc[segments], dot + (2f * Assumptions.BandOutlineMetres));
@@ -187,16 +196,34 @@ namespace WhereTheyGo
             buffer.DrawCircle(fill, m_Arc[segments], dot);
         }
 
-        // The band's arc, sampled onto the ground into m_Arc. Returns how many straight
-        // pieces it came to, so m_Arc[0..segments] are the points.
-        private int Sample(ref TerrainHeightData heightData, Band band)
+        // One piece of an arc, as a tube. The mesh's axis is its own local Y and its
+        // `width` is a RADIUS, not a diameter — both read out of the code that builds
+        // it in OverlayRenderSystem — so the rotation wanted here is the one that takes
+        // straight up onto the piece's own direction.
+        private static void DrawTube(OverlayRenderSystem.Buffer buffer, Color colour, float3 from, float3 to, float radius, float overlap)
+        {
+            float3 along = to - from;
+            float length = math.length(along);
+            if (length < 0.01f)
+            {
+                return;
+            }
+
+            Quaternion rotation = Quaternion.FromToRotation(Vector3.up, along / length);
+            buffer.DrawCustomMesh(colour, (from + to) * 0.5f, length + overlap, radius, OverlayRenderSystem.CustomMeshType.Cylinder, rotation);
+        }
+
+        // The band's arc, sampled into m_Arc between its two feet. Returns how many
+        // straight pieces it came to, so m_Arc[0..segments] are the points.
+        private int Sample(Band band, float footA, float footB)
         {
             int segments = math.clamp((int)(band.LengthMetres / ArcMetresPerSegment), MinArcSegments, MaxArcSegments);
-            m_Arc[0] = Ground(ref heightData, band.Ax, band.Az);
-            for (int step = 1; step <= segments; step++)
+            for (int step = 0; step <= segments; step++)
             {
-                BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, step / (float)segments, out float x, out float z);
-                m_Arc[step] = Ground(ref heightData, x, z);
+                BandGeometry.PointOnArc(
+                    band.Ax, footA, band.Az, band.Bx, footB, band.Bz, step / (float)segments,
+                    out float x, out float y, out float z);
+                m_Arc[step] = new float3(x, y, z);
             }
 
             return segments;
@@ -210,14 +237,14 @@ namespace WhereTheyGo
         // user study behind that count arrowheads beat every alternative tested. They
         // also hold still, which the product plan asks of everything on this map.
         //
-        // Two lines rather than the game's own Arrow mesh. The mesh exists, but its
-        // local orientation is undocumented and the only vanilla caller stands it up
-        // vertically for the water tool; drawn flat it came out pointing across the
-        // band instead of along it, and far too large. A chevron of two segments is
-        // aimed and sized by arithmetic that is right here in front of us.
-        private void DrawDirection(
-            OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData,
-            DrawnBand drawn, int hour, int purposes, float opacity)
+        // Two tubes rather than the game's own Arrow mesh. That mesh is a flat flag
+        // standing in its local XY plane, and the only vanilla caller stands it upright
+        // for the water tool; aimed along an arc it came out pointing across the band
+        // and far too large. A chevron of two pieces is aimed and sized by arithmetic
+        // that is right here in front of us.
+        private static void DrawDirection(
+            OverlayRenderSystem.Buffer buffer, DrawnBand drawn,
+            int hour, int purposes, float opacity, float footA, float footB)
         {
             Band band = drawn.Band;
             int direction = band.DirectionAtHour(hour, purposes);
@@ -226,25 +253,29 @@ namespace WhereTheyGo
                 return;
             }
 
-            // Set back from the end so the head sits ON the band rather than over the
-            // end dot, and aimed along the arc's own tangent — on a bowed band the
-            // straight A-to-B heading is visibly wrong near the ends.
+            // Set back from the end so the head sits ON the arc rather than over the
+            // foot dot, and aimed along the arc's own tangent, which near the ends
+            // climbs at better than thirty degrees.
             float t = direction > 0 ? 1f - Assumptions.BandArrowInsetShare : Assumptions.BandArrowInsetShare;
-            BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float tipX, out float tipZ);
-            BandGeometry.DirectionOnArc(band.Ax, band.Az, band.Bx, band.Bz, t, out float dx, out float dz);
+            BandGeometry.PointOnArc(band.Ax, footA, band.Az, band.Bx, footB, band.Bz, t, out float tipX, out float tipY, out float tipZ);
+            BandGeometry.DirectionOnArc(band.Ax, footA, band.Az, band.Bx, footB, band.Bz, t, out float dx, out float dy, out float dz);
             if (direction < 0)
             {
                 dx = -dx;
+                dy = -dy;
                 dz = -dz;
             }
 
             float width = BandView.WidthOf(drawn.WidthClass);
             float arm = width * Assumptions.BandArrowShareOfWidth;
-            // The two barbs run back from the tip at 35 degrees either side.
-            float backX = -dx * ArrowCos;
-            float backZ = -dz * ArrowCos;
-            float sideX = -dz * ArrowSin;
-            float sideZ = dx * ArrowSin;
+            // The barbs run back along the arc at 35 degrees either side, and they open
+            // out HORIZONTALLY: a chevron that opened in the arc's own vertical plane
+            // would be edge-on from directly above, which is where this map is read.
+            float3 back = new float3(-dx, -dy, -dz) * ArrowCos;
+            float plan = math.sqrt((dx * dx) + (dz * dz));
+            float3 side = plan > 1e-4f
+                ? new float3(-dz / plan, 0f, dx / plan) * ArrowSin
+                : new float3(0f, 0f, ArrowSin);
 
             // White rather than the band's own colour: the head has to read against the
             // band it sits on, and it is the one mark on this map that answers "which
@@ -252,18 +283,15 @@ namespace WhereTheyGo
             // the cool end of the ramp, which is already light.
             var colour = new Color(1f, 1f, 1f, opacity * (0.55f + (0.45f * (1f - band.CarriedShare))));
 
-            float3 tip = Ground(ref heightData, tipX, tipZ);
-            float3 left = Ground(ref heightData, tipX + ((backX + sideX) * arm), tipZ + ((backZ + sideZ) * arm));
-            float3 right = Ground(ref heightData, tipX + ((backX - sideX) * arm), tipZ + ((backZ - sideZ) * arm));
-            float stroke = Math.Max(width * ArrowStrokeShare, MinArrowStrokeMetres);
-            buffer.DrawLine(colour, new Line3.Segment(left, tip), stroke);
-            buffer.DrawLine(colour, new Line3.Segment(right, tip), stroke);
+            var tip = new float3(tipX, tipY, tipZ);
+            float stroke = Math.Max(width * ArrowStrokeShare, MinArrowStrokeMetres) * 0.5f;
+            DrawTube(buffer, colour, tip + ((back + side) * arm), tip, stroke, 0f);
+            DrawTube(buffer, colour, tip + ((back - side) * arm), tip, stroke, 0f);
         }
 
-        private static float3 Ground(ref TerrainHeightData heightData, float x, float z)
+        private static float GroundHeight(ref TerrainHeightData heightData, float x, float z)
         {
-            var flat = new float3(x, 0f, z);
-            return new float3(x, TerrainUtils.SampleHeight(ref heightData, flat) + TerrainOffset, z);
+            return TerrainUtils.SampleHeight(ref heightData, new float3(x, 0f, z)) + TerrainOffset;
         }
     }
 }

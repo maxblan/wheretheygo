@@ -1,4 +1,4 @@
-# What the game actually does
+﻿# What the game actually does
 
 Facts about Cities: Skylines II that this mod depends on, each read out of the
 decompiled assemblies rather than inferred from a name. They are here because every one
@@ -98,6 +98,35 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
   `Quaternion.LookRotation(new Vector3(dir.x, 0f, dir.z), Vector3.up)` points the mesh
   along `dir`, and it is drawn **twice, the second time with the height negated**,
   because the mesh is one-sided.
+- **The curve primitive cannot draw anything that leaves the ground plane**, which is
+  why the desire bands are tubes. Three independent reasons, all in
+  `OverlayRenderSystem.Buffer`: every entry point measures `length` as
+  `MathUtils.Length(curve.xz)`, the length in the MAP PLANE, and `DrawCurveImpl`
+  silently drops anything under 1 cm of it; the unprojected ("absolute") curve is drawn
+  as ONE flat quad (`GetMesh(box: false)` is four vertices at local y = 0); and
+  `FitQuad(Bezier4x3, …)` fits that quad's plane by taking `cross(forward, b − a)` and
+  `cross(forward, d − c)`, negating whichever has `y < 0`, and adding them. For a bow to
+  the SIDE the two are opposite and the negation makes them agree — it works. For a bow
+  purely in Y both have `y == 0` exactly, nothing is negated, they cancel, and the code
+  falls back on `up = (0, 1, 0)`: a horizontal quad. A vertical arc is precisely that
+  function's degenerate case.
+- The `cameraFacing` parameter on `DrawLine` and on `FitQuad` is **dead in this build**:
+  checked in IL, the argument is never loaded in either body.
+- **The `Cylinder` mesh is built in code** (`GetCustomMeshMesh`), so its geometry is a
+  fact and not a guess: 64 sides, radius 1 in the local XZ plane, from y = −0.5 to
+  +0.5. So its axis is its **local Y**, `DrawCustomMesh`'s `width` is a **radius** (the
+  TRS scale is `(width, height, width)`) and `height` is the full length, both centred
+  on `position`. It has **no end caps**. The only vanilla caller is the water source in
+  `GuideLinesSystem`, standing upright with `Quaternion.identity`, so a rotated chain is
+  ours to establish — `Quaternion.FromToRotation(Vector3.up, direction)` aims one piece.
+  The `Arrow` mesh, likewise generated: flat in its local XY plane (every z is 0), base
+  at y = 0, tip at y = 3, so it is a FLAG, which is why it came out pointing across a
+  band when aimed flat.
+- All overlay instances — projected curves, absolute curves and every custom mesh — are
+  drawn with **one shared bounds**, `m_BoundsData`, and that value is **never reset**:
+  `DrawCircleImpl`/`DrawCurveImpl` only ever union into it with `|=`. So it grows to
+  cover everything drawn since the world loaded, and geometry high above the ground
+  cannot be culled away by it. Custom meshes contribute nothing to it themselves.
 - `ToolRaycastSystem.CalculateRaycastLine` and `CameraRayPlaneIntersect` are public
   statics, so a mod can compute the pointer's ray without owning a tool. Note that
   `CameraRayPlaneIntersect` uses the CAMERA's forward as the plane normal — it is not a

@@ -2,86 +2,80 @@
 
 namespace WhereTheyGo
 {
-    // How a band is drawn: the arc it follows, how wide it is, and what colour.
+    // How a band is drawn: the arc it flies along and what colour it carries.
     //
     // All three are pure functions of the band, so the legend, the renderer and the
     // tests agree about them by construction rather than by comment.
     internal static class BandGeometry
     {
-        // The arc, as the two interior control points of a cubic curve between the
-        // ends. Bowed rather than straight for one reason: two bands between the same
-        // districts, or one crossing another, lie on top of each other as straight
-        // lines and the map becomes a single smear.
+        // How high this band's arc flies over its middle, in metres.
+        public static float ArcHeightMetres(float lengthMetres)
+        {
+            float height = lengthMetres * Assumptions.BandArcHeightShare;
+            return height > Assumptions.BandArcMaxHeightMetres ? Assumptions.BandArcMaxHeightMetres : height;
+        }
+
+        // How far above the straight line between its two ends the arc runs at `t`.
         //
-        // The bow is always to the LEFT of A→B, and A is the end with the lower zone
-        // index (DesireBands), so the same two places always bow the same way however
-        // the journeys happened to be recorded.
-        public static void Arc(
-            float ax, float az, float bx, float bz,
-            out float c1x, out float c1z, out float c2x, out float c2z)
+        // 4h*t*(1-t) is the vertical part of a cubic curve whose two inner control
+        // points are lifted by 4h/3 - the same four thirds the game itself uses for a
+        // curve that hangs (NetUtils.StraightCurve multiplies the sag by 1.3333334).
+        // At t = 0.5 it comes to exactly h, which is what lets one number describe the
+        // arc to the renderer, the hit test and a reader.
+        public static float RiseAt(float lengthMetres, float t)
+        {
+            return 4f * ArcHeightMetres(lengthMetres) * t * (1f - t);
+        }
+
+        // A point on the arc: straight in plan, bowed into the air. `t` runs from 0 at
+        // A to 1 at B, and the two end heights are the ground under each end.
+        //
+        // The arc is drawn as a chain of tubes rather than as one curve primitive, and
+        // this is why: the overlay's curve is ONE flat quad whose plane is fitted from
+        // the curve's own control points, and a bow that is purely vertical is exactly
+        // the case that fit falls back on a horizontal plane for (OverlayRenderSystem
+        // .Buffer.FitQuad - the two cross products cancel). Its length is measured in
+        // the map plane as well. See docs/game-facts.md.
+        public static void PointOnArc(
+            float ax, float ay, float az, float bx, float by, float bz, float t,
+            out float x, out float y, out float z)
         {
             float dx = bx - ax;
             float dz = bz - az;
             float length = (float)Math.Sqrt((dx * dx) + (dz * dz));
-            if (length <= 0.001f)
-            {
-                c1x = ax;
-                c1z = az;
-                c2x = bx;
-                c2z = bz;
-                return;
-            }
-
-            float bow = Math.Min(length * Assumptions.BandBowShare, Assumptions.BandBowMaxMetres);
-            // Left of the direction of travel in the map plane (x, z).
-            float leftX = -dz / length;
-            float leftZ = dx / length;
-            c1x = ax + (dx / 3f) + (leftX * bow);
-            c1z = az + (dz / 3f) + (leftZ * bow);
-            c2x = ax + (dx * 2f / 3f) + (leftX * bow);
-            c2z = az + (dz * 2f / 3f) + (leftZ * bow);
+            x = ax + (dx * t);
+            z = az + (dz * t);
+            y = ay + ((by - ay) * t) + RiseAt(length, t);
         }
 
-        // A point on that arc, for hit-testing and for the dots that show which way the
-        // traffic runs. `t` from 0 at A to 1 at B.
-        public static void PointOnArc(
-            float ax, float az, float bx, float bz, float t,
-            out float x, out float z)
-        {
-            Arc(ax, az, bx, bz, out float c1x, out float c1z, out float c2x, out float c2z);
-            float u = 1f - t;
-            float w0 = u * u * u;
-            float w1 = 3f * u * u * t;
-            float w2 = 3f * u * t * t;
-            float w3 = t * t * t;
-            x = (w0 * ax) + (w1 * c1x) + (w2 * c2x) + (w3 * bx);
-            z = (w0 * az) + (w1 * c1z) + (w2 * c2z) + (w3 * bz);
-        }
-
-        // Which way the arc is heading at `t`, normalised, in the map plane. The
-        // arrowhead that shows an hour's direction has to sit along the curve; on a
-        // bowed band the straight A→B direction is visibly wrong at the ends.
+        // Which way the arc is heading at `t`, normalised, in three dimensions. The
+        // arrowhead that shows an hour's direction has to sit along the arc; near the
+        // ends a band climbs at better than thirty degrees, where the straight A-to-B
+        // heading points into the ground.
         public static void DirectionOnArc(
-            float ax, float az, float bx, float bz, float t,
-            out float dx, out float dz)
+            float ax, float ay, float az, float bx, float by, float bz, float t,
+            out float dx, out float dy, out float dz)
         {
-            Arc(ax, az, bx, bz, out float c1x, out float c1z, out float c2x, out float c2z);
-            float u = 1f - t;
-            // Derivative of the cubic: 3[(1-t)²(c1-a) + 2(1-t)t(c2-c1) + t²(b-c2)].
-            float rawX = (3f * u * u * (c1x - ax)) + (6f * u * t * (c2x - c1x)) + (3f * t * t * (bx - c2x));
-            float rawZ = (3f * u * u * (c1z - az)) + (6f * u * t * (c2z - c1z)) + (3f * t * t * (bz - c2z));
+            float rawX = bx - ax;
+            float rawZ = bz - az;
             float length = (float)Math.Sqrt((rawX * rawX) + (rawZ * rawZ));
-            if (length <= 1e-4f)
+            // The rise's own slope, 4h(1 - 2t), on top of the slope of the ground
+            // between the two ends.
+            float rawY = (by - ay) + (4f * ArcHeightMetres(length) * (1f - (2f * t)));
+            float size = (float)Math.Sqrt((rawX * rawX) + (rawY * rawY) + (rawZ * rawZ));
+            if (size <= 1e-4f)
             {
-                // A band whose ends coincide has no heading; pointing along +x is
-                // arbitrary but never NaN.
+                // A band whose ends coincide on flat ground has no heading; pointing
+                // along +x is arbitrary but never NaN.
                 dx = 1f;
+                dy = 0f;
                 dz = 0f;
                 return;
             }
 
-            dx = rawX / length;
-            dz = rawZ / length;
+            dx = rawX / size;
+            dy = rawY / size;
+            dz = rawZ / size;
         }
 
         // Warm where nobody rides, cool where everybody does. The ramp runs from a
@@ -97,51 +91,27 @@ namespace WhereTheyGo
             b = Lerp(0.24f, 0.55f, t);
         }
 
-        // How far a point lies from the band's arc, squared, in metres. Sampled along
-        // the same curve the renderer draws, so what the player points at is what they
-        // see — a closed-form distance to a cubic would be exact about a curve nobody
-        // is looking at.
-        public static float DistanceSqToArc(float ax, float az, float bx, float bz, float px, float pz, int samples)
-        {
-            if (samples < 1)
-            {
-                samples = 1;
-            }
-
-            float best = float.MaxValue;
-            PointOnArc(ax, az, bx, bz, 0f, out float lastX, out float lastZ);
-            for (int i = 1; i <= samples; i++)
-            {
-                PointOnArc(ax, az, bx, bz, i / (float)samples, out float x, out float z);
-                float distance = DistanceSqToSegment(lastX, lastZ, x, z, px, pz);
-                if (distance < best)
-                {
-                    best = distance;
-                }
-
-                lastX = x;
-                lastZ = z;
-            }
-
-            return best;
-        }
-
-        private static float DistanceSqToSegment(float x1, float z1, float x2, float z2, float px, float pz)
+        // How far a point lies from a straight piece of a line, squared. The hit test
+        // walks the arc's own pieces with this, in SCREEN space rather than on the
+        // ground: a band now flies hundreds of metres above the corridor it describes,
+        // so where it lies on the map and where the player sees it are two different
+        // places, and only one of them can be pointed at.
+        public static float DistanceSqToSegment(float x1, float y1, float x2, float y2, float px, float py)
         {
             float dx = x2 - x1;
-            float dz = z2 - z1;
-            float lengthSq = (dx * dx) + (dz * dz);
-            float t = lengthSq <= 0f ? 0f : (((px - x1) * dx) + ((pz - z1) * dz)) / lengthSq;
+            float dy = y2 - y1;
+            float lengthSq = (dx * dx) + (dy * dy);
+            float t = lengthSq <= 0f ? 0f : (((px - x1) * dx) + ((py - y1) * dy)) / lengthSq;
             t = t < 0f ? 0f : t > 1f ? 1f : t;
             float cx = x1 + (t * dx);
-            float cz = z1 + (t * dz);
-            return ((px - cx) * (px - cx)) + ((pz - cz) * (pz - cz));
+            float cy = y1 + (t * dy);
+            return ((px - cx) * (px - cx)) + ((py - cy) * (py - cy));
         }
 
-        // The casing colour for a band of this fill: the same hue driven well down in
-        // lightness. A neutral black outline would read as a fifth colour on a map
-        // that already carries a ramp; this one disappears into its own band and only
-        // does its job where two bands overlap.
+        // The casing colour for the dot at a band's end: the band's own hue driven
+        // well down in lightness. A neutral black outline would read as a fifth colour
+        // on a map that already carries a ramp; this one disappears into its own dot
+        // and only does its job against the streets the dot sits among.
         public static void OutlineColour(float carriedShare, out float r, out float g, out float b)
         {
             Colour(carriedShare, out float fillR, out float fillG, out float fillB);

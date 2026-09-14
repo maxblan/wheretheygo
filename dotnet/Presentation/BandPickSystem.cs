@@ -19,16 +19,16 @@ namespace WhereTheyGo
     {
         // The arc is tested in this many pieces. More than the renderer draws: a hit
         // test that is coarser than the line it tests looks like a mis-aimed pointer.
-        private const int PickSamples = 20;
+        private const int PickSamples = 24;
 
-        // How far outside its own width a band may still be grabbed, in metres. A thin
-        // band is otherwise impossible to point at on a zoomed-out map.
-        private const float PickSlackMetres = 40f;
-
-        // Two iterations of ray-against-terrain. The first uses sea level, the second
-        // the height found there, which is within a metre or two on anything but a
-        // cliff — and a cliff is not where bands are read.
-        private const int GroundIterations = 2;
+        // How far outside its own edge a band may still be grabbed, in PIXELS.
+        //
+        // In pixels rather than in metres because the bands now fly: an arc is drawn
+        // where it appears on screen, not where it lies on the map, so the only honest
+        // question is how far the pointer is from the drawn line. It also fixes what
+        // the old slack in metres got wrong at both ends of the zoom — forty metres is
+        // half the screen from up close and invisible from far away.
+        private const float PickSlackPixels = 14f;
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate.
@@ -56,68 +56,43 @@ namespace WhereTheyGo
                 return;
             }
 
-            if (!TryGroundPoint(camera, out float px, out float pz))
-            {
-                WhereTheyGoSystem.SetHoveredBand(band: null);
-                return;
-            }
-
-            WhereTheyGoSystem.SetHoveredBand(NearestBand(px, pz));
-        }
-
-        // Where the pointer meets the ground. The ray is intersected with a horizontal
-        // plane, the terrain is sampled there, and the intersection is redone at that
-        // height — which is what turns "somewhere along the line of sight" into "the
-        // place under the cursor" on anything but a vertical face.
-        private bool TryGroundPoint(Camera camera, out float x, out float z)
-        {
-            x = 0f;
-            z = 0f;
-            Ray ray = camera.ScreenPointToRay(InputManager.instance.mousePosition);
-            // Looking along the horizon: no ground under the cursor to speak of.
-            if (Mathf.Abs(ray.direction.y) < 1e-4f)
-            {
-                return false;
-            }
-
+            // One matrix for the whole frame rather than a WorldToScreenPoint call per
+            // sample per band: the same arithmetic, without crossing into the engine
+            // some thousands of times while the pointer moves.
+            float4x4 viewProjection = math.mul(camera.projectionMatrix, camera.worldToCameraMatrix);
+            Vector2 pointer = input.mousePosition;
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(waitForPending: false);
-            float height = 0f;
-            for (int i = 0; i < GroundIterations; i++)
-            {
-                float t = (height - ray.origin.y) / ray.direction.y;
-                if (t <= 0f)
-                {
-                    return false;
-                }
-
-                Vector3 hit = ray.origin + (ray.direction * t);
-                x = hit.x;
-                z = hit.z;
-                height = TerrainUtils.SampleHeight(ref heightData, new float3(x, 0f, z));
-            }
-
-            return true;
+            WhereTheyGoSystem.SetHoveredBand(NearestBand(ref heightData, viewProjection, camera.pixelWidth, camera.pixelHeight, pointer.x, pointer.y));
         }
 
         // The nearest band the player can actually see: the threshold, the purposes and
         // the hour all decide what is on screen, and pointing at something invisible
         // would be a lie.
-        private Band? NearestBand(float px, float pz)
+        private Band? NearestBand(ref TerrainHeightData heightData, float4x4 viewProjection, float pixelWidth, float pixelHeight, float px, float py)
         {
             // The same view the renderer draws from, so what the pointer can find and
             // what the eye can see are one list rather than two agreeing by luck.
             BandView view = m_Overlay.CurrentBandView;
             Band? best = null;
             float bestDistance = float.MaxValue;
-            // Lightest first, matching the draw order: where a thin band lies over a
+            // Lightest first, matching the draw order: where a thin band crosses a
             // thick one, the thin one is what the player is looking at.
             for (int i = view.Drawn.Length - 1; i >= 0; i--)
             {
                 DrawnBand drawn = view.Drawn[i];
                 Band band = drawn.Band;
-                float reach = (BandView.WidthOf(drawn.WidthClass) * 0.5f) + PickSlackMetres;
-                float distanceSq = BandGeometry.DistanceSqToArc(band.Ax, band.Az, band.Bx, band.Bz, px, pz, PickSamples);
-                if (distanceSq <= reach * reach && distanceSq < bestDistance)
+                float footA = TerrainUtils.SampleHeight(ref heightData, new float3(band.Ax, 0f, band.Az));
+                float footB = TerrainUtils.SampleHeight(ref heightData, new float3(band.Bx, 0f, band.Bz));
+                float distanceSq = DistanceSqOnScreen(band, footA, footB, viewProjection, pixelWidth, pixelHeight, px, py);
+                if (distanceSq >= bestDistance)
+                {
+                    continue;
+                }
+
+                // Half the band's own width on screen would be the exact answer; the
+                // band is drawn in metres, so the slack alone stands in for it. A
+                // thick band is easier to hit anyway because its arc is the same line.
+                if (distanceSq <= PickSlackPixels * PickSlackPixels)
                 {
                     bestDistance = distanceSq;
                     best = band;
@@ -125,6 +100,67 @@ namespace WhereTheyGo
             }
 
             return best;
+        }
+
+        // How far the pointer is, in pixels, from the band's arc as it appears on
+        // screen. Samples the same arc the renderer draws and walks its pieces.
+        private static float DistanceSqOnScreen(
+            Band band, float footA, float footB, float4x4 viewProjection,
+            float pixelWidth, float pixelHeight, float px, float py)
+        {
+            float best = float.MaxValue;
+            bool havePrevious = false;
+            float lastX = 0f;
+            float lastY = 0f;
+            for (int i = 0; i <= PickSamples; i++)
+            {
+                BandGeometry.PointOnArc(
+                    band.Ax, footA, band.Az, band.Bx, footB, band.Bz, i / (float)PickSamples,
+                    out float x, out float y, out float z);
+                if (!TryProject(viewProjection, pixelWidth, pixelHeight, x, y, z, out float sx, out float sy))
+                {
+                    // Behind the camera: the piece leading up to it cannot be measured
+                    // either, so the chain starts again at the next point in front.
+                    havePrevious = false;
+                    continue;
+                }
+
+                if (havePrevious)
+                {
+                    float distance = BandGeometry.DistanceSqToSegment(lastX, lastY, sx, sy, px, py);
+                    if (distance < best)
+                    {
+                        best = distance;
+                    }
+                }
+
+                lastX = sx;
+                lastY = sy;
+                havePrevious = true;
+            }
+
+            return best;
+        }
+
+        // A world point in screen pixels, with the origin at the bottom left where the
+        // input system puts the pointer. False when the point is behind the camera,
+        // where the perspective divide turns round and would report a hit on the
+        // opposite side of the screen.
+        private static bool TryProject(
+            float4x4 viewProjection, float pixelWidth, float pixelHeight,
+            float x, float y, float z, out float sx, out float sy)
+        {
+            float4 clip = math.mul(viewProjection, new float4(x, y, z, 1f));
+            if (clip.w <= 1e-4f)
+            {
+                sx = 0f;
+                sy = 0f;
+                return false;
+            }
+
+            sx = ((clip.x / clip.w) + 1f) * 0.5f * pixelWidth;
+            sy = ((clip.y / clip.w) + 1f) * 0.5f * pixelHeight;
+            return true;
         }
     }
 }

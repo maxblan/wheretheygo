@@ -226,43 +226,60 @@ namespace WhereTheyGo.Tests
             AssertEqual(atoB, btoA, 1e-3f, "over a day the two directions carry the same traffic");
         }
 
-        private static void BandGeometryBowsLeftAndCasesTheFill()
+        private static void BandArcRisesAndAimsAlongItself()
         {
-            // A band running due east. Left of travel in the map plane is +z, which is
-            // north in the game's world.
-            BandGeometry.Arc(0f, 0f, 1000f, 0f, out float c1x, out float c1z, out float c2x, out float c2z);
-            float bow = Math.Min(1000f * Assumptions.BandBowShare, Assumptions.BandBowMaxMetres);
-            AssertEqual(bow, c1z, 1e-3f, "the arc bows left of the direction of travel");
-            AssertEqual(bow, c2z, 1e-3f, "at both control points");
-            AssertTrue(c1x < c2x, "which are a third and two thirds along");
+            // A band running due east over flat ground at sea level.
+            const float ax = 0f;
+            const float az = 0f;
+            const float bx = 1000f;
+            const float bz = 0f;
+            float height = BandGeometry.ArcHeightMetres(1000f);
+            AssertEqual(1000f * Assumptions.BandArcHeightShare, height, 1e-3f, "the arc's height is a share of the band's length");
 
-            BandGeometry.PointOnArc(0f, 0f, 1000f, 0f, 0f, out float sx, out float sz);
-            BandGeometry.PointOnArc(0f, 0f, 1000f, 0f, 1f, out float ex, out float ez);
-            AssertTrue(sx == 0f && sz == 0f && Math.Abs(ex - 1000f) < 1e-3f && Math.Abs(ez) < 1e-3f, "the arc starts at A and ends at B");
-            BandGeometry.PointOnArc(0f, 0f, 1000f, 0f, 0.5f, out float mx, out float mz);
-            AssertTrue(Math.Abs(mx - 500f) < 1e-3f && mz > 1f, $"and its middle is off the straight line, at z={mz.ToString("F1", CultureInfo.InvariantCulture)}");
+            BandGeometry.PointOnArc(ax, 0f, az, bx, 0f, bz, 0f, out float sx, out float sy, out float sz);
+            BandGeometry.PointOnArc(ax, 0f, az, bx, 0f, bz, 1f, out float ex, out float ey, out float ez);
+            AssertTrue(sx == 0f && sz == 0f && Math.Abs(ex - 1000f) < 1e-3f && Math.Abs(ez) < 1e-3f, "the arc starts over A and ends over B");
+            AssertTrue(Math.Abs(sy) < 1e-3f && Math.Abs(ey) < 1e-3f, "and both its feet stand on the ground");
 
-            // A very long band's bow is capped, or it would swing out over the sea.
-            BandGeometry.Arc(0f, 0f, 40000f, 0f, out _, out float longBow, out _, out _);
-            AssertEqual(Assumptions.BandBowMaxMetres, longBow, 1e-3f, "the bow is capped in metres");
+            BandGeometry.PointOnArc(ax, 0f, az, bx, 0f, bz, 0.5f, out float mx, out float my, out float mz);
+            AssertEqual(500f, mx, 1e-3f, "in plan the arc is the straight line between its ends");
+            AssertEqual(0f, mz, 1e-3f, "with nothing to either side of it");
+            AssertEqual(height, my, 1e-2f, "and over the middle it stands exactly its own height up");
 
-            // Degenerate: a band with no length has no arc to speak of and must not
-            // divide by zero.
-            BandGeometry.Arc(5f, 5f, 5f, 5f, out float dx, out float dz, out _, out _);
-            AssertTrue(dx == 5f && dz == 5f, "a band of no length is its own control points");
+            // The quarter points of a parabola are three quarters of the way up, which
+            // is what keeps the arc from looking like a tent.
+            BandGeometry.PointOnArc(ax, 0f, az, bx, 0f, bz, 0.25f, out _, out float qy, out _);
+            AssertEqual(height * 0.75f, qy, 1e-2f, "a quarter along it is three quarters as high");
 
-            // The tangent an arrowhead is turned by. On a bowed band the straight A-to-B
-            // heading is visibly wrong near the ends, which is the whole reason this
-            // exists rather than reusing the chord.
-            BandGeometry.DirectionOnArc(0f, 0f, 1000f, 0f, 0.5f, out float mdx, out float mdz);
-            AssertTrue(Math.Abs(mdx - 1f) < 1e-3f && Math.Abs(mdz) < 1e-3f, "at the middle of a symmetric bow the heading is the chord's");
-            BandGeometry.DirectionOnArc(0f, 0f, 1000f, 0f, 0f, out float sdx, out float sdz);
-            AssertTrue(sdx > 0f && sdz > 0f, "leaving A it already heads into the bow, which is +z on an eastward band");
-            AssertTrue(Math.Abs((sdx * sdx) + (sdz * sdz) - 1f) < 1e-4f, "and the heading is a unit vector, or the arrow would be scaled by it");
-            BandGeometry.DirectionOnArc(5f, 5f, 5f, 5f, 0.5f, out float ddx, out float ddz);
-            AssertTrue(!float.IsNaN(ddx) && !float.IsNaN(ddz), "a band of no length still has a finite heading");
+            // A cross-city band's height is capped, or it would fly off the map.
+            AssertEqual(Assumptions.BandArcMaxHeightMetres, BandGeometry.ArcHeightMetres(40000f), 1e-3f, "the height is capped in metres");
 
-            // The casing is the band's own colour driven down, not black: a neutral
+            // Ends on different ground: the arc rides on the line between the two feet
+            // rather than on sea level, so neither foot is buried or left hanging.
+            BandGeometry.PointOnArc(ax, 100f, az, bx, 300f, bz, 0f, out _, out float lowFoot, out _);
+            BandGeometry.PointOnArc(ax, 100f, az, bx, 300f, bz, 1f, out _, out float highFoot, out _);
+            BandGeometry.PointOnArc(ax, 100f, az, bx, 300f, bz, 0.5f, out _, out float overSlope, out _);
+            AssertEqual(100f, lowFoot, 1e-3f, "the low foot is on its own ground");
+            AssertEqual(300f, highFoot, 1e-3f, "the high foot on its own");
+            AssertEqual(200f + height, overSlope, 1e-2f, "and the middle stands its height over the line between them");
+
+            // The tangent an arrowhead is turned by. On an arc the straight A-to-B
+            // heading points into the ground at both ends, which is the whole reason
+            // this exists rather than reusing the chord.
+            BandGeometry.DirectionOnArc(ax, 0f, az, bx, 0f, bz, 0.5f, out float mdx, out float mdy, out float mdz);
+            AssertTrue(Math.Abs(mdx - 1f) < 1e-3f && Math.Abs(mdy) < 1e-3f && Math.Abs(mdz) < 1e-3f, "over the middle the heading is level and along the chord");
+            BandGeometry.DirectionOnArc(ax, 0f, az, bx, 0f, bz, 0f, out float sdx, out float sdy, out _);
+            AssertTrue(sdx > 0f && sdy > 0f, "leaving A it climbs");
+            AssertTrue(Math.Abs((sdx * sdx) + (sdy * sdy) - 1f) < 1e-4f, "and the heading is a unit vector, or the arrow would be scaled by it");
+            BandGeometry.DirectionOnArc(ax, 0f, az, bx, 0f, bz, 1f, out _, out float edy, out _);
+            AssertTrue(edy < 0f, "reaching B it descends");
+
+            // Degenerate: a band whose ends coincide on flat ground has no arc at all
+            // and must not divide by zero.
+            BandGeometry.DirectionOnArc(5f, 0f, 5f, 5f, 0f, 5f, 0.5f, out float ddx, out float ddy, out float ddz);
+            AssertTrue(!float.IsNaN(ddx) && !float.IsNaN(ddy) && !float.IsNaN(ddz), "a band of no length still has a finite heading");
+
+            // The casing is the dot's own colour driven down, not black: a neutral
             // outline would read as a fifth colour on a map that already carries a ramp.
             BandGeometry.Colour(0.5f, out float fr, out float fg, out float fb);
             BandGeometry.OutlineColour(0.5f, out float or_, out float og, out float ob);
@@ -449,35 +466,25 @@ namespace WhereTheyGo.Tests
                 || Math.Abs(normalised - 5.0) < 1e-6;
         }
 
-        // Pointing at a band. The hit test runs on the same arc the renderer draws, so
-        // what the player grabs is what they see.
-        private static void PointingAtABandFindsTheArcNotTheChord()
+        // Pointing at a band. The hit test walks the drawn arc piece by piece, in
+        // screen space — there is no camera here, so what this pins down is the piece
+        // of arithmetic it walks with, and the reason it may not use the chord.
+        private static void PointingMeasuresAgainstTheArcNotTheChord()
         {
-            // A band running due east bows to the left (+z), so its middle is NOT on
-            // the straight line between its ends.
-            const float ax = 0f;
-            const float az = 0f;
-            const float bx = 1000f;
-            const float bz = 0f;
+            // Straight onto a piece, beside it, and past both its ends.
+            AssertTrue(BandGeometry.DistanceSqToSegment(0f, 0f, 100f, 0f, 50f, 0f) < 1e-6f, "a point on the piece is on the piece");
+            AssertEqual(9f, BandGeometry.DistanceSqToSegment(0f, 0f, 100f, 0f, 50f, 3f), 1e-4f, "beside it, the distance is the perpendicular one");
+            AssertEqual(25f, BandGeometry.DistanceSqToSegment(0f, 0f, 100f, 0f, -5f, 0f), 1e-4f, "before the start it measures to the start");
+            AssertEqual(25f, BandGeometry.DistanceSqToSegment(0f, 0f, 100f, 0f, 105f, 0f), 1e-4f, "past the end it measures to the end");
+            AssertTrue(BandGeometry.DistanceSqToSegment(7f, 7f, 7f, 7f, 7f, 7f) < 1e-6f, "a piece of no length is its own position");
 
-            BandGeometry.PointOnArc(ax, az, bx, bz, 0.5f, out float mx, out float mz);
-            float onArc = BandGeometry.DistanceSqToArc(ax, az, bx, bz, mx, mz, 20);
-            AssertTrue(onArc < 1f, $"a point on the arc is on the arc, got {Math.Sqrt(onArc).ToString("F1", CultureInfo.InvariantCulture)} m away");
-
-            // The midpoint of the CHORD is a good way off it — which is the whole
-            // reason the test is here: a hit test against the chord would grab the
-            // wrong band wherever two bands cross.
-            float onChord = BandGeometry.DistanceSqToArc(ax, az, bx, bz, 500f, 0f, 20);
-            AssertTrue(Math.Sqrt(onChord) > 20f, $"the chord's middle is off the arc by {Math.Sqrt(onChord).ToString("F1", CultureInfo.InvariantCulture)} m");
-
-            // The ends are always on it, and a point far away is far away.
-            AssertTrue(BandGeometry.DistanceSqToArc(ax, az, bx, bz, ax, az, 20) < 1f, "the A end is on the arc");
-            AssertTrue(BandGeometry.DistanceSqToArc(ax, az, bx, bz, bx, bz, 20) < 1f, "and so is the B end");
-            float far = BandGeometry.DistanceSqToArc(ax, az, bx, bz, 500f, -400f, 20);
-            AssertTrue(Math.Sqrt(far) > 350f, "a point off the band is off the band");
-
-            // A band of no length still answers rather than dividing by zero.
-            AssertTrue(BandGeometry.DistanceSqToArc(5f, 5f, 5f, 5f, 5f, 5f, 20) < 1f, "a band with no length is its own position");
+            // And the reason the chord will not do: over its middle the arc stands its
+            // full height above the straight line between its ends, so a hit test
+            // against that line would grab the wrong band wherever two cross.
+            float height = BandGeometry.ArcHeightMetres(2000f);
+            BandGeometry.PointOnArc(0f, 0f, 0f, 2000f, 0f, 0f, 0.5f, out _, out float my, out _);
+            AssertTrue(my > 100f, $"the arc's middle is {my.ToString("F0", CultureInfo.InvariantCulture)} m above the chord's");
+            AssertEqual(height, my, 1e-2f, "which is exactly the height the legend would name");
         }
 
         private static void BandColourRunsWarmToCoolAndMonotone()
