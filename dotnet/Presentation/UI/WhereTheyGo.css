@@ -84,3 +84,93 @@
    Fallbacks. Each of these applies only when the matching vanilla class could not be
    resolved, which means an export moved between game versions. The table then looks
    plainer and works the same. */
+/* ---------------------------------------------------------------------------
+   The map's own controls, under the two figures: the hour of the day, which
+   purposes, and how thin a band may be. cohtml has no <input type=range> and no
+   checkbox, so both are built out of divs — see the components in the .mjs. */
+
+.ta-control {
+    margin: 0 10rem 6rem 10rem;
+}
+
+.ta-control-row {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+}
+
+.ta-control-label {
+    font-size: 11rem;
+    color: rgb(190, 205, 218);
+}
+
+.ta-control-value {
+    font-size: 11rem;
+    color: rgb(238, 244, 250);
+}
+
+/* The slider. The track is the hit area, so it is taller than it looks: a 4 rem
+   bar is under a finger's worth of pointer slop at every UI scale. */
+.ta-track {
+    position: relative;
+    height: 14rem;
+    padding: 5rem 0;
+}
+
+.ta-track-fill {
+    position: absolute;
+    top: 6rem;
+    left: 0;
+    height: 3rem;
+    background-color: rgb(75, 195, 241);
+}
+
+.ta-track-knob {
+    position: absolute;
+    top: 2rem;
+    width: 10rem;
+    height: 10rem;
+    margin-left: -5rem;
+    border-radius: 5rem;
+    background-color: rgb(238, 244, 250);
+}
+
+/* The unfilled remainder. An element of its own, placed BEFORE the fill in the
+   markup: a ::after would paint on top of the fill and hide it. */
+.ta-track-rail {
+    position: absolute;
+    top: 6rem;
+    left: 0;
+    right: 0;
+    height: 3rem;
+    background-color: rgba(190, 205, 218, 0.25);
+}
+
+.ta-check {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.ta-check-box {
+    width: 12rem;
+    height: 12rem;
+    margin-right: 6rem;
+    line-height: 12rem;
+    text-align: center;
+    font-size: 10rem;
+    color: rgb(16, 22, 30);
+    background-color: rgba(190, 205, 218, 0.25);
+}
+
+.ta-check-box-on {
+    background-color: rgb(75, 195, 241);
+}
+
+.ta-check-label {
+    font-size: 11rem;
+    color: rgb(222, 234, 248);
+}

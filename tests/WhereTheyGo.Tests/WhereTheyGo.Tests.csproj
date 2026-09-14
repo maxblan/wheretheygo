@@ -21,6 +21,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="CommonTests.cs" />
+    <Compile Include="BandTests.cs" />
     <Compile Include="PipelineTests.cs" />
     <Compile Include="WalkNetworkTests.cs" />
     <!-- The mod's whole pure core, linked rather than duplicated: every file in a

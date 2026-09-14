@@ -7,17 +7,23 @@ namespace WhereTheyGo
     // The layers the player can toggle in the infoview panel.
     internal enum OverlayLayer
     {
+        // The desire bands: where the city travels, and how much of it the network
+        // carries. Drawn by BandRenderer through the overlay buffer rather than as a
+        // colour on anything, so it takes no colour-group index of its own — it is an
+        // infomode purely so the player can switch it off beside the other one.
+        DesireBands = 0,
+
         // Colours BUILDINGS by how far their door is from a served stop (author's
         // request 2026-09-06). It lives in the object colour group, not the terrain
         // group — see AccessInfomodePrefab.
-        TransitAccess = 0,
+        TransitAccess = 1,
     }
 
     internal static class OverlayLayers
     {
-        public const int Count = 1;
+        public const int Count = 2;
 
-        public static OverlayLayer[] All => new[] { OverlayLayer.TransitAccess };
+        public static OverlayLayer[] All => new[] { OverlayLayer.DesireBands, OverlayLayer.TransitAccess };
 
         // Layers that colour OBJECTS rather than the terrain. They take an index in
         // the object colour group, so they never occupy one of the terrain channels.
@@ -30,6 +36,7 @@ namespace WhereTheyGo
         {
             switch (layer)
             {
+                case OverlayLayer.DesireBands: return "WhereTheyGoDesireBands";
                 case OverlayLayer.TransitAccess: return "WhereTheyGoTransitAccess";
                 default: return "WhereTheyGo";
             }
@@ -41,6 +48,17 @@ namespace WhereTheyGo
         {
             switch (layer)
             {
+                case OverlayLayer.DesireBands:
+                    // The bands paint themselves (BandGeometry.Colour); this is the
+                    // legend's ramp, and it is the same two ends: warm where nobody
+                    // rides, cool where everybody does.
+                    BandGeometry.Colour(0f, out float lowR, out float lowG, out float lowB);
+                    BandGeometry.Colour(0.5f, out float midR, out float midG, out float midB);
+                    BandGeometry.Colour(1f, out float highR, out float highG, out float highB);
+                    low = new Color(lowR, lowG, lowB, 1f);
+                    medium = new Color(midR, midG, midB, 1f);
+                    high = new Color(highR, highG, highB, 1f);
+                    break;
                 default:
                     // Walking time from a building to the nearest served stop: pale
                     // straw is a short walk, deep red-brown is at or beyond the horizon.

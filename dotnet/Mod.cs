@@ -74,6 +74,11 @@ namespace WhereTheyGo
             // already uploaded that by the time we wrote ours. The two-type overloads
             // below are the game's own answer to this, and the only one that works.
 
+            // The desire bands go through OverlayRenderSystem, which drains and clears
+            // its buffer when it updates. Drawing after that is a frame late, every
+            // frame.
+            updateSystem.UpdateBefore<BandRenderer, OverlayRenderSystem>(SystemUpdatePhase.Rendering);
+
             // Buildings coloured by walk time to transit: written into Game.Objects.
             // Color after ObjectColorSystem has had its say and before BatchDataSystem
             // reads it (both are Rendering, in that order).

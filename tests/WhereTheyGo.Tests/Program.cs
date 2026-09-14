@@ -74,6 +74,11 @@ namespace WhereTheyGo.Tests
             // F3 steps 3–4, the panel contract and the disagreement pass, pure since 2026-09-05.
             Run("Journeys route door to door over the existing lines, and each line gets its riders", JourneysRouteOverTheExistingNetwork);
             Run("Carried counts the journeys transit makes faster, under this city's own ceiling", CarriedIsFasterThanWalkingAndUnderTheCeiling);
+            Run("Bands: neighbouring corridors bundle into one, in both directions", BandsBundleNeighbouringCorridors);
+            Run("Bands: the bundling is deterministic, heaviest first, and says what the cap left out", BandsAreDeterministicAndBounded);
+            Run("Bands: a journey inside one zone or off the map is not a band", BandsDropWhatIsNotAJourney);
+            Run("Bands: the arc bows left, the width is logarithmic", BandGeometryBowsLeftAndScalesByLog);
+            Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
             Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
 
             // F1's grid pass and F2's candidate set, pure since 2026-09-05.

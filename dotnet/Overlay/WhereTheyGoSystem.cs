@@ -296,6 +296,7 @@ namespace WhereTheyGo
             TrackInputChanges();
             HandleInfoviewRequest();
             FinishComputeIfReady();
+            FinishRoutingIfReady();
 
             bool active = m_Infoview.ActiveLayers() > 0;
 
@@ -350,7 +351,7 @@ namespace WhereTheyGo
             // The READING runs on the simulation clock (every ReadingIntervalFrames,
             // A8.5).
             ObserveLines();
-            if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds)
+            if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds && !m_RoutingPending)
             {
                 m_LastLineSample = now;
                 RefreshLineHealth();
@@ -371,7 +372,9 @@ namespace WhereTheyGo
         // and stop snapping), so it always runs after a snap has landed.
         private void MaybeUpdateTravelDemand(Setting settings, float now)
         {
-            if (m_TileSnap is null || m_JobPending)
+            // While a routing pass is out, every input it reads — the journeys, the
+            // lines, the stops — stays exactly as the worker saw it.
+            if (m_TileSnap is null || m_JobPending || m_RoutingPending)
             {
                 return;
             }

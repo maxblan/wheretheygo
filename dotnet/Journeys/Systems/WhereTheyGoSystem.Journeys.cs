@@ -148,7 +148,7 @@ namespace WhereTheyGo
             MeasureCoverage(settings);
             long modelMs = clock.ElapsedMilliseconds - extractMs;
 
-            RouteJourneys();
+            bool passStarted = StartRoutingPass();
             long routingMs = clock.ElapsedMilliseconds - extractMs - modelMs;
             m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
 
@@ -156,7 +156,8 @@ namespace WhereTheyGo
                 $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)} (observed shopping/leisure {(m_TripObserver.LastDemandCount).ToString(CultureInfo.InvariantCulture)} ×{(m_TripObserver.LastScale).ToString("F2", CultureInfo.InvariantCulture)} over {(LineHistory.GameHours(m_TripObserver.Window.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours), " +
                 $"weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}; " +
                 $"main thread {(clock.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms (extract {(extractMs).ToString(CultureInfo.InvariantCulture)}, model {(modelMs).ToString(CultureInfo.InvariantCulture)}, " +
-                $"routing {(routingMs).ToString(CultureInfo.InvariantCulture)}); " +
+                $"handover {(routingMs).ToString(CultureInfo.InvariantCulture)}); " +
+                $"routing pass {(passStarted ? "started on the worker" : "not started (one is already out)")}; " +
                 $"trip observation since the last refresh: {(m_TripObserver.ScanCount).ToString(CultureInfo.InvariantCulture)} scans, " +
                 $"mean {(m_TripObserver.ScanCount > 0 ? m_TripObserver.ScanMsSum / (double)m_TripObserver.ScanCount : 0.0).ToString("F1", CultureInfo.InvariantCulture)} ms, max {(m_TripObserver.ScanMsMax).ToString(CultureInfo.InvariantCulture)} ms");
             m_TripObserver.ResetScanStats();

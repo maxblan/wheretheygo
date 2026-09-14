@@ -35,6 +35,14 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingWalkUnserved]", "weiter als die {0} min, die hier als bedient gelten" },
                 { "WhereTheyGo.Panel[WalkNone]", "keine Haltestelle erreichbar" },
                 { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
+                { "WhereTheyGo.Panel[TimeOfDay]", "Tageszeit" },
+                { "WhereTheyGo.Panel[WholeDay]", "Ganzer Tag" },
+                { "WhereTheyGo.Panel[AtHour]", "{0}:00 Uhr" },
+                { "WhereTheyGo.Panel[Threshold]", "Bänder ausblenden unter" },
+                { "WhereTheyGo.Panel[PurposeWork]", "Arbeit" },
+                { "WhereTheyGo.Panel[PurposeSchool]", "Schule" },
+                { "WhereTheyGo.Panel[PurposeShopping]", "Einkauf" },
+                { "WhereTheyGo.Panel[PurposeLeisure]", "Freizeit" },
                 { "WhereTheyGo.Panel[Carried]", "Vom ÖPNV getragen" },
                 { "WhereTheyGo.Panel[CarriedCaption]", "aller Wege — gezählt werden die, für die der ÖPNV schneller ist als Gehen" },
                 { "WhereTheyGo.Panel[Coverage]", "In Gehweite" },
@@ -47,6 +55,8 @@ namespace WhereTheyGo
                 { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
                 { "Infoviews.INFOVIEW_TOOLTIP[WhereTheyGo]", "Wie weit jedes Gebäude vom heutigen Angebot entfernt liegt." },
 
+                { "Infoviews.INFOMODE[WhereTheyGoDesireBands]", "Wunschlinien" },
+                { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoDesireBands]", "Alle Wege der Stadt, gebündelt zu Bändern zwischen den Orten, zwischen denen die Menschen unterwegs sind. Warm heißt: hier fährt niemand mit dem ÖPNV. Kühl heißt: das Netz trägt diese Wege." },
                 { "Infoviews.INFOMODE[WhereTheyGoTransitAccess]", "Fußweg zum ÖPNV (Gebäude)" },
                 { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoTransitAccess]", "Färbt jedes Gebäude nach dem Fußweg von seiner Tür zur nächsten Haltestelle, die deine Linien wirklich bedienen: grün ist kurz, rot liegt am oder jenseits des Gehweg-Horizonts aus den Angebotsstandards." },
 

@@ -117,6 +117,14 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[BuildingWalkUnserved]", "further than the {0} min this city counts as served" },
                 { "WhereTheyGo.Panel[WalkNone]", "no stop in reach" },
                 { "WhereTheyGo.Panel[WalkMinutes]", "{0} min" },
+                { "WhereTheyGo.Panel[TimeOfDay]", "Time of day" },
+                { "WhereTheyGo.Panel[WholeDay]", "All day" },
+                { "WhereTheyGo.Panel[AtHour]", "{0}:00" },
+                { "WhereTheyGo.Panel[Threshold]", "Hide bands under" },
+                { "WhereTheyGo.Panel[PurposeWork]", "Work" },
+                { "WhereTheyGo.Panel[PurposeSchool]", "School" },
+                { "WhereTheyGo.Panel[PurposeShopping]", "Shopping" },
+                { "WhereTheyGo.Panel[PurposeLeisure]", "Leisure" },
                 { "WhereTheyGo.Panel[Carried]", "Carried by transit" },
                 { "WhereTheyGo.Panel[CarriedCaption]", "of all journeys, counting those transit makes faster than walking" },
                 { "WhereTheyGo.Panel[Coverage]", "Within walking distance" },
@@ -128,6 +136,8 @@ namespace WhereTheyGo
                 { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
                 { "Infoviews.INFOVIEW_TOOLTIP[WhereTheyGo]", "How far each building is from the service you already run." },
 
+                { "Infoviews.INFOMODE[WhereTheyGoDesireBands]", "Desire lines" },
+                { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoDesireBands]", "Every journey the city makes, bundled into bands between the places people travel between. Warm means nobody rides: the network does not carry that travel. Cool means it does." },
                 { "Infoviews.INFOMODE[WhereTheyGoTransitAccess]", "Walk to transit (buildings)" },
                 { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoTransitAccess]", "Colours every building by the walk from its door to the nearest stop your lines actually serve: green is a short walk, red is at or beyond the walking horizon set under Service standards." },
 

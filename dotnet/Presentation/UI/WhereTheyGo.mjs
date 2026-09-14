@@ -45,8 +45,115 @@ function useBound(name, fallback) {
     return Api.useValue(binding(name, fallback));
 }
 
+function trigger(name, ...args) {
+    Api.trigger(GROUP, name, ...args);
+}
+
 function h(tag, props, ...children) {
     return React.createElement(tag, props, ...children);
+}
+
+// The four purposes, in the order JourneyPurpose declares them. The MASK is the
+// contract with C# (1 << purpose); the labels are ours to translate.
+const PURPOSES = [
+    { bit: 1, key: "PurposeWork", english: "Work" },
+    { bit: 2, key: "PurposeSchool", english: "School" },
+    { bit: 4, key: "PurposeShopping", english: "Shopping" },
+    { bit: 8, key: "PurposeLeisure", english: "Leisure" },
+];
+
+// cohtml has no checkbox, so a switch is a div with a tick in it. Same shape the
+// vanilla infomode rows use, close enough that the two read as one list.
+function Check({ label, on, onClick }) {
+    return h("div", { className: "ta-check", onClick },
+        h("div", { className: "ta-check-box" + (on ? " ta-check-box-on" : "") }, on ? "\u2713" : ""),
+        h("div", { className: "ta-check-label" }, label));
+}
+
+// And no <input type=range>, so a slider is a track the pointer drags across. The
+// value is read from where the pointer is along the track's own width, which cohtml
+// does report; a drag outside the track clamps rather than jumping.
+function Slider({ value, min, max, onChange }) {
+    const track = React.useRef(null);
+    const pick = React.useCallback((event) => {
+        const node = track.current;
+        if (!node || !node.getBoundingClientRect) {
+            return;
+        }
+
+        const box = node.getBoundingClientRect();
+        if (!box.width) {
+            return;
+        }
+
+        const share = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+        onChange(Math.round(min + (share * (max - min))));
+    }, [min, max, onChange]);
+
+    const filled = max > min ? ((value - min) / (max - min)) * 100 : 0;
+    return h("div", {
+        className: "ta-track",
+        ref: track,
+        onMouseDown: pick,
+        onMouseMove: (event) => {
+            // buttons is a bitmask; 1 is the left button held down.
+            if (event.buttons & 1) {
+                pick(event);
+            }
+        },
+    },
+        h("div", { className: "ta-track-rail" }),
+        h("div", { className: "ta-track-fill", style: { width: filled + "%" } }),
+        h("div", { className: "ta-track-knob", style: { left: filled + "%" } }));
+}
+
+// The hour the map is showing, or the whole day. Twenty-four steps and an off
+// position: the slider's left end is "all day", which is where the map opens.
+function TimeOfDay({ hour }) {
+    const t = useTranslate();
+    const label = hour < 0
+        ? t("WholeDay", "All day")
+        : t("AtHour", "{0}:00").replace("{0}", String(hour).padStart(2, "0"));
+    return h("div", { className: "ta-control" },
+        h("div", { className: "ta-control-row" },
+            h("div", { className: "ta-control-label" }, t("TimeOfDay", "Time of day")),
+            h("div", { className: "ta-control-value" }, label)),
+        h(Slider, {
+            value: hour < 0 ? 0 : hour + 1,
+            min: 0,
+            max: 24,
+            onChange: (step) => trigger("selectHour", step <= 0 ? -1 : step - 1),
+        }));
+}
+
+function Threshold({ percent }) {
+    const t = useTranslate();
+    return h("div", { className: "ta-control" },
+        h("div", { className: "ta-control-row" },
+            h("div", { className: "ta-control-label" }, t("Threshold", "Hide bands under")),
+            h("div", { className: "ta-control-value" }, percent + " %")),
+        h(Slider, {
+            value: percent,
+            min: 0,
+            max: 25,
+            onChange: (value) => trigger("setBandThreshold", value),
+        }));
+}
+
+function Purposes({ mask }) {
+    const t = useTranslate();
+    return h("div", { className: "ta-control" },
+        PURPOSES.map((purpose) => h(Check, {
+            key: purpose.key,
+            label: t(purpose.key, purpose.english),
+            on: (mask & purpose.bit) !== 0,
+            // Never all four off: an empty map reads as a broken one, so the last
+            // one switched on stays on.
+            onClick: () => {
+                const next = mask ^ purpose.bit;
+                trigger("setPurposes", next === 0 ? purpose.bit : next);
+            },
+        })));
 }
 
 // The two city-wide figures, in the game's own infoview panel (author's request
@@ -75,6 +182,7 @@ function InfoviewFigures() {
     const ours = useBound("heatmap", false);
     const figuresRaw = useBound("coverage", "");
     const historyRaw = useBound("dataCoverage", "");
+    const stateRaw = useBound("mapState", "");
     if (!ours) {
         return null;
     }
@@ -111,7 +219,16 @@ function InfoviewFigures() {
                 .replace("{1}", String(readings))
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
 
-    return h("div", { className: "ta-figures" }, rows);
+    const state = (stateRaw || "").split("|");
+    const hour = parseInt(state[0], 10);
+    const purposes = parseInt(state[1], 10);
+    const threshold = parseInt(state[2], 10);
+
+    return h("div", { className: "ta-figures" },
+        rows,
+        h(TimeOfDay, { hour: isNaN(hour) ? -1 : hour }),
+        h(Purposes, { mask: isNaN(purposes) ? 0xF : purposes }),
+        h(Threshold, { percent: isNaN(threshold) ? 2 : threshold }));
 }
 
 const VANILLA = {

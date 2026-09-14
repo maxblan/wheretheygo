@@ -20,9 +20,36 @@ namespace WhereTheyGo
 
         private CarriedReport m_CarriedReport;
 
-        private float[] m_CeilingScratch = System.Array.Empty<float>();
-
         internal CarriedReport Carried => m_CarriedReport;
+
+        private BandSet? m_Bands;
+
+        // One routing pass, handed to a worker task. Everything it touches is a copy
+        // or a plain array; nothing on the worker reads ECS state.
+        private sealed class RoutingPass
+        {
+            public RoutingProblem Problem = new RoutingProblem();
+            public RoutingResult? Result;
+            public CarriedReport Carried;
+            public BandSet? Bands;
+            public float2Like WorldMin;
+            public int2Like ZoneGrid;
+            public List<Journey> Journeys = new List<Journey>();
+            public readonly List<DeferredLogLine> Log = new List<DeferredLogLine>();
+            public long RouteMs;
+            public long BandMs;
+        }
+
+        private System.Threading.Tasks.Task? m_PendingRouting;
+
+        private RoutingPass? m_PendingPass;
+
+        private bool m_RoutingPending;
+
+        internal bool RoutingPending => m_RoutingPending;
+
+        // What the renderer and the picker read. Null until the first refresh lands.
+        internal BandSet? Bands => m_Bands;
 
         private RoutingProblem? m_PairTable;
 
@@ -113,40 +140,139 @@ namespace WhereTheyGo
             return problem;
         }
 
-        // The network as it stands, routed once per refresh: every pair's door-to-door
-        // time, and the riders each existing line carries — which is what a line's own
-        // reading shows as its demand (register A8.2).
-        private void RouteJourneys()
+        // Hands the routing and the bundling to a worker task.
+        //
+        // Both are far too heavy for the frame: one Dijkstra per distinct origin door
+        // over the whole transit graph, then a sweep over every zone pair. Measured at
+        // two seconds for a city of 1,400 journeys, which on the main thread is two
+        // seconds of frozen game every time the demand refreshes.
+        //
+        // Everything the worker reads is gathered HERE, on the main thread, as copies:
+        // the problem's plain arrays and a snapshot of the journeys. While a pass is
+        // out, OnUpdate leaves those inputs alone (m_RoutingPending).
+        private bool StartRoutingPass()
         {
-            m_PairTable = null;
-            RoutingProblem problem = BuildRoutingProblem();
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            RoutingResult routed = JourneyRouting.Evaluate(problem, before: null);
-            if (m_CeilingScratch.Length < problem.PairCount)
+            if (m_RoutingPending)
             {
-                m_CeilingScratch = new float[problem.PairCount];
+                return false;
             }
 
-            m_CarriedReport = JourneyRouting.MarkCarried(problem, routed, m_CeilingScratch);
-            m_Routed = routed;
-            m_RoutedProblem = problem;
-            m_Baseline = routed.After;
+            m_PairTable = null;
+            var pass = new RoutingPass
+            {
+                Problem = BuildRoutingProblem(),
+                WorldMin = new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y),
+                ZoneGrid = new int2Like(m_ZoneGrid.x, m_ZoneGrid.y),
+            };
+            pass.Journeys.AddRange(m_Journeys);
+            m_PendingPass = pass;
+            m_RoutingPending = true;
+            m_PendingRouting = System.Threading.Tasks.Task.Run(
+                () =>
+                {
+                    DeferredLog.Bind(pass.Log);
+                    try
+                    {
+                        RunRoutingPass(pass);
+                    }
+                    finally
+                    {
+                        DeferredLog.Unbind();
+                    }
+                },
+                System.Threading.CancellationToken.None);
+            return true;
+        }
+
+        // The worker's half: route every journey over the network as it stands, decide
+        // what the network carries, and bundle the result into bands.
+        private static void RunRoutingPass(RoutingPass pass)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            RoutingResult routed = JourneyRouting.Evaluate(pass.Problem, before: null);
+            pass.Carried = JourneyRouting.MarkCarried(pass.Problem, routed, new float[pass.Problem.PairCount]);
+            pass.Result = routed;
+            pass.RouteMs = clock.ElapsedMilliseconds;
+
+            clock.Restart();
+            pass.Bands = DesireBands.Build(
+                pass.Journeys,
+                pass.Problem.PairOx, pass.Problem.PairOz, pass.Problem.PairDx, pass.Problem.PairDz, pass.Problem.PairWeight,
+                routed.Carried, pass.Problem.PairCount,
+                pass.WorldMin, pass.ZoneGrid,
+                Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            pass.BandMs = clock.ElapsedMilliseconds;
+        }
+
+        // Adopts a finished pass: its log lines first, in order, then the fields the
+        // panel, the renderer and the line readings all read. A faulted pass is logged
+        // in full and the previous bands stay on the map.
+        private void FinishRoutingIfReady()
+        {
+            System.Threading.Tasks.Task? pending = m_PendingRouting;
+            RoutingPass? pass = m_PendingPass;
+            if (!m_RoutingPending || pending is null || pass is null || !pending.IsCompleted)
+            {
+                return;
+            }
+
+            m_RoutingPending = false;
+            m_PendingRouting = null;
+            m_PendingPass = null;
+            DeferredLog.Flush(pass.Log);
+            if (pending.IsFaulted || pending.IsCanceled || pass.Result is null || pass.Bands is null)
+            {
+                DeferredLog.Error($"Routing pass failed: {pending.Exception}");
+                return;
+            }
+
+            m_Routed = pass.Result;
+            m_RoutedProblem = pass.Problem;
+            m_CarriedReport = pass.Carried;
+            m_Bands = pass.Bands;
+            m_Baseline = pass.Result.After;
             m_ExistingLineRiders.Clear();
-            for (int i = 0; i < routed.BaseRiders.Length && i < m_ExistingLines.Count; i++)
+            for (int i = 0; i < pass.Result.BaseRiders.Length && i < m_ExistingLines.Count; i++)
             {
                 m_ExistingLineRiders[m_ExistingLines[i].m_Id] =
-                    ((float)routed.BaseRiders[i], (float)routed.BaseRidersByDay[i], (float)routed.BaseRidersByNight[i]);
+                    ((float)pass.Result.BaseRiders[i], (float)pass.Result.BaseRidersByDay[i], (float)pass.Result.BaseRidersByNight[i]);
             }
 
+            // The carried share is half of the panel's first figure, and the coverage
+            // measure ran before this pass started — so the figure is refreshed here
+            // rather than left a refresh behind.
+            Setting? settings = Mod.Settings;
+            if (settings is not null)
+            {
+                RefreshCoverage(settings, "routed");
+            }
+
+            LogRoutingPass(pass);
+        }
+
+        private void LogRoutingPass(RoutingPass pass)
+        {
+            RoutingProblem problem = pass.Problem;
+            RoutingResult routed = pass.Result!;
+            BandSet bands = pass.Bands!;
             DeferredLog.Info(
                 $"Door-to-door routing: {(problem.PairCount).ToString(CultureInfo.InvariantCulture)} pairs from " +
                 $"{(JourneyRouting.GeometryOf(problem).ZoneCount).ToString(CultureInfo.InvariantCulture)} doors over " +
                 $"{(problem.BaseLines.Count).ToString(CultureInfo.InvariantCulture)} existing lines in " +
-                $"{(stopwatch.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms; " +
-                $"carried {(m_CarriedReport.CarriedPairs).ToString(CultureInfo.InvariantCulture)} pairs = " +
-                $"{(m_CarriedReport.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight " +
-                $"(faster than walking and under {(m_CarriedReport.CeilingSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                $"{(m_CarriedReport.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median of {m_CarriedReport.MedianSeconds.ToString("F0", CultureInfo.InvariantCulture)}s")})");
+                $"{(pass.RouteMs).ToString(CultureInfo.InvariantCulture)} ms on the worker; " +
+                $"carried {(pass.Carried.CarriedPairs).ToString(CultureInfo.InvariantCulture)} pairs = " +
+                $"{(pass.Carried.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight " +
+                $"(faster than walking and under {(pass.Carried.CeilingSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                $"{(pass.Carried.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median of {pass.Carried.MedianSeconds.ToString("F0", CultureInfo.InvariantCulture)}s")})");
+            DeferredLog.Info(
+                $"Desire bands: {(bands.Bands.Length).ToString(CultureInfo.InvariantCulture)} from " +
+                $"{(problem.PairCount).ToString(CultureInfo.InvariantCulture)} door pairs " +
+                $"({(bands.MergedPairs).ToString(CultureInfo.InvariantCulture)} zone pairs folded into a neighbour at {(Assumptions.BandMergeMetres).ToString("F0", CultureInfo.InvariantCulture)} m), " +
+                $"heaviest {(bands.HeaviestWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day, " +
+                $"{(pass.BandMs).ToString(CultureInfo.InvariantCulture)} ms" +
+                (bands.HiddenPairs > 0
+                    ? $"; NOT SHOWN: {(bands.HiddenPairs).ToString(CultureInfo.InvariantCulture)} zone pairs past the cap of {(Assumptions.MaxBands).ToString(CultureInfo.InvariantCulture)} bands, together {(bands.HiddenWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day"
+                    : string.Empty));
             for (int i = 0; i < problem.BaseLines.Count && i < m_ExistingLines.Count; i++)
             {
                 DeferredLog.Info(

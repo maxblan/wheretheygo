@@ -416,6 +416,11 @@ namespace WhereTheyGo
         // off. Read by BuildingAccessColorSystem, which writes it into Game.Objects.Color.
         private readonly int[] m_ObjectLayerIndex = new int[OverlayLayers.Count];
 
+        // Whether the player has this layer switched on. The game hands an active
+        // infomode a 1-based index within its colour group, so a zero here means the
+        // infomode is not in the active set at all.
+        public bool IsLayerActive(OverlayLayer layer) => ObjectLayerIndex(layer) > 0;
+
         public int ObjectLayerIndex(OverlayLayer layer)
         {
             int index = (int)layer;
