@@ -20,17 +20,25 @@ namespace WhereTheyGo
     // is invisible here: the bands only change when the demand pipeline reruns.
     public sealed partial class BandRenderer : GameSystemBase
     {
-        // The arc is sampled into this many straight pieces. A curve primitive exists
-        // (DrawCurve takes a Bezier4x3), but it takes ONE height for the whole curve,
-        // and a band crosses hills; sampling lets every piece sit on the ground under
-        // it. Sixteen is where a 3 km band stops looking like a polygon.
-        private const int ArcSegments = 16;
+        // The arc is sampled into straight pieces. A curve primitive exists (DrawCurve
+        // takes a Bezier4x3), but it takes ONE height for the whole curve, and a band
+        // crosses hills; sampling lets every piece sit on the ground under it.
+        //
+        // Sampled by LENGTH rather than at a fixed count: four hundred bands at
+        // sixteen pieces each is six thousand draw calls a frame, and a 400 m band
+        // does not need sixteen.
+        private const float ArcMetresPerSegment = 200f;
+
+        private const int MinArcSegments = 3;
+
+        private const int MaxArcSegments = 14;
 
         // Lifted off the ground by the same margin the route polylines used, so a band
         // is not swallowed by the terrain it follows.
         private const float TerrainOffset = 4f;
 
-        private const float BandOpacity = 0.75f;
+        // Enough to read against the city, little enough to read the city through it.
+        private const float BandOpacity = 0.55f;
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
@@ -77,7 +85,9 @@ namespace WhereTheyGo
             float threshold = m_OverlaySystem.BandThresholdShare;
             int hour = m_OverlaySystem.SelectedHour;
             int purposes = m_OverlaySystem.PurposeFilter;
-            for (int i = 0; i < bands.Bands.Length; i++)
+            // Lightest first, so the city's real corridors end up ON TOP of the hair
+            // rather than under it: the bands come out of the bundling heaviest first.
+            for (int i = bands.Bands.Length - 1; i >= 0; i--)
             {
                 Band band = bands.Bands[i];
                 if ((band.PurposeMask & purposes) == 0)
@@ -106,10 +116,11 @@ namespace WhereTheyGo
             var colour = new Color(r, g, b, BandOpacity);
             float width = BandGeometry.Width(weight, heaviest);
 
+            int segments = math.clamp((int)(band.LengthMetres / ArcMetresPerSegment), MinArcSegments, MaxArcSegments);
             float3 previous = Ground(ref heightData, band.Ax, band.Az);
-            for (int step = 1; step <= ArcSegments; step++)
+            for (int step = 1; step <= segments; step++)
             {
-                BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, step / (float)ArcSegments, out float x, out float z);
+                BandGeometry.PointOnArc(band.Ax, band.Az, band.Bx, band.Bz, step / (float)segments, out float x, out float z);
                 float3 next = Ground(ref heightData, x, z);
                 buffer.DrawLine(colour, new Line3.Segment(previous, next), width);
                 previous = next;

@@ -132,7 +132,24 @@ namespace WhereTheyGo.Tests
             BandSet capped = BundleOf(journeys, null, Assumptions.BandMergeMetres, 5);
             AssertTrue(capped.Bands.Length == 5, $"the cap holds, got {capped.Bands.Length.ToString(CultureInfo.InvariantCulture)}");
             AssertTrue(capped.HiddenPairs > 0 && capped.HiddenWeight > 0f, "and what it left out is counted, not silently dropped");
-            AssertTrue(capped.Bands[0].Weight >= first.Bands[0].Weight - 1e-3f, "the heaviest band survives the cap");
+
+            // Nothing evaporates: every journey is either on a band or in the hidden
+            // count. (The heaviest FINAL band need not survive the cap — a band that
+            // starts light can absorb its way past the ones accepted before it, and
+            // the cap is applied as the buckets arrive.)
+            float shownWeight = 0f;
+            for (int i = 0; i < capped.Bands.Length; i++)
+            {
+                shownWeight += capped.Bands[i].Weight;
+            }
+
+            float allWeight = 0f;
+            for (int i = 0; i < first.Bands.Length; i++)
+            {
+                allWeight += first.Bands[i].Weight;
+            }
+
+            AssertEqual(allWeight, shownWeight + capped.HiddenWeight, 1e-2f, "what is drawn plus what was left out is every journey");
         }
 
         private static void BandsDropWhatIsNotAJourney()

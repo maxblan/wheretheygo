@@ -58,9 +58,15 @@ namespace WhereTheyGo
             z = (w0 * az) + (w1 * c1z) + (w2 * c2z) + (w3 * bz);
         }
 
-        // Width in metres. Logarithmic on purpose: the heaviest corridor of a city is
-        // often a hundred times the lightest band drawn, and on a linear scale it eats
-        // the map while everything else is a hairline.
+        // Width in metres, on the square root of the traffic.
+        //
+        // Not linear: the heaviest corridor is a hundred times the lightest band drawn,
+        // and linearly it eats the map while everything else is a hairline. Not
+        // logarithmic either, which was the first attempt and made the map unreadable
+        // (2026-09-14): log puts a band of a TENTH the traffic at two thirds of the
+        // full width, so nearly every band came out fat and the picture was a smear of
+        // overlapping blobs. The square root is the middle: a tenth of the traffic is
+        // a third of the width, which still reads as "much less" while staying visible.
         public static float Width(float weight, float heaviestWeight)
         {
             if (weight <= 0f || heaviestWeight <= 0f)
@@ -68,7 +74,7 @@ namespace WhereTheyGo
                 return Assumptions.BandMinWidthMetres;
             }
 
-            double scale = Math.Log(1.0 + Math.Min(weight, heaviestWeight)) / Math.Log(1.0 + heaviestWeight);
+            double scale = Math.Sqrt(Math.Min(weight, heaviestWeight) / (double)heaviestWeight);
             return Assumptions.BandMinWidthMetres
                 + ((Assumptions.BandMaxWidthMetres - Assumptions.BandMinWidthMetres) * (float)scale);
         }

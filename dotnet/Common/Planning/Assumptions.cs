@@ -153,10 +153,10 @@ namespace WhereTheyGo
 
         // ---- Desire bands (the map's main layer)
         // Two zone pairs are the same corridor when BOTH their ends lie this close
-        // together. A quarter of a kilometre: near enough that one band is honest
-        // about both, far enough that two genuinely different corridors through the
-        // same district stay apart.
-        public const float BandMergeMetres = 250f;
+        // together. Raised from 250 m on 2026-09-14: at the zone grid's own 256 m
+        // pitch almost nothing merged beyond what the grid had already merged, and
+        // the map drew hundreds of near-duplicate corridors on top of each other.
+        public const float BandMergeMetres = 450f;
 
         // Bands drawn at most. A real city settles well under this; a map with tens of
         // thousands of zone pairs would otherwise draw until the frame died. What does
@@ -164,21 +164,24 @@ namespace WhereTheyGo
         public const int MaxBands = 400;
 
         // Band widths in metres on the ground, between the lightest band drawn and the
-        // heaviest in the city (BandGeometry.Width, logarithmic between them).
-        public const float BandMinWidthMetres = 8f;
+        // heaviest in the city (BandGeometry.Width, on the square root between them).
+        // 110 m was a blob at any zoom a player actually uses.
+        public const float BandMinWidthMetres = 5f;
 
-        public const float BandMaxWidthMetres = 110f;
+        public const float BandMaxWidthMetres = 48f;
 
         // How far a band bows out of the straight line, as a share of its length and
-        // capped in metres, so a cross-city band does not swing out over the sea.
-        public const float BandBowShare = 0.12f;
+        // capped in metres, so a cross-city band does not swing out over the sea. Just
+        // enough to separate two bands between the same districts; more than this and
+        // a band stops reading as a connection between its two ends.
+        public const float BandBowShare = 0.06f;
 
-        public const float BandBowMaxMetres = 600f;
+        public const float BandBowMaxMetres = 250f;
 
         // Bands under this share of the heaviest band are hidden until the player
-        // moves the panel's slider. Two percent leaves the corridors and drops the
-        // hair.
-        public const int BandThresholdDefaultPercent = 2;
+        // moves the panel's slider. Five percent leaves the corridors and drops the
+        // hair; two showed every one of the four hundred at once.
+        public const int BandThresholdDefaultPercent = 5;
 
         // How long an observed journey's maker stays before travelling back, by
         // purpose. Only the RETURN hour rests on it: the outbound hour is the clock
@@ -500,6 +503,13 @@ namespace WhereTheyGo
 
 
         public const float DebounceSeconds = 0.3f;
+
+        // Floor on how often the tile snap may re-run. It is one nearest-node query per
+        // 32 m tile — two hundred thousand on a full map — and it answers a question
+        // that only changes when somebody builds a road. A new road therefore shows in
+        // the building colours within a minute rather than instantly, which is the
+        // right trade for an infoview.
+        public const float SnapIntervalSeconds = 60f;
 
 
 

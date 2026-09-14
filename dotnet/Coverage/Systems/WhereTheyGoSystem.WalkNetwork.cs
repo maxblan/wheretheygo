@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿using System;
+using System.Globalization;
 using Colossal.Collections;
 using Unity.Entities;
 using Game.Simulation;
@@ -24,6 +25,15 @@ namespace WhereTheyGo
 
         private bool m_RoadCacheDirty = true;
 
+        // What the last snapped graph looked like. A live city tags nodes and edges as
+        // Updated for reasons that do not move a pavement — the node count was seen
+        // wobbling between 5131 and 5136 with nobody building anything — and every one
+        // of those tags used to re-run the whole snap. The snap now only re-runs when
+        // this signature has actually moved, and at most every SnapIntervalSeconds.
+        private long m_SnappedSignature = -1;
+
+        private float m_LastSnapAt = float.NegativeInfinity;
+
         // Where each tile attaches to the network. Null until the first pass lands.
         private TileSnap? m_TileSnap;
 
@@ -38,6 +48,8 @@ namespace WhereTheyGo
         private SnapBox? m_PendingBox;
 
         private int2 m_PendingGrid;
+
+        private long m_PendingSignature;
 
         private float2 m_PendingWorldMin;
 
@@ -54,6 +66,13 @@ namespace WhereTheyGo
         private bool StartCompute()
         {
             if (m_JobPending || m_PopulationSystem is null || m_TerrainSystem is null)
+            {
+                return false;
+            }
+
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            bool cold = m_TileSnap is null;
+            if (!cold && now - m_LastSnapAt < Assumptions.SnapIntervalSeconds)
             {
                 return false;
             }
@@ -86,6 +105,15 @@ namespace WhereTheyGo
                 return false;
             }
 
+            // The graph is rebuilt above whatever happens — it is 5,000 nodes and the
+            // coverage walk needs it current. The SNAP is the expensive half, and it
+            // only has to run when the graph it snaps to is a different graph.
+            long signature = SignatureOf(graph, gridSize);
+            if (!cold && signature == m_SnappedSignature)
+            {
+                return false;
+            }
+
             int width = gridSize.x;
             int height = gridSize.y;
             float minX = worldMin.x;
@@ -102,6 +130,8 @@ namespace WhereTheyGo
 
             m_PendingGrid = gridSize;
             m_PendingWorldMin = worldMin;
+            m_PendingSignature = signature;
+            m_LastSnapAt = now;
             m_JobPending = true;
             m_PlayableGridAtCompute = GetGridSize();
             return true;
@@ -157,6 +187,7 @@ namespace WhereTheyGo
             }
 
             m_TileSnap = snap;
+            m_SnappedSignature = m_PendingSignature;
             m_IntensityGrid = m_PendingGrid;
             m_ScoreWorldMin = m_PendingWorldMin;
             DeferredLog.Info(
@@ -165,6 +196,27 @@ namespace WhereTheyGo
                 $"({(m_EdgesWithoutPavement).ToString(CultureInfo.InvariantCulture)} edges without a pedestrian lane skipped, " +
                 $"{(m_WalkBridges).ToString(CultureInfo.InvariantCulture)} gaps bridged at up to {(Assumptions.WalkBridgeMetres).ToString("F0", CultureInfo.InvariantCulture)} m), " +
                 $"{(snap.TilesOnNetwork).ToString(CultureInfo.InvariantCulture)} tiles within {(Assumptions.AccessWalkMs / 1000).ToString(CultureInfo.InvariantCulture)} s of a node");
+        }
+
+        // Enough of the graph to tell one pavement layout from another: the counts and
+        // the total length. Two graphs with the same three numbers snap the same way.
+        private static long SignatureOf(WalkGraph graph, int2 grid)
+        {
+            double metres = 0.0;
+            for (int e = 0; e < graph.EdgeMetres.Length; e++)
+            {
+                metres += graph.EdgeMetres[e];
+            }
+
+            unchecked
+            {
+                long signature = graph.NodeCount;
+                signature = (signature * 31) + graph.EdgeMetres.Length;
+                signature = (signature * 31) + (long)Math.Round(metres, MidpointRounding.ToEven);
+                signature = (signature * 31) + grid.x;
+                signature = (signature * 31) + grid.y;
+                return signature;
+            }
         }
 
         private void DiscardPendingCompute()
