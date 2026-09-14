@@ -3,25 +3,6 @@ using System.Collections.Generic;
 
 namespace TransitArchitect
 {
-    // Per-cell raw scoring terms. Kept as one struct so the access pass writes a
-    // single array and the managed combine pass reads it back without re-deriving
-    // units. Since v2 every term is a walking-TIME quantity over the pedestrian
-    // network (register A1.1), not a Euclidean one.
-    internal struct SuitabilityCell
-    {
-        public float m_Demand;
-        public float m_Jobs;
-        public float m_Coverage;
-        public float m_Access;
-        public float m_Future;
-        // Served stops of OTHER modes close enough to transfer to, weighted by how
-        // much trunk capacity they represent.
-        public float m_Interchange;
-        // Served stops of other modes near enough to already absorb this tile's
-        // demand, but too far to transfer to.
-        public float m_CrossCoverage;
-    }
-
     // The pedestrian network as the planning model sees it: one node per net node,
     // one undirected edge per net edge that carries a pedestrian lane, cost = walking
     // time in whole milliseconds. Integer costs are the point: every shortest-path
@@ -408,200 +389,19 @@ namespace TransitArchitect
         }
     }
 
-    // One group of point sources with weights: homes (residents), workplaces (jobs),
-    // zoned-but-unbuilt cells (future). Filled by the gathering side.
-    internal sealed class WalkSources
+    // The pedestrian network as every tile of the map sees it: which node each tile
+    // attaches to and how long the walk to it is, plus the spatial index that found
+    // them. -1 means no pavement within the access walk.
+    internal sealed class TileSnap
     {
-        public float[] X = Array.Empty<float>();
-        public float[] Z = Array.Empty<float>();
-        public float[] Weight = Array.Empty<float>();
-        public int Count;
-    }
-
-    internal sealed class WalkAccessInputs
-    {
-        public WalkGraph Graph = WalkGraph.Build(Array.Empty<float>(), Array.Empty<float>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<float>(), 0);
-        public WalkSources Homes = new WalkSources();
-        public WalkSources Jobs = new WalkSources();
-        public WalkSources Future = new WalkSources();
-        // Served stops with their TransportType as an int in [0, TypeCount).
-        public float[] StopX = Array.Empty<float>();
-        public float[] StopZ = Array.Empty<float>();
-        public int[] StopType = Array.Empty<int>();
-        public int StopCount;
-        public int TypeCount;
-        // Straight-line walk from a point to its network node, beyond which the point
-        // is not on the network at all; the transfer walk; the distinct catchment
-        // times of the modes, ascending.
-        public int AccessMs;
-        public int TransferMs;
-        public int[] CatchmentMs = Array.Empty<int>();
-    }
-
-    // Everything the terms need, per network node, for every catchment class and
-    // stop type at once — so a single pass serves the map (one mode) and the stop
-    // placement (any mode) without a second, inconsistent computation.
-    internal sealed class WalkAccessResult
-    {
-        public int[] HomeNode = Array.Empty<int>();
-        public int[] JobNode = Array.Empty<int>();
-        public int[] FutureNode = Array.Empty<int>();
-        public int[] StopNode = Array.Empty<int>();
-        public int[] HomeAccessMs = Array.Empty<int>();
-        public int[] JobAccessMs = Array.Empty<int>();
-        public int[] FutureAccessMs = Array.Empty<int>();
-        public int[] StopAccessMs = Array.Empty<int>();
-        // [class][node]
-        public float[][] Demand = Array.Empty<float[]>();
-        public float[][] Jobs = Array.Empty<float[]>();
-        public float[][] Future = Array.Empty<float[]>();
-        // [class][type][node]: Σ K(t, T_class) over served stops of that type.
-        public float[][][] StopWithin = Array.Empty<float[][]>();
-        // [type][node]: Σ K(t, T_transfer) — how readily one can change here.
-        public float[][] Interchange = Array.Empty<float[]>();
-        // [class][type][node]: Σ K(t, T_class) · (1 − K(t, T_transfer)).
-        public float[][][] CrossRaw = Array.Empty<float[][]>();
-        public int SourcesOffNetwork;
-        public long Relaxations;
-    }
-
-    // Everything one compute produces: the node-level accumulators for every mode,
-    // the tile snap, and the seven raw terms for the mode the map was built for.
-    internal sealed class WalkAccessOutput
-    {
-        public WalkAccessResult Result = new WalkAccessResult();
         public WalkNodeIndex? Index;
-        public SuitabilityCell[] Terms = Array.Empty<SuitabilityCell>();
         public int[] TileNode = Array.Empty<int>();
         public int[] TileWalkMs = Array.Empty<int>();
-        public int Class;
-        public int SelfType;
-        public float[] TypeWeight = Array.Empty<float>();
         public int TilesOnNetwork;
     }
 
     internal static class SuitabilityWalkAccess
     {
-
-        // One compute, start to finish, with no Unity type in sight — which is what
-        // lets the game run it on a worker thread and the offline pipeline run the
-        // identical code on an exported city.
-        public static WalkAccessOutput Run(
-            WalkAccessInputs inputs, int width, int height, float worldMinX, float worldMinZ, float tileSize,
-            byte[] buildable, int cls, int selfType, float[] typeWeight)
-        {
-            var output = new WalkAccessOutput
-            {
-                Result = Compute(inputs),
-                Class = cls,
-                SelfType = selfType,
-                TypeWeight = typeWeight,
-                Terms = new SuitabilityCell[width * height],
-                TileNode = new int[width * height],
-                TileWalkMs = new int[width * height],
-            };
-            if (inputs.Graph.NodeCount == 0 || cls < 0 || cls >= inputs.CatchmentMs.Length)
-            {
-                for (int i = 0; i < output.TileNode.Length; i++)
-                {
-                    output.TileNode[i] = -1;
-                    output.TileWalkMs[i] = -1;
-                }
-
-                return output;
-            }
-
-            double accessMetres = inputs.AccessMs / 1000.0 * Assumptions.WalkSpeed;
-            output.Index = new WalkNodeIndex(inputs.Graph, Math.Max(32.0, accessMetres));
-            TileTerms(output.Result, output.Index, width, height, worldMinX, worldMinZ, tileSize, buildable,
-                inputs.AccessMs, cls, selfType, typeWeight, output.Terms, output.TileNode, output.TileWalkMs);
-            for (int i = 0; i < output.TileNode.Length; i++)
-            {
-                if (output.TileNode[i] >= 0)
-                {
-                    output.TilesOnNetwork++;
-                }
-            }
-
-            return output;
-        }
-
-        // K(t, T) = 1 − t/T for t ≤ T, the same linear fade the v1 kernel used over
-        // distance (TCQSM and Zhao et al. both prefer a fade to a hard edge).
-        //
-        // Evaluated in DOUBLE and rounded to binary32 exactly once, at the store — as is
-        // every weighted sum in this file. C# permits a runtime to carry float
-        // intermediates at higher precision, and the game's Mono does exactly that
-        // while .NET on the pipeline side does not: the first real export disagreed
-        // with both the offline run of this very code and the evaluator in the last bit
-        // of 285 of 2073 tiles. Spelling the arithmetic out in double with one explicit
-        // narrowing leaves nothing to the runtime's discretion.
-        public static double Kernel(long timeMs, int horizonMs)
-        {
-            return 1.0 - ((double)timeMs / horizonMs);
-        }
-
-        // acc + w·k, rounded to binary32 once. Products of two binary32 values are exact
-        // in double, so the only rounding is the final one.
-        public static float Add(float accumulator, float weight, double kernel)
-        {
-            return (float)(accumulator + (weight * kernel));
-        }
-
-        public static WalkAccessResult Compute(WalkAccessInputs inputs)
-        {
-            WalkGraph graph = inputs.Graph;
-            int classes = inputs.CatchmentMs.Length;
-            int types = Math.Max(1, inputs.TypeCount);
-            var result = new WalkAccessResult
-            {
-                Demand = Grid(classes, graph.NodeCount),
-                Jobs = Grid(classes, graph.NodeCount),
-                Future = Grid(classes, graph.NodeCount),
-                Interchange = Grid(types, graph.NodeCount),
-                StopWithin = new float[classes][][],
-                CrossRaw = new float[classes][][],
-            };
-            for (int c = 0; c < classes; c++)
-            {
-                result.StopWithin[c] = Grid(types, graph.NodeCount);
-                result.CrossRaw[c] = Grid(types, graph.NodeCount);
-            }
-
-            if (graph.NodeCount == 0 || classes == 0)
-            {
-                result.SourcesOffNetwork = inputs.Homes.Count + inputs.Jobs.Count + inputs.Future.Count + inputs.StopCount;
-                return result;
-            }
-
-            double accessMetres = inputs.AccessMs / 1000.0 * Assumptions.WalkSpeed;
-            var index = new WalkNodeIndex(graph, Math.Max(32.0, accessMetres));
-            var dijkstra = new IntDijkstra(graph.NodeCount);
-            long horizon = inputs.CatchmentMs[classes - 1];
-
-            Snap(index, inputs.Homes, inputs.AccessMs, out result.HomeNode, out result.HomeAccessMs, ref result.SourcesOffNetwork);
-            Snap(index, inputs.Jobs, inputs.AccessMs, out result.JobNode, out result.JobAccessMs, ref result.SourcesOffNetwork);
-            Snap(index, inputs.Future, inputs.AccessMs, out result.FutureNode, out result.FutureAccessMs, ref result.SourcesOffNetwork);
-            SnapStops(index, inputs, out result.StopNode, out result.StopAccessMs, ref result.SourcesOffNetwork);
-
-            Accumulate(graph, dijkstra, inputs.Homes, result.HomeNode, result.HomeAccessMs, inputs.CatchmentMs, horizon, result.Demand, result);
-            Accumulate(graph, dijkstra, inputs.Jobs, result.JobNode, result.JobAccessMs, inputs.CatchmentMs, horizon, result.Jobs, result);
-            Accumulate(graph, dijkstra, inputs.Future, result.FutureNode, result.FutureAccessMs, inputs.CatchmentMs, horizon, result.Future, result);
-            AccumulateStops(graph, dijkstra, inputs, result, horizon);
-            return result;
-        }
-
-        private static float[][] Grid(int rows, int columns)
-        {
-            var grid = new float[rows][];
-            for (int r = 0; r < rows; r++)
-            {
-                grid[r] = new float[columns];
-            }
-
-            return grid;
-        }
-
         // A point's node and the whole-millisecond walk to it; -1 when nothing lies
         // within the access walk. The straight line stands in for the unmodelled last
         // metres between a building's centre and the pavement.
@@ -633,182 +433,47 @@ namespace TransitArchitect
             return node;
         }
 
-        private static void Snap(WalkNodeIndex index, WalkSources sources, int accessMs, out int[] nodes, out int[] walkMs, ref int offNetwork)
+        // Every tile's node and the walk to it, for the tile grid the access field is
+        // laid out on. The node is the nearest one ON THE GROUND (WalkGraph.Siteable):
+        // a tile over a tunnel reads the pavement above it, not the one beneath.
+        public static TileSnap SnapTiles(
+            WalkGraph graph, int width, int height, float worldMinX, float worldMinZ, float tileSize, int accessMs)
         {
-            nodes = new int[sources.Count];
-            walkMs = new int[sources.Count];
-            for (int i = 0; i < sources.Count; i++)
+            var snap = new TileSnap
             {
-                nodes[i] = SnapPoint(index, sources.X[i], sources.Z[i], accessMs, out walkMs[i]);
-                if (nodes[i] < 0)
-                {
-                    offNetwork++;
-                }
-            }
-        }
-
-        private static void SnapStops(WalkNodeIndex index, WalkAccessInputs inputs, out int[] nodes, out int[] walkMs, ref int offNetwork)
-        {
-            nodes = new int[inputs.StopCount];
-            walkMs = new int[inputs.StopCount];
-            for (int i = 0; i < inputs.StopCount; i++)
-            {
-                nodes[i] = SnapPoint(index, inputs.StopX[i], inputs.StopZ[i], inputs.AccessMs, out walkMs[i]);
-                if (nodes[i] < 0)
-                {
-                    offNetwork++;
-                }
-            }
-        }
-
-        // Sources in index order, settled nodes in settle order: the float sums this
-        // produces are reproducible because that order is fixed by the input alone.
-        private static void Accumulate(
-            WalkGraph graph, IntDijkstra dijkstra, WalkSources sources, int[] nodes, int[] walkMs,
-            int[] catchmentMs, long horizon, float[][] into, WalkAccessResult result)
-        {
-            for (int i = 0; i < sources.Count; i++)
-            {
-                if (nodes[i] < 0)
-                {
-                    continue;
-                }
-
-                float weight = sources.Weight[i];
-                dijkstra.Run(graph, nodes[i], walkMs[i], horizon);
-                result.Relaxations += dijkstra.SettledCount;
-                for (int s = 0; s < dijkstra.SettledCount; s++)
-                {
-                    int node = dijkstra.Settled[s];
-                    long t = dijkstra.Dist[node];
-                    for (int c = 0; c < catchmentMs.Length; c++)
-                    {
-                        if (t <= catchmentMs[c])
-                        {
-                            into[c][node] = Add(into[c][node], weight, Kernel(t, catchmentMs[c]));
-                        }
-                    }
-                }
-            }
-        }
-
-        private static void AccumulateStops(WalkGraph graph, IntDijkstra dijkstra, WalkAccessInputs inputs, WalkAccessResult result, long horizon)
-        {
-            for (int i = 0; i < inputs.StopCount; i++)
-            {
-                int type = inputs.StopType[i];
-                if (result.StopNode[i] < 0 || type < 0 || type >= result.Interchange.Length)
-                {
-                    continue;
-                }
-
-                dijkstra.Run(graph, result.StopNode[i], result.StopAccessMs[i], horizon);
-                result.Relaxations += dijkstra.SettledCount;
-                for (int s = 0; s < dijkstra.SettledCount; s++)
-                {
-                    int node = dijkstra.Settled[s];
-                    long t = dijkstra.Dist[node];
-                    double transferable = t <= inputs.TransferMs ? Kernel(t, inputs.TransferMs) : 0.0;
-                    if (t <= inputs.TransferMs)
-                    {
-                        result.Interchange[type][node] = Add(result.Interchange[type][node], 1f, transferable);
-                    }
-
-                    for (int c = 0; c < inputs.CatchmentMs.Length; c++)
-                    {
-                        if (t <= inputs.CatchmentMs[c])
-                        {
-                            double within = Kernel(t, inputs.CatchmentMs[c]);
-                            result.StopWithin[c][type][node] = Add(result.StopWithin[c][type][node], 1f, within);
-                            result.CrossRaw[c][type][node] = Add(result.CrossRaw[c][type][node], 1f, within * (1.0 - transferable));
-                        }
-                    }
-                }
-            }
-        }
-
-        // The seven raw terms at a network node for one mode: catchment class `cls`,
-        // own stop type `selfType`, other types weighted by `typeWeight` (capacity
-        // relative to a bus, register A1.10; 0 excludes a type). Cross-mode sums run
-        // over types in ascending order.
-        public static SuitabilityCell NodeTerms(WalkAccessResult result, int node, int cls, int selfType, float[] typeWeight)
-        {
-            var cell = new SuitabilityCell
-            {
-                m_Demand = result.Demand[cls][node],
-                m_Jobs = result.Jobs[cls][node],
-                m_Future = result.Future[cls][node],
-                m_Access = 1f,
+                TileNode = new int[width * height],
+                TileWalkMs = new int[width * height],
             };
-
-            float[][] within = result.StopWithin[cls];
-            float[][] cross = result.CrossRaw[cls];
-            for (int type = 0; type < within.Length; type++)
+            if (graph.NodeCount == 0 || width <= 0 || height <= 0)
             {
-                if (type == selfType)
+                for (int i = 0; i < snap.TileNode.Length; i++)
                 {
-                    cell.m_Coverage = Add(cell.m_Coverage, 1f, within[type][node]);
-                    continue;
+                    snap.TileNode[i] = -1;
+                    snap.TileWalkMs[i] = -1;
                 }
 
-                float weight = type < typeWeight.Length ? typeWeight[type] : 0f;
-                if (weight <= 0f)
-                {
-                    continue;
-                }
-
-                cell.m_Interchange = Add(cell.m_Interchange, weight, result.Interchange[type][node]);
-                cell.m_CrossCoverage = Add(cell.m_CrossCoverage, weight, cross[type][node]);
+                return snap;
             }
 
-            return cell;
-        }
-
-        // A tile's terms are its node's terms; only the access term is the tile's own,
-        // fading from 1 at the node to 0 at the access walk. A tile with no node in
-        // reach — or an unbuildable one — scores nothing. The node is the nearest one
-        // on the ground: a tile over a tunnel reads the pavement a stop could stand on,
-        // not the one beneath it.
-        public static void TileTerms(
-            WalkAccessResult result, WalkNodeIndex index, int width, int height, float worldMinX, float worldMinZ, float tileSize,
-            byte[] buildable, int accessMs, int cls, int selfType, float[] typeWeight,
-            SuitabilityCell[] terms, int[] tileNode, int[] tileWalkMs)
-        {
+            double accessMetres = accessMs / 1000.0 * Assumptions.WalkSpeed;
+            snap.Index = new WalkNodeIndex(graph, Math.Max(32.0, accessMetres));
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    int i = x + y * width;
-                    tileNode[i] = -1;
-                    tileWalkMs[i] = -1;
-                    terms[i] = default;
-                    if (buildable[i] == 0)
+                    int i = x + (y * width);
+                    float cx = worldMinX + ((x + 0.5f) * tileSize);
+                    float cz = worldMinZ + ((y + 0.5f) * tileSize);
+                    snap.TileNode[i] = SnapSite(snap.Index, cx, cz, accessMs, out int walkMs);
+                    snap.TileWalkMs[i] = walkMs;
+                    if (snap.TileNode[i] >= 0)
                     {
-                        continue;
+                        snap.TilesOnNetwork++;
                     }
-
-                    float cx = worldMinX + (x + 0.5f) * tileSize;
-                    float cz = worldMinZ + (y + 0.5f) * tileSize;
-                    int node = SnapSite(index, cx, cz, accessMs, out int walkMs);
-                    if (node < 0)
-                    {
-                        continue;
-                    }
-
-                    tileNode[i] = node;
-                    tileWalkMs[i] = walkMs;
-                    SuitabilityCell cell = NodeTerms(result, node, cls, selfType, typeWeight);
-                    cell.m_Access = (float)Kernel(walkMs, accessMs);
-                    terms[i] = cell;
                 }
             }
-        }
 
-        // Which catchment class a horizon belongs to, or -1.
-        public static int ClassOf(int[] catchmentMs, int horizonMs)
-        {
-            return Array.IndexOf(catchmentMs, horizonMs);
+            return snap;
         }
-
     }
 }

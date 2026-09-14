@@ -1,4 +1,4 @@
-root = true
+﻿root = true
 
 [*.{cs,csproj,props,targets}]
 indent_style = space
@@ -76,17 +76,15 @@ dotnet_diagnostic.MA0149.severity = none
 dotnet_diagnostic.MA0181.severity = none
 
 # Method length. The rule stays ON, ratcheted to the current worst offender so no
-# method may grow past today's longest. Roughly forty methods sit over 60 lines and
-# sixteen over 100; splitting them is a refactor rather than a fix and must not be
-# done blind, so the ratchet holds the line meanwhile. Lower these numbers as methods
-# are split; never raise them.
+# method may grow past today's longest. Splitting the long ones is a refactor rather
+# than a fix and must not be done blind, so the ratchet holds the line meanwhile.
+# Lower these numbers as methods are split; never raise them.
 #
-# The line ceiling is GraphMath.GrowCorridor at 138; the statement ceiling
-# is 60, checked by build rather than counted by eye — 59 fails nothing, 55 fails six
-# methods. Both were pulled down to what the code really does rather than left at a
-# round number, which is not a ratchet at all.
-MA0051.maximum_lines_per_method = 138
-MA0051.maximum_statements_per_method = 60
+# Both figures are what the build says, not what anyone counted: 111 lines fails one
+# method and 51 statements fails two. They came down from 138/60 when the suggestion
+# pipeline was removed (2026-09-14).
+MA0051.maximum_lines_per_method = 112
+MA0051.maximum_statements_per_method = 52
 
 # One type per file, named after the file. `Lines.cs` deliberately holds
 # `ExistingLine` beside the reader that builds it.

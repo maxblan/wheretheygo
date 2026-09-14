@@ -4,25 +4,10 @@ using System.Globalization;
 
 namespace TransitArchitect.Tests
 {
-    // F3 steps 3–4, the panel payload contract and the log's disagreement pass —
-    // logic that used to live in the ECS system and could not be run here.
+    // The served-demand discount and the panel payload contract — logic that used to
+    // live in the ECS system and could not be run here.
     internal static partial class Program
     {
-        private static SuggestedRoute MakeRoute(ModePreset mode, params float2Like[] stops)
-        {
-            var route = new SuggestedRoute { Mode = mode, Network = RouteNetwork.Road, Vehicles = 2 };
-            route.Stops.AddRange(stops);
-            route.Path.AddRange(stops);
-            float length = 0f;
-            for (int i = 1; i < stops.Length; i++)
-            {
-                length += float2Like.Distance(stops[i - 1], stops[i]);
-            }
-
-            route.Length = length;
-            return route;
-        }
-
         private static void ServedDemandMapsPairsAndDiscounts()
         {
             var worldMin = new float2Like(0f, 0f);
@@ -72,8 +57,8 @@ namespace TransitArchitect.Tests
             AssertTrue(report.WeightBefore == 14f, "the carried journeys weighed 14 before");
             float direct = ride + ServedDemand.WalkSeconds(0f) + ServedDemand.WalkSeconds(0f);
             float viaWalk = ride + ServedDemand.WalkSeconds((256f * 256f) + (256f * 256f)) + ServedDemand.WalkSeconds(0f);
-            AssertTrue(flows[0].m_Weight == 10f * SuitabilityScoring.Saturate(direct / Assumptions.MaxJourneySeconds), "a carried journey keeps door-to-door / ceiling of its weight");
-            AssertTrue(flows[3].m_Weight == 4f * SuitabilityScoring.Saturate(viaWalk / Assumptions.MaxJourneySeconds), "the walk from the zone centre to its stop is charged");
+            AssertTrue(flows[0].m_Weight == 10f * Math.Min(1f, Math.Max(0f, direct / Assumptions.MaxJourneySeconds)), "a carried journey keeps door-to-door / ceiling of its weight");
+            AssertTrue(flows[3].m_Weight == 4f * Math.Min(1f, Math.Max(0f, viaWalk / Assumptions.MaxJourneySeconds)), "the walk from the zone centre to its stop is charged");
             AssertTrue(flows[1].m_Weight == 7f && flows[2].m_Weight == 3f && flows[4].m_Weight == 2f, "journeys the network cannot carry keep their weight");
             AssertTrue(report.WeightAfter == flows[0].m_Weight + flows[3].m_Weight, "the report sums what the carried journeys kept");
             AssertTrue(ServedDemand.RemainingWeight(flows) == flows[0].m_Weight + 7f + 3f + flows[3].m_Weight + 2f, "remaining weight is the sum over every flow");
@@ -87,79 +72,73 @@ namespace TransitArchitect.Tests
 
 
 
+        // Routing every journey door to door over the lines that exist: the one
+        // evaluation the demand refresh makes. Two zones 3 km apart with a trunk line
+        // between them, and a third journey the line cannot help with.
+        private static void JourneysRouteOverTheExistingNetwork()
+        {
+            var problem = new LineSetProblem
+            {
+                // A: the trunk's first stop, B: its last, C: off to the side.
+                PairOx = new[] { 0f, 0f, 5000f },
+                PairOz = new[] { 0f, 0f, 5000f },
+                PairDx = new[] { 3000f, 3000f, 6000f },
+                PairDz = new[] { 0f, 0f, 5000f },
+                PairWeight = new[] { 30f, 10f, 7f },
+                PairDayShare = new[] { 1f, 0f, 1f },
+                PairCount = 3,
+                BaseStopX = new[] { 0f, 1500f, 3000f },
+                BaseStopZ = new[] { 0f, 0f, 0f },
+                BaseStopCount = 3,
+                WalkRadius = Assumptions.TransferWalkRadius,
+                BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
+                MaxTravelSeconds = Assumptions.MaxJourneySeconds,
+                ZoneReachMetres = Assumptions.ZoneStopReachMetres,
+            };
+            problem.BaseLines.Add(new TransitLine
+            {
+                m_Stops = new[] { 0, 1, 2 },
+                m_ExpectedWait = 120f,
+                m_SpeedMetresPerSecond = 15f,
+            });
+
+            LineSetEvaluation routed = LineSet.Evaluate(problem, before: null);
+
+            float walkOnly = LineSet.WalkOnlySeconds(problem, 0);
+            AssertTrue(routed.After.Length == 3, "one door-to-door time per pair");
+            AssertTrue(routed.After[0] < walkOnly, $"the trunk beats walking 3 km: {routed.After[0].ToString("F0", CultureInfo.InvariantCulture)}s against {walkOnly.ToString("F0", CultureInfo.InvariantCulture)}s");
+            AssertTrue(routed.After[0] == routed.After[1], "the same two doors give the same time whatever the time of day");
+            AssertTrue(routed.After[2] == LineSet.WalkOnlySeconds(problem, 2), "a journey no line reaches keeps the walk");
+
+            // Every pair that rides the line adds its whole weight to that line, split
+            // by the share of its rides in the day period.
+            AssertTrue(routed.BaseRiders.Length == 1, "one figure per existing line");
+            AssertEqual(40f, (float)routed.BaseRiders[0], 1e-3f, "both carried journeys ride the trunk");
+            AssertEqual(30f, (float)routed.BaseRidersByDay[0], 1e-3f, "the day share of those riders");
+            AssertEqual(10f, (float)routed.BaseRidersByNight[0], 1e-3f, "and the night share");
+
+            // Nothing is saved against a baseline of itself.
+            LineSetEvaluation again = LineSet.Evaluate(problem, routed.After);
+            AssertTrue(again.TimeSaved == 0.0, "routing the same network twice saves nothing");
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                AssertTrue(again.After[i] == routed.After[i], "and gives the same times");
+            }
+
+            // With no line at all every journey walks.
+            problem.BaseLines.Clear();
+            problem.Geometry = null;
+            LineSetEvaluation walking = LineSet.Evaluate(problem, before: null);
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                AssertTrue(walking.After[i] == LineSet.WalkOnlySeconds(problem, i), "a city with no transit walks every journey");
+            }
+        }
+
         private static void PanelPayloadRowsKeepTheirFieldOrder()
         {
-            var route = MakeRoute(ModePreset.Bus, new float2Like(100.7f, 200.2f), new float2Like(300f, 400f), new float2Like(500.9f, 600.1f));
-            route.EnabledDemand = 50f;
-            route.Schedule = LineSchedule.Day;
-            route.DayUtilisation = 0.25f;
-            route.NightUtilisation = 0.104f;
-            string rows = PanelPayload.RouteRows(new List<SuggestedRoute> { route, route }, 1000f);
-            string[] lines = rows.Split('\n');
-            AssertTrue(lines.Length == 2, "one row per route");
-            string[] fields = lines[0].Split('|');
-            AssertTrue(fields.Length == 10, $"the route row has ten fields, got {fields.Length.ToString(CultureInfo.InvariantCulture)}: {lines[0]}");
-            AssertTrue(fields[0] == "Bus" && fields[1] == (route.Length / 1000f).ToString("F1", CultureInfo.InvariantCulture) && fields[2] == "3" && fields[3] == "2", "mode, km, stops, vehicles");
-            AssertTrue(fields[4] == TransitModes.ColorCssFor(ModePreset.Bus), "the colour travels with the row");
-            AssertTrue(fields[5] == "5.0", "a reach under ten percent keeps one decimal");
-            AssertTrue(fields[6] == "100,200>500,600" && fields[6] == PanelPayload.RouteKeyOf(route), "the row's identity is where the line runs between");
-            AssertTrue(fields[7] == "Day" && fields[8] == "25" && fields[9] == "10", "schedule and the two period utilisations");
-            route.EnabledDemand = 500f;
-            AssertTrue(PanelPayload.RouteRows(new List<SuggestedRoute> { route }, 1000f).Split('|')[5] == "50", "a reach of ten percent or more is a whole number");
-            AssertTrue(PanelPayload.RouteRows(new List<SuggestedRoute> { route }, 0f).Split('|')[5] == "0.0", "no unserved travel means no reach");
-            AssertTrue(PanelPayload.RouteKeyOf(MakeRoute(ModePreset.Bus, new float2Like(1f, 1f))) == "empty", "a route without two stops has no key");
-
-            var health = new LineHealth
-            {
-                m_Id = 77,
-                m_EntityIndex = 512,
-                m_Name = "Line 3",
-                m_Mode = ModePreset.Tram,
-                m_Verdict = LineVerdict.Healthy,
-                m_Usage = 0.456f,
-                m_Vehicles = 4,
-                m_Stops = 9,
-                m_WindowSamples = 12,
-                m_WindowGameHours = 6.4f,
-                m_PeakUsage = 0.9f,
-                m_Schedule = LineSchedule.DayAndNight,
-                m_ScheduleAdvice = LineSchedule.Day,
-                m_DayUsage = 0.5f,
-                m_NightUsage = 0.05f,
-                m_DaySamples = 8,
-                m_NightSamples = 4,
-                m_RidersPerDay = 812f,
-                m_Utilisation = 0.234f,
-                m_RecommendedMode = ModePreset.Tram,
-                m_RecommendedFleet = 5,
-                m_FleetMin = 1,
-                m_FleetMax = 13,
-                m_PlanningLoad = 96,
-                m_DayUtilisation = 0.3f,
-                m_NightUtilisation = 0.1f,
-            };
-            // The row the vanilla transport overview joins on. Five fields, in this
-            // order: the entity index it is keyed by, the id every action is sent
-            // back with, the verdict token, its argument and the utilisation the
-            // verdict was reached on.
-            string[] overview = PanelPayload.OverviewRows(new List<LineHealth> { health }).Split('|');
-            AssertTrue(overview.Length == 5, $"the overview row has five fields, got {overview.Length.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(overview[0] == "512" && overview[1] == "77", "the entity index comes first and the id second");
-            AssertTrue(overview[2] == "Healthy" && overview[3].Length == 0, "a healthy line has a verdict and no argument");
-            AssertTrue(overview[4] == "23", "the utilisation is the plan's, as a whole percent");
-
-            health.m_RidersPerDay = -1f;
-            AssertTrue(PanelPayload.OverviewRows(new List<LineHealth> { health }).Split('|')[4] == "-",
-                "a line no route pass has measured reads as a dash rather than as 0%");
-
-            health.m_RidersPerDay = 812f;
-            health.m_Verdict = LineVerdict.FleetUp;
-            health.m_RecommendedFleet = 7;
-            string[] fleetUp = PanelPayload.OverviewRows(new List<LineHealth> { health }).Split('|');
-            AssertTrue(fleetUp[2] == "FleetUp" && fleetUp[3] == "3", "the argument is how many vehicles to add, not the target");
-
             AssertTrue(PanelPayload.DataCoverageRow(1.5f, 4, 24f, 12, 3.2f) == "1.5|4|24|12|3.2", "data coverage row");
-            AssertTrue(PanelPayload.EquityRow(0.8f, 10, 80, 0.126) == "80.0|10|80|0.13", "equity row");
+            AssertTrue(PanelPayload.EquityRow(0.8f, 10, 0.126) == "80.0|10|0.13", "coverage row");
         }
     }
 }

@@ -396,8 +396,8 @@ namespace TransitArchitect
                 var cellOf = new int[stopCount];
                 for (int i = 0; i < stopCount; i++)
                 {
-                    int cx = SuitabilityScoring.ClampInt((int)((stopX[i] - minX) / cellSize), 0, cols - 1);
-                    int cz = SuitabilityScoring.ClampInt((int)((stopZ[i] - minZ) / cellSize), 0, rows - 1);
+                    int cx = Math.Min(cols - 1, Math.Max(0, (int)((stopX[i] - minX) / cellSize)));
+                    int cz = Math.Min(rows - 1, Math.Max(0, (int)((stopZ[i] - minZ) / cellSize)));
                     cellOf[i] = cx + cz * cols;
                     counts[cellOf[i]]++;
                 }
@@ -576,6 +576,63 @@ namespace TransitArchitect
             return node == originStop;
         }
 
+        // The k-th smallest of `values[0..length)`, by quickselect — the array is
+        // REORDERED in place, which is why the caller passes a scratch copy. Used for
+        // the median carried journey.
+        public static float SelectKth(float[] values, int length, int k)
+        {
+            if (values is null || length <= 0)
+            {
+                return 0f;
+            }
+
+            k = Math.Min(length - 1, Math.Max(0, k));
+            int lo = 0;
+            int hi = length - 1;
+            while (lo < hi)
+            {
+                float pivot = values[(lo + hi) >> 1];
+                int i = lo;
+                int j = hi;
+                while (i <= j)
+                {
+                    while (values[i] < pivot)
+                    {
+                        i++;
+                    }
+
+                    while (values[j] > pivot)
+                    {
+                        j--;
+                    }
+
+                    if (i <= j)
+                    {
+                        float tmp = values[i];
+                        values[i] = values[j];
+                        values[j] = tmp;
+                        i++;
+                        j--;
+                    }
+                }
+
+                if (k <= j)
+                {
+                    hi = j;
+                }
+                else if (k >= i)
+                {
+                    lo = i;
+                }
+                else
+                {
+                    return values[k];
+                }
+            }
+
+            return values[k];
+        }
+
         // The travel time past which a journey counts as not carried at all, taken from
         // the city's OWN typical transit journey rather than from a fixed hour.
         //
@@ -611,7 +668,7 @@ namespace TransitArchitect
                 return fallback;
             }
 
-            median = SuitabilityScoring.SelectKth(travelTimes, count, count / 2);
+            median = SelectKth(travelTimes, count, count / 2);
             if (median <= 0f)
             {
                 return fallback;

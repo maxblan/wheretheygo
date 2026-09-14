@@ -50,8 +50,6 @@ namespace TransitArchitect
         // network node to the nearest served stop, and the coverage that gives.
         private readonly List<Trip> m_Journeys = new List<Trip>();
 
-        private float[]? m_DemandRaster;
-
         private int2 m_ZoneGrid;
 
         private float m_LastDemandRefresh;
@@ -65,10 +63,6 @@ namespace TransitArchitect
         // really 17% of the demand it was competing for. Two different pools, one
         // ratio.
         private float m_UnservedTravelWeight;
-
-        private RouteGoal m_LastObjective;
-
-        private int m_LastRouteCount;
 
         // The city's working hours as day fractions (EconomyParameterData); the game's
         // shifts sit on them (Daytime). Logged once so the classification is auditable.
@@ -101,7 +95,7 @@ namespace TransitArchitect
         // Runs on its own slow cadence because it is far heavier than the per-tile
         // scoring — it walks every citizen and runs a shortest-path search per
         // origin zone.
-        private void UpdateTravelDemand(Setting settings, int2 gridSize, float2 worldMin, float2 mapSize, bool objectiveChanged)
+        private void UpdateTravelDemand(Setting settings, int2 gridSize, float2 worldMin, float2 mapSize)
         {
             // What the refresh costs the frame, phase by phase: the one part of the
             // route pipeline still on the main thread, so its budget is logged.
@@ -154,40 +148,17 @@ namespace TransitArchitect
             MeasureEquity(settings);
             DiscountServedDemand();
             m_UnservedTravelWeight = ServedDemand.RemainingWeight(m_ZoneFlows);
-            BuildDemandLayer(settings, gridSize, worldMin);
             long modelMs = clock.ElapsedMilliseconds - extractMs;
 
-            long networksMs = 0;
-            if (m_GraphDirty || m_RoadGraph.Graph is null)
-            {
-                BuildNetworks(gridSize, worldMin);
-                networksMs = clock.ElapsedMilliseconds - extractMs - modelMs;
-            }
-
-            bool passStarted = false;
-            bool passDue = m_Routes.Count == 0 || objectiveChanged
-                || UnityEngine.Time.realtimeSinceStartup - m_LastRoutePassStart >= Assumptions.RoutePassIntervalSeconds;
-            if (m_RoadGraph.Graph is not null && m_ZoneNodes is not null && passDue)
-            {
-
-                // The flow assignment runs on the worker with the rest of the route
-                // pass (it only feeds corridor growth); the main thread hands over the
-                // journeys and networks it built.
-                passStarted = StartRoutePass(settings, gridSize, worldMin, tripCount, totalWeight);
-            }
-
+            RouteJourneys();
+            long routingMs = clock.ElapsedMilliseconds - extractMs - modelMs;
             m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
-            if (!passStarted)
-            {
-                UpdateRouteList();
-            }
 
             DeferredLog.Info(
                 $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)} (observed shopping/leisure {(m_TripObserver.LastDemandCount).ToString(CultureInfo.InvariantCulture)} ×{(m_TripObserver.LastScale).ToString("F2", CultureInfo.InvariantCulture)} over {(LineHistory.GameHours(m_TripObserver.Window.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours), " +
-                $"weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}, " +
-                $"route pass {(passStarted ? "started on the worker" : passDue ? "not started (no network)" : $"not due (every {Assumptions.RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s)")}; " +
+                $"weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, zonePairs={m_ZoneFlows.Count}; " +
                 $"main thread {(clock.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms (extract {(extractMs).ToString(CultureInfo.InvariantCulture)}, model {(modelMs).ToString(CultureInfo.InvariantCulture)}, " +
-                $"networks {(networksMs).ToString(CultureInfo.InvariantCulture)}, assign {(clock.ElapsedMilliseconds - extractMs - modelMs - networksMs).ToString(CultureInfo.InvariantCulture)}); " +
+                $"routing {(routingMs).ToString(CultureInfo.InvariantCulture)}); " +
                 $"trip observation since the last refresh: {(m_TripObserver.ScanCount).ToString(CultureInfo.InvariantCulture)} scans, " +
                 $"mean {(m_TripObserver.ScanCount > 0 ? m_TripObserver.ScanMsSum / (double)m_TripObserver.ScanCount : 0.0).ToString("F1", CultureInfo.InvariantCulture)} ms, max {(m_TripObserver.ScanMsMax).ToString(CultureInfo.InvariantCulture)} ms");
             m_TripObserver.ResetScanStats();
@@ -198,7 +169,7 @@ namespace TransitArchitect
         // against how close its ends happen to be to some stop.
         private void BuildTransitModel(Setting settings, int2 gridSize)
         {
-            RefreshLineHealth(settings);
+            RefreshLineHealth();
 
             // A city with NO transit at all still gets a model, empty though it is.
             // Returning early here left m_TransitNetwork and m_BaselineSeconds null,
@@ -249,32 +220,9 @@ namespace TransitArchitect
             m_ServedDemand.MapZonesToStops(xs, zs, new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y), new int2Like(m_ZoneGrid.x, m_ZoneGrid.y));
             m_ServedDemand.BuildPairs(m_ZoneFlows);
 
-            int problems = 0;
-            for (int i = 0; i < m_LineHealth.Count; i++)
-            {
-                if (m_LineHealth[i].Severity > 0)
-                {
-                    problems++;
-                }
-            }
-
             DeferredLog.Info(
                 $"Transit model: lines={m_ExistingLines.Count}, stops={m_TransitStops.Count}, " +
-                $"graphNodes={(m_TransitNetwork.Graph.NodeCount).ToString(CultureInfo.InvariantCulture)}, routablePairs={(m_ServedDemand.PairCount).ToString(CultureInfo.InvariantCulture)}, " +
-                $"linesNeedingAttention={(problems).ToString(CultureInfo.InvariantCulture)}");
-
-            for (int i = 0; i < m_LineHealth.Count && i < 12; i++)
-            {
-                LineHealth entry = m_LineHealth[i];
-                DeferredLog.Info(
-                    $"Line {(entry.m_Index).ToString(CultureInfo.InvariantCulture)} ({entry.m_Mode}): {LineHealthRules.Describe(entry)} — " +
-                    $"{(entry.m_Passengers).ToString(CultureInfo.InvariantCulture)}/{(entry.m_Capacity).ToString(CultureInfo.InvariantCulture)} aboard right now, " +
-                    $"occupancy {(entry.m_Usage * 100f).ToString("F1", CultureInfo.InvariantCulture)}% " +
-                    $"(peak {(entry.m_PeakUsage * 100f).ToString("F1", CultureInfo.InvariantCulture)}%, planning load {(entry.m_PlanningLoad).ToString(CultureInfo.InvariantCulture)}) " +
-                    $"{(entry.m_WindowSamples > 0 ? $"from {entry.m_WindowSamples.ToString(CultureInfo.InvariantCulture)} readings over {entry.m_WindowGameHours.ToString("F1", CultureInfo.InvariantCulture)}h" : "from this reading alone")}, " +
-                    $"{(entry.m_Vehicles).ToString(CultureInfo.InvariantCulture)}/{(entry.m_TargetVehicles).ToString(CultureInfo.InvariantCulture)} vehicles, plan {entry.m_RecommendedMode} × {(entry.m_RecommendedFleet).ToString(CultureInfo.InvariantCulture)}, " +
-                    $"{(entry.m_Stops).ToString(CultureInfo.InvariantCulture)} stops, {(entry.m_LengthKm).ToString("F1", CultureInfo.InvariantCulture)} km");
-            }
+                $"graphNodes={(m_TransitNetwork.Graph.NodeCount).ToString(CultureInfo.InvariantCulture)}, routablePairs={(m_ServedDemand.PairCount).ToString(CultureInfo.InvariantCulture)}");
         }
 
         // Unserved demand, decided by ROUTING each journey over the existing network
@@ -283,7 +231,7 @@ namespace TransitArchitect
         // discounted; one it cannot is left at full weight to drive a suggestion.
         private void DiscountServedDemand()
         {
-            if (m_RawTerms is null || m_TransitNetwork is null || m_TransitWorkspace is null)
+            if (m_TransitNetwork is null || m_TransitWorkspace is null)
             {
                 return;
             }
@@ -299,34 +247,6 @@ namespace TransitArchitect
                 $"({(report.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median, or a slow network" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median")}); " +
                 $"weight {(report.WeightBefore).ToString("F0", CultureInfo.InvariantCulture)} -> {(report.WeightAfter).ToString("F0", CultureInfo.InvariantCulture)} " +
                 $"({((report.WeightBefore > 0f ? (1f - report.WeightAfter / report.WeightBefore) * 100f : 0f)).ToString("F0", CultureInfo.InvariantCulture)}% absorbed by existing lines)");
-        }
-
-        private void BuildDemandLayer(Setting settings, int2 gridSize, float2 worldMin)
-        {
-            // Rasterising and normalising a layer no infomode can select is a pass over
-            // every cell on the map for nothing.
-            if (TermLayer(SuitabilityLayer.TravelDemand) is null)
-            {
-                return;
-            }
-
-            int cells = gridSize.x * gridSize.y;
-            if (m_DemandRaster is null || m_DemandRaster.Length != cells)
-            {
-                m_DemandRaster = new float[cells];
-            }
-
-            DemandZones.RasterizeDesireLines(
-                m_ZoneFlows, new float2Like(worldMin.x, worldMin.y), new int2Like(m_ZoneGrid.x, m_ZoneGrid.y),
-                new int2Like(gridSize.x, gridSize.y), Assumptions.TileSize, m_DemandRaster);
-
-            byte[] layer = m_LayerIntensities[(int)SuitabilityLayer.TravelDemand];
-            if (layer is not null && layer.Length == cells && m_ScoreScratch is not null && m_ScoreScratch.Length >= cells)
-            {
-                SuitabilityScoring.NormalizeIntensities(
-                    m_DemandRaster, cells, settings.HighlightShare / 100f, Assumptions.IntensityGamma, layer, m_ScoreScratch);
-                m_Infoview.InvalidateExpandedCache();
-            }
         }
     }
 }

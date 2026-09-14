@@ -15,11 +15,9 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace TransitArchitect
 {
-    // The heat map's presentation in the game: the infoview and infomode prefabs, the
-    // repair of the game's infoview buffer, the undo of vanilla auto-activation, the
-    // terrain channel each active layer landed in, and the reflection into
-    // OverlayInfomodeSystem's terrain texture that paints the intensities the F1 pass
-    // produced. Owns no scoring state: the intensities come in with every frame.
+    // The mod's presentation in the game's infoview menu: the infoview and infomode
+    // prefabs, the repair of the game's infoview buffer, the undo of vanilla
+    // auto-activation, and which colour-group index each active layer landed in.
     //
     // The three queries are created by the overlay system (GetEntityQuery), so they
     // stay registered with that system's dependencies exactly as before.
@@ -28,7 +26,6 @@ namespace TransitArchitect
         private readonly EntityManager m_EntityManager;
         private readonly PrefabSystem m_PrefabSystem;
         private readonly ToolSystem m_ToolSystem;
-        private readonly OverlayInfomodeSystem m_OverlayInfomodeSystem;
         private readonly EntityQuery m_ActiveInfomodeQuery;
         private readonly EntityQuery m_PlaceableInfoviewQuery;
         private readonly EntityQuery m_PlaceableInfoviewChangedQuery;
@@ -37,7 +34,6 @@ namespace TransitArchitect
             EntityManager entityManager,
             PrefabSystem prefabSystem,
             ToolSystem toolSystem,
-            OverlayInfomodeSystem overlayInfomodeSystem,
             EntityQuery activeInfomodeQuery,
             EntityQuery placeableInfoviewQuery,
             EntityQuery placeableInfoviewChangedQuery)
@@ -45,33 +41,20 @@ namespace TransitArchitect
             m_EntityManager = entityManager;
             m_PrefabSystem = prefabSystem;
             m_ToolSystem = toolSystem;
-            m_OverlayInfomodeSystem = overlayInfomodeSystem;
             m_ActiveInfomodeQuery = activeInfomodeQuery;
             m_PlaceableInfoviewQuery = placeableInfoviewQuery;
             m_PlaceableInfoviewChangedQuery = placeableInfoviewChangedQuery;
         }
 
-        // Whether a layer is registered as an infomode and can therefore be drawn.
-        // SuitabilityLayers.All decides which are; EnsurePrefabs registers exactly those.
-        public bool IsRegistered(SuitabilityLayer layer) => m_LayerPrefabs.ContainsKey(layer);
-
-        // Any layer's bytes may have changed: the interleaved buffer is rebuilt on the
-        // next frame even if the active set is identical.
-        public void InvalidateExpandedCache()
-        {
-            m_ExpandedSignature = -1;
-        }
-
         // Leaving a city drops the caches that belong to it.
         public void Release()
         {
-            m_ExpandedCache = null;
             m_VanillaPlaceableInfoviews = null;
         }
 
-        // Opens or closes our infoview on behalf of the toolbar button. Activation
-        // still goes through ToolSystem.infoview, which is what assigns the terrain
-        // overlay channel our heat map is drawn into.
+        // Opens or closes our infoview on behalf of the Options page. Activation goes
+        // through ToolSystem.infoview, which is what assigns each infomode its index in
+        // its colour group.
         public void SetActive(bool active)
         {
             if (m_InfoviewPrefab is null)
@@ -124,23 +107,6 @@ namespace TransitArchitect
 
         private InfoviewPrefab? m_InfoviewPrefab;
 
-        private byte[]? m_ExpandedCache;
-
-        private long m_ExpandedSignature = -1;
-
-        // Bound once rather than invoked reflectively every frame: InjectOverlay runs
-        // on the render path while the overlay is on screen, and MethodInfo.Invoke
-        // there allocated an object[], boxed the int2 argument and boxed the returned
-        // NativeArray sixty times a second. Binding a typed delegate also checks the
-        // signature the reflection lookup could not — GetMethod matches on parameters
-        // only, so a changed return type would have surfaced as a per-frame cast
-        // exception instead of the one-shot diagnostic below.
-        private static Func<OverlayInfomodeSystem, int2, NativeArray<byte>>? s_GetTerrainTextureData;
-
-        private static FieldInfo? s_TerrainTextureField;
-
-        private static bool s_ReflectionChecked;
-
         private int m_LastLoggedIndex = int.MinValue;
 
         private bool m_PrefabsAdded;
@@ -156,8 +122,6 @@ namespace TransitArchitect
         private int m_LastPlaceableCount = -1;
 
         private Dictionary<Entity, PlaceableInfoviewItem[]>? m_VanillaPlaceableInfoviews;
-
-        private bool m_LastOverlayApplied;
 
 
         public void EnsurePrefabs()
@@ -187,9 +151,7 @@ namespace TransitArchitect
                 var info = new InfomodeInfo();
                 SetField(info, "m_Mode", prefab);
                 SetField(info, "m_Priority", InfomodePriority - i);
-                // Only the combined score is on by default; the rest are opt-in so
-                // opening the infoview does not immediately burn all four channels.
-                SetField(info, "m_Supplemental", layer != SuitabilityLayer.Score);
+                SetField(info, "m_Supplemental", value: false);
                 SetField(info, "m_Optional", value: false);
                 infomodeInfos.Add(info);
             }
@@ -217,14 +179,12 @@ namespace TransitArchitect
 
             m_ToolSystem.EventInfomodesChanged?.Invoke();
             m_PrefabsAdded = true;
-            DeferredLog.Info($"Registered {layers.Length} suitability infomodes and the infoview prefab.");
+            DeferredLog.Info($"Registered {(layers.Length).ToString(CultureInfo.InvariantCulture)} infomodes and the infoview prefab.");
         }
 
         private static InfomodeBasePrefab CreateLayerPrefab(SuitabilityLayer layer)
         {
-            InfomodeBasePrefab prefab = SuitabilityLayers.IsObjectLayer(layer)
-                ? PrefabBase.Create<AccessInfomodePrefab>(SuitabilityLayers.NameOf(layer))
-                : PrefabBase.Create<SuitabilityInfomodePrefab>(SuitabilityLayers.NameOf(layer));
+            InfomodeBasePrefab prefab = PrefabBase.Create<AccessInfomodePrefab>(SuitabilityLayers.NameOf(layer));
             SuitabilityLayers.ColorsOf(layer, out Color low, out Color medium, out Color high);
 
             SetField(prefab, "m_Priority", InfomodePriority);
@@ -232,7 +192,7 @@ namespace TransitArchitect
             SetField(prefab, "m_Low", low);
             SetField(prefab, "m_Medium", medium);
             SetField(prefab, "m_High", high);
-            SetField(prefab, "m_Steps", layer == SuitabilityLayer.Sites ? 4 : 16);
+            SetField(prefab, "m_Steps", 16);
             SetField(prefab, "m_LegendType", GradientLegendType.Gradient);
             SetField(prefab, "m_LowLabelId", "TransitArchitect.Legend.Low");
             SetField(prefab, "m_MediumLabelId", "TransitArchitect.Legend.Medium");
@@ -309,7 +269,7 @@ namespace TransitArchitect
                     _ = buffer.Add(new InfoviewMode(
                         entity,
                         InfomodePriority - i,
-                        supplemental: layer != SuitabilityLayer.Score,
+                        supplemental: false,
                         optional: false));
                     added++;
                 }
@@ -452,9 +412,6 @@ namespace TransitArchitect
         // landed in. ToolSystem hands out m_Index = colorGroup * 4 + (1-based active
         // count) with NO bounds check, so a fifth active layer gets an index past
         // our four channels and must be dropped here.
-        private readonly List<KeyValuePair<int, SuitabilityLayer>> m_ActiveChannels =
-            new List<KeyValuePair<int, SuitabilityLayer>>();
-
         // The colour-group index each active OBJECT layer landed in, or 0 when it is
         // off. Read by BuildingAccessColorSystem, which writes it into Game.Objects.Color.
         private readonly int[] m_ObjectLayerIndex = new int[SuitabilityLayers.Count];
@@ -465,12 +422,11 @@ namespace TransitArchitect
             return index >= 0 && index < m_ObjectLayerIndex.Length ? m_ObjectLayerIndex[index] : 0;
         }
 
-        public int ResolveActiveLayers(out long signature)
+        // How many of the mod's own infomodes the player has switched on, and where
+        // each object layer landed in its colour group.
+        public int ActiveLayers()
         {
-            m_ActiveChannels.Clear();
             System.Array.Clear(m_ObjectLayerIndex, 0, m_ObjectLayerIndex.Length);
-            signature = 0;
-
             if (m_ActiveInfomodeQuery.IsEmptyIgnoreFilter)
             {
                 return 0;
@@ -479,7 +435,7 @@ namespace TransitArchitect
             using var entities = m_ActiveInfomodeQuery.ToEntityArray(Allocator.Temp);
             using var actives = m_ActiveInfomodeQuery.ToComponentDataArray<InfomodeActive>(Allocator.Temp);
 
-            int skipped = 0;
+            int active = 0;
             int unlinked = 0;
             for (int i = 0; i < entities.Length; i++)
             {
@@ -489,201 +445,30 @@ namespace TransitArchitect
                     continue;
                 }
 
-                if (SuitabilityLayers.IsObjectLayer(layer))
-                {
-                    // Object layers colour buildings, not the terrain: their index
-                    // belongs to another colour group and is not a terrain channel.
-                    m_ObjectLayerIndex[(int)layer] = actives[i].m_Index;
-                    continue;
-                }
-
-                int channel = actives[i].m_Index - 1;
-                if (channel is < 0 or >= SuitabilityLayers.MaxActiveLayers)
-                {
-                    skipped++;
-                    continue;
-                }
-
-                m_ActiveChannels.Add(new KeyValuePair<int, SuitabilityLayer>(channel, layer));
-                signature |= ((long)((int)layer + 1)) << (channel * 8);
-            }
-
-            if (skipped > 0 && signature != m_ExpandedSignature)
-            {
-                DeferredLog.Warn($"{(skipped).ToString(CultureInfo.InvariantCulture)} suitability layer(s) skipped: the terrain overlay only has {SuitabilityLayers.MaxActiveLayers} channels. Turn one off to see another.");
+                m_ObjectLayerIndex[(int)layer] = actives[i].m_Index;
+                active++;
             }
 
             // The query only ever holds our own infomodes, so reaching this point with
-            // none resolved is a fault, not the overlay being off — and it is the one
-            // fault that looks like a working overlay: the infoview is on, so
-            // TerrainRenderSystem keeps painting our gradient, but no intensity is ever
-            // written and the whole map sits at the low end of the ramp. It also stops
-            // every compute, so the route suggestions go with it. Say so.
-            if (m_LastLoggedIndex != m_ActiveChannels.Count)
+            // none resolved is a fault, not the infoview being off: the view is on, the
+            // legend is drawn, and nothing is ever coloured. Say so.
+            if (m_LastLoggedIndex != active)
             {
-                if (m_ActiveChannels.Count > 0)
+                if (active > 0)
                 {
-                    DeferredLog.Info($"Active suitability layers: {m_ActiveChannels.Count}.");
+                    DeferredLog.Info($"Active layers: {(active).ToString(CultureInfo.InvariantCulture)}.");
                 }
                 else
                 {
                     DeferredLog.Warn(
-                        $"No suitability layer resolved from {(entities.Length).ToString(CultureInfo.InvariantCulture)} active infomode(s): " +
-                        $"{(unlinked).ToString(CultureInfo.InvariantCulture)} not linked to a layer, " +
-                        $"{(skipped).ToString(CultureInfo.InvariantCulture)} outside the {SuitabilityLayers.MaxActiveLayers} terrain channels. " +
-                        "Nothing will be computed or drawn, and the map will show the low end of the gradient everywhere.");
+                        $"No layer resolved from {(entities.Length).ToString(CultureInfo.InvariantCulture)} active infomode(s): " +
+                        $"{(unlinked).ToString(CultureInfo.InvariantCulture)} not linked to a layer. Nothing will be coloured.");
                 }
 
-                m_LastLoggedIndex = m_ActiveChannels.Count;
+                m_LastLoggedIndex = active;
             }
 
-            return m_ActiveChannels.Count;
-        }
-
-        // Paints the active layers' intensities into the terrain overlay while the
-        // infoview is on and the system has a computed field to show.
-        public void ApplyOverlayState(bool active, long signature, bool hasData, byte[][] layerIntensities, int2 grid)
-        {
-            bool applied = false;
-            if (active && hasData && CheckPipeline())
-            {
-                BuildExpandedCache(signature, layerIntensities, grid);
-                applied = InjectOverlay(grid);
-            }
-
-            if (applied != m_LastOverlayApplied)
-            {
-                DeferredLog.Info($"Overlay map {(applied ? "attached" : "detached")} (active={active}, data={(hasData ? "yes" : "no")})");
-                m_LastOverlayApplied = applied;
-            }
-        }
-
-        // Verify the reflected members once and report loudly if a game update moved
-        // them, rather than silently rendering nothing forever.
-        [SuppressMessage("Design", "CA1031:Do not catch general exception types",
-            Justification = "Reading the game's version string is only for the diagnostic below. " +
-                "Any failure there must not stop the check from reporting what it found.")]
-        private static bool CheckPipeline()
-        {
-            if (s_ReflectionChecked)
-            {
-                return s_GetTerrainTextureData is not null && s_TerrainTextureField != null;
-            }
-
-            s_ReflectionChecked = true;
-            MethodInfo? getter = typeof(OverlayInfomodeSystem).GetMethod(
-                "GetTerrainTextureData",
-                BindingFlags.Instance | BindingFlags.NonPublic,
-                binder: null,
-                types: new[] { typeof(int2) },
-                modifiers: null);
-            s_TerrainTextureField = typeof(OverlayInfomodeSystem).GetField(
-                "m_TerrainTexture",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-
-            if (getter != null)
-            {
-                s_GetTerrainTextureData = Delegate.CreateDelegate(
-                    typeof(Func<OverlayInfomodeSystem, int2, NativeArray<byte>>),
-                    getter,
-                    throwOnBindFailure: false) as Func<OverlayInfomodeSystem, int2, NativeArray<byte>>;
-            }
-
-            if (s_GetTerrainTextureData is not null && s_TerrainTextureField != null)
-            {
-                return true;
-            }
-
-            string version = "unknown";
-            try
-            {
-                version = Colossal.Core.Version.current.fullVersion;
-            }
-            catch
-            {
-                // Version lookup is best-effort diagnostics only.
-            }
-
-            DeferredLog.Error(
-                "The overlay cannot draw: this game version moved the internals it renders through. " +
-                "OverlayInfomodeSystem internals not found or the wrong shape " +
-                $"(GetTerrainTextureData bound={s_GetTerrainTextureData is not null}, " +
-                $"m_TerrainTexture={s_TerrainTextureField != null}) on game {version}; the overlay cannot render.");
-            return false;
-        }
-
-        private void BuildExpandedCache(long signature, byte[][] layerIntensities, int2 grid)
-        {
-            int cells = grid.x * grid.y;
-            if (cells <= 0)
-            {
-                return;
-            }
-
-            if (m_ExpandedCache is null || m_ExpandedCache.Length != cells * 4)
-            {
-                m_ExpandedCache = new byte[cells * 4];
-                m_ExpandedSignature = -1;
-            }
-
-            if (m_ExpandedSignature == signature)
-            {
-                return;
-            }
-
-            Array.Clear(m_ExpandedCache, 0, m_ExpandedCache.Length);
-            for (int a = 0; a < m_ActiveChannels.Count; a++)
-            {
-                int channel = m_ActiveChannels[a].Key;
-                byte[] source = layerIntensities[(int)m_ActiveChannels[a].Value];
-                if (source is null || source.Length < cells)
-                {
-                    continue;
-                }
-
-                for (int i = 0; i < cells; i++)
-                {
-                    m_ExpandedCache[i * 4 + channel] = source[i];
-                }
-            }
-
-            m_ExpandedSignature = signature;
-        }
-
-        // Feed intensities through OverlayInfomodeSystem's own terrain texture — the
-        // exact path the vanilla heatmaps use. GetTerrainTextureData resizes the
-        // texture, assigns it to TerrainRenderSystem.overrideOverlaymap and schedules
-        // a clear only when the texture instance changed; ApplyOverlay completes that
-        // job, then we copy our data in and re-upload. Runs every frame while active
-        // because the vanilla system clears the override at the start of each frame.
-        private bool InjectOverlay(int2 grid)
-        {
-            // CheckPipeline binds both reflected members before anything calls this.
-            if (s_GetTerrainTextureData is null || s_TerrainTextureField is null)
-            {
-                return false;
-            }
-
-            NativeArray<byte> data = s_GetTerrainTextureData(m_OverlayInfomodeSystem, grid);
-            m_OverlayInfomodeSystem.ApplyOverlay();
-
-            int expected = grid.x * grid.y * 4;
-            if (data.Length != expected || m_ExpandedCache is null || m_ExpandedCache.Length != expected)
-            {
-                return false;
-            }
-
-            // Pattern-matched rather than cast: the texture is only created once the
-            // game has sized it, and an unguarded cast turned "not ready yet" into an
-            // exception on the render path.
-            if (s_TerrainTextureField.GetValue(m_OverlayInfomodeSystem) is not Texture2D texture)
-            {
-                return false;
-            }
-
-            data.CopyFrom(m_ExpandedCache);
-            texture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
-            return true;
+            return active;
         }
 
         private static void SetField(object target, string name, object value)

@@ -45,10 +45,6 @@ function useBound(name, fallback) {
     return Api.useValue(binding(name, fallback));
 }
 
-function trigger(name, ...args) {
-    Api.trigger(GROUP, name, ...args);
-}
-
 function h(tag, props, ...children) {
     return React.createElement(tag, props, ...children);
 }
@@ -86,12 +82,12 @@ function InfoviewFigures() {
     const rows = [];
 
     const equity = (equityRaw || "").split("|");
-    if (equity.length >= 4) {
+    if (equity.length >= 3) {
         rows.push(figureRow(
             t("Equity", "Served journeys"),
             equity[0] + " %",
-            t("EquityCaption", "reach a served stop within {0} min at both ends · target {1} % · Gini {2}")
-                .replace("{0}", equity[1]).replace("{1}", equity[2]).replace("{2}", equity[3])));
+            t("EquityCaption", "reach a served stop within {0} min at both ends · Gini {1}")
+                .replace("{0}", equity[1]).replace("{1}", equity[2])));
     }
 
     const coverage = (coverageRaw || "").split("|");
@@ -111,46 +107,10 @@ function InfoviewFigures() {
                 .replace("{1}", String(readings))
             : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
 
-    return h("div", { className: "ta-figures" },
-        rows,
-        h(RoutesToggle, null));
+    return h("div", { className: "ta-figures" }, rows);
 }
-
-// The suggested lines, switchable from the map legend (author's request 2026-09-06).
-// Written as a row of our own rather than as an infomode, because an infomode's ticked
-// state belongs to the infoview and is dropped when it closes — and these lines are
-// drawn under every view, including the game's own transport view while a stop is being
-// placed, which is exactly when a player wants to see them.
-function RoutesToggle() {
-    const t = useTranslate();
-    const on = useBound("showRoutes", true);
-    return h("div", {
-        className: "ta-legend-row",
-        onClick: () => trigger("setShowRoutes", !on),
-    },
-        h("div", { className: "ta-legend-label" }, t("ShowRoutes", "Suggested lines")),
-        h("div", { className: "ta-legend-box" + (on ? " ta-legend-box-on" : "") }, on ? "\u2713" : ""));
-}
-
-// ---------------------------------------------------------------------------
-// Inside the game's own Transportation Overview.
-//
-// The player's own words for this mod: it should look as though the game came with
-// it. So the verdicts live in the vanilla overview's line list rather than in a
-// window of ours, and the suggestions sit under that list in the same panel.
-//
-// Two facts decide how (docs/ui-architecture.md, read out of the game's UI bundle):
-// moduleRegistry.append does nothing on these components, because none of them
-// renders {children} — only extend works; and the overview's header row is a private
-// const inside its page module, so an extra column can carry a value but not a
-// label. Every lookup below is therefore defensive: on anything unexpected the
-// vanilla component is returned untouched, because a throw inside the registrar
-// takes the whole UI module down without a visible error.
 
 const VANILLA = {
-    lineItem: "game-ui/game/components/transportation-overview-panel/transport-line-item/transport-line-item.tsx",
-    page: "game-ui/game/components/transportation-overview-panel/transportation-overview-page.tsx",
-    pageStyle: "game-ui/game/components/transportation-overview-panel/transportation-overview-page.module.scss",
     // The infoview panel's own building blocks. InfoviewPanelSpace is the divider the
     // panel draws once, between the MAP LEGEND heading and the infomode checkboxes, so
     // extending it is what puts our figures INSIDE that panel rather than in a second
@@ -158,74 +118,12 @@ const VANILLA = {
     // never ours.
     infoSpace: "game-ui/game/components/infoviews/active-infoview-panel/components/infoview-panel-space.tsx",
     infoLabels: "game-ui/game/components/infoviews/active-infoview-panel/components/labels/labels.tsx",
-    // The map from a C# section's `group` to the component that draws it. Its setter
-    // is an Object.assign, so writing one key adds a section without disturbing the
-    // hundred the game registers.
+    // The map from a C# section's type name to the component that draws it.
     sections: "game-ui/game/components/selected-info-panel/selected-info-sections/selected-info-sections.tsx",
-    // The generic tab strip. Extending Tab is how the suggestions get a tab of their
-    // own beside PUBLIC TRANSPORT and CARGO — the panel builds that strip inline, so
-    // there is no seam at the panel level, and Tab is the piece it builds it from.
-    tabs: "game-ui/common/tabs/tabs.tsx",
-    // The pieces the vanilla line list is made of. Borrowing them is what makes our
-    // table the same table: Section paints the panel body and holds a sticky header,
-    // Scrollable is the game's own scroll box, and the theme is the one the line list
-    // passes to Section.
-    section: "game-ui/common/section/section.tsx",
-    scrollable: "game-ui/common/scrolling/scrollable.tsx",
-    sectionTheme: "game-ui/common/section/themes/panel-section.module.scss",
-    lineItemStyle: "game-ui/game/components/transportation-overview-panel/transport-line-item/transport-line-item.module.scss",
 };
-
-// TransportationOverviewPanelTab is {PublicTransport: 0, Cargo: 1}. Ours is a value the
-// game will never use, held in a store of our own rather than in the panel's state: the
-// panel owns that state, and a third value in it would reach code that only knows two.
-const SUGGESTIONS_TAB = 900;
-
-const tabStore = { on: false, listeners: new Set() };
-
-function setSuggestionsTab(on) {
-    if (tabStore.on !== on) {
-        tabStore.on = on;
-        tabStore.listeners.forEach((listener) => listener());
-    }
-}
-
-function useSuggestionsTab() {
-    const [on, setOn] = React.useState(tabStore.on);
-    React.useEffect(() => {
-        const listener = () => setOn(tabStore.on);
-        tabStore.listeners.add(listener);
-        listener();
-        return () => { tabStore.listeners.delete(listener); };
-    }, []);
-    return on;
-}
-
-// Which of the transportation overview's two tabs this is, or null for every other tab
-// in the game — and there are many, in panels that have nothing to do with us.
-//
-// Keyed on the tab's LABEL, not on its numeric id: the ids are 0 and 1, and so are
-// CityInfoPanelTab's and EconomyPanelTab's. The transportation tabs render
-// Loc.Transport.TAB with hash "PublicTransport" or "Cargo", which nothing else does. If
-// the game ever changes that, the extra tab quietly fails to appear and every other tab
-// keeps working, which is the right way for this to break.
-function transportTabKind(props) {
-    const child = props && props.children && props.children.props ? props.children.props : null;
-    const hash = child ? child.hash : null;
-    return hash === "PublicTransport" || hash === "Cargo" ? hash : null;
-}
-
-let pageClasses = {};
 
 // The game's own label row, or null when the export has moved.
 let vanillaLabel = null;
-
-// The vanilla line list's own building blocks, resolved once at register time. Every one
-// of them is optional: a renamed export must cost a plainer table, never a missing one.
-let vanilla = {};
-
-// The vanilla line row's classes, for our own rows.
-let lineClasses = {};
 
 function readVanilla(registry, path, exportName) {
     try {
@@ -235,290 +133,6 @@ function readVanilla(registry, path, exportName) {
         console.warn("[TransitArchitect] " + path + " is not where it used to be: " + error);
         return null;
     }
-}
-
-// Rows arrive as "entityIndex|id|verdict|argument|utilisation", keyed by the ECS
-// index of the line entity — which is what the vanilla row carries.
-// The id is handed back to C# for an action, because an index is reused once a line
-// is deleted and would then point at whatever took its slot.
-function useOverviewRows() {
-    const raw = useBound("overviewRows", "");
-    return React.useMemo(() => {
-        const map = {};
-        (raw || "").split("\n").filter(Boolean).forEach((line) => {
-            const parts = line.split("|");
-            if (parts.length >= 5) {
-                map[parts[0]] = parts;
-            }
-        });
-        return map;
-    }, [raw]);
-}
-
-// The improvement plan arrives as "mode|vehicles|delta|intervalSeconds|shape|value|fleetMin|fleetMax",
-// numbers and tokens only, so the sentence can be assembled in the player's language.
-function describePlan(t, raw) {
-    const p = (raw || "").split("|");
-    // Eight fields, as PlanPayload writes them. A short payload used to pass this
-    // guard and render "NaN" and "undefined" into the player's language.
-    if (p.length < 8) {
-        return raw || "";
-    }
-
-    const mode = t("Mode." + p[0], p[0]);
-    let text = t("Plan.Fleet", "run it as {0} with {1} vehicle(s)")
-        .replace("{0}", mode)
-        .replace("{1}", p[1]);
-
-    const delta = parseInt(p[2], 10);
-    if (delta) {
-        text += t("Plan.Delta", " ({0})").replace("{0}", delta > 0 ? "+" + delta : String(delta));
-    }
-
-    // The span the game's vehicle slider allows this line; 0 as the maximum means the
-    // policy prefab was not found and the span is open above.
-    const fleetMax = parseInt(p[7], 10);
-    if (fleetMax > 0) {
-        text += t("Plan.Span", ", the game allows {0} to {1}").replace("{0}", p[6]).replace("{1}", p[7]);
-    }
-
-    const interval = parseInt(p[3], 10);
-    if (interval >= 0) {
-        text += t("Plan.Interval", ", i.e. an interval of about {0} s").replace("{0}", String(interval));
-    }
-
-    switch (p[4]) {
-        case "Split":
-            return text + t("Plan.Split", "; split it \u2014 {0} km is more than the largest {1} fleet can carry")
-                .replace("{0}", p[5]).replace("{1}", mode);
-        case "Reroute":
-            return text + t("Plan.Reroute",
-                "; or reroute it through denser ground \u2014 the suggestions list shows where demand is unserved");
-        default:
-            return text + t("Plan.Fine", "; the route shape looks reasonable");
-    }
-}
-
-// Every other t(...) call in this file carries its English inline so a key missing
-// from a locale degrades to English rather than to a blank line. These did not.
-const SCHEDULE_FALLBACKS = {
-    DayAndNight: "all day",
-    Day: "by day only (06:00\u201322:00)",
-    Night: "by night only (22:00\u201306:00)",
-};
-
-const VERDICT_FALLBACKS = {
-    FleetShort: "fleet short \u2014 the game wants {0} more vehicle(s) than it can supply",
-    ModeUp: "too big for its mode \u2014 upgrade to {0}",
-    SplitRoute: "beyond the largest fleet of any mode \u2014 split the route",
-    Remove: "empty and unjustified even as the smallest service \u2014 reroute or remove",
-    ModeDown: "a smaller vehicle would do \u2014 run it as {0}",
-    FleetUp: "add {0} vehicle(s)",
-    FleetDown: "remove {0} vehicle(s)",
-    Schedule: "run it {0}",
-    Healthy: "healthy",
-};
-
-const VERDICT_COLORS = {
-    FleetShort: "rgb(240, 140, 40)",
-    ModeUp: "rgb(230, 60, 50)",
-    SplitRoute: "rgb(230, 60, 50)",
-    Remove: "rgb(130, 140, 155)",
-    ModeDown: "rgb(120, 170, 220)",
-    FleetUp: "rgb(240, 140, 40)",
-    FleetDown: "rgb(120, 170, 220)",
-    Schedule: "rgb(230, 200, 60)",
-    Healthy: "rgb(80, 190, 120)",
-};
-
-// What the note's action reads. Short and imperative: it is the thing to do, and the
-// reason for it is the sentence beside it.
-function cellText(t, parts) {
-    const verdict = parts[2];
-    const argument = parts[3] || "";
-    const veh = t("Vehicles", "veh");
-    switch (verdict) {
-        case "Healthy": return "";
-        case "ModeUp":
-        case "ModeDown": return "\u2192 " + t("Mode." + argument, argument);
-        case "SplitRoute": return t("Cell.Split", "split");
-        case "Remove": return t("Cell.Remove", "remove");
-        case "Schedule": return t("Schedule." + argument, SCHEDULE_FALLBACKS[argument] || argument);
-        case "FleetShort":
-        case "FleetUp": return "+" + argument + " " + veh;
-        case "FleetDown": return "\u2212" + argument.replace(/^-/, "") + " " + veh;
-        default: return "";
-    }
-}
-
-// Verdicts whose sentence says something the action does not. For the others the
-// action already IS the sentence ("+2 veh", "run it by day only"), and repeating it
-// beside itself is what the first cut of this did.
-const EXPLAINED = { ModeUp: true, ModeDown: true, SplitRoute: true, Remove: true, FleetShort: true };
-
-function TransitNote({ parts }) {
-    const t = useTranslate();
-    const id = parseInt(parts[1], 10);
-    const verdict = parts[2];
-    const text = cellText(t, parts);
-    const structural = verdict === "ModeUp" || verdict === "SplitRoute" || verdict === "Remove";
-
-    // The worked-out plan for whichever line was asked about last. Shown on that line
-    // rather than in a panel of our own, so the answer appears where the question was
-    // asked; every other line shows the short reason instead.
-    const plan = useBound("improvePlan", "");
-    const planFor = useBound("improvedLine", -1);
-    const planDrawn = useBound("improvedRouteDrawn", false);
-    const mine = planFor === id && plan !== "";
-
-    // Nothing to say about a healthy line, and nothing is exactly what a player wants
-    // to read about one.
-    if (!text) {
-        return null;
-    }
-
-    const reason = t("Verdict." + verdict + (parts[3] ? ".Arg" : ""), VERDICT_FALLBACKS[verdict] || verdict)
-        .replace("{0}", verdict === "ModeUp" || verdict === "ModeDown"
-            ? t("Mode." + parts[3], parts[3])
-            : verdict === "Schedule"
-                ? t("Schedule." + parts[3], SCHEDULE_FALLBACKS[parts[3]] || parts[3])
-                : (parts[3] || "").replace(/^-/, ""));
-
-    // The figure the verdict was reached on, so the line says what it rests on without
-    // being asked; a dash means no route pass has measured this line yet.
-    const load = parts[4] && parts[4] !== "-"
-        ? t("CellLoad", "{0}% full at the recommended fleet").replace("{0}", parts[4])
-        : "";
-    const why = EXPLAINED[verdict]
-        ? (load ? reason + " \u00b7 " + load : reason)
-        : (load || reason);
-
-    // A click does the part of the plan the game can apply by itself \u2014 a fleet or a
-    // schedule change, both of which the player could make in the line panel. A verdict
-    // that means building work is never acted on: the camera goes there, the mod works
-    // out what it would take, and the decision stays with the player. Which is which is
-    // decided in C#; this only sends the click.
-    const act = () => {
-        if (structural) {
-            trigger("improveLine", id);
-            trigger("focusLine", id);
-        } else {
-            trigger("applyPlan", id);
-        }
-    };
-
-    // Laid out on the line list's own grid: the action under the Name column, the
-    // reason across the middle, the button where the row's own buttons are. The first
-    // cut was a free-floating strip of text, which is what made it read as somebody
-    // else's addition to the panel.
-    return h("div", {
-        className: (lineClasses.container || "") + " ta-note",
-        onClick: act,
-    },
-        h("div", { className: pageClasses.cellSingle || "" }),
-        h("div", { className: (pageClasses.cellWide || "") + " ta-note-action" },
-            h("div", {
-                className: "ta-note-dot",
-                style: { backgroundColor: VERDICT_COLORS[verdict] || "rgb(160,160,160)" },
-            }),
-            h("div", null, text)),
-        h("div", { className: "ta-note-reason" },
-            mine
-                ? describePlan(t, plan) + (planDrawn ? " \u00b7 " + t("PlanDrawn", "the re-traced route is on the map") : "")
-                : why),
-        h("div", { className: (pageClasses.cellDouble || "") + " ta-note-do" },
-            structural ? t("NoteShow", "show me") : t("NoteApply", "apply")));
-}
-
-// The suggestions, as the whole body of their own tab (author's request 2026-09-06).
-// They were a section under the vanilla line list, which is where the room ran out: that
-// list is as long as the city has lines, so a table beneath it either clipped or pushed
-// the panel off the screen. A tab of its own has the whole panel.
-//
-// Built from the same parts as the vanilla line list — its page classes, its Section, its
-// theme, its Scrollable, its cell widths — so it IS one of the game's tables rather than
-// something of ours that resembles one. Where a part cannot be resolved the table falls
-// back to plain markup, which looks plainer and works the same.
-function SuggestionsPage() {
-    const t = useTranslate();
-    const raw = useBound("routeList", "");
-    const update = useBound("routeUpdate", "");
-    const selected = useBound("selectedRoute", -1);
-    const rows = (raw || "").split("\n").filter(Boolean).map((row) => row.split("|"));
-
-    const cell = pageClasses.cell || "";
-    const single = pageClasses.cellSingle || "";
-    const wide = pageClasses.cellWide || "";
-    const double = pageClasses.cellDouble || "";
-    const Section = vanilla.section;
-    const Scrollable = vanilla.scrollable;
-
-    // The header row, in the shape the vanilla one has: a centred title over a row of
-    // column labels using the same cell widths as the rows beneath it.
-    const header = h("div", { className: pageClasses.header || "ta-head" },
-        h("div", { className: pageClasses.title || "ta-title" }, t("SuggestedLines", "Suggested lines")),
-        h("div", { className: pageClasses.legends || "ta-legends" },
-            h("div", { className: single }),
-            h("div", { className: wide + " ta-cell-label" }, t("ColMode", "Mode")),
-            h("div", { className: double + " ta-cell-label" }, t("ColLength", "Length")),
-            h("div", { className: double + " ta-cell-label" }, t("ColStops", "Stops")),
-            h("div", { className: double + " ta-cell-label" }, t("ColVehicles", "Vehicles")),
-            h("div", { className: double + " ta-cell-label" }, t("ColSchedule", "Runs")),
-            h("div", { className: double + " ta-cell-label" }, t("ColReach", "Unlocks")),
-            h("div", { className: single })));
-
-    const list = rows.length === 0
-        ? h("div", { className: pageClasses.noLines || "ta-suggestions-empty" },
-            t("NoSuggestions", "nothing worth adding right now \u2014 let the city run"))
-        : rows.map((parts, index) => {
-            const mode = parts[0] || "Bus";
-            return h("div", {
-                key: parts[6] || index,
-                // The line list's own row class, which carries its padding, its hover
-                // and its text colours.
-                className: (lineClasses.container || "ta-suggestion")
-                    + (index === selected ? " selected" : ""),
-                onClick: () => trigger("selectRoute", index),
-                onMouseEnter: () => trigger("highlightRoute", index),
-                onMouseLeave: () => trigger("highlightRoute", -1),
-            },
-                h("div", { className: single },
-                    h("div", { className: "ta-swatch", style: { backgroundColor: parts[4] || "rgb(200,200,200)" } })),
-                h("div", { className: wide }, t("Mode." + mode, mode)),
-                h("div", { className: double }, (parts[1] || "?") + " " + t("Km", "km")),
-                h("div", { className: double }, parts[2] || "?"),
-                h("div", { className: double }, parts[3] || "?"),
-                // When to run it. The game offers all day, day only or night only per
-                // line, and the recommendation rests on how full this line would be in
-                // each period on its own riders.
-                h("div", { className: double },
-                    t("Schedule." + (parts[7] || "DayAndNight"), SCHEDULE_FALLBACKS[parts[7]] || "all day")),
-                // The figure the list is ordered by, so the gap between the first row and
-                // the second is visible rather than implied.
-                h("div", { className: double }, (parts[5] || "0") + " %"),
-                h("div", { className: single }));
-        });
-
-    const body = Scrollable
-        ? h(Scrollable, { className: pageClasses.scrollable }, list)
-        : h("div", { className: "ta-suggestions-list" }, list);
-
-    const column = Section
-        ? h(Section, { theme: vanilla.sectionTheme, className: pageClasses.lines, header }, body)
-        : h("div", { className: (pageClasses.lines || "") + " ta-suggestions" }, header, body);
-
-    // The apply button is ours and has nowhere vanilla to sit, so it goes above the
-    // table rather than into its header, where it would push a column out of line.
-    return h("div", { className: pageClasses.transportationOverviewPage || "ta-suggestions-page" },
-        h("div", { className: "ta-suggestions-column" },
-            update
-                ? h("div", { className: "ta-update" },
-                    h("button", {
-                        className: "ta-improve",
-                        onClick: () => trigger("applyRouteUpdate"),
-                    }, t("RouteUpdate", "{0} new suggestions ready \u2014 apply").replace("{0}", update)))
-                : null,
-            column));
 }
 
 // The walk-to-transit row in the game's own selected-building window, drawn from what
@@ -588,91 +202,6 @@ function registerBuildingSection(registry) {
     }
 }
 
-// Wraps a vanilla line row so our note sits UNDER it. Beside it does not work: the
-// overview's header row is a private const inside the game's page module, so an added
-// column can carry a value but never a heading — and worse, taking width from the row
-// pulled every vanilla column out from under its own heading by however wide our text
-// happened to be. Stacked, the vanilla row keeps every pixel and every alignment it
-// had, and the note reads as a remark about the line above it.
-function extendOverview(registry) {
-    pageClasses = readVanilla(registry, VANILLA.pageStyle, "classes") || {};
-    lineClasses = readVanilla(registry, VANILLA.lineItemStyle, "classes") || {};
-    vanilla = {
-        section: readVanilla(registry, VANILLA.section, "Section"),
-        scrollable: readVanilla(registry, VANILLA.scrollable, "Scrollable"),
-        sectionTheme: readVanilla(registry, VANILLA.sectionTheme, "classes"),
-    };
-
-    if (readVanilla(registry, VANILLA.lineItem, "TransportLineItem")) {
-        registry.extend(VANILLA.lineItem, "TransportLineItem", (Original) => (props) => {
-            const rows = useOverviewRows();
-            const entity = props && props.line && props.line.lineData ? props.line.lineData.entity : null;
-            const parts = entity && entity.index !== undefined ? rows[String(entity.index)] : null;
-            if (!parts) {
-                return h(Original, props);
-            }
-
-            return h("div", { className: "ta-overview-row" },
-                h(Original, props),
-                h(TransitNote, { parts }));
-        });
-    }
-
-    // The panel's body: the vanilla page, or ours when our tab is the one showing.
-    if (readVanilla(registry, VANILLA.page, "TransportationOverviewPage")) {
-        registry.extend(VANILLA.page, "TransportationOverviewPage", (Original) => (props) => {
-            const mine = useSuggestionsTab();
-
-            // Closes our tab with the panel, so the tab strip and the body cannot come
-            // back disagreeing about which tab is selected. Nothing else needs saying
-            // any more: the suggested lines are drawn under every view now, so the
-            // renderer no longer has to be told when this panel is open.
-            React.useEffect(() => () => setSuggestionsTab(false), []);
-
-            return mine ? h(SuggestionsPage, null) : h(Original, props);
-        });
-    }
-
-    // And the tab that switches to it, beside the game's own two.
-    if (readVanilla(registry, VANILLA.tabs, "Tab")) {
-        registry.extend(VANILLA.tabs, "Tab", (Original) => (props) => {
-            const t = useTranslate();
-            const mine = useSuggestionsTab();
-            const kind = transportTabKind(props);
-            if (!kind) {
-                return h(Original, props);
-            }
-
-            // While our tab is showing, the game's two must not draw themselves as
-            // selected, and clicking either must hand the body back to them.
-            const patched = Object.assign({}, props, {
-                selectedId: mine ? SUGGESTIONS_TAB : props.selectedId,
-                onSelect: (id) => {
-                    setSuggestionsTab(false);
-                    if (props.onSelect) {
-                        props.onSelect(id);
-                    }
-                },
-            });
-
-            if (kind !== "Cargo") {
-                return h(Original, patched);
-            }
-
-            // Rendered through the game's own Tab, so it is the same button in the same
-            // strip rather than something of ours that looks nearly like one.
-            return h(React.Fragment, null,
-                h(Original, patched),
-                h(Original, {
-                    id: SUGGESTIONS_TAB,
-                    selectedId: mine ? SUGGESTIONS_TAB : props.selectedId,
-                    onSelect: () => setSuggestionsTab(true),
-                    children: t("SuggestionsTab", "Suggestions"),
-                }));
-        });
-    }
-}
-
 const register = (moduleRegistry) => {
     if (!React || !Api || !moduleRegistry || !moduleRegistry.append) {
         console.error("[TransitArchitect] UI module could not register.");
@@ -681,11 +210,9 @@ const register = (moduleRegistry) => {
 
     // No window and no toolbar button of the mod's own. Everything it has to say lives
     // where the player is already looking: the figures in the game's infoview panel
-    // (reached from the infoview menu like every vanilla one), the verdicts and
-    // suggestions in the Transportation Overview, one row in the selected-building
-    // window, and every setting in the Options page.
+    // (reached from the infoview menu like every vanilla one), one row in the
+    // selected-building window, and every setting in the Options page.
     extendInfoview(moduleRegistry);
-    extendOverview(moduleRegistry);
     registerBuildingSection(moduleRegistry);
     console.info("[TransitArchitect] UI registered.");
 };

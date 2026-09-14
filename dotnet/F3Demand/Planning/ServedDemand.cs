@@ -218,7 +218,7 @@ namespace TransitArchitect
             {
                 ZoneFlow flow = flows[servedPairIndex[i]];
                 weightBefore += flow.m_Weight;
-                flow.m_Weight *= SuitabilityScoring.Saturate(servedSeconds[i] / ceiling);
+                flow.m_Weight *= Math.Min(1f, Math.Max(0f, servedSeconds[i] / ceiling));
                 weightAfter += flow.m_Weight;
                 flows[servedPairIndex[i]] = flow;
             }

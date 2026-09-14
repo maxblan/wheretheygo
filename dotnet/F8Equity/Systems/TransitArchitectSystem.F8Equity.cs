@@ -109,9 +109,9 @@ namespace TransitArchitect
         // walking horizon, and publishes the figure the panel and the ranking use.
         private void MeasureEquity(Setting settings)
         {
-            WalkAccessOutput? access = m_Access;
-            WalkAccessInputs? inputs = m_AccessInputs;
-            if (access?.Index is null || inputs is null)
+            TileSnap? snap = m_TileSnap;
+            WalkGraph? graph = m_WalkGraph;
+            if (snap?.Index is null || graph is null)
             {
                 m_Coverage = null;
                 return;
@@ -131,17 +131,17 @@ namespace TransitArchitect
             for (int i = 0; i < count; i++)
             {
                 Trip trip = m_Journeys[i];
-                m_JourneyOriginNode[i] = SuitabilityWalkAccess.SnapPoint(access.Index, trip.m_Origin.x, trip.m_Origin.y, inputs.AccessMs, out m_JourneyOriginAccess[i]);
-                m_JourneyDestinationNode[i] = SuitabilityWalkAccess.SnapPoint(access.Index, trip.m_Destination.x, trip.m_Destination.y, inputs.AccessMs, out m_JourneyDestinationAccess[i]);
+                m_JourneyOriginNode[i] = SuitabilityWalkAccess.SnapPoint(snap.Index, trip.m_Origin.x, trip.m_Origin.y, Assumptions.AccessWalkMs, out m_JourneyOriginAccess[i]);
+                m_JourneyDestinationNode[i] = SuitabilityWalkAccess.SnapPoint(snap.Index, trip.m_Destination.x, trip.m_Destination.y, Assumptions.AccessWalkMs, out m_JourneyDestinationAccess[i]);
                 m_JourneyWeight[i] = trip.m_Weight;
             }
 
-            if (m_EquityDijkstra is null || m_EquityDijkstra.Dist.Length != inputs.Graph.NodeCount)
+            if (m_EquityDijkstra is null || m_EquityDijkstra.Dist.Length != graph.NodeCount)
             {
-                m_EquityDijkstra = new IntDijkstra(inputs.Graph.NodeCount);
+                m_EquityDijkstra = new IntDijkstra(graph.NodeCount);
             }
 
-            SnapStops(m_TransitStops, access.Index, inputs.AccessMs, out int[] stopNodes, out int[] stopAccess);
+            SnapStops(m_TransitStops, snap.Index, Assumptions.AccessWalkMs, out int[] stopNodes, out int[] stopAccess);
             // Searched well past the equity horizon on purpose. Every "is this served"
             // test compares against the horizon itself (Equity.EndServed), so the
             // coverage figure is unchanged; what the extra range buys is a real number
@@ -149,9 +149,9 @@ namespace TransitArchitect
             // a house 40 minutes away are different problems, and "over 10 min" for both
             // reads as a broken measurement rather than a long walk.
             m_ServedWalkMs = Equity.ServedWalkMs(
-                inputs.Graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length,
+                graph, m_EquityDijkstra, stopNodes, stopAccess, stopNodes.Length,
                 m_EquityHorizonMs * Assumptions.AccessFieldHorizonMultiple);
-            BuildAccessField(access);
+            BuildAccessField(snap);
             RefreshCoverage(settings, "measured");
         }
 
@@ -160,7 +160,7 @@ namespace TransitArchitect
         // (at a stop) to 255 (at or beyond the walking horizon). This is what colours the
         // buildings and what the selected-building row reports.
         //
-        // Two steps, and the second one is the point. WalkAccessOutput.TileNode only
+        // Two steps, and the second one is the point. TileSnap.TileNode only
         // holds a node for a tile within the ACCESS budget of the pedestrian network —
         // 8110 of 200704 tiles on Valmare — because that budget answers a different
         // question: how far a STOP may stand from a road. Reading it as "this tile has no
@@ -168,7 +168,7 @@ namespace TransitArchitect
         // over the city, and painted a tram terminus as unserved. So tiles without a node
         // of their own take the walk of a nearby tile that has one, plus the walk between
         // them.
-        private void BuildAccessField(WalkAccessOutput access)
+        private void BuildAccessField(TileSnap access)
         {
             int[]? served = m_ServedWalkMs;
             if (served is null || m_EquityHorizonMs <= 0 || access.TileNode.Length == 0)
@@ -333,10 +333,10 @@ namespace TransitArchitect
                 m_ServedWalkMs, m_EquityHorizonMs,
                 m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
                 m_JourneyWeight, m_Journeys.Count);
-            s_Equity = PanelPayload.EquityRow(m_Coverage.Share, settings.EquityWalkMinutes, settings.EquityFloorPercent, m_Coverage.GiniWalk);
+            s_Equity = PanelPayload.EquityRow(m_Coverage.Share, settings.EquityWalkMinutes, m_Coverage.GiniWalk);
             DeferredLog.Info(
-                $"Equity ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
-                $"{settings.EquityWalkMinutes.ToString(CultureInfo.InvariantCulture)} min (floor {settings.EquityFloorPercent.ToString(CultureInfo.InvariantCulture)} %), " +
+                $"Coverage ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
+                $"{settings.EquityWalkMinutes.ToString(CultureInfo.InvariantCulture)} min, " +
                 $"{(m_Coverage.TripsCovered).ToString(CultureInfo.InvariantCulture)}/{(m_Coverage.Trips).ToString(CultureInfo.InvariantCulture)} journeys, " +
                 $"{(m_Coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
                 $"Gini of access walk {m_Coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +

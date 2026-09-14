@@ -120,39 +120,5 @@ namespace TransitArchitect
             int y = zone / zoneGrid.x;
             return worldMin + new float2Like((x + 0.5f) * Assumptions.ZoneSize, (y + 0.5f) * Assumptions.ZoneSize);
         }
-
-        // Paints straight desire lines between zone pairs into the tile raster, so
-        // the demand layer shows where movement wants to happen regardless of what
-        // roads exist.
-        public static void RasterizeDesireLines(
-            List<ZoneFlow> flows,
-            float2Like worldMin,
-            int2Like zoneGrid,
-            int2Like tileGrid,
-            float tileSize,
-            float[] raster)
-        {
-            if (raster is null)
-            {
-                return;
-            }
-
-            Array.Clear(raster, 0, raster.Length);
-
-            for (int i = 0; i < flows.Count; i++)
-            {
-                ZoneFlow flow = flows[i];
-                float2Like from = ZoneCentre(flow.m_Origin, worldMin, zoneGrid);
-                float2Like to = ZoneCentre(flow.m_Destination, worldMin, zoneGrid);
-
-                float2Like fromTile = (from - worldMin) / tileSize;
-                float2Like toTile = (to - worldMin) / tileSize;
-
-                GraphMath.RasterizeSegment(
-                    raster, tileGrid.x, tileGrid.y,
-                    fromTile.x, fromTile.y, toTile.x, toTile.y,
-                    flow.m_Weight);
-            }
-        }
     }
 }

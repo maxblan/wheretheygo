@@ -92,10 +92,6 @@ namespace TransitArchitect
 
         private bool m_LastActive;
 
-        private ComputeSnapshot m_LastComputeSettings;
-
-        private CombineSnapshot m_LastCombineSettings;
-
         private bool m_RecomputeRequested;
 
         private float m_RecomputeAt;
@@ -105,107 +101,6 @@ namespace TransitArchitect
         // The game clock, for stamping observed journeys and line readings with the
         // time of day (Daytime), and the city's working hours for the commute shifts.
         private TimeSystem? m_TimeSystem;
-
-        private struct ComputeSnapshot : IEquatable<ComputeSnapshot>
-        {
-            public ModePreset Mode;
-            public int CatchmentRadius;
-            public int AccessRadius;
-            public int MaxSlope;
-
-            public static ComputeSnapshot Capture(Setting settings)
-            {
-                return new ComputeSnapshot
-                {
-                    Mode = settings.Mode,
-                    CatchmentRadius = settings.CatchmentRadius,
-                    AccessRadius = settings.AccessRadius,
-                    MaxSlope = settings.MaxSlope,
-                };
-            }
-
-            public readonly bool Equals(ComputeSnapshot other)
-            {
-                return Mode == other.Mode
-                    && CatchmentRadius == other.CatchmentRadius
-                    && AccessRadius == other.AccessRadius
-                    && MaxSlope == other.MaxSlope;
-            }
-
-            public readonly override bool Equals(object obj)
-            {
-                return obj is ComputeSnapshot other && Equals(other);
-            }
-
-            public readonly override int GetHashCode()
-            {
-                unchecked
-                {
-                    int hash = 17;
-                    hash = (hash * 31) ^ Mode.GetHashCode();
-                    hash = (hash * 31) ^ CatchmentRadius.GetHashCode();
-                    hash = (hash * 31) ^ AccessRadius.GetHashCode();
-                    hash = (hash * 31) ^ MaxSlope.GetHashCode();
-                    return hash;
-                }
-            }
-        }
-
-        private struct CombineSnapshot : IEquatable<CombineSnapshot>
-        {
-            public float W1;
-            public float W2;
-            public float W3;
-            public float W4;
-            public float W5;
-            public float W6;
-            public float W7;
-            public int HighlightShare;
-
-            public static CombineSnapshot Capture(Setting settings)
-            {
-                return new CombineSnapshot
-                {
-                    W1 = settings.W1,
-                    W2 = settings.W2,
-                    W3 = settings.W3,
-                    W4 = settings.W4,
-                    W5 = settings.W5,
-                    W6 = settings.W6,
-                    W7 = settings.W7,
-                    HighlightShare = settings.HighlightShare,
-                };
-            }
-
-            public readonly bool Equals(CombineSnapshot other)
-            {
-                return W1 == other.W1 && W2 == other.W2 && W3 == other.W3 && W4 == other.W4 && W5 == other.W5
-                    && W6 == other.W6 && W7 == other.W7
-                    && HighlightShare == other.HighlightShare;
-            }
-
-            public readonly override bool Equals(object obj)
-            {
-                return obj is CombineSnapshot other && Equals(other);
-            }
-
-            public readonly override int GetHashCode()
-            {
-                unchecked
-                {
-                    int hash = 17;
-                    hash = (hash * 31) ^ W1.GetHashCode();
-                    hash = (hash * 31) ^ W2.GetHashCode();
-                    hash = (hash * 31) ^ W3.GetHashCode();
-                    hash = (hash * 31) ^ W4.GetHashCode();
-                    hash = (hash * 31) ^ W5.GetHashCode();
-                    hash = (hash * 31) ^ W6.GetHashCode();
-                    hash = (hash * 31) ^ W7.GetHashCode();
-                    hash = (hash * 31) ^ HighlightShare.GetHashCode();
-                    return hash;
-                }
-            }
-        }
 
         protected override void OnCreate()
         {
@@ -270,6 +165,12 @@ namespace TransitArchitect
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
+            m_AllEdgeQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<Edge>(), ComponentType.ReadOnly<Curve>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
+            });
+
             m_LineQuery = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[]
@@ -281,16 +182,6 @@ namespace TransitArchitect
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
 
-            m_AllEdgeQuery = GetEntityQuery(new EntityQueryDesc
-            {
-                All = new[] { ComponentType.ReadOnly<Edge>(), ComponentType.ReadOnly<Curve>() },
-                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
-            });
-
-            // Vehicle PREFABS, not vehicles: the capacity of a mode is a property of
-            // the assets installed, and has to be readable before the player has built
-            // a single line of that mode.
-            CreatePrefabQueries();
 
             m_NodeChangedQuery = ChangedQuery(ComponentType.ReadOnly<Node>());
             m_EdgeChangedQuery = GetEntityQuery(new EntityQueryDesc
@@ -307,7 +198,6 @@ namespace TransitArchitect
                 All = new[] { ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<HouseholdMember>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
             });
-            m_HouseholdQuery = LiveQuery(ComponentType.ReadOnly<Household>(), ComponentType.ReadOnly<Game.Buildings.PropertyRenter>());
             m_QueuedQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TripNeeded>(), ComponentType.ReadOnly<CurrentBuilding>());
             m_TravellingQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<TravelPurpose>(), ComponentType.ReadOnly<CurrentTransport>());
             m_InsideQuery = LiveQuery(ComponentType.ReadOnly<Citizen>(), ComponentType.ReadOnly<CurrentBuilding>());
@@ -316,11 +206,6 @@ namespace TransitArchitect
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
             m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(isReadOnly: true);
             m_TouristLookup = GetComponentLookup<TouristHousehold>(isReadOnly: true);
-            m_NodeLookup = GetComponentLookup<Node>(isReadOnly: true);
-            m_CurveLookup = GetComponentLookup<Curve>(isReadOnly: true);
-            m_PrefabRefLookup = GetComponentLookup<PrefabRef>(isReadOnly: true);
-            m_RoadDataLookup = GetComponentLookup<RoadData>(isReadOnly: true);
-
             m_TransformLookup = GetComponentLookup<Transform>(isReadOnly: true);
             m_PropertyRenterLookup = GetComponentLookup<Game.Buildings.PropertyRenter>(isReadOnly: true);
             m_ZoneDataLookup = GetComponentLookup<ZoneData>(isReadOnly: true);
@@ -329,12 +214,6 @@ namespace TransitArchitect
 
             m_LastStopCount = m_StopQuery.CalculateEntityCount();
 
-            var settings = Mod.Settings;
-            if (settings is not null)
-            {
-                m_LastComputeSettings = ComputeSnapshot.Capture(settings);
-                m_LastCombineSettings = CombineSnapshot.Capture(settings);
-            }
         }
 
         // The infoview presenter and the queries it watches. Created here, by the system,
@@ -345,7 +224,6 @@ namespace TransitArchitect
                 ComponentType.ReadOnly<SuitabilityInfomodeData>(),
                 ComponentType.ReadOnly<InfomodeActive>());
 
-            CreateNotificationQuery();
             m_PlaceableInfoviewQuery = GetEntityQuery(ComponentType.ReadOnly<PlaceableInfoviewItem>());
             m_PlaceableInfoviewChangedQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -353,7 +231,7 @@ namespace TransitArchitect
                 Any = new[] { ComponentType.ReadOnly<Created>(), ComponentType.ReadOnly<Updated>() },
             });
             m_Infoview = new SuitabilityInfoview(
-                EntityManager, m_PrefabSystem, m_ToolSystem, m_OverlayInfomodeSystem,
+                EntityManager, m_PrefabSystem, m_ToolSystem,
                 m_ActiveInfomodeQuery, m_PlaceableInfoviewQuery, m_PlaceableInfoviewChangedQuery);
         }
 
@@ -380,31 +258,17 @@ namespace TransitArchitect
         protected override void OnDestroy()
         {
             DiscardPendingCompute();
-            DiscardPendingRoutes();
-            m_RawTerms = null;
-            m_Scores = null;
-            m_ScoreScratch = null;
-            m_TermScratch = null;
-            m_Access = null;
-            m_AccessInputs = null;
+            m_TileSnap = null;
             m_WalkGraph = null;
             m_TripObserver.Clear();
-            m_Land = null;
             m_Infoview.Release();
 
             // Leaving a city must not leave its numbers on the panel. LineHistory
             // already guards its own series against a save change; these strings had
             // no such guard and were shown against the next city until its first
             // refresh landed.
-            s_RouteList = string.Empty;
             s_DataCoverage = string.Empty;
             s_Equity = string.Empty;
-            s_ImprovePlan = string.Empty;
-            s_ImprovedLine = -1;
-            s_ImprovedRouteDrawn = false;
-            s_ImproveRequest = -1;
-            s_HighlightedRoute = -1;
-            s_SelectedRoute = -1;
             base.OnDestroy();
         }
 
@@ -423,7 +287,6 @@ namespace TransitArchitect
             if (GameManager.instance == null || !GameManager.instance.gameMode.IsGame())
             {
                 DiscardPendingCompute();
-                DiscardPendingRoutes();
                 m_RecomputeRequested = false;
                 return;
             }
@@ -432,51 +295,19 @@ namespace TransitArchitect
             m_Infoview.SweepPlaceableInfoviews();
             TrackInputChanges();
             HandleInfoviewRequest();
-            FinishRoutesIfReady(settings);
-            if (!m_RoutesPending)
-            {
-                HandleImprovementRequest();
-                HandleLineActionRequests();
-                FinishComputeIfReady();
-            }
+            FinishComputeIfReady();
 
-            int activeLayers = m_Infoview.ResolveActiveLayers(out long signature);
-            bool active = activeLayers > 0;
+            bool active = m_Infoview.ActiveLayers() > 0;
 
             if (active != m_LastActive)
             {
-                // Drawing the map neither starts nor cancels a pass: the scores it paints
-                // are the ones the route pass already keeps fresh.
-                Mod.Log.Info(active ? "Heat map shown" : "Heat map hidden");
+                Mod.Log.Info(active ? "Infoview shown" : "Infoview hidden");
                 m_LastActive = active;
             }
 
-            // From here on nothing is gated on `active` (the heat map being DRAWN): the
-            // access pass, the demand refresh and the route pass run whenever a city is
-            // loaded, because the suggestions and the line verdicts are read from the
-            // panel with the map off as often as on. `active` only decides whether the
-            // scores are painted (SuitabilityInfoview.ApplyOverlayState).
-            var computeSettings = ComputeSnapshot.Capture(settings);
-            if (!computeSettings.Equals(m_LastComputeSettings))
-            {
-                // Slope and mode change what counts as buildable, so the mask has to
-                // go too, not just the scores.
-                if (computeSettings.Mode != m_LastComputeSettings.Mode || computeSettings.MaxSlope != m_LastComputeSettings.MaxSlope)
-                {
-                    m_MaskDirty = true;
-                }
-
-                if (computeSettings.Mode != m_LastComputeSettings.Mode)
-                {
-                    m_RoadCacheDirty = true;
-                }
-
-                ScheduleRecompute(Assumptions.DebounceSeconds);
-            }
-            m_LastComputeSettings = computeSettings;
-
-            MaybeRecombine(settings);
-
+            // Nothing below is gated on `active` (the infoview being open): the walk
+            // pass and the demand refresh run whenever a city is loaded, because the
+            // figures are read from the panel with the map off as often as on.
             int stopCount = m_StopQuery.CalculateEntityCount();
             if (stopCount != m_LastStopCount)
             {
@@ -489,19 +320,19 @@ namespace TransitArchitect
             }
 
             float now = UnityEngine.Time.realtimeSinceStartup;
-            if (!m_JobPending && !m_RecomputeRequested && m_RawTerms is not null
+            if (!m_JobPending && !m_RecomputeRequested && m_TileSnap is not null
                 && now - m_LastComputeFinish >= Assumptions.PeriodicRefreshSeconds)
             {
                 ScheduleRecompute(0f);
             }
 
             int2 currentSize = GetGridSize();
-            if (!m_JobPending && (m_RawTerms is null || !m_PlayableGridAtCompute.Equals(currentSize)))
+            if (!m_JobPending && (m_TileSnap is null || !m_PlayableGridAtCompute.Equals(currentSize)))
             {
                 ScheduleRecompute(0f);
             }
 
-            if (m_RecomputeRequested && !m_JobPending && !m_RoutesPending && now >= m_RecomputeAt)
+            if (m_RecomputeRequested && !m_JobPending && now >= m_RecomputeAt)
             {
                 if (StartCompute())
                 {
@@ -514,17 +345,15 @@ namespace TransitArchitect
             // being drawn — a player has no reason to leave the map recoloured for a
             // game day, and the moment they switch it off the readings stopped. The
             // panel then showed line verdicts and "1 Messung" beside them, which is
-            // exactly as broken as it sounds. Reading six lines is cheap; the route
-            // pipeline below is what stays gated.
+            // exactly as broken as it sounds. Reading six lines is cheap.
             //
             // The READING runs on the simulation clock (every ReadingIntervalFrames,
-            // A8.5) and touches nothing the route worker holds; the JUDGING, which
-            // rebuilds the line collection the worker reads, waits for the worker.
+            // A8.5).
             ObserveLines();
-            if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds && !m_RoutesPending)
+            if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds)
             {
                 m_LastLineSample = now;
-                RefreshLineHealth(settings);
+                RefreshLineHealth();
             }
 
             // Also ungated on `active`: a journey not seen is demand not counted.
@@ -534,63 +363,26 @@ namespace TransitArchitect
                 ObserveTrips();
             }
 
-            if (!m_RoutesPending)
-            {
-                MaybeUpdateTravelDemand(settings, now);
-            }
+            MaybeUpdateTravelDemand(settings, now);
 
-            m_Infoview.ApplyOverlayState(active, signature, m_RawTerms is not null, m_LayerIntensities, m_IntensityGrid);
         }
 
-        // A changed term weight re-combines the existing terms without a new compute.
-        // The recombine writes the score field in place, which the route worker reads,
-        // so while a pass is pending the change waits — and stays noticed, because the
-        // snapshot is only recorded once the recombine has run.
-        private void MaybeRecombine(Setting settings)
-        {
-            if (m_RoutesPending)
-            {
-                return;
-            }
-
-            var combineSettings = CombineSnapshot.Capture(settings);
-            if (!combineSettings.Equals(m_LastCombineSettings) && m_RawTerms is not null)
-            {
-                RecombineAndNormalize();
-            }
-
-            m_LastCombineSettings = combineSettings;
-        }
-
-        // The demand pipeline needs the per-tile terms to exist (for the served
-        // discount and stop snapping), so it always runs after a compute has landed.
+        // The demand pipeline needs the tile snap to exist (for the served discount
+        // and stop snapping), so it always runs after a snap has landed.
         private void MaybeUpdateTravelDemand(Setting settings, float now)
         {
-            if (m_RawTerms is null || m_JobPending)
+            if (m_TileSnap is null || m_JobPending)
             {
                 return;
             }
 
-            bool objectiveChanged = settings.Objective != m_LastObjective || settings.RouteCount != m_LastRouteCount;
-            bool due = now - m_LastDemandRefresh >= Assumptions.DemandRefreshSeconds;
-            if (!objectiveChanged && !due && m_ZoneFlows.Count > 0)
+            if (now - m_LastDemandRefresh < Assumptions.DemandRefreshSeconds && m_ZoneFlows.Count > 0)
             {
-                return;
-            }
-
-            m_LastObjective = settings.Objective;
-            m_LastRouteCount = settings.RouteCount;
-
-            // Changing only the objective re-grows routes from the flow already
-            // assigned; no need to walk every citizen again.
-            if (objectiveChanged && !due && m_ZoneFlows.Count > 0 && m_RoadGraph.Graph is not null)
-            {
-                _ = StartRoutePass(settings, m_IntensityGrid, m_ScoreWorldMin, tripCount: -1, totalZoneWeight: 0f);
                 return;
             }
 
             float2 mapSize = new float2(m_IntensityGrid.x, m_IntensityGrid.y) * Assumptions.TileSize;
-            UpdateTravelDemand(settings, m_IntensityGrid, m_ScoreWorldMin, mapSize, objectiveChanged);
+            UpdateTravelDemand(settings, m_IntensityGrid, m_ScoreWorldMin, mapSize);
         }
 
         // Change tags live for a single frame, so the caches must be invalidated
@@ -600,17 +392,6 @@ namespace TransitArchitect
             if (!m_NodeChangedQuery.IsEmptyIgnoreFilter || !m_EdgeChangedQuery.IsEmptyIgnoreFilter)
             {
                 m_RoadCacheDirty = true;
-                m_GraphDirty = true;
-            }
-
-            if (!m_WorkplaceChangedQuery.IsEmptyIgnoreFilter)
-            {
-                m_WorkplaceCacheDirty = true;
-            }
-
-            if (!m_BlockChangedQuery.IsEmptyIgnoreFilter)
-            {
-                m_ZoneCacheDirty = true;
             }
 
             float now = UnityEngine.Time.realtimeSinceStartup;
@@ -620,13 +401,6 @@ namespace TransitArchitect
             if (now - m_LastCollectionRebuild >= Assumptions.CollectionRefreshSeconds)
             {
                 m_RoadCacheDirty = true;
-                m_WorkplaceCacheDirty = true;
-                m_ZoneCacheDirty = true;
-            }
-
-            if (now - m_LastMaskRefresh >= Assumptions.MaskRefreshSeconds)
-            {
-                m_MaskDirty = true;
             }
         }
 

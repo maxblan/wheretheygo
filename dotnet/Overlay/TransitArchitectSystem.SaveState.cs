@@ -24,16 +24,13 @@ namespace TransitArchitect
     // version can read the length and skip, and only a matching version parses.
     public sealed partial class TransitArchitectSystem : IDefaultSerializable
     {
-        private const int SaveFormatVersion = 2;
+        private const int SaveFormatVersion = 3;
         private const int MaxSavePayloadBytes = 64 * 1024 * 1024;
-        private bool m_RestoredRoutes;
 
         public void SetDefaults(Context context)
         {
             m_TripObserver.Window.Clear();
             m_LineHistory.Clear();
-            m_Routes.Clear();
-            m_RestoredRoutes = false;
             DeferredLog.Info($"Save state reset ({context.purpose})");
         }
 
@@ -47,7 +44,7 @@ namespace TransitArchitect
             writer.Write(bytes);
             DeferredLog.Info(
                 $"Save state written: {(payload.Length).ToString(CultureInfo.InvariantCulture)} bytes — " +
-                $"{(m_Routes.Count).ToString(CultureInfo.InvariantCulture)} suggestions, {(m_TripObserver.Window.Count).ToString(CultureInfo.InvariantCulture)} observed journeys, " +
+                $"{(m_TripObserver.Window.Count).ToString(CultureInfo.InvariantCulture)} observed journeys, " +
                 $"{(m_LineHistory.TrackedLines).ToString(CultureInfo.InvariantCulture)} lines of readings");
         }
 
@@ -92,25 +89,6 @@ namespace TransitArchitect
             using var stream = new MemoryStream();
             using (var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
             {
-                w.Write(m_Routes.Count);
-                for (int r = 0; r < m_Routes.Count; r++)
-                {
-                    SuggestedRoute route = m_Routes[r];
-                    w.Write((byte)route.Mode);
-                    w.Write((byte)route.Network);
-                    w.Write(route.Length);
-                    w.Write(route.CapturedFlow);
-                    w.Write(route.EnabledDemand);
-                    w.Write(route.Vehicles);
-                    w.Write(route.BentThroughHub);
-                    w.Write(route.Group);
-                    w.Write((byte)route.Schedule);
-                    w.Write(route.DayUtilisation);
-                    w.Write(route.NightUtilisation);
-                    WritePoints(w, route.Path);
-                    WritePoints(w, route.Stops);
-                }
-
                 IReadOnlyList<ObservedTrip> trips = m_TripObserver.Window.Trips;
                 w.Write(trips.Count);
                 for (int i = 0; i < trips.Count; i++)
@@ -152,30 +130,6 @@ namespace TransitArchitect
         {
             using var stream = new MemoryStream(payload, writable: false);
             using var r = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
-            int routeCount = ReadCount(r, 1024);
-            var routes = new List<SuggestedRoute>(routeCount);
-            for (int i = 0; i < routeCount; i++)
-            {
-                var route = new SuggestedRoute
-                {
-                    Mode = (ModePreset)r.ReadByte(),
-                    Network = (RouteNetwork)r.ReadByte(),
-                    Length = r.ReadSingle(),
-                    CapturedFlow = r.ReadSingle(),
-                    EnabledDemand = r.ReadSingle(),
-                    Vehicles = r.ReadInt32(),
-                    BentThroughHub = r.ReadBoolean(),
-                    Group = r.ReadInt32(),
-                    Schedule = (LineSchedule)r.ReadByte(),
-                    DayUtilisation = r.ReadSingle(),
-                    NightUtilisation = r.ReadSingle(),
-                    DemandScored = true,
-                };
-                ReadPoints(r, route.Path);
-                ReadPoints(r, route.Stops);
-                routes.Add(route);
-            }
-
             int tripCount = ReadCount(r, Assumptions.ObservedTripCapacity);
             var trips = new List<ObservedTrip>(tripCount);
             for (int i = 0; i < tripCount; i++)
@@ -213,9 +167,6 @@ namespace TransitArchitect
             }
 
             // Everything parsed: only now replace the live state.
-            m_Routes.Clear();
-            m_Routes.AddRange(routes);
-            m_RestoredRoutes = routes.Count > 0;
             m_TripObserver.Window.Clear();
             for (int i = 0; i < trips.Count; i++)
             {
@@ -232,7 +183,7 @@ namespace TransitArchitect
             }
 
             DeferredLog.Info(
-                $"Save state restored: {(routes.Count).ToString(CultureInfo.InvariantCulture)} suggestions, {(trips.Count).ToString(CultureInfo.InvariantCulture)} observed journeys, " +
+                $"Save state restored: {(trips.Count).ToString(CultureInfo.InvariantCulture)} observed journeys, " +
                 $"{(lineCount).ToString(CultureInfo.InvariantCulture)} lines with {(readings.Count).ToString(CultureInfo.InvariantCulture)} readings " +
                 $"spanning {(LineHistory.GameHours(m_LineHistory.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours " +
                 $"of the {(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} h window");
@@ -249,40 +200,5 @@ namespace TransitArchitect
             return count;
         }
 
-        private static void WritePoints(BinaryWriter writer, List<float2Like> points)
-        {
-            writer.Write(points.Count);
-            for (int i = 0; i < points.Count; i++)
-            {
-                writer.Write(points[i].x);
-                writer.Write(points[i].y);
-            }
-        }
-
-        private static void ReadPoints(BinaryReader reader, List<float2Like> into)
-        {
-            int count = ReadCount(reader, 65536);
-            for (int i = 0; i < count; i++)
-            {
-                float x = reader.ReadSingle();
-                float z = reader.ReadSingle();
-                into.Add(new float2Like(x, z));
-            }
-        }
-
-        // Restored suggestions are shown as they were; the first route pass then keeps
-        // its normal interval instead of running on the first frame after a load.
-        private void AnnounceRestoredRoutes()
-        {
-            if (!m_RestoredRoutes)
-            {
-                return;
-            }
-
-            m_RestoredRoutes = false;
-            m_LastRoutePassStart = UnityEngine.Time.realtimeSinceStartup;
-            UpdateRouteList();
-            DeferredLog.Info($"Suggestions restored from the save: {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)}; the next route pass is due in {Assumptions.RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s");
-        }
     }
 }
