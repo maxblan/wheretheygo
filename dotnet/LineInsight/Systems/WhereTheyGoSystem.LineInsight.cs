@@ -196,7 +196,7 @@ namespace WhereTheyGo
                 readings = math.max(readings, line.m_WindowReadings);
             }
 
-            s_DataCoverage = PanelPayload.DataCoverageRow(
+            SetHistoryFigures(
                 coveredHours, readings, LineHistory.GameHours(m_LineHistory.WindowFrames),
                 m_TripObserver.Window.Count, LineHistory.GameHours(m_TripObserver.Window.SpanFrames));
         }

@@ -195,10 +195,5 @@ namespace WhereTheyGo.Tests
             }
         }
 
-        private static void PanelPayloadRowsKeepTheirFieldOrder()
-        {
-            AssertTrue(PanelPayload.DataCoverageRow(1.5f, 4, 24f, 12, 3.2f) == "1.5|4|24|12|3.2", "data coverage row");
-            AssertTrue(PanelPayload.CoverageRow(0.8f, 10, 0.126, 0.435f) == "80.0|10|0.13|43.5", "the two city-wide figures, with the carried share appended");
-        }
     }
 }

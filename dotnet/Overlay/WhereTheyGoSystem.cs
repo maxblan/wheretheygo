@@ -225,8 +225,7 @@ namespace WhereTheyGo
             // already guards its own series against a save change; these strings had
             // no such guard and were shown against the next city until its first
             // refresh landed.
-            s_DataCoverage = string.Empty;
-            s_CoverageFigures = string.Empty;
+            s_Figures = default;
             base.OnDestroy();
         }
 

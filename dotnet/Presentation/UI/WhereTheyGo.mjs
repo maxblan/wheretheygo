@@ -1,24 +1,32 @@
-﻿// In-game control panel for Where They Go.
+﻿// In-game panel for Where They Go.
 //
-// Hand-written ES module rather than a bundled React app: the game exposes React
-// and its binding API on `window`, so no build toolchain is involved and the file
-// can be deployed as-is next to the DLL.
+// Hand-written ES module rather than a bundled React app: the game exposes React, its
+// binding API and — the part that matters most here — its own UI components on
+// `window`, so no build toolchain is involved and the file deploys next to the DLL.
 //
-// cohtml (the game's UI engine) supports neither <select>, <input type=range> nor
-// checkboxes, so every control here is built from divs and buttons.
+// Everything visible is built from the GAME'S components rather than from divs of our
+// own. `window["cs2/ui"]` is the supported surface (PanelSection, PanelSectionRow,
+// Tooltip, FormattedParagraphs); the module registry has the rest — the real slider
+// with its drag, gamepad and sound, the real checkbox, the infoview panel's own
+// section and gradient bar, the stacked bar chart, the Chart.js wrapper and the
+// tooltip that follows the cursor. A hand-rolled copy of any of these is a copy that
+// looks almost right and behaves almost right.
+//
+// Every lookup falls back: a renamed export costs a plainer row, never a blank panel.
 
 const React = window.React;
 const Api = window["cs2/api"];
 const L10n = window["cs2/l10n"];
+const CsUi = window["cs2/ui"] || {};
 
-const GROUP = "transitArchitect";
-// Every panel string is looked up under this prefix. The English text stays inline
-// as the fallback argument, so a key missing from a locale file degrades to English
+const GROUP = "wheretheygo";
+// Every panel string is looked up under this prefix. The English text stays inline as
+// the fallback argument, so a key missing from a locale file degrades to English
 // rather than showing the raw key.
 const LOC = "WhereTheyGo.Panel[";
 
-// The game's localization, as a (key, englishFallback) => string. useLocalization is
-// a hook, so this is one too and must be called at the top of a component.
+// The game's localization, as a (key, englishFallback) => string. useLocalization is a
+// hook, so this is one too and must be called at the top of a component.
 function useTranslate() {
     const loc = L10n && L10n.useLocalization ? L10n.useLocalization() : null;
     return React.useCallback((key, fallback) => {
@@ -53,298 +61,558 @@ function h(tag, props, ...children) {
     return React.createElement(tag, props, ...children);
 }
 
-// The four purposes, in the order JourneyPurpose declares them. The MASK is the
-// contract with C# (1 << purpose); the labels are ours to translate.
-const PURPOSES = [
-    { bit: 1, key: "PurposeWork", english: "Work" },
-    { bit: 2, key: "PurposeSchool", english: "School" },
-    { bit: 4, key: "PurposeShopping", english: "Shopping" },
-    { bit: 8, key: "PurposeLeisure", english: "Leisure" },
-];
-
-// cohtml has no checkbox, so a switch is a div with a tick in it. Same shape the
-// vanilla infomode rows use, close enough that the two read as one list.
-function Check({ label, on, onClick }) {
-    return h("div", { className: "ta-check", onClick },
-        h("div", { className: "ta-check-box" + (on ? " ta-check-box-on" : "") }, on ? "\u2713" : ""),
-        h("div", { className: "ta-check-label" }, label));
-}
-
-// And no <input type=range>, so a slider is a track the pointer drags across. The
-// value is read from where the pointer is along the track's own width, which cohtml
-// does report; a drag outside the track clamps rather than jumping.
-function Slider({ value, min, max, onChange }) {
-    const track = React.useRef(null);
-    const pick = React.useCallback((event) => {
-        const node = track.current;
-        if (!node || !node.getBoundingClientRect) {
-            return;
-        }
-
-        const box = node.getBoundingClientRect();
-        if (!box.width) {
-            return;
-        }
-
-        const share = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
-        onChange(Math.round(min + (share * (max - min))));
-    }, [min, max, onChange]);
-
-    const filled = max > min ? ((value - min) / (max - min)) * 100 : 0;
-    return h("div", {
-        className: "ta-track",
-        ref: track,
-        onMouseDown: pick,
-        onMouseMove: (event) => {
-            // buttons is a bitmask; 1 is the left button held down.
-            if (event.buttons & 1) {
-                pick(event);
-            }
-        },
-    },
-        h("div", { className: "ta-track-rail" }),
-        h("div", { className: "ta-track-fill", style: { width: filled + "%" } }),
-        h("div", { className: "ta-track-knob", style: { left: filled + "%" } }));
-}
-
-// The hour the map is showing, or the whole day. Twenty-four steps and an off
-// position: the slider's left end is "all day", which is where the map opens.
-function TimeOfDay({ hour, playing }) {
-    const t = useTranslate();
-    const label = hour < 0
-        ? t("WholeDay", "All day")
-        : t("AtHour", "{0}:00").replace("{0}", String(hour).padStart(2, "0"));
-    return h("div", { className: "ta-control" },
-        h("div", { className: "ta-control-row" },
-            h("div", { className: "ta-control-label" }, t("TimeOfDay", "Time of day")),
-            h("div", {
-                className: "ta-play" + (playing ? " ta-play-on" : ""),
-                onClick: () => trigger("setHourPlay", !playing),
-            }, playing ? "\u25A0" : "\u25B6"),
-            h("div", { className: "ta-control-value" }, label)),
-        h(Slider, {
-            value: hour < 0 ? 0 : hour + 1,
-            min: 0,
-            max: 24,
-            onChange: (step) => {
-                // Touching the slider takes the day back off automatic: otherwise the
-                // playback would move the hour out from under the pointer.
-                if (playing) {
-                    trigger("setHourPlay", false);
-                }
-
-                trigger("selectHour", step <= 0 ? -1 : step - 1);
-            },
-        }));
-}
-
-function Threshold({ percent }) {
-    const t = useTranslate();
-    return h("div", { className: "ta-control" },
-        h("div", { className: "ta-control-row" },
-            h("div", { className: "ta-control-label" }, t("Threshold", "Hide bands under")),
-            h("div", { className: "ta-control-value" }, percent + " %")),
-        h(Slider, {
-            value: percent,
-            min: 0,
-            max: 25,
-            onChange: (value) => trigger("setBandThreshold", value),
-        }));
-}
-
-function Purposes({ mask }) {
-    const t = useTranslate();
-    return h("div", { className: "ta-control" },
-        PURPOSES.map((purpose) => h(Check, {
-            key: purpose.key,
-            label: t(purpose.key, purpose.english),
-            on: (mask & purpose.bit) !== 0,
-            // Never all four off: an empty map reads as a broken one, so the last
-            // one switched on stays on.
-            onClick: () => {
-                const next = mask ^ purpose.bit;
-                trigger("setPurposes", next === 0 ? purpose.bit : next);
-            },
-        })));
-}
-
-// The two city-wide figures, in the game's own infoview panel (author's request
-// 2026-09-06). They used to live in a window of the mod's own, which is one window too
-// many: they describe the map that panel is the legend for.
-//
-// Built from the game's own InfoviewPanelLabel where it resolves, so the rows match the
-// ones the vanilla panels draw, and from plain markup where it does not — a renamed
-// export must cost a plainer row, never a missing figure.
-function figureRow(label, value, caption) {
-    const Label = vanillaLabel;
-    return h("div", { className: "ta-figure" },
-        Label
-            ? h(Label, { small: true, text: label, rightText: value })
-            : h("div", { className: "ta-figure-row" },
-                h("div", { className: "ta-figure-label" }, label),
-                h("div", { className: "ta-figure-value" }, value)),
-        caption ? h("div", { className: "ta-figure-caption" }, caption) : null);
-}
-
-function InfoviewFigures() {
-    const t = useTranslate();
-    // Hooks first and unconditionally: the panel this sits in is shared with every
-    // vanilla infoview, so this component renders for all of them and returns nothing
-    // for the ones that are not ours.
-    const ours = useBound("heatmap", false);
-    const figuresRaw = useBound("coverage", "");
-    const historyRaw = useBound("dataCoverage", "");
-    const stateRaw = useBound("mapState", "");
-    const hoveredRaw = useBound("hoveredBand", "");
-    if (!ours) {
-        return null;
-    }
-
-    const rows = [];
-
-    const figures = (figuresRaw || "").split("|");
-    if (figures.length >= 4) {
-        rows.push(figureRow(
-            t("Carried", "Carried by transit"),
-            figures[3] + " %",
-            t("CarriedCaption", "of all journeys, counting those transit makes faster than walking")));
-        rows.push(figureRow(
-            t("Coverage", "Within walking distance"),
-            figures[0] + " %",
-            t("CoverageCaption", "reach a served stop within {0} min at both ends · Gini {1}")
-                .replace("{0}", figures[1]).replace("{1}", figures[2])));
-    }
-
-    const history = (historyRaw || "").split("|");
-    const readings = parseInt(history[1], 10) || 0;
-    const observedTrips = parseInt(history[3], 10) || 0;
-    const observed = (observedTrips
-        ? t("ObservedTrips", "{0} shopping/leisure journeys seen over {1} h")
-        : t("ObservedTripsEmpty", "no shopping/leisure journeys seen yet"))
-        .replace("{0}", String(observedTrips))
-        .replace("{1}", history[4] || "0");
-    rows.push(figureRow(
-        t("DataBasis", "Data collected"),
-        readings ? (history[0] || "0") + " h" : t("DataBasisNone", "nothing yet"),
-        (readings
-            ? t("DataBasisCaption", "of the last {0} h · {1} readings")
-                .replace("{0}", history[2] || "24")
-                .replace("{1}", String(readings))
-            : t("DataBasisEmpty", "readings start with your first line")) + " · " + observed));
-
-    // The band under the pointer takes the place of the city-wide figures while it is
-    // there: the player is asking about that band, and two sets of numbers in one
-    // panel is one set too many.
-    const hovered = (hoveredRaw || "").split("|");
-    if (hovered.length >= 4) {
-        rows.length = 0;
-        rows.push(figureRow(
-            t("BandJourneys", "Journeys on this band"),
-            hovered[0],
-            t("BandWithout", "{0} % of them with no transit · busiest at {1}:00")
-                .replace("{0}", hovered[1])
-                .replace("{1}", String(hovered[2]).padStart(2, "0"))));
-    }
-
-    const state = (stateRaw || "").split("|");
-    const hour = parseInt(state[0], 10);
-    const purposes = parseInt(state[1], 10);
-    const threshold = parseInt(state[2], 10);
-
-    return h("div", { className: "ta-figures" },
-        rows,
-        h(TimeOfDay, { hour: isNaN(hour) ? -1 : hour, playing: state[3] === "1" }),
-        h(Purposes, { mask: isNaN(purposes) ? 0xF : purposes }),
-        h(Threshold, { percent: isNaN(threshold) ? 2 : threshold }));
-}
+// ---------------------------------------------------------------------------
+// The game's own components.
 
 const VANILLA = {
-    // The infoview panel's own building blocks. InfoviewPanelSpace is the divider the
-    // panel draws once, between the MAP LEGEND heading and the infomode checkboxes, so
-    // extending it is what puts our figures INSIDE that panel rather than in a second
-    // box under it. It renders more than once only for the zone infoviews, which are
-    // never ours.
     infoSpace: "game-ui/game/components/infoviews/active-infoview-panel/components/infoview-panel-space.tsx",
     infoLabels: "game-ui/game/components/infoviews/active-infoview-panel/components/labels/labels.tsx",
+    infoSection: "game-ui/game/components/infoviews/active-infoview-panel/components/sections/infoview-panel-section.tsx",
+    valueBarSection: "game-ui/game/components/infoviews/active-infoview-panel/components/sections/value-bar-section.tsx",
+    slider: "game-ui/common/input/slider/slider.tsx",
+    checkbox: "game-ui/common/input/toggle/checkbox/checkbox.tsx",
+    infoBarChart: "game-ui/common/charts/bar-chart/info-bar-chart.tsx",
+    responsiveChart: "game-ui/common/charts/responsive-chart/responsive-chart.tsx",
+    mouseTooltip: "game-ui/common/tooltip/floating-mouse-tooltip/floating-mouse-tooltip.tsx",
+    colorLegend: "game-ui/common/charts/legends/color-legend.tsx",
     // The map from a C# section's type name to the component that draws it.
     sections: "game-ui/game/components/selected-info-panel/selected-info-sections/selected-info-sections.tsx",
 };
 
-// The game's own label row, or null when the export has moved.
-let vanillaLabel = null;
+// Resolved once at registration. Null where an export has moved, which every user of
+// these checks for.
+const V = {
+    Label: null,
+    Section: null,
+    ValueBarSection: null,
+    Slider: null,
+    Checkbox: null,
+    InfoBarChart: null,
+    Chart: null,
+    MouseTooltip: null,
+    LegendSymbol: null,
+};
 
 function readVanilla(registry, path, exportName) {
     try {
         const module = registry && registry.registry ? registry.registry.get(path) : null;
-        return module ? module[exportName] : null;
+        return module ? (module[exportName] || null) : null;
     } catch (error) {
-        console.warn("[WhereTheyGo] " + path + " is not where it used to be: " + error);
+        console.warn("[WhereTheyGo] " + path + "#" + exportName + " is not where it used to be: " + error);
         return null;
     }
 }
 
+function resolveVanilla(registry) {
+    V.Label = readVanilla(registry, VANILLA.infoLabels, "InfoviewPanelLabel");
+    V.Section = readVanilla(registry, VANILLA.infoSection, "InfoviewPanelSection");
+    V.ValueBarSection = readVanilla(registry, VANILLA.valueBarSection, "ValueBarSection");
+    V.Slider = readVanilla(registry, VANILLA.slider, "Slider");
+    V.Checkbox = readVanilla(registry, VANILLA.checkbox, "Checkbox");
+    V.InfoBarChart = readVanilla(registry, VANILLA.infoBarChart, "InfoBarChart");
+    V.Chart = readVanilla(registry, VANILLA.responsiveChart, "ResponsiveChart");
+    V.MouseTooltip = readVanilla(registry, VANILLA.mouseTooltip, "FloatingMouseTooltip");
+    V.LegendSymbol = readVanilla(registry, VANILLA.colorLegend, "ColorLegendSymbol");
+}
+
+// A bordered box in the infoview panel, as the vanilla panels draw one.
+function Section({ tooltip, children }) {
+    if (V.Section) {
+        return h(V.Section, { disableFocus: true, tooltip }, children);
+    }
+
+    return h("div", { className: "wtg-section" }, children);
+}
+
+// A label with a value on the right. `small` is the game's secondary weight.
+function Row({ label, value, small, uppercase }) {
+    if (V.Label) {
+        return h(V.Label, { small, uppercase, text: label, rightText: value });
+    }
+
+    return h("div", { className: "wtg-row" + (small ? " wtg-row-small" : "") },
+        h("div", { className: "wtg-row-label" + (uppercase ? " wtg-upper" : "") }, label),
+        value === undefined || value === null ? null : h("div", { className: "wtg-row-value" }, value));
+}
+
+function Caption({ children }) {
+    return h("div", { className: "wtg-caption" }, children);
+}
+
+// ---------------------------------------------------------------------------
+// Formatting, in the player's own locale and units.
+
+function number(value, unit) {
+    const Localized = L10n && L10n.LocalizedNumber;
+    const Unit = L10n && L10n.Unit;
+    if (Localized && Unit) {
+        return h(Localized, { value, unit: unit || Unit.Integer });
+    }
+
+    return String(Math.round(value));
+}
+
+function integer(value) {
+    return number(Math.round(value));
+}
+
+function percent(share) {
+    const Unit = L10n && L10n.Unit;
+    return number(share * 100, Unit ? Unit.Percentage : undefined);
+}
+
+// An hour of the day, as the player's own clock writes it. Falls back to 24-hour text,
+// which is what the mod's own log uses.
+function useHourText() {
+    const t = useTranslate();
+    return React.useCallback(
+        (hour) => t("AtHour", "{0}:00").replace("{0}", String(hour).padStart(2, "0")),
+        [t]);
+}
+
+// ---------------------------------------------------------------------------
+// Controls.
+
+// The four purposes, in the order JourneyPurpose declares them. The MASK is the
+// contract with C# (1 << purpose); the colours are the panel's own, because purpose is
+// not something the map paints — the map paints how much of a band transit carries.
+const PURPOSES = [
+    { bit: 1, key: "PurposeWork", english: "Work", colour: "#4a90d9" },
+    { bit: 2, key: "PurposeSchool", english: "School", colour: "#8e7cc3" },
+    { bit: 4, key: "PurposeShopping", english: "Shopping", colour: "#e0a43c" },
+    { bit: 8, key: "PurposeLeisure", english: "Leisure", colour: "#5fa86a" },
+];
+
+function Check({ label, on, onChange }) {
+    if (V.Checkbox) {
+        return h(V.Checkbox, { checked: on, onChange, className: "wtg-check" });
+    }
+
+    return h("div", {
+        className: "wtg-check-fallback" + (on ? " wtg-check-on" : ""),
+        onClick: () => onChange(!on),
+    }, on ? "✓" : "", label);
+}
+
+function Slider({ value, start, end, onChange, className }) {
+    if (V.Slider) {
+        return h(V.Slider, {
+            value,
+            start,
+            end,
+            className: "wtg-slider " + (className || ""),
+            onChange: (next) => onChange(Math.round(next)),
+        });
+    }
+
+    // No vanilla slider: a track the pointer drags across, which is what this panel
+    // used before the game's own was found.
+    return h("div", {
+        className: "wtg-track " + (className || ""),
+        onMouseDown: (event) => pickAlong(event, start, end, onChange),
+        onMouseMove: (event) => {
+            if (event.buttons & 1) {
+                pickAlong(event, start, end, onChange);
+            }
+        },
+    },
+        h("div", { className: "wtg-track-fill", style: { width: fillShare(value, start, end) + "%" } }),
+        h("div", { className: "wtg-track-knob", style: { left: fillShare(value, start, end) + "%" } }));
+}
+
+function fillShare(value, start, end) {
+    return end > start ? Math.min(100, Math.max(0, ((value - start) / (end - start)) * 100)) : 0;
+}
+
+function pickAlong(event, start, end, onChange) {
+    const node = event.currentTarget;
+    if (!node || !node.getBoundingClientRect) {
+        return;
+    }
+
+    const box = node.getBoundingClientRect();
+    if (!box.width) {
+        return;
+    }
+
+    const share = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    onChange(Math.round(start + (share * (end - start))));
+}
+
+// The day, as twenty-four columns of how much the city travels in each hour.
+//
+// The control IS the reading: before the player picks anything, the strip has already
+// said when the city moves and how sharp its peaks are. Clicking a column shows the map
+// at that hour; clicking it again goes back to the whole day, which is where the map
+// opens and the only state in which there is no direction to draw.
+function HourStrip({ hour, hourly, playing }) {
+    const t = useTranslate();
+    const hourText = useHourText();
+    let peak = 0;
+    for (let i = 0; i < hourly.length; i++) {
+        if (hourly[i] > peak) {
+            peak = hourly[i];
+        }
+    }
+
+    const select = (next) => {
+        // Touching the strip takes the day off automatic: otherwise playback would move
+        // the hour out from under the pointer.
+        if (playing) {
+            trigger("setHourPlay", false);
+        }
+
+        trigger("selectHour", next === hour ? -1 : next);
+    };
+
+    return h("div", { className: "wtg-hours" },
+        h("div", { className: "wtg-hours-head" },
+            h("div", { className: "wtg-hours-title" }, t("TimeOfDay", "Time of day")),
+            h("div", {
+                className: "wtg-play" + (playing ? " wtg-play-on" : ""),
+                onClick: () => trigger("setHourPlay", !playing),
+            }, playing ? "■" : "▶"),
+            h("div", { className: "wtg-hours-value" },
+                hour < 0 ? t("WholeDay", "All day") : hourText(hour))),
+        h("div", { className: "wtg-hours-bars" },
+            hourly.map((value, index) => h("div", {
+                key: index,
+                className: "wtg-hour"
+                    + (index === hour ? " wtg-hour-on" : "")
+                    + (hour < 0 ? " wtg-hour-all" : ""),
+                onClick: () => select(index),
+            },
+                h("div", {
+                    className: "wtg-hour-fill",
+                    // At least a sliver, so an hour with almost nobody travelling still
+                    // reads as an hour rather than as a hole in the chart.
+                    style: { height: (peak > 0 ? Math.max(2, (value / peak) * 100) : 0) + "%" },
+                })))),
+        h("div", { className: "wtg-hours-axis" },
+            [0, 6, 12, 18].map((mark) => h("div", { key: mark, className: "wtg-hours-mark" }, hourText(mark)))));
+}
+
+// Which purposes the map is drawing, with what each is worth. The switches carry their
+// own weight beside their name: "Leisure 12 000" answers a question the tick box on its
+// own cannot.
+function Purposes({ mask, weights }) {
+    const t = useTranslate();
+    const values = PURPOSES.map((purpose, index) => (mask & purpose.bit) !== 0 ? (weights[index] || 0) : 0);
+    let total = 0;
+    for (const value of values) {
+        total += value;
+    }
+
+    const toggle = (purpose) => {
+        const next = mask ^ purpose.bit;
+        // Never all four off: an empty map reads as a broken one, so the last one
+        // switched on stays on.
+        trigger("setPurposes", next === 0 ? purpose.bit : next);
+    };
+
+    const legend = h("div", { className: "wtg-purposes" },
+        PURPOSES.map((purpose, index) => h("div", {
+            key: purpose.key,
+            className: "wtg-purpose" + ((mask & purpose.bit) !== 0 ? "" : " wtg-purpose-off"),
+            onClick: () => toggle(purpose),
+        },
+            h(Check, { label: "", on: (mask & purpose.bit) !== 0, onChange: () => toggle(purpose) }),
+            h("div", { className: "wtg-purpose-swatch", style: { backgroundColor: purpose.colour } }),
+            h("div", { className: "wtg-purpose-label" }, t(purpose.key, purpose.english)),
+            h("div", { className: "wtg-purpose-value" }, integer(weights[index] || 0)))));
+
+    const data = { values, total: total > 0 ? total : 1 };
+    const colours = PURPOSES.map((purpose) => purpose.colour);
+    if (V.InfoBarChart) {
+        return h(V.InfoBarChart, {
+            title: t("Purposes", "Journeys by purpose"),
+            colors: colours,
+            labels: PURPOSES.map((purpose) => t(purpose.key, purpose.english)),
+            data,
+            customLegend: legend,
+            className: "wtg-purpose-chart",
+        });
+    }
+
+    return h("div", null, h(Row, { label: t("Purposes", "Journeys by purpose"), uppercase: true }), legend);
+}
+
+// How much of the map the threshold is hiding, and what each width class means.
+function Bands({ thresholdPercent, shown, total, hiddenShare, breaks, widths, ramp }) {
+    const t = useTranslate();
+    return h("div", { className: "wtg-bands" },
+        h(Row, {
+            uppercase: true,
+            label: t("Bands", "Bands"),
+            value: t("BandsShown", "{0} of {1}").replace("{0}", String(shown)).replace("{1}", String(total)),
+        }),
+        h(Slider, {
+            value: thresholdPercent,
+            start: 0,
+            end: 25,
+            onChange: (value) => trigger("setBandThreshold", value),
+        }),
+        h(Caption, null,
+            t("ThresholdCaption", "hiding everything under {0} % of the strongest band")
+                .replace("{0}", String(thresholdPercent)),
+            hiddenShare > 0.005
+                ? " · " + t("HiddenShare", "{0} % of the journeys")
+                    .replace("{0}", String(Math.round(hiddenShare * 100)))
+                : ""),
+        h(WidthLegend, { breaks, widths, ramp }));
+}
+
+// What a width means, in journeys a day. The point of drawing widths in classes at all:
+// a class can be read off a legend, a continuous ramp can only be compared.
+function WidthLegend({ breaks, widths, ramp }) {
+    const t = useTranslate();
+    const mid = ramp && ramp.length > 1 ? ramp[1] : "#c07840";
+    const rows = [];
+    for (let i = 0; i < widths.length; i++) {
+        const low = i === 0 ? 0 : breaks[i - 1];
+        const high = i < breaks.length ? breaks[i] : null;
+        const text = high === null
+            ? t("ClassOver", "{0} and more").replace("{0}", String(Math.round(low)))
+            : low === 0
+                ? t("ClassUnder", "under {0}").replace("{0}", String(Math.round(high)))
+                : String(Math.round(low)) + "–" + String(Math.round(high));
+        rows.push(h("div", { className: "wtg-class", key: i },
+            h("div", { className: "wtg-class-bar" },
+                h("div", {
+                    className: "wtg-class-fill",
+                    // Drawn at the same relative thickness the map uses, so the legend
+                    // is a sample of the thing rather than a picture of it.
+                    style: {
+                        height: Math.max(2, (widths[i] / widths[widths.length - 1]) * 14) + "rem",
+                        backgroundColor: mid,
+                    },
+                })),
+            h("div", { className: "wtg-class-label" }, text)));
+    }
+
+    return h("div", null,
+        h(Caption, null, t("ClassCaption", "width: journeys a day")),
+        h("div", { className: "wtg-classes" }, rows));
+}
+
+// ---------------------------------------------------------------------------
+// The infoview panel.
+
+function CarriedFigure({ share, ramp }) {
+    const t = useTranslate();
+    const title = h(Row, {
+        uppercase: true,
+        label: t("Carried", "Carried by transit"),
+        value: percent(share),
+    });
+    const caption = h(Caption, null,
+        t("CarriedCaption", "of all journeys — counting those transit makes faster than walking"));
+
+    // The gradient IS the map's legend, and the pointer says where the city sits on it.
+    // One object instead of a figure in one place and a colour key in another.
+    if (V.ValueBarSection && ramp && ramp.length === 3) {
+        return h(V.ValueBarSection, {
+            title,
+            value: { min: 0, max: 1, current: share },
+            gradient: { stops: [{ color: ramp[0], offset: 0 }, { color: ramp[1], offset: 0.5 }, { color: ramp[2], offset: 1 }] },
+        }, caption);
+    }
+
+    return h(Section, null, title, caption);
+}
+
+function CoverageFigure({ share, walkMinutes, ramp }) {
+    const t = useTranslate();
+    const title = h(Row, {
+        uppercase: true,
+        label: t("Coverage", "Within walking distance"),
+        value: percent(share),
+    });
+    const caption = h(Caption, null,
+        t("CoverageCaption", "reach a served stop within {0} min at both ends")
+            .replace("{0}", String(walkMinutes)));
+
+    if (V.ValueBarSection && ramp && ramp.length === 3) {
+        return h(V.ValueBarSection, {
+            title,
+            value: { min: 0, max: 1, current: share },
+            // Reversed against the map's own ramp: on the map the deep end is a LONG
+            // walk, and here a high number is a good one.
+            gradient: { stops: [{ color: ramp[2], offset: 0 }, { color: ramp[1], offset: 0.5 }, { color: ramp[0], offset: 1 }] },
+        }, caption);
+    }
+
+    return h(Section, null, title, caption);
+}
+
+// Where the numbers come from. Deliberately last and deliberately quiet: it is
+// provenance, not a finding about the city. It used to sit between the two figures in
+// the same weight, which made "0.8 h" look like a third headline.
+function DataBasis({ figures }) {
+    const t = useTranslate();
+    const seen = figures.observedJourneys > 0;
+    return h(Section, null,
+        h(Row, { uppercase: true, small: true, label: t("DataBasis", "Where these come from") }),
+        h(Caption, null,
+            seen
+                ? t("ObservedTrips", "{0} shopping and leisure journeys seen over {1} h; commutes are read from the save")
+                    .replace("{0}", String(figures.observedJourneys))
+                    .replace("{1}", figures.observedHours.toFixed(1))
+                : t("ObservedTripsEmpty", "no shopping or leisure journeys seen yet; commutes are read from the save")),
+        h(Caption, null,
+            figures.readings > 0
+                ? t("DataBasisCaption", "line readings cover {0} h of the last {1} h, from {2} readings")
+                    .replace("{0}", figures.coveredHours.toFixed(1))
+                    .replace("{1}", String(Math.round(figures.windowHours)))
+                    .replace("{2}", String(figures.readings))
+                : t("DataBasisEmpty", "line readings start with your first line")));
+}
+
+// The band under the pointer, in a tooltip at the cursor rather than in the panel.
+//
+// It belongs at the cursor: the player is pointing at one band out of hundreds, and a
+// number that appears somewhere else entirely has to be matched up by eye. The game has
+// a tooltip that follows the pointer in screen space, which is exactly this job.
+function HoveredBand({ band }) {
+    const t = useTranslate();
+    const hourText = useHourText();
+    if (!band || !V.MouseTooltip) {
+        return null;
+    }
+
+    const content = h("div", { className: "wtg-tip" },
+        h("div", { className: "wtg-tip-head" },
+            t("BandJourneys", "{0} journeys a day").replace("{0}", String(Math.round(band.journeys)))),
+        h("div", { className: "wtg-tip-line" },
+            t("BandWithout", "{0} % travel without transit")
+                .replace("{0}", String(Math.round((1 - band.carriedShare) * 100)))),
+        h("div", { className: "wtg-tip-line" },
+            t("BandPeak", "busiest at {0}").replace("{0}", hourText(band.peakHour))));
+
+    return h(V.MouseTooltip, {
+        tooltip: content,
+        screenSpacePosition: true,
+        alwaysVisible: true,
+        className: "wtg-tip-box",
+    });
+}
+
+function InfoviewFigures() {
+    // Hooks first and unconditionally: the panel this sits in is shared with every
+    // vanilla infoview, so this component renders for all of them and returns nothing
+    // for the ones that are not ours.
+    const ours = useBound("infoviewActive", false);
+    const figures = useBound("figures", null);
+    const state = useBound("mapState", null);
+    const band = useBound("hoveredBand", null);
+    if (!ours || !figures || !state) {
+        return null;
+    }
+
+    const hourly = state.hourly || [];
+    return h("div", { className: "wtg-panel" },
+        h(CarriedFigure, { share: figures.carriedShare, ramp: state.bandRamp }),
+        h(CoverageFigure, {
+            share: figures.coverageShare,
+            walkMinutes: figures.coverageWalkMinutes,
+            ramp: state.walkRamp,
+        }),
+        h(Section, null, h(HourStrip, {
+            hour: state.hour,
+            hourly,
+            playing: state.playing,
+        })),
+        h(Section, null, h(Purposes, {
+            mask: state.purposes,
+            weights: state.purposeWeights || [],
+        })),
+        h(Section, null, h(Bands, {
+            thresholdPercent: state.thresholdPercent,
+            shown: state.bandsShown,
+            total: state.bandsTotal,
+            hiddenShare: state.hiddenShare,
+            breaks: state.classBreaks || [],
+            widths: state.classWidths || [],
+            ramp: state.bandRamp,
+        })),
+        h(DataBasis, { figures }),
+        h(HoveredBand, { band }));
+}
+
+// ---------------------------------------------------------------------------
+// The selected-object windows.
+
 // The walk-to-transit row in the game's own selected-building window, drawn from what
-// BuildingAccessSection wrote. The props are that section's JSON: a section whose
-// group has no component here is simply not drawn, so this file and the C# side can be
-// updated in either order without a broken panel in between.
+// BuildingAccessSection wrote. The props are that section's JSON.
 function BuildingAccessRow({ walkSeconds, served, horizonMinutes }) {
     const t = useTranslate();
     const minutes = Math.round((walkSeconds || 0) / 60);
-    const Label = vanillaLabel;
     // Three cases, and the third is why this is not one line: within the horizon, beyond
     // it but measured, and beyond the search itself. "over 10 min" for the last two
-    // together is what made a 12-minute walk and no service at all look like the same
-    // broken reading.
+    // together is what made a 12-minute walk and no service at all look the same.
     const value = walkSeconds > 0
         ? t("WalkMinutes", "{0} min").replace("{0}", String(minutes))
         : t("WalkNone", "no stop in reach");
 
-    // Deliberately the same words as the infomode this number colours the building
-    // for, so a player who has both open sees one fact stated twice, not two facts.
-    return h("div", { className: "ta-building" },
-        Label
-            ? h(Label, { small: true, text: t("BuildingWalk", "Walk to transit"), rightText: value })
-            : h("div", { className: "ta-figure-row" },
-                h("div", { className: "ta-figure-label" }, t("BuildingWalk", "Walk to transit")),
-                h("div", { className: "ta-figure-value" }, value)),
-        h("div", { className: "ta-figure-caption" },
+    return h(PanelSection, null,
+        h(PanelRow, { uppercase: true, left: t("BuildingSection", "Walk to transit") }),
+        h(PanelRow, { subRow: true, left: t("BuildingWalk", "Nearest served stop"), right: value }),
+        h(Caption, null,
             served
-                ? t("BuildingWalkServed", "to the nearest stop your lines serve")
+                ? t("BuildingWalkServed", "over the pedestrian network, to a stop your lines actually call at")
                 : t("BuildingWalkUnserved", "further than the {0} min this city counts as served")
                     .replace("{0}", String(horizonMinutes || 0))));
 }
 
 // The reading in the window of a line the player clicked, drawn from what
 // LineInsightSection wrote. A reading, never a verdict: no advice, no buttons.
+//
+// Built from the game's own InfoSection and InfoRow, which is what gives it the heading
+// every other section in that window has. Without one it rendered as loose rows under
+// the colour picker and read as part of it.
 function LineInsightRow({ measured, riders, minutesSaved, duplicatePercent, hourlyLoad }) {
     const t = useTranslate();
-    const Label = vanillaLabel;
-    const row = (label, value) => Label
-        ? h(Label, { small: true, text: label, rightText: value })
-        : h("div", { className: "ta-figure-row" },
-            h("div", { className: "ta-figure-label" }, label),
-            h("div", { className: "ta-figure-value" }, value));
-
+    const title = h(PanelRow, { uppercase: true, left: t("LineSection", "Where they go") });
     if (!measured) {
-        return h("div", { className: "ta-building" },
-            row(t("LineRiders", "Journeys using this line"), t("LineMeasuring", "measuring…")),
-            h("div", { className: "ta-figure-caption" },
-                t("LineMeasuringCaption", "routing the city again without this line")));
+        return h(PanelSection, null,
+            title,
+            h(PanelRow, {
+                subRow: true,
+                left: t("LineRiders", "Journeys using this line"),
+                right: t("LineMeasuring", "measuring…"),
+            }),
+            h(Caption, null, t("LineMeasuringCaption", "routing the city again without this line")));
     }
 
-    return h("div", { className: "ta-building" },
-        row(t("LineRiders", "Journeys using this line"), String(riders || 0)),
-        h("div", { className: "ta-figure-caption" },
-            t("LineSaved", "saving {0} passenger-minutes a day against walking and the rest of your network")
-                .replace("{0}", String(minutesSaved || 0))),
-        row(t("LineDuplicate", "No slower without it"), (duplicatePercent || 0) + " %"),
-        h("div", { className: "ta-figure-caption" },
+    const perJourney = riders > 0 ? minutesSaved / riders : 0;
+    return h(PanelSection, null,
+        title,
+        h(PanelRow, {
+            subRow: true,
+            left: t("LineRiders", "Journeys using this line"),
+            right: integer(riders || 0),
+        }),
+        h(PanelRow, {
+            subRow: true,
+            left: t("LineSaved", "Minutes it saves them, a day"),
+            right: integer(minutesSaved || 0),
+        }),
+        h(Caption, null,
+            t("LineSavedCaption", "{0} min per journey, against walking and the rest of your network")
+                .replace("{0}", perJourney.toFixed(1))),
+        h(PanelRow, {
+            subRow: true,
+            left: t("LineDuplicate", "No slower without it"),
+            right: (duplicatePercent || 0) + " %",
+        }),
+        h(Caption, null,
             t("LineDuplicateCaption", "of those journeys would be no slower if this line did not exist")),
         h(HourlyLoad, { hourlyLoad }));
 }
 
-// Load hour by hour against the seats that were actually out in that hour. An hour
-// the window never watched is a gap, not a zero.
+// Load hour by hour against the seats that were actually out in that hour. An hour the
+// window never watched is a GAP, not a zero — which is why this is not a plain bar
+// chart: a zero and an unwatched hour must not look alike.
 function HourlyLoad({ hourlyLoad }) {
     const t = useTranslate();
     const hours = Array.isArray(hourlyLoad) ? hourlyLoad : [];
@@ -359,25 +627,87 @@ function HourlyLoad({ hourlyLoad }) {
         }
     }
 
-    return h("div", { className: "ta-hours" },
-        h("div", { className: "ta-figure-caption" },
+    return h("div", { className: "wtg-load" },
+        h(Caption, null,
             seen
                 ? t("LineHours", "How full it runs, hour by hour")
                 : t("LineHoursEmpty", "no readings yet — they start once the line runs")),
-        h("div", { className: "ta-hours-bars" },
-            hours.map((share, hour) => h("div", {
-                key: hour,
-                className: "ta-hour" + (share < 0 ? " ta-hour-gap" : ""),
-                // A bar is at least a sliver so an hour with almost nobody aboard is
-                // still visibly an hour that was watched.
-                style: share >= 0 ? { height: Math.max(2, Math.min(100, share * 100)) + "%" } : null,
-            }))));
+        seen ? h(LoadChart, { hours }) : null);
 }
 
-// Puts the two city-wide figures inside the game's infoview panel, under its heading.
-function extendInfoview(registry) {
-    vanillaLabel = readVanilla(registry, VANILLA.infoLabels, "InfoviewPanelLabel");
+function LoadChart({ hours }) {
+    const points = hours.map((share, hour) => ({ x: hour, y: share < 0 ? null : Math.round(share * 100) }));
+    if (!V.Chart) {
+        // No chart component: bars of our own, which at least keep the gaps visible.
+        return h("div", { className: "wtg-load-bars" },
+            hours.map((share, hour) => h("div", {
+                key: hour,
+                className: "wtg-load-bar" + (share < 0 ? " wtg-load-gap" : ""),
+                style: share >= 0 ? { height: Math.max(2, Math.min(100, share * 100)) + "%" } : null,
+            })));
+    }
 
+    // Chart.js, which the game bundles and uses for the traffic profile in the road
+    // window. `spanGaps: false` is the whole point: a null is a gap in the line, so an
+    // hour nobody watched leaves a hole instead of a dip to zero.
+    const data = {
+        labels: hours.map((_, hour) => hour),
+        datasets: [{
+            label: "load",
+            data: points,
+            borderColor: "#5fa8d3",
+            backgroundColor: "rgba(95, 168, 211, 0.35)",
+            borderWidth: 2,
+            fill: true,
+            spanGaps: false,
+            pointRadius: 0,
+        }],
+    };
+    const options = {
+        parsing: false,
+        scales: {
+            x: {
+                type: "linear",
+                min: 0,
+                max: 23,
+                ticks: { stepSize: 6, color: "rgba(255,255,255,0.5)", font: { size: 9 } },
+                grid: { color: "rgba(255,255,255,0.1)" },
+            },
+            y: {
+                min: 0,
+                suggestedMax: 100,
+                ticks: { maxTicksLimit: 3, color: "rgba(255,255,255,0.5)", font: { size: 9 } },
+                grid: { color: "rgba(255,255,255,0.1)" },
+            },
+        },
+    };
+    return h(V.Chart, { type: "line", data, options, className: "wtg-load-chart" });
+}
+
+// The game's own section and row, which is what makes these look like every other
+// section in the window rather than like an add-on.
+function PanelSection(props) {
+    const Component = CsUi.PanelSection;
+    return Component ? h(Component, { disableFocus: true }, props.children) : h("div", { className: "wtg-section" }, props.children);
+}
+
+function PanelRow(props) {
+    const Component = CsUi.PanelSectionRow;
+    if (Component) {
+        return h(Component, { disableFocus: true, ...props });
+    }
+
+    return h(Row, { label: props.left, value: props.right, small: props.subRow, uppercase: props.uppercase });
+}
+
+// ---------------------------------------------------------------------------
+// Registration.
+
+// Puts the mod's figures and controls inside the game's infoview panel, under its
+// heading. InfoviewPanelSpace is the divider the panel draws once, between the MAP
+// LEGEND heading and the infomode checkboxes, so extending it is what puts our figures
+// INSIDE that panel rather than in a second box under it.
+function extendInfoview(registry) {
     if (readVanilla(registry, VANILLA.infoSpace, "InfoviewPanelSpace")) {
         registry.extend(VANILLA.infoSpace, "InfoviewPanelSpace", (Original) => (props) =>
             h(React.Fragment, null, h(Original, props), h(InfoviewFigures, null)));
@@ -392,7 +722,7 @@ function extendInfoview(registry) {
 // (`set selectedInfoSectionComponents(e){GAe=e}`), so writing a one-key object took the
 // component of every vanilla section with it and the selected-info panel rendered
 // "Unknown element type" for all of them.
-function registerBuildingSection(registry) {
+function registerSections(registry) {
     try {
         const module = registry && registry.registry ? registry.registry.get(VANILLA.sections) : null;
         const current = module ? module.selectedInfoSectionComponents : null;
@@ -419,10 +749,12 @@ const register = (moduleRegistry) => {
 
     // No window and no toolbar button of the mod's own. Everything it has to say lives
     // where the player is already looking: the figures in the game's infoview panel
-    // (reached from the infoview menu like every vanilla one), one row in the
-    // selected-building window, and every setting in the Options page.
+    // (reached from the infoview menu like every vanilla one), one section in the
+    // selected-building window, one in the selected-line window, and every setting on
+    // the Options page.
+    resolveVanilla(moduleRegistry);
     extendInfoview(moduleRegistry);
-    registerBuildingSection(moduleRegistry);
+    registerSections(moduleRegistry);
     console.info("[WhereTheyGo] UI registered.");
 };
 

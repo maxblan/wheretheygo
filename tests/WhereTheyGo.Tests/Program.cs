@@ -85,7 +85,6 @@ namespace WhereTheyGo.Tests
             Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
             Run("A line's worth is what its riders lose when it is taken out", LineContributionComesFromTakingTheLineOut);
             Run("Hourly load tells an unwatched hour from a quiet one", HourlyLoadSeparatesQuietHoursFromUnwatchedOnes);
-            Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
 
             // F1's grid pass and F2's candidate set, pure since 2026-09-05.
             Run("Walk network: the pieces the game's data leaves are bridged", WalkBridgingJoinsWhatTheDataCuts);

@@ -3,15 +3,16 @@ using Game.UI;
 
 namespace WhereTheyGo
 {
-    // Bindings for what the mod shows in the game.
+    // What the infoview panel reads and what its controls raise.
     //
-    // Two city-wide figures, how much observed history they rest on, and the three
-    // controls that decide what the map draws — the hour of the day, which purposes,
-    // and how thin a band may be before it is hidden. Everything else lives on the
-    // Options page.
+    // Everything goes across as JSON rather than as delimited strings: the panel reads
+    // it by name, so a field added in the middle moves nothing, and the numbers arrive
+    // as numbers so the panel can format them in the player's own locale. The game's
+    // own UI does the same — a selected-object section writes through this very
+    // IJsonWriter.
     public sealed partial class PanelUISystem : UISystemBase
     {
-        private const string Group = "transitArchitect";
+        private const string Group = "wheretheygo";
 
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
@@ -24,19 +25,162 @@ namespace WhereTheyGo
             base.OnCreate();
             m_OverlaySystem = World.GetOrCreateSystemManaged<WhereTheyGoSystem>();
 
-            AddUpdateBinding(new GetterValueBinding<bool>(Group, "heatmap", () =>
+            AddUpdateBinding(new GetterValueBinding<bool>(Group, "infoviewActive", () =>
                 m_OverlaySystem is not null && m_OverlaySystem.IsInfoviewActive));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "dataCoverage", static () => WhereTheyGoSystem.DataCoverageText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "coverage", static () => WhereTheyGoSystem.CoverageText));
-            // What the map is showing: the hour, the purposes and the threshold. Owned
-            // in C# so the panel's controls and the map cannot disagree about it.
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "mapState", static () => WhereTheyGoSystem.MapStateText));
-            AddUpdateBinding(new GetterValueBinding<string>(Group, "hoveredBand", static () => WhereTheyGoSystem.HoveredBandText));
+            AddUpdateBinding(new RawValueBinding(Group, "figures", WriteFigures));
+            AddUpdateBinding(new RawValueBinding(Group, "mapState", WriteMapState));
+            AddUpdateBinding(new RawValueBinding(Group, "hoveredBand", WriteHoveredBand));
 
             AddBinding(new TriggerBinding<int>(Group, "selectHour", static hour => WhereTheyGoSystem.SelectHour(hour)));
             AddBinding(new TriggerBinding<int>(Group, "setPurposes", static mask => WhereTheyGoSystem.SetPurposeFilter(mask)));
             AddBinding(new TriggerBinding<int>(Group, "setBandThreshold", static percent => WhereTheyGoSystem.SetBandThreshold(percent)));
             AddBinding(new TriggerBinding<bool>(Group, "setHourPlay", static playing => WhereTheyGoSystem.SetHourPlay(playing)));
+        }
+
+        // The city-wide figures and what they rest on.
+        private static void WriteFigures(IJsonWriter writer)
+        {
+            PanelFigures figures = WhereTheyGoSystem.Figures;
+            writer.TypeBegin("WhereTheyGo.Figures");
+            writer.PropertyName("carriedShare");
+            writer.Write(figures.CarriedShare);
+            writer.PropertyName("coverageShare");
+            writer.Write(figures.CoverageShare);
+            writer.PropertyName("coverageWalkMinutes");
+            writer.Write(figures.CoverageWalkMinutes);
+            writer.PropertyName("coveredHours");
+            writer.Write(figures.CoveredHours);
+            writer.PropertyName("readings");
+            writer.Write(figures.Readings);
+            writer.PropertyName("windowHours");
+            writer.Write(figures.WindowHours);
+            writer.PropertyName("observedJourneys");
+            writer.Write(figures.ObservedJourneys);
+            writer.PropertyName("observedHours");
+            writer.Write(figures.ObservedHours);
+            writer.TypeEnd();
+        }
+
+        // What the map is showing, and what it is showing it of. The panel's controls
+        // are drawn from this rather than from state of their own, so the hour strip
+        // and the map cannot drift apart.
+        private void WriteMapState(IJsonWriter writer)
+        {
+            BandView view = m_OverlaySystem.CurrentBandView;
+            BandSet? set = m_OverlaySystem.Bands;
+            int purposes = m_OverlaySystem.PurposeFilter;
+
+            writer.TypeBegin("WhereTheyGo.MapState");
+            writer.PropertyName("hour");
+            writer.Write(m_OverlaySystem.SelectedHour);
+            writer.PropertyName("purposes");
+            writer.Write(purposes);
+            writer.PropertyName("thresholdPercent");
+            writer.Write(m_OverlaySystem.BandThresholdPercent);
+            writer.PropertyName("playing");
+            writer.Write(WhereTheyGoSystem.PlayingHours);
+
+            // The shape of the city's day, which is both the hour strip's picture and
+            // its scale. Under the purposes in force, so switching shopping off
+            // reshapes the strip rather than leaving it describing a different map.
+            writer.PropertyName("hourly");
+            WriteFloats(writer, set is null ? null : set.HourlyProfile(purposes), Band.HoursPerDay);
+
+            // What the four switches are worth, so each carries its own weight beside
+            // its name.
+            writer.PropertyName("purposeWeights");
+            WriteFloats(writer, set?.PurposeWeights(), Band.PurposeCount);
+
+            // How much of the map the threshold is currently hiding. Said out loud:
+            // a map that quietly dropped a third of the city's travel reads as a map of
+            // the whole city.
+            writer.PropertyName("bandsShown");
+            writer.Write(view.Drawn.Length);
+            writer.PropertyName("bandsTotal");
+            writer.Write(view.TotalCount);
+            writer.PropertyName("hiddenShare");
+            float total = view.ShownWeight + view.HiddenWeight;
+            writer.Write(total > 0f ? view.HiddenWeight / total : 0f);
+
+            // The legend: what each width class means, in journeys a day, and how wide
+            // each is drawn so the panel can show a sample of the real thing.
+            writer.PropertyName("classBreaks");
+            WriteFloats(writer, view.ClassBreaks, BandView.ClassCount - 1);
+            writer.PropertyName("classWidths");
+            WriteFloats(writer, Assumptions.BandClassWidthsMetres, BandView.ClassCount);
+
+            // The two colour ramps, sent rather than copied into the panel: they are
+            // defined once, in the code that paints the map with them, and a second
+            // copy in JavaScript is a copy that drifts.
+            writer.PropertyName("bandRamp");
+            WriteRamp(writer, OverlayLayer.DesireBands);
+            writer.PropertyName("walkRamp");
+            WriteRamp(writer, OverlayLayer.TransitAccess);
+            writer.TypeEnd();
+        }
+
+        private static void WriteRamp(IJsonWriter writer, OverlayLayer layer)
+        {
+            OverlayLayers.ColorsOf(layer, out UnityEngine.Color low, out UnityEngine.Color medium, out UnityEngine.Color high);
+            writer.ArrayBegin(3u);
+            writer.Write(Hex(low));
+            writer.Write(Hex(medium));
+            writer.Write(Hex(high));
+            writer.ArrayEnd();
+        }
+
+        private static string Hex(UnityEngine.Color colour)
+        {
+            return "#" + UnityEngine.ColorUtility.ToHtmlStringRGB(colour);
+        }
+
+        // The band under the pointer, or nothing. Written as its own object rather than
+        // folded into the map state: it changes on every mouse move, and the rest does
+        // not.
+        private void WriteHoveredBand(IJsonWriter writer)
+        {
+            Band? band = WhereTheyGoSystem.HoveredBand;
+            if (band is null)
+            {
+                writer.WriteNull();
+                return;
+            }
+
+            int purposes = m_OverlaySystem.PurposeFilter;
+            writer.TypeBegin("WhereTheyGo.HoveredBand");
+            writer.PropertyName("journeys");
+            writer.Write(band.WeightAtHour(m_OverlaySystem.SelectedHour, purposes));
+            writer.PropertyName("dayJourneys");
+            writer.Write(band.DayWeight(purposes));
+            writer.PropertyName("carriedShare");
+            writer.Write(band.CarriedShare);
+            writer.PropertyName("peakHour");
+            writer.Write(band.PeakHour(purposes));
+            writer.PropertyName("lengthMetres");
+            writer.Write(band.LengthMetres);
+            writer.PropertyName("purposeWeights");
+            var weights = new float[Band.PurposeCount];
+            for (int purpose = 0; purpose < weights.Length; purpose++)
+            {
+                weights[purpose] = band.DayWeight(1 << purpose);
+            }
+
+            WriteFloats(writer, weights, Band.PurposeCount);
+            writer.TypeEnd();
+        }
+
+        // An array of a known length, with a row of zeroes where there is no data yet:
+        // the panel draws a flat strip rather than disappearing, which is the honest
+        // picture of a city that has not been measured.
+        private static void WriteFloats(IJsonWriter writer, float[]? values, int length)
+        {
+            writer.ArrayBegin((uint)length);
+            for (int i = 0; i < length; i++)
+            {
+                writer.Write(values is not null && i < values.Length ? values[i] : 0f);
+            }
+
+            writer.ArrayEnd();
         }
     }
 }

@@ -15,9 +15,9 @@ namespace WhereTheyGo
         // main menu, where there is no city and no system to talk to.
         private static int s_InfoviewRequest = -1;
 
-        private static string s_DataCoverage = string.Empty;
-
-        private static string s_CoverageFigures = string.Empty;
+        // The city-wide numbers, written by the passes that measure them and read by
+        // the panel's bindings.
+        private static PanelFigures s_Figures;
 
         // What the map is showing right now, all three owned here so the panel and the
         // renderer cannot disagree about it.
@@ -51,22 +51,25 @@ namespace WhereTheyGo
 
         public static void RequestInfoview(bool on) => s_InfoviewRequest = on ? 1 : 0;
 
-        // "coveredHours|readings|windowHours" — how much observed history the figures
-        // are actually resting on. The panel shows it because a mean over twenty
-        // minutes and a mean over a full day are the same number on screen and mean
-        // very different things.
-        public static string DataCoverageText => s_DataCoverage;
+        internal static PanelFigures Figures => s_Figures;
 
-        public static string CoverageText => s_CoverageFigures;
+        internal static void SetCoverageFigures(float coverageShare, int walkMinutes, float carriedShare)
+        {
+            s_Figures.CoverageShare = coverageShare;
+            s_Figures.CoverageWalkMinutes = walkMinutes;
+            s_Figures.CarriedShare = carriedShare;
+        }
 
-        // "hour|purposes|thresholdPercent" — the map's own state, so the panel draws
-        // its controls from what the map is actually doing rather than from state of
-        // its own.
-        public static string MapStateText =>
-            $"{s_SelectedHour.ToString(CultureInfo.InvariantCulture)}|" +
-            $"{s_PurposeFilter.ToString(CultureInfo.InvariantCulture)}|" +
-            $"{s_BandThresholdPercent.ToString(CultureInfo.InvariantCulture)}|" +
-            $"{(s_PlayingHours ? 1 : 0).ToString(CultureInfo.InvariantCulture)}";
+        internal static void SetHistoryFigures(float coveredHours, int readings, float windowHours, int observedJourneys, float observedHours)
+        {
+            s_Figures.CoveredHours = coveredHours;
+            s_Figures.Readings = readings;
+            s_Figures.WindowHours = windowHours;
+            s_Figures.ObservedJourneys = observedJourneys;
+            s_Figures.ObservedHours = observedHours;
+        }
+
+        internal static bool PlayingHours => s_PlayingHours;
 
         // -1 (the whole day) or an hour of it.
         public static void SelectHour(int hour) => s_SelectedHour = hour is >= 0 and < Band.HoursPerDay ? hour : -1;

@@ -1,8 +1,8 @@
 ﻿/* Where They Go styling.
  *
- * Two rules shaped this file. cohtml supports no CSS `gap`, so spacing is margins;
- * and 1rem is about one design pixel, so every size is in rem and scales with the
- * game's UI scale exactly as a vanilla panel does.
+ * Two rules shaped this file. cohtml supports no CSS `gap`, so spacing is margins; and
+ * 1rem is about one design pixel, so every size is in rem and scales with the game's UI
+ * scale exactly as a vanilla panel does.
  *
  * Colours are written out rather than taken from the game's CSS variables, and the one
  * time this file tried otherwise it printed 597 warnings into UI.log. Two reasons, and
@@ -19,209 +19,346 @@
  * So: literals, read off the vanilla panels, so the result matches them without
  * depending on them.
  *
- * The mod has no window of its own. Everything styled here is a few rows injected into
- * panels the game already draws, which is why there is so little of it. */
+ * There is far less here than the panel would suggest, and that is the point: the rows,
+ * the sections, the slider, the checkbox, the gradient bars, the stacked bar and the
+ * hourly chart are all the GAME'S components. What is left is the hour strip, the width
+ * legend, and the spacing between things. */
 
-/* ---------------------------------------------------------------------------
-   Two figures in the game's infoview panel, and one row in its selected-building
-   window. Both borrow InfoviewPanelLabel for the label/value line, so only the caption
-   under it and the spacing around it are ours. */
-
-.ta-figures {
+.wtg-panel {
     margin: 2rem 0 6rem 0;
 }
 
-.ta-figure {
-    margin-bottom: 5rem;
+/* The fallback section and row, used only where a vanilla export has been renamed out
+   from under us. Same shape, plainer type. */
+.wtg-section {
+    margin: 0 10rem 6rem 10rem;
 }
 
-.ta-building {
-    margin: 4rem 10rem;
-}
-
-/* The fallback line, used only when InfoviewPanelLabel has been renamed out from under
-   us. Same shape, plainer type. */
-.ta-figure-row {
+.wtg-row {
     display: flex;
     flex-direction: row;
     align-items: baseline;
 }
 
-.ta-figure-label {
+.wtg-row-label {
     flex: 1 1 auto;
     min-width: 0;
     color: #dfe8f2;
     font-size: 12rem;
 }
 
-.ta-figure-value {
+.wtg-row-small .wtg-row-label,
+.wtg-row-small .wtg-row-value {
+    font-size: 11rem;
+}
+
+.wtg-row-value {
     flex: 0 0 auto;
     color: #ffffff;
     font-size: 12rem;
+    margin-left: 8rem;
 }
 
-/* What the figure rests on. Small and quiet: it qualifies the number above, it is not
-   a finding of its own. */
-.ta-figure-caption {
-    color: #93a8bd;
+.wtg-upper {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* Everything that explains a number rather than being one. Dim and small on purpose:
+   the figure is the statement, this is the footnote. */
+.wtg-caption {
+    color: #93a4b8;
     font-size: 10rem;
+    line-height: 1.35;
+    margin-top: 1rem;
 }
 
 /* ---------------------------------------------------------------------------
-   Inside the game's Transportation Overview.
+   The hour strip: twenty-four columns of how much the city travels in each hour, which
+   is both the picture of the day and the control that picks one. */
 
-   Almost everything here is layout, not looks. The table and the rows are built from
-   the game's own Section, Scrollable, page classes and row classes, so the panel body,
-   the sticky header, the column widths, the padding, the hover and the text colours all
-   come from the game. What is left below is the handful of things it has no class for,
-   plus fallbacks for when an export has moved.
-
-   Colours are literals here too. Being inside a game panel does make the variables
-   resolvable, but writing them needs a fallback for the day an export moves and the
-   class is not applied — and cohtml has no fallback (see the note at the top). */
-
-/* ---------------------------------------------------------------------------
-   Fallbacks. Each of these applies only when the matching vanilla class could not be
-   resolved, which means an export moved between game versions. The table then looks
-   plainer and works the same. */
-/* ---------------------------------------------------------------------------
-   The map's own controls, under the two figures: the hour of the day, which
-   purposes, and how thin a band may be. cohtml has no <input type=range> and no
-   checkbox, so both are built out of divs — see the components in the .mjs. */
-
-.ta-control {
-    margin: 0 10rem 6rem 10rem;
+.wtg-hours {
+    margin-top: 1rem;
 }
 
-.ta-control-row {
+.wtg-hours-head {
     display: flex;
     flex-direction: row;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 2rem;
+    align-items: center;
+    margin-bottom: 3rem;
 }
 
-.ta-control-label {
+.wtg-hours-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #dfe8f2;
+    font-size: 12rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.wtg-hours-value {
+    flex: 0 0 auto;
+    color: #ffffff;
+    font-size: 12rem;
+    margin-left: 6rem;
+}
+
+.wtg-play {
+    flex: 0 0 auto;
+    width: 18rem;
+    height: 18rem;
+    line-height: 18rem;
+    text-align: center;
+    font-size: 9rem;
+    color: #9fb4cc;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 2rem;
+}
+
+.wtg-play:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.wtg-play-on {
+    color: #0b1620;
+    background-color: #4bc3f1;
+}
+
+.wtg-hours-bars {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    height: 44rem;
+}
+
+/* Each column is a hit target the full height of the strip, so a quiet hour is as easy
+   to click as a peak one. The bar inside it is what is drawn. */
+.wtg-hour {
+    flex: 1 1 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    margin-right: 1rem;
+}
+
+.wtg-hour-fill {
+    background-color: rgba(120, 155, 190, 0.55);
+    border-radius: 1rem 1rem 0 0;
+}
+
+.wtg-hour:hover .wtg-hour-fill {
+    background-color: rgba(190, 215, 240, 0.8);
+}
+
+/* With no hour picked every column is live, because the map is showing all of them. */
+.wtg-hour-all .wtg-hour-fill {
+    background-color: rgba(150, 185, 215, 0.6);
+}
+
+.wtg-hour-on .wtg-hour-fill {
+    background-color: #4bc3f1;
+}
+
+.wtg-hours-axis {
+    display: flex;
+    flex-direction: row;
+    margin-top: 2rem;
+}
+
+.wtg-hours-mark {
+    flex: 1 1 0;
+    color: #7f90a4;
+    font-size: 9rem;
+}
+
+/* ---------------------------------------------------------------------------
+   The four purposes, each carrying what it is worth. */
+
+.wtg-purpose-chart {
+    margin-top: 1rem;
+}
+
+.wtg-purposes {
+    margin-top: 2rem;
+}
+
+.wtg-purpose {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.wtg-purpose-off .wtg-purpose-label,
+.wtg-purpose-off .wtg-purpose-value {
+    color: #64748a;
+}
+
+.wtg-purpose-off .wtg-purpose-swatch {
+    opacity: 0.3;
+}
+
+.wtg-purpose-swatch {
+    flex: 0 0 auto;
+    width: 8rem;
+    height: 8rem;
+    border-radius: 4rem;
+    margin: 0 5rem 0 4rem;
+}
+
+.wtg-purpose-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #dfe8f2;
     font-size: 11rem;
-    color: rgb(190, 205, 218);
 }
 
-.ta-control-value {
+.wtg-purpose-value {
+    flex: 0 0 auto;
+    color: #ffffff;
     font-size: 11rem;
-    color: rgb(238, 244, 250);
 }
 
-/* The slider. The track is the hit area, so it is taller than it looks: a 4 rem
-   bar is under a finger's worth of pointer slop at every UI scale. */
-.ta-track {
+.wtg-check {
+    flex: 0 0 auto;
+}
+
+.wtg-check-fallback {
+    flex: 0 0 auto;
+    width: 12rem;
+    height: 12rem;
+    line-height: 12rem;
+    text-align: center;
+    font-size: 9rem;
+    color: #0b1620;
+    background-color: rgba(255, 255, 255, 0.12);
+    border-radius: 2rem;
+}
+
+.wtg-check-on {
+    background-color: #4bc3f1;
+}
+
+/* ---------------------------------------------------------------------------
+   The band threshold and what the widths mean. */
+
+.wtg-slider {
+    margin: 2rem 0;
+}
+
+.wtg-classes {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    margin-top: 2rem;
+}
+
+.wtg-class {
+    flex: 1 1 0;
+    margin-right: 4rem;
+}
+
+/* The sample is drawn at the same relative thickness the map uses, so the legend is a
+   sample of the thing rather than a picture of it. */
+.wtg-class-bar {
+    height: 16rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.wtg-class-fill {
+    width: 100%;
+    border-radius: 1rem;
+}
+
+.wtg-class-label {
+    color: #93a4b8;
+    font-size: 9rem;
+    margin-top: 2rem;
+}
+
+/* The fallback slider, for when the game's own has moved. */
+.wtg-track {
     position: relative;
     height: 14rem;
-    padding: 5rem 0;
+    margin: 3rem 0;
 }
 
-.ta-track-fill {
+.wtg-track-fill {
     position: absolute;
-    top: 6rem;
+    top: 5rem;
     left: 0;
-    height: 3rem;
-    background-color: rgb(75, 195, 241);
+    height: 4rem;
+    background-color: #4bc3f1;
+    border-radius: 2rem;
 }
 
-.ta-track-knob {
+.wtg-track-knob {
     position: absolute;
     top: 2rem;
     width: 10rem;
     height: 10rem;
     margin-left: -5rem;
     border-radius: 5rem;
-    background-color: rgb(238, 244, 250);
+    background-color: #ffffff;
 }
 
-/* The unfilled remainder. An element of its own, placed BEFORE the fill in the
-   markup: a ::after would paint on top of the fill and hide it. */
-.ta-track-rail {
-    position: absolute;
-    top: 6rem;
-    left: 0;
-    right: 0;
-    height: 3rem;
-    background-color: rgba(190, 205, 218, 0.25);
+/* ---------------------------------------------------------------------------
+   The band under the pointer. */
+
+.wtg-tip-box {
+    pointer-events: none;
 }
 
-.ta-check {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    margin-bottom: 2rem;
+.wtg-tip {
+    padding: 3rem 2rem;
 }
 
-.ta-check-box {
-    width: 12rem;
-    height: 12rem;
-    margin-right: 6rem;
-    line-height: 12rem;
-    text-align: center;
+.wtg-tip-head {
+    color: #ffffff;
+    font-size: 12rem;
+    margin-bottom: 1rem;
+}
+
+.wtg-tip-line {
+    color: #b9c7d8;
     font-size: 10rem;
-    color: rgb(16, 22, 30);
-    background-color: rgba(190, 205, 218, 0.25);
 }
 
-.ta-check-box-on {
-    background-color: rgb(75, 195, 241);
-}
+/* ---------------------------------------------------------------------------
+   The line's own reading, in the window of the line the player clicked. */
 
-.ta-check-label {
-    font-size: 11rem;
-    color: rgb(222, 234, 248);
-}
-
-/* Play/pause for the time of day, between the label and the hour. A square and a
-   triangle rather than an icon: the game's own icon atlas is not ours to borrow. */
-.ta-play {
-    width: 14rem;
-    height: 14rem;
-    margin: 0 6rem;
-    line-height: 14rem;
-    text-align: center;
-    font-size: 9rem;
-    color: rgb(190, 205, 218);
-    background-color: rgba(190, 205, 218, 0.18);
-}
-
-.ta-play-on {
-    color: rgb(16, 22, 30);
-    background-color: rgb(75, 195, 241);
-}
-
-/* The label and the hour sit at the two ends with the button between them, so the
-   row keeps its shape whether the day is playing or not. */
-.ta-control-row .ta-control-value {
-    margin-left: auto;
-}
-
-/* The hour-by-hour load in a line's own window. Twenty-four bars, each as tall as
-   that hour's riders against the seats that were out. An hour nobody watched is a
-   flat marker rather than an empty column: no readings is not no riders. */
-.ta-hours {
-    margin-top: 4rem;
-}
-
-.ta-hours-bars {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    height: 28rem;
+.wtg-load {
     margin-top: 3rem;
 }
 
-.ta-hour {
-    width: 4rem;
-    margin-right: 1rem;
-    min-height: 1rem;
-    background-color: rgb(75, 195, 241);
+.wtg-load-chart {
+    width: 100%;
+    height: 60rem;
 }
 
-.ta-hour-gap {
-    height: 1rem;
-    background-color: rgba(190, 205, 218, 0.3);
+/* Bars, for when the chart component has moved. An unwatched hour is a gap, never a
+   zero: the two must not look alike. */
+.wtg-load-bars {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    height: 36rem;
+    margin-top: 2rem;
+}
+
+.wtg-load-bar {
+    flex: 1 1 0;
+    margin-right: 1rem;
+    background-color: #5fa8d3;
+    border-radius: 1rem 1rem 0 0;
+}
+
+.wtg-load-gap {
+    height: 2rem;
+    background-color: rgba(255, 255, 255, 0.12);
 }
