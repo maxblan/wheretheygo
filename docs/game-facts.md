@@ -66,6 +66,15 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
     `m_MaxSpeed = RouteInfo.m_Distance / RouteInfo.m_Duration`. Anything modelling what
     a rider experiences must read `RouteInfo`. On a real city the two differ by a factor
     of **3 to 11** — measured on Valmare's sixteen lines, 2026-09-14.
+- **`VehicleTiming.m_AverageTravelTime` can be garbage, and it poisons `RouteInfo`.**
+  `RouteUtils.UpdateAverageTravelTime` computes `(arrivalFrame - departureFrame) / 60f`
+  on two **unsigned** frame counters, and `departureFrame` is regularly set AHEAD of now
+  (`CalculateDepartureFrame`, or `m_SimulationFrameIndex + 60` for a vehicle not yet en
+  route). The subtraction wraps, giving 2³²/60 = **71 582 788 s**, and the running
+  average halves that into smaller but equally false numbers afterwards. The game
+  answers it by clamping the interval it publishes at `10 × target`, so
+  `m_VehicleInterval × fleetTarget` is the longest loop it will admit to — which agrees
+  with `Σ RouteInfo.m_Duration` to the second wherever the data is sound.
 - **A transit edge is one-way.** The same method sets `m_Flags |= EdgeFlags.Forward` and
   no backward flag. A line is a closed loop driven in one direction: stepping one stop
   "backwards" is not a cheap shortcut, it is riding the whole loop round.

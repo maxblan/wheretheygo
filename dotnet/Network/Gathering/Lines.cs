@@ -121,6 +121,7 @@ namespace WhereTheyGo
                 line.m_StableDurationSeconds = line.m_PathDurationSeconds + (line.m_StopIndices.Count * dwell);
                 line.m_TargetInterval = TargetInterval(entityManager, lineEntity, lineData);
                 line.m_StopDuration = dwell;
+                ClampRiddenDuration(line);
 
                 TransportLineFlags flags = transportLine.m_Flags;
                 line.m_RequireVehicles = (flags & TransportLineFlags.RequireVehicles) != 0;
@@ -306,6 +307,52 @@ namespace WhereTheyGo
                     line.m_LineDurationSeconds += ridden;
                 }
             }
+        }
+
+        // The ridden duration, held to what the game itself is willing to believe.
+        //
+        // RouteInfo.m_Duration is scaled by VehicleTiming.m_AverageTravelTime, and that
+        // field can be garbage: RouteUtils.UpdateAverageTravelTime computes
+        // (arrivalFrame - departureFrame) / 60f on two UNSIGNED frame counters, and a
+        // vehicle whose next departure is scheduled ahead of now makes the subtraction
+        // wrap. 2^32 / 60 = 71 582 788 seconds, and that is very nearly what a line's
+        // RouteInfo durations then add up to — seen on this city at 71 587 250 s for a
+        // six-stop metro loop. Later halvings of the running average leave smaller but
+        // equally false numbers behind, so there is no threshold that separates them.
+        //
+        // The game has the same problem and answers it by CLAMPING: the interval it
+        // publishes is min(10 x target, lineDuration / fleetTarget), so
+        // m_VehicleInterval x fleetTarget is the longest loop it will admit to. Where
+        // the data is sound the two agree exactly — checked against seven of this
+        // city's eighteen lines, to the second. Where they do not, this takes the
+        // game's number and says so.
+        private static void ClampRiddenDuration(ExistingLine line)
+        {
+            if (line.m_TargetInterval <= 0f || line.m_VehicleInterval <= 0f || line.m_LineDurationSeconds <= 0f)
+            {
+                return;
+            }
+
+            // TransportLineSystem.CalculateVehicleCount, mirrored.
+            int fleetTarget = Math.Max(1, (int)Math.Round(line.m_StableDurationSeconds / Math.Max(1f, line.m_TargetInterval), MidpointRounding.AwayFromZero));
+            float trusted = line.m_VehicleInterval * fleetTarget;
+            if (line.m_LineDurationSeconds <= trusted)
+            {
+                return;
+            }
+
+            float scale = trusted / line.m_LineDurationSeconds;
+            for (int i = 0; i < line.m_RideSeconds.Count; i++)
+            {
+                line.m_RideSeconds[i] *= scale;
+            }
+
+            DeferredLog.Warn(
+                $"Line \"{line.m_Name}\" reports a ridden loop of {(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                $"which the game's own clamp puts at {(trusted).ToString("F0", CultureInfo.InvariantCulture)}s " +
+                $"({(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s interval x {(fleetTarget).ToString(CultureInfo.InvariantCulture)} vehicles). " +
+                "Its average travel time has wrapped; riding it is charged the clamped figure.");
+            line.m_LineDurationSeconds = trusted;
         }
 
         // Fleet size, and how full it is. Capacity comes from the vehicle prefab, and
