@@ -71,9 +71,12 @@ namespace WhereTheyGo
                 { "Infoviews.INFOMODE[WhereTheyGoTransitAccess]", "Fußweg zum ÖPNV (Gebäude)" },
                 { "Infoviews.INFOMODE_TOOLTIP[WhereTheyGoTransitAccess]", "Färbt jedes Gebäude nach dem Fußweg von seiner Tür zur nächsten Haltestelle, die deine Linien wirklich bedienen: grün ist kurz, rot liegt am oder jenseits des Gehweg-Horizonts aus den Angebotsstandards." },
 
-                { "Infoviews.LABEL[WhereTheyGo.Legend.Low]", "Niedrig" },
-                { "Infoviews.LABEL[WhereTheyGo.Legend.Medium]", "Mittel" },
-                { "Infoviews.LABEL[WhereTheyGo.Legend.High]", "Hoch" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoDesireBands.Low]", "Niemand fährt" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoDesireBands.Medium]", "Die Hälfte" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoDesireBands.High]", "Alle getragen" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Low]", "An der Haltestelle" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Medium]", "Auf halbem Weg" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.High]", "Zu weit zu Fuß" },
             };
 
             foreach (KeyValuePair<string, string> panel in PanelEntries())

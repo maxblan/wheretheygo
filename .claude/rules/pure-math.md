@@ -2,14 +2,13 @@
 paths:
   - "dotnet/**/Planning/**"
   - "tests/WhereTheyGo.Tests/**"
-  - "verification/subject/**"
 ---
 
 # The testable core
 
 You are in the half of this mod that can be executed without the game: every `Planning/` folder
 under `dotnet/`. These files use `System.*` only, which is what lets `tests/WhereTheyGo.Tests`
-and `verification/subject` link them by glob and run offline. That property is the whole reason the
+link them by glob and run offline. That property is the whole reason the
 `Planning/` folders exist.
 
 - **No Unity, ECS, Colossal or Game types here** — not `float2`, not `Entity`, not

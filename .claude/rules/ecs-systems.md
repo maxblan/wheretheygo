@@ -34,26 +34,28 @@ enough that a wrong number is visible in the log rather than only on screen.
   (BinaryWriter), never as extra fields beside it, and a layout change bumps the version. Parsing
   errors inside the payload are caught and mean "start cold"; a length the reader cannot consume
   must throw, because reading past the block corrupts the rest of the save.
-- **Anything the route worker may execute logs through `DeferredLog`.** `Mod.Log` is an
+- **Anything the routing worker may execute logs through `DeferredLog`.** `Mod.Log` is an
   unguarded `StreamWriter`; two threads writing at once corrupt it. `DeferredLog` writes straight
   through on the main thread and buffers on a thread that bound a buffer, so the same code logs
-  correctly on both. New main-thread work that touches a field the worker reads (scores, masks,
-  networks, zone flows, existing lines, served stops) must be gated on `!m_RoutesPending` like
+  correctly on both. New main-thread work that touches a field the worker reads (the journeys,
+  the existing lines, the served stops, the walk graph) must be gated on `!m_RoutingPending` like
   its neighbours in `OnUpdate`.
 - **Respect the update phases.** `Mod.OnLoad` documents why each system sits where it does:
-  PreCulling between `OverlayInfomodeSystem` clearing the terrain overlay and `TerrainRenderSystem`
-  consuming it; Rendering for anything using `OverlayRenderSystem`, whose buffer is drained *before*
-  PreCulling; UIUpdate for bindings. Moving a system between phases is a behaviour change.
+  Rendering for anything using `OverlayRenderSystem`, whose buffer is drained *before* PreCulling;
+  Rendering after `ObjectColorSystem` for the building colours, which it would otherwise reset;
+  UIUpdate for bindings and for the pointer, which must run after the camera has moved. Moving a
+  system between phases is a behaviour change.
 - **The infoview prefab must stay valid and non-editor.** `ToolSystem.SetInfoview` only activates a
   view's infomodes while `ToolSystem.activeInfoview` is non-null, and that getter returns null for
   an invalid view — so hiding the mod from the infoview menu by invalidating the prefab silently
-  kills the heat map. Presentation-only hiding belongs in the UI module.
+  kills the whole infoview. Presentation-only hiding belongs in the UI module.
 - **Ordering of game buffers is not a detail.** `RouteWaypoint`/`RouteSegment` on the *line* are
   travel-ordered and index-aligned. `ConnectedRoute` on a stop is not ordered and must never be
   used to infer a sequence.
-- **A network's identity must be set.** `AlignmentNetwork.Network` drives whether an alignment
-  has to be re-traced on streets before a road vehicle may run it. Left at its enum default, every
-  graph claimed to be a road and ferry alignments were drawn as buses across open water.
+- **Change detection is not a heartbeat.** A live city tags nodes and edges `Updated` for reasons
+  that move no pavement — the walk network's node count was seen wobbling by four with nobody
+  building anything. Anything expensive hung off a changed-query needs a signature of what it
+  actually depends on, and an interval. The tile snap is the precedent.
 - **Keep the arithmetic out of here.** Anything numerically interesting belongs in the pure files
   (see `pure-math.md`); this side gathers ECS data, calls into that math, and renders the result.
 - **Burst jobs constrain what you may reference** — no managed types, no exceptions. Prefer widening

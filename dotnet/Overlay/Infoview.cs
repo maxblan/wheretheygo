@@ -194,9 +194,12 @@ namespace WhereTheyGo
             SetField(prefab, "m_High", high);
             SetField(prefab, "m_Steps", 16);
             SetField(prefab, "m_LegendType", GradientLegendType.Gradient);
-            SetField(prefab, "m_LowLabelId", "WhereTheyGo.Legend.Low");
-            SetField(prefab, "m_MediumLabelId", "WhereTheyGo.Legend.Medium");
-            SetField(prefab, "m_HighLabelId", "WhereTheyGo.Legend.High");
+            // A label per LAYER, not one pair for both: the two ramps mean different
+            // things at their ends, and "Low — High" under each of them says neither.
+            string layerKey = OverlayLayers.NameOf(layer);
+            SetField(prefab, "m_LowLabelId", $"WhereTheyGo.Legend.{layerKey}.Low");
+            SetField(prefab, "m_MediumLabelId", $"WhereTheyGo.Legend.{layerKey}.Medium");
+            SetField(prefab, "m_HighLabelId", $"WhereTheyGo.Legend.{layerKey}.High");
             return prefab;
         }
 

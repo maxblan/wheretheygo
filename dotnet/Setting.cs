@@ -154,9 +154,12 @@ namespace WhereTheyGo
 
                 // The infoview panel composes gradient legend label keys as
                 // Infoviews.LABEL[<labelId>].
-                { "Infoviews.LABEL[WhereTheyGo.Legend.Low]", "Low" },
-                { "Infoviews.LABEL[WhereTheyGo.Legend.Medium]", "Medium" },
-                { "Infoviews.LABEL[WhereTheyGo.Legend.High]", "High" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoDesireBands.Low]", "Nobody rides" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoDesireBands.Medium]", "Half" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoDesireBands.High]", "All carried" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Low]", "At a stop" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Medium]", "Halfway" },
+                { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.High]", "Too far to walk" },
             };
 
             foreach (KeyValuePair<string, string> panel in PanelEntries())

@@ -38,11 +38,11 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   make a symptom disappear.
 - When one conceptual change forces edits across files that are not otherwise related, stop and
   name the missing boundary before continuing. Two fan-outs here are the design, not a smell: a new
-  panel control moves together through `Setting.cs`, `PanelUISystem.cs`, the `.mjs`, the
-  `.css` and both locale files (a new verdict token likewise through `LineVerdict`, the `.mjs`
-  fallback tables and both locale files); and a new scoring term moves through `SuitabilityWalkAccess.cs`, the
-  combine pass in `SuitabilityHeatmap.cs`, the F1 partial of the overlay system, the infomode
-  registration in `SuitabilityInfoview.cs` and the legend. Complete those in one change rather than reporting them as coupling.
+  panel control moves together through `WhereTheyGoSystem.Panel.cs`, `PanelUISystem.cs`, the
+  `.mjs`, the `.css` and both locale files; and a new overlay layer moves through `OverlayLayer`,
+  `OverlayLayers.NameOf`/`ColorsOf`, the infomode registration in `Infoview.cs`, its renderer and
+  the legend labels in both locale files. Complete those in one change rather than reporting them
+  as coupling.
 - When a change needs yet another special-case branch, look for the missing named concept first.
 
 ## Complexity and abstraction
@@ -55,10 +55,9 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   explicit parameters, the way `PlaceStops` takes a scoring callback. Introduce an interface only
   when a second real implementor exists today, or when it is the mechanism reversing a dependency
   direction.
-- Both rules govern *new* indirection. `AlignmentNetwork`'s uniform view over the streets and the
-  free-form lattices, the `float2Like` vector that keeps the pure core Unity-free,
-  and `PanelUISystem`'s one-line binding forwarders exist by design — do not dissolve or
-  flag them. Pass-through code outside your change point gets recorded, not deleted.
+- Both rules govern *new* indirection. The `float2Like` vector that keeps the pure core
+  Unity-free and `PanelUISystem`'s one-line binding forwarders exist by design — do not
+  dissolve or flag them. Pass-through code outside your change point gets recorded, not deleted.
 - Never split a function because of its line count. Split when it mixes conceptual phases
   (gather ECS data / compute / render) or abstraction levels. If an extracted helper has one caller
   and its name only restates its steps, inline it back.
@@ -75,8 +74,8 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   (`MinLengthFor`, `StopSpacingFor`, `ColorFor`) are that shape on purpose, so adding a mode is one
   visible edit per table. Never introduce a dispatch layer to remove a single conditional.
 - Do not add jobs, threads, or shared mutable state without stating what it makes possible that the
-  single-threaded version cannot — and rule out a scheduling bug first: "Suggest improvement" was
-  slow because it was handled in the 60-second refresh, not because anything needed parallelising.
+  single-threaded version cannot — and rule out a scheduling bug first: the tile snap was slow
+  because it re-ran every ten seconds, not because anything needed parallelising.
   Do not add an assembly reference without stating what code it replaces.
 - Do not optimize without a measurement: state the target, measure, change one thing, remeasure.
   No cache, arena, extra index, or `unsafe` on intuition. Bounds are different — fix a queue,
@@ -145,7 +144,7 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
   is a correct design here, not an anemic model.
 - Expose behavior, not representation: no public field or setter that lets a caller drive internal
   state through a sequence the type should own. This never applies to the ECS component structs, the
-  gathered `ExistingLine`/`LineHealth`/`SuggestedRoute` records, or the plain arrays the pure
+  gathered `ExistingLine`/`Band`/`Journey` records, or the plain arrays the pure
   functions consume — those stay data-only by rule, and a data-only struct here is never an
   anemic-model defect.
 - Keep the existing file split as given — the pure/game-facing boundary is what makes any of this
@@ -159,7 +158,7 @@ the simulation. The pure core takes what it is given and returns a result. See
 
 The failure mode that matters in this mod is not a crash — it is a plausible wrong number reaching
 the map. Guard against that specifically: log the inputs, mirror the game's own formula where one
-exists, and prefer a logged rejection over a suggestion nobody can justify.
+exists, and prefer a logged gap over a number nobody can trace.
 
 - Validate exhaustively once, at the trust boundary where untrusted data enters, and convert it
   there into types that make the invalid state unrepresentable. Do not re-validate inside the core.

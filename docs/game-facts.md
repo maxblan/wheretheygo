@@ -1,0 +1,106 @@
+# What the game actually does
+
+Facts about Cities: Skylines II that this mod depends on, each read out of the
+decompiled assemblies rather than inferred from a name. They are here because every one
+of them was wrong at least once when guessed.
+
+Re-check any of them with:
+
+```bash
+DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
+  "/mnt/c/Program Files (x86)/Steam/steamapps/common/Cities Skylines II/Cities2_Data/Managed/Game.dll" \
+  -t Game.Simulation.TransportLineSystem
+```
+
+## The clock and when people travel
+
+- A day is `normalizedTime ∈ [0, 1)`, 0 = midnight. `TransportLineSystem` calls it night
+  when `normalizedTime < 0.25` or `≥ 11/12` — 22:00 to 06:00 — and a day-only line is
+  inactive then.
+- `WorkerSystem.GetTimeToWork` computes
+  `frac(RoundToInt(24 · (m_WorkDayStart + offset)) / 24)`, with `offset` a per-citizen
+  ±1 h plus **0.33 of a day for the evening shift and 0.67 for the night shift**.
+  **The game rounds to whole hours.** Without that rounding the evening shift lands on
+  16:92 instead of 17:00, and every evening commute is stamped an hour early
+  (`Daytime.CommuteHours` mirrors the formula).
+- Students keep the day shift's hours (`StudentSystem.GetTimeToStudy`).
+- The per-citizen ±1 h offset is deliberately not modelled: a journey is classed by its
+  shift's nominal time.
+
+## Lines, stops and vehicles
+
+- `RouteWaypoint` and `RouteSegment` **on the line** are travel-ordered and
+  index-aligned. `ConnectedRoute` **on a stop** is not ordered and must never be used to
+  infer a sequence.
+- A hub is several stop entities metres apart — the train platform, the metro entrance
+  below it, the bus stand out front. What modes a place offers is the union over the
+  stops within walking distance of each other, never one stop's own mode.
+- Fleet size is `round(stableDuration / targetInterval)` (to even), where
+  `stableDuration` includes the dwell at every stop. The player sets a vehicle COUNT
+  (`VehicleCountSection`); the game turns it into a slider position on the vehicle-count
+  policy prefab, lerps that onto the `VehicleInterval` modifier's range and applies the
+  modifier to the prefab interval, so the two ends of the slider bound the fleet.
+- `TransportLine.m_VehicleInterval` is **not** a measured headway: it is
+  `min(10 × target, pathDuration / targetFleet)` — the planned interval on a running
+  line, and the whole path duration on an inactive one. A metro with no vehicles
+  therefore reports an interval of thirteen hours, which is why the router charges it a
+  wait nobody would sit through: the line genuinely does not run.
+- `RequireVehicles` / `NotEnoughVehicles` mean "fewer out than the target" and "a request
+  the game could not fill" — supply, not demand.
+- `WaitingPassengers.m_AverageWaitingTime` is a pathfinder accumulator, not seconds; one
+  stranded rider drives it into the thousands.
+- A line's display name is a *formatted* name: the label helper returns the raw
+  `"…{NUMBER}"` pattern, so the substitution has to be done against the active
+  localization dictionary.
+
+## Infoviews and overlays
+
+- `ToolSystem.SetInfoview` only activates a view's infomodes while
+  `ToolSystem.activeInfoview` is non-null, and that getter returns null for an **invalid**
+  view. Hiding the mod's row by invalidating its prefab therefore kills the whole
+  infoview silently. Presentation-only hiding belongs in the UI module.
+- `ToolSystem.GetInfomodes` reads the infoview ENTITY's `InfoviewMode` buffer, not the
+  managed prefab. For runtime-registered prefabs that buffer can be missing or empty,
+  which leaves the panel without rows.
+- `ToolSystem.Activate` hands an active infomode `m_Index = colorGroup * 4 + (1-based
+  count)` with no bounds check. Colour group 0 is the terrain heatmap group (four
+  channels of one RGBA texture); anything that does not override `GetColorGroup` lands in
+  the object colour group, which is what colours buildings.
+- The game auto-activates an infoview for a build-menu asset through
+  `PlaceableInfoviewItem`. A mod's infomodes carry no vanilla match data and score a
+  neutral 0, which beats assets whose vanilla infomodes all score negative — so the mod
+  has to undo that, from a snapshot taken before its own infoview exists.
+- `OverlayRenderSystem` drains and clears its buffer during `SystemUpdatePhase.Rendering`,
+  which runs *before* PreCulling. Anything drawing into it must be registered in
+  Rendering, and `Game.UpdateSystem` sorts by `(phase, registration index)` and **ignores
+  `[UpdateBefore]`/`[UpdateAfter]` attributes entirely** — the two-type
+  `UpdateBefore<A, B>` overloads are the only mechanism that actually orders against a
+  named game system.
+- The overlay buffer draws lines, curves, dashed variants of both, circles and custom
+  meshes. **There is no text primitive.** `DrawCurve` takes one height for the whole
+  curve, so anything following the ground has to be sampled into segments.
+- `ToolRaycastSystem.CalculateRaycastLine` and `CameraRayPlaneIntersect` are public
+  statics, so a mod can compute the pointer's ray without owning a tool. Note that
+  `CameraRayPlaneIntersect` uses the CAMERA's forward as the plane normal — it is not a
+  ground intersection.
+
+## The selected-object window
+
+- `SelectedInfoUISystem.AddMiddleSection(ISectionSource)` adds a section; `InfoSectionBase`
+  is the base to derive from, and a section is drawn only while `visible` is true.
+- The game maps a section to its UI component by the **C# type name** the section writes
+  (`IJsonWriter.TypeBegin(GetType().FullName)`), not by its `group` string. The map is
+  `selectedInfoSectionComponents` in
+  `game-ui/game/components/selected-info-panel/selected-info-sections/selected-info-sections.tsx`,
+  and its setter **assigns rather than merges** — writing a one-key object takes every
+  vanilla section with it.
+
+## What cannot be used
+
+- The game's own pathfinder is agent-shaped and asynchronous. It cannot answer bulk
+  offline questions like "how long would this journey take", which is why the mod builds
+  its own transit graph and mirrors the pathfinder's cost model instead
+  (walk, wait and ride weighed the same; a change costs its walk and its wait).
+- Cities: Skylines II keeps no per-stop ridership history. `WaitingPassengers` is an
+  instantaneous queue re-tallied every few hundred simulation frames, and the city
+  statistics only expose per-mode totals for the whole city.
