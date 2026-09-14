@@ -85,62 +85,7 @@ namespace TransitArchitect.Tests
             AssertTrue(empty.LongestJourneyMetres(flows) == 0f, "and no longest journey either");
         }
 
-        private static void ChurnCountsHeldEndsAndGatesTheLog()
-        {
-            var churn = new SuggestionChurn();
-            var routes = new List<SuggestedRoute>
-            {
-                MakeRoute(ModePreset.Bus, new float2Like(0f, 0f), new float2Like(500f, 0f), new float2Like(1000f, 0f)),
-                MakeRoute(ModePreset.Tram, new float2Like(0f, 2000f), new float2Like(600f, 2000f), new float2Like(1200f, 2000f)),
-            };
-            AssertTrue(churn.CountHeld(routes) == 0 && churn.RememberedCount == 0, "nothing remembered yet");
-            churn.Remember(routes);
-            AssertTrue(churn.RememberedCount == 2, "both remembered");
-            var next = new List<SuggestedRoute>
-            {
-                MakeRoute(ModePreset.Bus, new float2Like(150f, 0f), new float2Like(500f, 0f), new float2Like(1100f, 100f)),
-                MakeRoute(ModePreset.Tram, new float2Like(0f, 2000f), new float2Like(600f, 2000f), new float2Like(1500f, 2000f)),
-                MakeRoute(ModePreset.Bus, new float2Like(5f, 5f)),
-            };
-            AssertTrue(churn.CountHeld(next) == 1, "ends within 200 m are the same corridor; a terminus 300 m off is not; a one-stop route never counts");
 
-            AssertTrue(churn.ChangedSinceLogged(routes), "the first list is a change");
-            AssertTrue(!churn.ChangedSinceLogged(routes), "the same list again is not");
-            var moved = new List<SuggestedRoute> { next[0], next[1] };
-            AssertTrue(churn.ChangedSinceLogged(moved), "a moved terminus is");
-            AssertTrue(!churn.ChangedSinceLogged(moved), "and the moved list is then the logged one");
-            AssertTrue(churn.ChangedSinceLogged(next) && churn.ChangedSinceLogged(next), "a route without two stops reads as a change every time");
-            AssertTrue(churn.ChangedSinceLogged(new List<SuggestedRoute>()), "an emptied list is a change");
-        }
-
-        private static void SanityChecksNameEachDefect()
-        {
-            var complaints = new List<string>();
-            var healthy = new LineHealth { m_Name = "1", m_Mode = ModePreset.Bus, m_Usage = 0.3f, m_PeakUsage = 0.5f, m_Capacity = 100, m_Vehicles = 2, m_RecommendedFleet = 2, m_FleetMin = 1, m_FleetMax = 10, m_RoundTripSeconds = 1200f, m_HeadwaySeconds = 600f, m_WindowGameHours = 12f };
-            var route = MakeRoute(ModePreset.Bus, new float2Like(0f, 0f), new float2Like(400f, 0f), new float2Like(800f, 0f), new float2Like(1200f, 0f));
-            route.EnabledDemand = 100f;
-            int clear = SanityChecks.Check(new List<LineHealth> { healthy }, new List<SuggestedRoute> { route }, 5000f, 8000f, complaints.Add);
-            AssertTrue(clear == 0 && complaints.Count == 0, "a plausible line and route raise nothing");
-
-            var broken = new LineHealth { m_Name = "2", m_Mode = ModePreset.Tram, m_Usage = 2f, m_PeakUsage = 1f, m_Capacity = 100, m_Vehicles = 0, m_RecommendedFleet = 0, m_FleetMin = 1, m_FleetMax = 5, m_RoundTripSeconds = 1000f, m_HeadwaySeconds = 4000f, m_WindowGameHours = 30f };
-            int lineComplaints = SanityChecks.Check(new List<LineHealth> { broken }, new List<SuggestedRoute>(), 0f, 0f, complaints.Add);
-            AssertTrue(lineComplaints == 6 && complaints.Count == 6, $"usage, peak below mean, capacity without vehicles, fleet outside the span, interval and window each complain once: {lineComplaints.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(complaints[0].Contains("outside 0..1.5", StringComparison.Ordinal) && complaints[3].Contains("outside the game's span", StringComparison.Ordinal), "the messages name the invariant");
-
-            complaints.Clear();
-            var stub = MakeRoute(ModePreset.Bus, new float2Like(0f, 0f), new float2Like(100f, 0f));
-            stub.EnabledDemand = 900f;
-            stub.Vehicles = 0;
-            int routeComplaints = SanityChecks.Check(new List<LineHealth>(), new List<SuggestedRoute> { stub }, 1000f, 8000f, complaints.Add);
-            // Fewer than three stops, a 100 m stub credited with 90 % of the city, no
-            // vehicles, and a stop spacing under 40 % of the bus's.
-            AssertTrue(routeComplaints == 4, $"a two-stop stub raises four complaints, got {routeComplaints.ToString(CultureInfo.InvariantCulture)}: {string.Join(" / ", complaints)}");
-
-            complaints.Clear();
-            var greedy = MakeRoute(ModePreset.Bus, new float2Like(0f, 0f), new float2Like(400f, 0f), new float2Like(800f, 0f));
-            greedy.EnabledDemand = 2000f;
-            AssertTrue(SanityChecks.Check(new List<LineHealth>(), new List<SuggestedRoute> { greedy }, 1000f, 8000f, complaints.Add) == 2, "demand above the city's total, and a short line unlocking most of it");
-        }
 
         private static void PanelPayloadRowsKeepTheirFieldOrder()
         {

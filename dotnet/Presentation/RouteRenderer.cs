@@ -47,32 +47,8 @@ namespace TransitArchitect
                 default: return 20f;
             }
         }
-        // Ranked site markers (author's decision 11a, 2026-09-06). Rank has to be
-        // readable without a label, because the overlay buffer draws geometry only —
-        // there is no text primitive — so it is carried by size and opacity: the best
-        // site is the largest and fully opaque, and each one after it is a step
-        // smaller down to a floor, so a marker never shrinks out of sight.
-        private const float SiteMarkerDiameter = 90f;
-
-        private const float SiteMarkerStep = 8f;
-
-        private const float SiteMarkerMinDiameter = 34f;
-
-        // The dark centre that turns a disc into a ring, as a share of the diameter.
-        private const float SiteMarkerCoreShare = 0.55f;
-
-        private const float SiteMarkerMinOpacity = 0.45f;
-
-        // Deliberately NOT a mode colour. A recommended site and a suggested line's stop
-        // are two different answers, and drawing both in the mode's blue made them read
-        // as one thing on the map. Gold belongs to neither Bus (38,140,255), Tram
-        // (255,115,26), Metro, Train nor Ferry.
-        private static readonly Color SiteMarkerColor = new Color(1f, 0.84f, 0.36f, 1f);
-
-        private static readonly Color SiteMarkerCoreColor = new Color(0.06f, 0.08f, 0.11f, 0.85f);
 
         private const float TerrainOffset = 4f;
-
 
         // Opacity of a drawn route. The colour itself belongs to the mode and lives
         // in TransitModes, so the map and the panel cannot disagree about it.
@@ -134,17 +110,13 @@ namespace TransitArchitect
             // there too (that panel switches the map to the game's transport infoview)
             // and again while a stop was being placed, which is exactly when a player
             // wants to see where the mod would put one.
-            //
-            // The ranked site markers are different: they are the heat map's own answer,
-            // so they still come and go with it.
             List<SuggestedRoute> routes = m_OverlaySystem.SuggestedRoutes;
             bool anyRoutes = settings.ShowRoutes && routes is not null && routes.Count > 0;
-            bool anySites = m_OverlaySystem.IsInfoviewActive && m_OverlaySystem.SiteCount > 0;
             // The re-traced alignment for one existing line stands on its own: it is
             // asked for from the transport overview, and a city with no suggestions at
             // all can still ask for one.
             bool anyProposal = settings.ShowRoutes && m_OverlaySystem.ImprovedRoute is not null;
-            if (!anyRoutes && !anySites && !anyProposal)
+            if (!anyRoutes && !anyProposal)
             {
                 return;
             }
@@ -153,14 +125,6 @@ namespace TransitArchitect
             dependencies.Complete();
 
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(waitForPending: false);
-
-            // The sites the heat map recommends, ranked. Drawn only with the heat map
-            // itself: they are the answer that map is giving, and on their own over
-            // bare terrain there is nothing to read them against.
-            if (anySites)
-            {
-                DrawSiteMarkers(buffer, ref heightData);
-            }
 
             if (anyProposal)
             {
@@ -276,33 +240,6 @@ namespace TransitArchitect
                     float3 stop = ToGround(route.Stops[s], ref heightData);
                     buffer.DrawCircle(color, stop, StopDiameterFor(route.Mode) * stopScale);
                 }
-            }
-        }
-
-        // One ring per recommended site, best first. Two circles rather than one: the
-        // mode colour outside and a dark core inside, so a marker reads as a target on
-        // top of the heat map instead of as another blob of it.
-        private void DrawSiteMarkers(OverlayRenderSystem.Buffer buffer, ref TerrainHeightData heightData)
-        {
-            Color color = SiteMarkerColor;
-            int count = m_OverlaySystem.SiteCount;
-            for (int rank = 0; rank < count; rank++)
-            {
-                if (!m_OverlaySystem.TryGetSite(rank, out float3 flat, out int _))
-                {
-                    continue;
-                }
-
-                float diameter = math.max(SiteMarkerMinDiameter, SiteMarkerDiameter - (rank * SiteMarkerStep));
-                // Opacity falls with rank as well as size, so two sites of the same
-                // clamped size are still ordered on screen.
-                float fade = count > 1 ? rank / (float)(count - 1) : 0f;
-                color.a = math.lerp(1f, SiteMarkerMinOpacity, fade);
-
-                float height = TerrainUtils.SampleHeight(ref heightData, flat);
-                var position = new float3(flat.x, height + TerrainOffset, flat.z);
-                buffer.DrawCircle(color, position, diameter);
-                buffer.DrawCircle(SiteMarkerCoreColor, position, diameter * SiteMarkerCoreShare);
             }
         }
 

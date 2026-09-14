@@ -26,7 +26,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Angebotsstandards" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kWeightsGroup), "Gewichtungen" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kTuningGroup), "Feinabstimmung" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kCalibrationGroup), "Kalibrierung" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Mode)), "Verkehrsmittel" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Mode)), "Verkehrsmittel, das die Karte bewertet. Bestimmt, welche bestehenden Haltestellen als Abdeckung zählen." },
@@ -75,13 +74,9 @@ namespace TransitArchitect
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.HighlightShare)), "Anteil der besten bebauten Felder am oberen Ende des Farbverlaufs. Kleinere Werte heben nur die allerbesten Stellen hervor." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.MaxSlope)), "Maximale Steigung" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.MaxSlope)), "Felder, die steiler als dieser Wert (in Grad) sind, gelten als unbebaubar und werden nicht bewertet." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.SiteCount)), "Empfohlene Standorte" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.SiteCount)), "Wie viele einzelne Standorte die Ebene „Empfohlene Standorte“ markiert." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Eignungskarte anzeigen" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Öffnet die Infoansicht der Mod: eine grün-rote Karte, wo eine neue Haltestelle des gewählten Verkehrsmittels am meisten bringt. Im Infoansichts-Menü des Spiels liegt derselbe Schalter." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.DeveloperTools)), "Entwicklerwerkzeuge" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.DeveloperTools)), "Zeigt die Diagnosen der Mod in dieser Seite, einschließlich des Verifikations-Exports. Nichts davon beeinflusst ein normales Spiel." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowRoutes)), "Vorgeschlagene Linien anzeigen" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowRoutes)), "Zeichnet die vorgeschlagenen Linien und ihre Haltestellen auf der Karte, solange diese Infoansicht offen ist." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Objective)), "Ziel der Linienplanung" },
@@ -92,12 +87,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Anzahl Vorschläge" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "Wie viele Linien vorgeschlagen werden. Jede entnimmt dem Pool die Nachfrage, die sie bedienen würde, sodass spätere Vorschläge die früheren ergänzen." },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyFittedWeights)), "Angepasste Gewichtungen übernehmen" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyFittedWeights)), "Überschreibt die Gewichtungen für Nachfrage, Arbeitsplätze, Erreichbarkeit und künftige Nachfrage mit den oben ermittelten Werten. Ohne genügend Messwerte ohne Wirkung." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Messwerte zurücksetzen" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ResetRidershipData)), "Verwirft alle erfassten Fahrgast-Messwerte und beginnt neu. Sinnvoll nach einem Umbau des Netzes." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ExportVerificationInstance)), "Verifikationsdaten exportieren" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Schreibt die Bewertungs-Eingaben und -Ergebnisse dieser Stadt als kanonisches JSON nach ModsData/TransitArchitect/verification, für die externe Verifikations-Pipeline. Nur lesend: exportiert wird, was der Mod ohnehin berechnet hat. Die Dateien entstehen bei der nächsten Neuberechnung; das Mod-Log nennt den Ordner." },
 
                 { "TransitArchitect.Infomode", "Haltestellen-Eignung" },
                 { "Infoviews.INFOVIEW[TransitArchitect]", "Transit Architect" },
@@ -150,9 +139,6 @@ namespace TransitArchitect
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Statuszeilen, die die Optionsseite unverändert ausgibt (siehe Loc).
-                { "TransitArchitect.Status[Calibration.Waiting]", "Warte auf eine geladene Stadt." },
-                { "TransitArchitect.Status[Calibration.Collecting]", "Sammelt bei laufender Zeit: {0} von {1} Haltestellen bereit, {2} erfasst (je {3} Messungen nötig)" },
-                { "TransitArchitect.Status[Calibration.Fit]", "R² {0} über {1} Haltestellen — Vorschlag: Nachfrage {2}, Arbeitsplätze {3}, Zukunft {4}" },
                 { "TransitArchitect.Panel[EquityCaption]", "erreichen an beiden Enden eine bediente Haltestelle in {0} min \u00b7 Ziel {1} % \u00b7 Gini {2}" },
                 { "TransitArchitect.Panel[DataBasisCaption]", "der letzten {0} h \u00b7 {1} Messungen" },
                 { "TransitArchitect.Panel[DataBasisNone]", "noch nichts" },

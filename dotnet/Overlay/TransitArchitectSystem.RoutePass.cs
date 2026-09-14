@@ -176,12 +176,6 @@ namespace TransitArchitect
             m_LineSetResolved.AddRange(pass.Resolved);
 
             UpdateRouteList();
-            LogRoutes();
-            if (pass.TripCount >= 0)
-            {
-                LogSanityChecks(pass.TotalZoneWeight);
-            }
-
         }
 
         // What the base network carries is a fact about the existing lines, not about

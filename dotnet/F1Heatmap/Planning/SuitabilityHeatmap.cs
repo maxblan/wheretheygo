@@ -127,43 +127,5 @@ namespace TransitArchitect
 
             return demand;
         }
-
-        // Paints each site as a small disc, brightest for the best rank, so the layer
-        // reads as discrete markers rather than a gradient.
-        public static void PaintSites(byte[] layer, int[] siteTiles, int count, int width, int height)
-        {
-            for (int s = 0; s < count; s++)
-            {
-                int index = siteTiles[s];
-                int cx = index % width;
-                int cy = index / width;
-                byte intensity = (byte)Math.Max(55, Math.Min(255, 255 - (s * (200 / Math.Max(1, count)))));
-
-                for (int dy = -Assumptions.SiteMarkerRadiusTiles; dy <= Assumptions.SiteMarkerRadiusTiles; dy++)
-                {
-                    int y = cy + dy;
-                    if (y < 0 || y >= height)
-                    {
-                        continue;
-                    }
-
-                    for (int dx = -Assumptions.SiteMarkerRadiusTiles; dx <= Assumptions.SiteMarkerRadiusTiles; dx++)
-                    {
-                        int x = cx + dx;
-                        if (x < 0 || x >= width)
-                        {
-                            continue;
-                        }
-
-                        if ((dx * dx) + (dy * dy) > Assumptions.SiteMarkerRadiusTiles * Assumptions.SiteMarkerRadiusTiles)
-                        {
-                            continue;
-                        }
-
-                        layer[x + (y * width)] = intensity;
-                    }
-                }
-            }
-        }
     }
 }

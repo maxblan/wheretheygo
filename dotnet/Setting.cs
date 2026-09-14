@@ -14,8 +14,8 @@ namespace TransitArchitect
     // "Advanced". Nothing is hidden — the mod is meant to be usable without ever
     // opening the second tab.
     [FileLocation(nameof(TransitArchitect))]
-    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
-    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup, kWeightsGroup, kTuningGroup, kCalibrationGroup)]
+    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup, kWeightsGroup, kTuningGroup)]
+    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup, kWeightsGroup, kTuningGroup)]
     public sealed class Setting : ModSetting
     {
         // Tabs. The strings are UI ids, not persistence keys (settings files key on
@@ -30,7 +30,6 @@ namespace TransitArchitect
         // Groups of the Advanced tab.
         public const string kWeightsGroup = "Weights";
         public const string kTuningGroup = "Tuning";
-        public const string kCalibrationGroup = "Calibration";
 
         // Single source of truth for slider ranges: the UI attributes, the
         // property setters and ClampAll all reference these.
@@ -71,8 +70,6 @@ namespace TransitArchitect
         public const int kUtilisationMax = 60;
         public const int kSlopeMin = 3;
         public const int kSlopeMax = 45;
-        public const int kSiteCountMin = 1;
-        public const int kSiteCountMax = 20;
         public const int kRouteCountMin = 1;
         public const int kRouteCountMax = 12;
 
@@ -93,13 +90,10 @@ namespace TransitArchitect
         private int m_EquityWalkMinutes;
         private int m_EquityFloorPercent;
         private int m_UtilisationFloorPercent;
-        private int m_SiteCount;
-        private string m_RidershipData = string.Empty;
         private RouteGoal m_Objective;
         private int m_RouteCount;
         private bool m_ShowRoutes = true;
         private bool m_ShowHeatmap = true;
-        private bool m_DeveloperTools;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -235,14 +229,6 @@ namespace TransitArchitect
             set => m_MaxSlope = ClampInt(value, kSlopeMin, kSlopeMax);
         }
 
-        [SettingsUISlider(min = kSiteCountMin, max = kSiteCountMax, step = 1, scalarMultiplier = 1, unit = Unit.kInteger)]
-        [SettingsUISection(kAdvancedSection, kTuningGroup)]
-        public int SiteCount
-        {
-            get => m_SiteCount;
-            set => m_SiteCount = ClampInt(value, kSiteCountMin, kSiteCountMax);
-        }
-
         // The suitability map itself. The game's infoview menu switches it too — this is
         // the same switch in the place a player looks for settings, and it is persisted
         // so a city opens the way it was left.
@@ -281,84 +267,15 @@ namespace TransitArchitect
             get => m_RouteCount;
             set => m_RouteCount = ClampInt(value, kRouteCountMin, kRouteCountMax);
         }
-
-        [SettingsUIButton]
-        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
-        [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
-        [SuppressMessage("Performance", "CA1822:Mark members as static",
-            Justification = "The game's settings UI binds to instance properties by "
-                + "reflection; a static member would not appear in the Options page.")]
-        public bool ApplyFittedWeights
-        {
-            set => TransitArchitectSystem.RequestApplyFittedWeights();
-        }
-
-        [SettingsUIButton]
-        [SettingsUIConfirmation]
-        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
-        [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
-        [SuppressMessage("Performance", "CA1822:Mark members as static",
-            Justification = "The game's settings UI binds to instance properties by "
-                + "reflection; a static member would not appear in the Options page.")]
-        public bool ResetRidershipData
-        {
-            set => TransitArchitectSystem.RequestResetCalibration();
-        }
-
-        // Accumulated ridership aggregates, persisted through the normal settings
-        // file so the series survives across sessions. Hidden because it is data,
-        // not a preference.
-        // Writes the offline verification pipeline a canonical instance of the current
-        // city. Read-only: it exports what the mod already computed and changes
-        // nothing. See verification/README.md. Hidden unless the developer switch is
-        // on: it is the mod's own test harness, not a thing to hand a player.
-        [SettingsUIButton]
-        [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
-        [SettingsUIHideByCondition(typeof(Setting), nameof(DeveloperToolsOff))]
-        [SuppressMessage("Performance", "CA1822:Mark members as static",
-            Justification = "The game's settings UI binds to instance properties by "
-                + "reflection; a static member would not appear in the Options page.")]
-        public bool ExportVerificationInstance
-        {
-            set => TransitArchitectSystem.RequestVerificationExport();
-        }
-
-        // Shows the mod's own diagnostics in this page. Off for everyone who is not
-        // working on the mod.
-        [SettingsUISection(kAdvancedSection, kCalibrationGroup)]
-        public bool DeveloperTools
-        {
-            get => m_DeveloperTools;
-            set => m_DeveloperTools = value;
-        }
-
-        // The settings UI calls this by name through SettingsUIHideByCondition; it is
-        // not dead code, and it cannot be static for the same reason the read-only
-        // string properties cannot be.
-        [SuppressMessage("Performance", "CA1822:Mark members as static",
-            Justification = "The game's settings UI resolves the condition on the "
-                + "instance by reflection.")]
-        public bool DeveloperToolsOff() => !m_DeveloperTools;
-
-        [SettingsUIHidden]
-        public string RidershipData
-        {
-            get => m_RidershipData ?? string.Empty;
-            set => m_RidershipData = value ?? string.Empty;
-        }
-
         public override void SetDefaults()
         {
             m_Mode = ModePreset.Bus;
             m_ShowHeatmap = true;
-            m_DeveloperTools = false;
             m_HighlightShare = Assumptions.HighlightShareDefaultPercent;
             m_MaxSlope = Assumptions.MaxSlopeDefaultDegrees;
             m_EquityWalkMinutes = Assumptions.EquityWalkMinutesDefault;
             m_EquityFloorPercent = Assumptions.EquityFloorDefaultPercent;
             m_UtilisationFloorPercent = Assumptions.UtilisationFloorDefaultPercent;
-            m_SiteCount = Assumptions.SiteCountDefault;
-            m_RidershipData = string.Empty;
             m_Objective = RouteGoal.Balanced;
             m_RouteCount = Assumptions.RouteCountDefault;
             m_ShowRoutes = true;
@@ -425,7 +342,6 @@ namespace TransitArchitect
             m_EquityWalkMinutes = 0;
             m_EquityFloorPercent = 0;
             m_UtilisationFloorPercent = 0;
-            m_SiteCount = 0;
             m_RouteCount = 0;
             // Negative marks "absent" for weights added after 1.1, since zero is a
             // legitimate value a user may have chosen.
@@ -452,14 +368,12 @@ namespace TransitArchitect
             m_EquityWalkMinutes = m_EquityWalkMinutes == 0 ? Assumptions.EquityWalkMinutesDefault : ClampInt(m_EquityWalkMinutes, kEquityMinutesMin, kEquityMinutesMax);
             m_EquityFloorPercent = m_EquityFloorPercent == 0 ? Assumptions.EquityFloorDefaultPercent : ClampInt(m_EquityFloorPercent, kEquityFloorMin, kEquityFloorMax);
             m_UtilisationFloorPercent = m_UtilisationFloorPercent == 0 ? Assumptions.UtilisationFloorDefaultPercent : ClampInt(m_UtilisationFloorPercent, kUtilisationMin, kUtilisationMax);
-            m_SiteCount = m_SiteCount == 0 ? Assumptions.SiteCountDefault : ClampInt(m_SiteCount, kSiteCountMin, kSiteCountMax);
             m_RouteCount = m_RouteCount == 0 ? Assumptions.RouteCountDefault : ClampInt(m_RouteCount, kRouteCountMin, kRouteCountMax);
             m_Objective = ValidObjective(m_Objective);
             float[] preset = PresetWeights(m_Mode);
             m_W5 = m_W5 < 0f ? preset[4] : ClampWeight(m_W5);
             m_W6 = m_W6 < 0f ? preset[5] : ClampWeight(m_W6);
             m_W7 = m_W7 < 0f ? preset[6] : ClampWeight(m_W7);
-            m_RidershipData ??= string.Empty;
         }
 
         private static RouteGoal ValidObjective(RouteGoal goal)
@@ -522,7 +436,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Service standards" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kWeightsGroup), "Weights" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kTuningGroup), "Tuning" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kCalibrationGroup), "Calibration" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Mode)), "Mode preset" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Mode)), "Transit mode the overlay evaluates. Determines which existing stops count as coverage." },
@@ -571,13 +484,9 @@ namespace TransitArchitect
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.HighlightShare)), "Share of the best built-up tiles shown at the top of the gradient. Lower values highlight only the very best spots." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.MaxSlope)), "Maximum slope" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.MaxSlope)), "Tiles steeper than this (in degrees) are treated as unbuildable and score nothing." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.SiteCount)), "Recommended sites" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.SiteCount)), "How many discrete candidate sites the Recommended sites layer marks." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Show the suitability map" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Opens the mod's own infoview: a green-to-red map of where a new stop of the chosen mode would do the most good. The game's infoview menu holds the same switch." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.DeveloperTools)), "Developer tools" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.DeveloperTools)), "Shows the mod's own diagnostics in this page, including the verification export. Nothing here affects a normal game." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowRoutes)), "Show suggested routes" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowRoutes)), "Draw the suggested lines and their stops on the map while this infoview is open." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Objective)), "Route objective" },
@@ -588,12 +497,6 @@ namespace TransitArchitect
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.RouteCount)), "Suggested lines" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.RouteCount)), "How many lines to suggest. Each one takes the demand it would carry out of the pool, so later suggestions complement the earlier ones." },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApplyFittedWeights)), "Apply fitted weights" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApplyFittedWeights)), "Overwrite the demand, jobs, accessibility and future weights with the fitted values above. Does nothing until enough samples have been collected." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ResetRidershipData)), "Reset collected samples" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ResetRidershipData)), "Discard all collected ridership samples and start over. Useful after reshaping your network." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ExportVerificationInstance)), "Export verification instance" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ExportVerificationInstance)), "Write this city's scoring inputs and results to ModsData/TransitArchitect/verification as canonical JSON, for the offline verification pipeline. Read-only: it exports what the mod already computed and changes nothing. The files are written after the next recalculation; the mod log names the folder." },
 
                 { "TransitArchitect.Infomode", "Station Suitability" },
                 { "Infoviews.INFOVIEW[TransitArchitect]", "Transit Architect" },
@@ -648,9 +551,6 @@ namespace TransitArchitect
                 // the English text inline as a fallback, so a key missing here shows English
                 // rather than a raw key.
                 // Status lines the Options page prints verbatim (see Loc).
-                { "TransitArchitect.Status[Calibration.Waiting]", "Waiting for a city to load." },
-                { "TransitArchitect.Status[Calibration.Collecting]", "Collecting while unpaused: {0} of {1} stops ready, {2} tracked (need {3} samples each)" },
-                { "TransitArchitect.Status[Calibration.Fit]", "R² {0} over {1} stops — suggested: demand {2}, jobs {3}, future {4}" },
                 { "TransitArchitect.Panel[EquityCaption]", "reach a served stop within {0} min at both ends \u00b7 target {1} % \u00b7 Gini {2}" },
                 { "TransitArchitect.Panel[DataBasisCaption]", "of the last {0} h \u00b7 {1} readings" },
                 { "TransitArchitect.Panel[DataBasisNone]", "nothing yet" },

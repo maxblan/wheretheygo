@@ -191,10 +191,6 @@ namespace TransitArchitect
                 $"trip observation since the last refresh: {(m_TripObserver.ScanCount).ToString(CultureInfo.InvariantCulture)} scans, " +
                 $"mean {(m_TripObserver.ScanCount > 0 ? m_TripObserver.ScanMsSum / (double)m_TripObserver.ScanCount : 0.0).ToString("F1", CultureInfo.InvariantCulture)} ms, max {(m_TripObserver.ScanMsMax).ToString(CultureInfo.InvariantCulture)} ms");
             m_TripObserver.ResetScanStats();
-            if (!passStarted)
-            {
-                LogSanityChecks(totalWeight);
-            }
         }
 
         // Reads the existing transit system and turns it into a routable model, so a

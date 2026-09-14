@@ -221,7 +221,6 @@ namespace TransitArchitect
                 () => box.m_Output = SuitabilityWalkAccess.Run(inputs, width, height, minX, minZ, Assumptions.TileSize, buildable, cls, selfType, typeWeight),
                 System.Threading.CancellationToken.None);
             m_PendingInputs = inputs;
-            CaptureExportInputs(inputs, gridSize, worldMin, buildable, settings.Mode, cls, selfType, typeWeight);
 
             m_PendingGrid = gridSize;
             m_PendingWorldMin = worldMin;
@@ -319,10 +318,6 @@ namespace TransitArchitect
             m_IntensityGrid = m_PendingGrid;
             m_ScoreWorldMin = m_PendingWorldMin;
             RecombineAndNormalize();
-            // After the combine, so the exported score field is the one these terms
-            // produce rather than the previous compute's.
-            WriteExportIfCaptured();
-
             DeferredLog.Info(
                 $"Overlay computed: grid {(m_PendingGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_PendingGrid.y).ToString(CultureInfo.InvariantCulture)}, " +
                 $"walk network {(output.Result.Demand.Length > 0 ? m_AccessInputs?.Graph.NodeCount ?? 0 : 0).ToString(CultureInfo.InvariantCulture)} nodes " +
@@ -333,7 +328,7 @@ namespace TransitArchitect
                 $"jobSites={(m_PendingJobSiteCount).ToString(CultureInfo.InvariantCulture)}, zonedCells={(m_PendingZonedCount).ToString(CultureInfo.InvariantCulture)}, " +
                 $"servedStops={(m_PendingStopCount).ToString(CultureInfo.InvariantCulture)} (orphans ignored={(m_PendingOrphanCount).ToString(CultureInfo.InvariantCulture)}), " +
                 $"sourcesOffNetwork={(output.Result.SourcesOffNetwork).ToString(CultureInfo.InvariantCulture)}, " +
-                $"settled={(output.Result.Relaxations).ToString(CultureInfo.InvariantCulture)}, sites={(m_SiteCount).ToString(CultureInfo.InvariantCulture)}");
+                $"settled={(output.Result.Relaxations).ToString(CultureInfo.InvariantCulture)}");
         }
 
         private void DiscardPendingCompute()
@@ -557,7 +552,6 @@ namespace TransitArchitect
                 scoreScratch);
 
             LogCombine(scores, totalCells);
-            ExtractSites(settings);
 
             // Any layer's bytes may have changed, so force the interleaved buffer to
             // be rebuilt even if the active set is identical.

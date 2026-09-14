@@ -40,22 +40,11 @@ namespace TransitArchitect.Tests
             Run("Normalization clears output when no positive scores", NormalizationClearsWhenEmpty);
             Run("Gamma lifts the low end without changing the cap", GammaLiftsLowEnd);
             Run("Normalization refuses an output shorter than the score field", NormalizationRejectsShortOutput);
-            Run("FindTopSites respects separation and count", TopSitesRespectSeparationAndCount);
-            Run("FindTopSites returns descending scores", TopSitesDescending);
-            Run("FindTopSites ignores non-positive fields", TopSitesIgnoresEmptyField);
-            Run("Exact sites beat greedy on the two-fives counterexample", ExactSitesBeatGreedyCounterexample);
-            Run("Exact sites match brute force on random grids", ExactSitesMatchBruteForce);
-            Run("Exact sites report a sound bound when the budget runs out", ExactSitesBoundWhenExhausted);
-            Run("Exact sites rank ties by index and handle empty fields", ExactSitesRankingAndEmptyField);
-            Run("Exact sites scale wide-ranging scores without loss", ExactSitesWeightScaling);
-            Run("Network sites conflict by walking time and match brute force", NetworkSitesMatchBruteForce);
-            Run("Network sites beat greedy where the middle node blocks both ends", NetworkSitesBeatGreedy);
             Run("Walk graph converts metres to whole milliseconds at the planning speed", WalkGraphMilliseconds);
             Run("Integer Dijkstra is exact, bounded and reusable", IntDijkstraExactBoundedReusable);
             Run("Nearest node breaks ties by index and respects the access walk", NearestNodeTiesAndReach);
             Run("Tiles and sites skip tunnel and bridge nodes that homes still walk from", NearestSiteSkipsOffGroundNodes);
             Run("Combine discounts by access and counts zoning only beside people", CombineDiscountsByAccessAndGatesFuture);
-            Run("Calibration regressors reproduce the combine under any weights", CalibrationFeaturesMatchCombine);
             Run("Walk access accumulates the linear time kernel per class", WalkAccessAccumulatesKernel);
             Run("Walk access splits stops into coverage, interchange and cross terms", WalkAccessStopTerms);
             Run("Tile terms follow the node and fade with the access walk", WalkAccessTileTerms);
@@ -141,10 +130,6 @@ namespace TransitArchitect.Tests
             Run("Stop plan: the dynamic programme matches brute force", StopPlanMatchesBruteForce);
 
             Run("Interchange weight is capacity relative to a bus, zero when unknown", CapacityWeightIsRelativeToBus);
-            Run("Export JSON matches the canonical form byte for byte", ExportJsonIsCanonical);
-            Run("Export JSON escapes exactly as ensure_ascii does", ExportJsonEscapes);
-            Run("Export float bits round-trip", ExportJsonBitsRoundTrip);
-            Run("Export instances carry the digest of their own body", ExportJsonHashesBody);
 
             // F4/F5 — the alignment stage, pure since 2026-09-05 (float2Like). The pinned
             // figures are the game-typed code's own outputs on the same synthetic city,
@@ -163,15 +148,12 @@ namespace TransitArchitect.Tests
 
             // F3 steps 3–4, the panel contract and the disagreement pass, pure since 2026-09-05.
             Run("Served demand: zones map to the nearest stop in reach, pairs drop same-stop and unmapped flows, carried journeys are discounted", ServedDemandMapsPairsAndDiscounts);
-            Run("Suggestion churn counts held corridors and gates the route log on change", ChurnCountsHeldEndsAndGatesTheLog);
-            Run("Sanity checks name each defect once and stay quiet on plausible numbers", SanityChecksNameEachDefect);
             Run("Panel payload rows keep their field order and formatting", PanelPayloadRowsKeepTheirFieldOrder);
 
             // F1's grid pass and F2's candidate set, pure since 2026-09-05.
             Run("Walk network: the pieces the game's data leaves are bridged", WalkBridgingJoinsWhatTheDataCuts);
             Run("Heatmap: term caps are positive percentiles, the field combines on-network tiles and writes the term layers", HeatmapCombineFieldAndCaps);
-            Run("Heatmap: node demand reads the tile under each node, sites paint as discs", HeatmapNodeDemandAndSitePainting);
-            Run("Sites: candidates are siteable nodes on buildable tiles with a positive score", SiteCandidatesOnTheNetwork);
+            Run("Heatmap: node demand reads the tile under each node", HeatmapNodeDemand);
 
             Console.WriteLine();
             if (s_Failures == 0)
@@ -343,155 +325,6 @@ namespace TransitArchitect.Tests
             AssertTrue(sized[3] > 0, "a correctly sized output is still filled");
         }
 
-        private static void TopSitesRespectSeparationAndCount()
-        {
-            // Four clear peaks on a 20x20 grid, each surrounded by a soft halo so
-            // the local-maximum filter has something to reject.
-            const int width = 20;
-            const int height = 20;
-            var scores = new float[width * height];
-            var peaks = new (int x, int y, float v)[]
-            {
-                (2, 2, 10f), (17, 2, 9f), (2, 17, 8f), (17, 17, 7f),
-            };
-
-            foreach (var peak in peaks)
-            {
-                for (int dy = -1; dy <= 1; dy++)
-                {
-                    for (int dx = -1; dx <= 1; dx++)
-                    {
-                        int x = peak.x + dx;
-                        int y = peak.y + dy;
-                        if (x < 0 || x >= width || y < 0 || y >= height)
-                        {
-                            continue;
-                        }
-                        float value = (dx == 0 && dy == 0) ? peak.v : peak.v * 0.5f;
-                        scores[x + y * width] = Math.Max(scores[x + y * width], value);
-                    }
-                }
-            }
-
-            var indices = new int[8];
-            var siteScores = new float[8];
-            int found = SuitabilityScoring.FindTopSites(scores, width, height, 5, 8, indices, siteScores, out _);
-            AssertEqual(4, found, 0, "should find exactly the four peaks");
-
-            // Every accepted pair must be at least `separation` apart.
-            for (int i = 0; i < found; i++)
-            {
-                for (int j = i + 1; j < found; j++)
-                {
-                    int dx = Math.Abs((indices[i] % width) - (indices[j] % width));
-                    int dy = Math.Abs((indices[i] / width) - (indices[j] / width));
-                    AssertTrue(Math.Max(dx, dy) >= 5, $"sites {i} and {j} are closer than the separation");
-                }
-            }
-
-            // A max-count lower than the number of peaks must be honoured.
-            int capped = SuitabilityScoring.FindTopSites(scores, width, height, 5, 2, indices, siteScores, out _);
-            AssertEqual(2, capped, 0, "max site count must cap the result");
-
-            // A separation wide enough to span the grid admits exactly one site.
-            int single = SuitabilityScoring.FindTopSites(scores, width, height, 100, 8, indices, siteScores, out _);
-            AssertEqual(1, single, 0, "a huge separation must collapse to one site");
-        }
-
-        private static void TopSitesDescending()
-        {
-            const int width = 30;
-            var scores = new float[width * 3];
-            scores[1] = 3f;
-            scores[10] = 9f;
-            scores[20] = 6f;
-
-            var indices = new int[4];
-            var siteScores = new float[4];
-            int found = SuitabilityScoring.FindTopSites(scores, width, 3, 2, 4, indices, siteScores, out _);
-            AssertEqual(3, found, 0, "three isolated peaks");
-            AssertEqual(9f, siteScores[0], 0f, "best first");
-            AssertEqual(6f, siteScores[1], 0f, "second");
-            AssertEqual(3f, siteScores[2], 0f, "third");
-        }
-
-        private static void TopSitesIgnoresEmptyField()
-        {
-            var scores = new float[100];
-            var indices = new int[4];
-            var siteScores = new float[4];
-            AssertEqual(0, SuitabilityScoring.FindTopSites(scores, 10, 10, 2, 4, indices, siteScores, out _), 0, "all-zero field");
-
-            for (int i = 0; i < scores.Length; i++)
-            {
-                scores[i] = -1f;
-            }
-            AssertEqual(0, SuitabilityScoring.FindTopSites(scores, 10, 10, 2, 4, indices, siteScores, out _), 0, "all-negative field");
-        }
-
-        private static void ExactSitesBeatGreedyCounterexample()
-        {
-            // 5 _ _ 8 _ _ 5 on a 9x3 grid, separation 4: greedy takes the 8 and can
-            // add nothing; the two 5s are mutually feasible and sum to 10.
-            const int width = 9;
-            const int height = 3;
-            var scores = new float[width * height];
-            scores[1 + width] = 5f;
-            scores[4 + width] = 8f;
-            scores[7 + width] = 5f;
-
-            var greedyIndices = new int[2];
-            var greedyScores = new float[2];
-            int greedy = SuitabilityScoring.FindTopSites(scores, width, height, 4, 2, greedyIndices, greedyScores, out _);
-            AssertEqual(1, greedy, 0, "greedy is stuck with the single 8");
-
-            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 4, 2, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(exact.Optimal, "search closes on a three-candidate field");
-            AssertTrue(exact.WeightsExact, "integer weights lose nothing on small integers");
-            AssertEqual(2, exact.Count, 0, "both fives are chosen");
-            AssertEqual(1 + width, exact.Indices[0], 0, "ranked by score then index: left five first");
-            AssertEqual(7 + width, exact.Indices[1], 0, "right five second");
-            AssertEqual(10f, exact.Scores[0] + exact.Scores[1], 0f, "objective is 10");
-            AssertEqual(3, exact.Candidates, 0, "three local maxima");
-        }
-
-        private static void ExactSitesMatchBruteForce()
-        {
-            // Small random fields with integer scores, so a brute-force sum over every
-            // feasible subset is exact and comparable to the solver's integer objective.
-            uint state = 20260904u;
-            for (int trial = 0; trial < 40; trial++)
-            {
-                int width = 6 + trial % 5;
-                int height = 5 + trial % 4;
-                int separation = 2 + trial % 3;
-                int maxSites = 1 + trial % 5;
-                var scores = new float[width * height];
-                for (int i = 0; i < scores.Length; i++)
-                {
-                    state = unchecked(state * 1664525u + 1013904223u);
-                    scores[i] = (state >> 24) < 96 ? (int)((state >> 8) % 50) : 0f;
-                }
-
-                ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, separation, maxSites, Assumptions.SiteSearchNodeBudget);
-                AssertTrue(exact.Optimal, "small fields close within the budget");
-                AssertTrue(exact.WeightsExact, "integer scores scale exactly");
-                AssertTrue(exact.Count <= maxSites, "never more than K sites");
-                AssertSitesFeasible(exact.Indices, exact.Count, width, separation);
-
-                int count = SuitabilityScoring.CollectSiteCandidates(scores, width, height, out int[] candidates, out float[] candidateScores, out _);
-                long best = BruteForceSites(candidates, candidateScores, count, width, separation, maxSites);
-                long value = 0;
-                for (int i = 0; i < exact.Count; i++)
-                {
-                    value += (long)exact.Scores[i];
-                    AssertEqual(scores[exact.Indices[i]], exact.Scores[i], 0f, "reported score is the grid value");
-                }
-
-                AssertEqual((int)best, (int)value, 0, $"trial {trial}: brute force {best} vs solver {value}");
-            }
-        }
-
         private static long BruteForceSites(int[] candidates, float[] candidateScores, int count, int width, int separation, int maxSites)
         {
             long best = 0;
@@ -540,249 +373,6 @@ namespace TransitArchitect.Tests
                     int dy = Math.Abs((indices[i] / width) - (indices[j] / width));
                     AssertTrue(Math.Max(dx, dy) >= separation, "chosen sites respect the separation");
                 }
-            }
-        }
-
-        private static void ExactSitesBoundWhenExhausted()
-        {
-            // The two-fives field with a budget of one node: the root bound (13) beats
-            // the greedy incumbent (8), so the search starts, expands the 8, and is
-            // stopped before it can try the fives. It must then report the incumbent
-            // with the unexplored branch's bound (10) as ceiling — and the closed run's
-            // optimum has to sit inside that interval.
-            const int width = 9;
-            const int height = 3;
-            var scores = new float[width * height];
-            scores[1 + width] = 5f;
-            scores[4 + width] = 8f;
-            scores[7 + width] = 5f;
-
-            ExactSiteSolution starved = SuitabilityExactSites.Solve(scores, width, height, 4, 2, 1);
-            AssertTrue(!starved.Optimal, "one node cannot close the counterexample");
-            AssertEqual(1, starved.Count, 0, "falls back to the greedy incumbent");
-            AssertEqual(8f, starved.Scores[0], 0f, "the incumbent is the 8");
-            AssertTrue(starved.UpperBound > starved.Value, "the ceiling admits a better set");
-
-            ExactSiteSolution closed = SuitabilityExactSites.Solve(scores, width, height, 4, 2, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(closed.Optimal, "closes with the full budget");
-            AssertEqual(starved.ScaleShift, closed.ScaleShift, 0, "same field, same scaling");
-            AssertTrue(closed.Value <= starved.UpperBound, "the true optimum sits under the starved run's ceiling");
-            AssertTrue(closed.Value > starved.Value, "the true optimum beats the incumbent here");
-            AssertTrue(closed.Value == starved.UpperBound, "on this field the open bound is tight");
-
-            // A dense 40x40 field closes within the default budget, and whatever a
-            // starved run reports must bracket that optimum and beat plain greedy.
-            const int denseWidth = 40;
-            const int denseHeight = 40;
-            var dense = new float[denseWidth * denseHeight];
-            uint state = 7u;
-            for (int i = 0; i < dense.Length; i++)
-            {
-                state = unchecked(state * 1664525u + 1013904223u);
-                dense[i] = 1 + (int)((state >> 8) % 1000);
-            }
-
-            ExactSiteSolution denseStarved = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, 1);
-            ExactSiteSolution denseClosed = SuitabilityExactSites.Solve(dense, denseWidth, denseHeight, 3, 8, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(denseClosed.Optimal, "the full budget closes a 40x40 field");
-            AssertSitesFeasible(denseClosed.Indices, denseClosed.Count, denseWidth, 3);
-            AssertSitesFeasible(denseStarved.Indices, denseStarved.Count, denseWidth, 3);
-            AssertTrue(denseClosed.Value <= denseStarved.UpperBound, "starved ceiling holds the optimum");
-            AssertTrue(denseClosed.Value >= denseStarved.Value, "starved incumbent never beats the optimum");
-
-            var greedyIndices = new int[8];
-            var greedyScores = new float[8];
-            int greedy = SuitabilityScoring.FindTopSites(dense, denseWidth, denseHeight, 3, 8, greedyIndices, greedyScores, out _);
-            float greedySum = 0f;
-            for (int i = 0; i < greedy; i++)
-            {
-                greedySum += greedyScores[i];
-            }
-
-            float starvedSum = 0f;
-            for (int i = 0; i < denseStarved.Count; i++)
-            {
-                starvedSum += denseStarved.Scores[i];
-            }
-
-            AssertTrue(starvedSum >= greedySum, "the incumbent is at least the greedy ranking");
-        }
-
-        private static void ExactSitesRankingAndEmptyField()
-        {
-            const int width = 12;
-            const int height = 7;
-            var scores = new float[width * height];
-            // Three equal peaks and one lesser four rows down: ranking is score desc,
-            // then index asc.
-            scores[10 + width] = 4f;
-            scores[1 + width] = 4f;
-            scores[5 + width] = 4f;
-            scores[5 + 5 * width] = 1f;
-            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 4, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(exact.Optimal, "closes");
-            AssertEqual(4, exact.Count, 0, "all four peaks fit");
-            AssertEqual(1 + width, exact.Indices[0], 0, "lowest index among equal scores first");
-            AssertEqual(5 + width, exact.Indices[1], 0, "then the next index");
-            AssertEqual(10 + width, exact.Indices[2], 0, "then the last equal score");
-            AssertEqual(5 + 5 * width, exact.Indices[3], 0, "the lesser peak last");
-
-            ExactSiteSolution empty = SuitabilityExactSites.Solve(new float[width * height], width, height, 3, 4, Assumptions.SiteSearchNodeBudget);
-            AssertEqual(0, empty.Count, 0, "nothing to choose from");
-            AssertTrue(empty.Optimal, "an empty field is trivially solved");
-            AssertEqual(0, (int)empty.Nodes, 0, "no search on an empty field");
-        }
-
-        private static void ExactSitesWeightScaling()
-        {
-            // Scores spanning 2^20 stay exact after scaling; a spread beyond the long's
-            // headroom is reported as inexact rather than silently rounded.
-            const int width = 9;
-            const int height = 3;
-            var scores = new float[width * height];
-            scores[1 + width] = 1048576f;
-            scores[4 + width] = 0.75f;
-            scores[7 + width] = 1.0f;
-            ExactSiteSolution exact = SuitabilityExactSites.Solve(scores, width, height, 3, 3, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(exact.WeightsExact, "a 2^20 spread is exact");
-            AssertEqual(3, exact.Count, 0, "all three are compatible at separation 3");
-            AssertEqual(1048576f, exact.Scores[0], 0f, "ranked by score");
-            AssertEqual(1.0f, exact.Scores[1], 0f, "then 1.0");
-            AssertEqual(0.75f, exact.Scores[2], 0f, "then 0.75");
-
-            scores[4 + width] = 1e-20f;
-            ExactSiteSolution wide = SuitabilityExactSites.Solve(scores, width, height, 3, 3, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(!wide.WeightsExact, "a 1e26 spread floors the tiny score");
-            AssertTrue(wide.Optimal, "still closes");
-            AssertSitesFeasible(wide.Indices, wide.Count, width, 3);
-        }
-
-        private static void NetworkSitesBeatGreedy()
-        {
-            // Nodes 0-1-2 one minute apart, scores 5 / 8 / 5, spacing 90 s: the 8 in the
-            // middle conflicts with both fives (60 s < 90 s) while the fives are 120 s
-            // apart and compatible. Greedy takes the 8; the optimum is the two fives.
-            WalkGraph graph = LineGraph(3, 72f);
-            var nodes = new[] { 0, 1, 2 };
-            var scores = new[] { 5f, 8f, 5f };
-            ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 90000, 2, Assumptions.SiteSearchNodeBudget);
-            AssertTrue(exact.Optimal, "closes");
-            AssertEqual(2, exact.Count, 0, "both fives");
-            AssertEqual(0, exact.Indices[0], 0, "ranked by score then node index");
-            AssertEqual(2, exact.Indices[1], 0, "the other five");
-
-            // Spacing 60 s: the middle node is exactly a minute away, which does NOT
-            // conflict (strictly below), so all three fit.
-            ExactSiteSolution loose = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 60000, 3, Assumptions.SiteSearchNodeBudget);
-            AssertEqual(3, loose.Count, 0, "a walk equal to the spacing is allowed");
-
-            // Budget of one node: greedy incumbent with a ceiling that holds the optimum.
-            ExactSiteSolution starved = SuitabilityExactSites.SolveOnNetwork(graph, nodes, scores, 3, 90000, 2, 1);
-            AssertTrue(!starved.Optimal, "one node cannot close it");
-            AssertEqual(8f, starved.Scores[0], 0f, "falls back to the greedy 8");
-            AssertTrue(exact.Value <= starved.UpperBound, "ceiling holds the optimum");
-        }
-
-        private static void NetworkSitesMatchBruteForce()
-        {
-            // Random small graphs: a line with a few random shortcuts, random scores,
-            // random spacing. Conflicts are recomputed here by a plain all-pairs
-            // Floyd-Warshall so the solver's Dijkstra-based lists are cross-checked too.
-            uint state = 99u;
-            for (int trial = 0; trial < 30; trial++)
-            {
-                int n = 6 + trial % 6;
-                var x = new float[n];
-                var z = new float[n];
-                var a = new List<int>();
-                var b = new List<int>();
-                var len = new List<float>();
-                for (int i = 0; i < n; i++)
-                {
-                    x[i] = i * 60f;
-                    if (i > 0)
-                    {
-                        a.Add(i - 1);
-                        b.Add(i);
-                        state = unchecked(state * 1664525u + 1013904223u);
-                        len.Add(30f + (state >> 8) % 90);
-                    }
-                }
-
-                for (int extra = 0; extra < 2; extra++)
-                {
-                    state = unchecked(state * 1664525u + 1013904223u);
-                    int u = (int)((state >> 8) % n);
-                    state = unchecked(state * 1664525u + 1013904223u);
-                    int v = (int)((state >> 8) % n);
-                    if (u != v)
-                    {
-                        a.Add(u);
-                        b.Add(v);
-                        len.Add(40f + (state >> 20) % 200);
-                    }
-                }
-
-                WalkGraph graph = WalkGraph.Build(x, z, a.ToArray(), b.ToArray(), len.ToArray(), a.Count);
-                var candidates = new int[n];
-                var scores = new float[n];
-                for (int i = 0; i < n; i++)
-                {
-                    candidates[i] = i;
-                    state = unchecked(state * 1664525u + 1013904223u);
-                    scores[i] = 1 + (int)((state >> 8) % 40);
-                }
-
-                state = unchecked(state * 1664525u + 1013904223u);
-                int separation = 40000 + (int)((state >> 8) % 120000);
-                int maxSites = 1 + trial % 4;
-                long[][] dist = AllPairsMs(graph);
-
-                long best = 0;
-                for (int mask = 0; mask < (1 << n); mask++)
-                {
-                    int bits = 0;
-                    long value = 0;
-                    bool ok = true;
-                    for (int i = 0; i < n && ok; i++)
-                    {
-                        if ((mask & (1 << i)) == 0)
-                        {
-                            continue;
-                        }
-
-                        bits++;
-                        value += (long)scores[i];
-                        for (int j = i + 1; j < n; j++)
-                        {
-                            if ((mask & (1 << j)) != 0 && dist[i][j] < separation)
-                            {
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (ok && bits <= maxSites)
-                    {
-                        best = Math.Max(best, value);
-                    }
-                }
-
-                ExactSiteSolution exact = SuitabilityExactSites.SolveOnNetwork(graph, candidates, scores, n, separation, maxSites, Assumptions.SiteSearchNodeBudget);
-                AssertTrue(exact.Optimal, "small graphs close");
-                long value2 = 0;
-                for (int i = 0; i < exact.Count; i++)
-                {
-                    value2 += (long)exact.Scores[i];
-                    for (int j = i + 1; j < exact.Count; j++)
-                    {
-                        AssertTrue(dist[exact.Indices[i]][exact.Indices[j]] >= separation, $"trial {trial}: chosen nodes respect the spacing");
-                    }
-                }
-
-                AssertTrue(exact.Count <= maxSites, "never more than K");
-                AssertEqual((int)best, (int)value2, 0, $"trial {trial}: brute force {best} vs solver {value2}");
             }
         }
 
@@ -1704,29 +1294,6 @@ namespace TransitArchitect.Tests
             AssertEqual(0f, SuitabilityScoring.Combine(in zonedOnly, in full, 1f), 0f, "zoning without residents or jobs counts nothing");
             var growing = new SuitabilityCell { m_Future = 1f, m_Jobs = 0.1f, m_Access = 1f };
             AssertEqual(1.1f, SuitabilityScoring.Combine(in growing, in full, 1f), 1e-6f, "beside a workplace the zoning counts in full");
-        }
-
-        private static void CalibrationFeaturesMatchCombine()
-        {
-            var random = new Random(7);
-            var features = new float[SuitabilityScoring.CalibrationFeatureCount];
-            for (int i = 0; i < 200; i++)
-            {
-                var weights = new CombineWeights(
-                    demand: (float)random.NextDouble() * 2f, jobs: (float)random.NextDouble() * 2f, coverage: 0f,
-                    access: (float)random.NextDouble() * 2f, future: (float)random.NextDouble() * 2f, interchange: 0f, cross: 0f,
-                    invDemand: 1f / (1f + (float)random.NextDouble()), invJobs: 1f / (1f + (float)random.NextDouble()), invFuture: 1f / (1f + (float)random.NextDouble()));
-                var cell = new SuitabilityCell
-                {
-                    m_Demand = random.Next(3) == 0 ? 0f : (float)random.NextDouble() * 3f,
-                    m_Jobs = random.Next(3) == 0 ? 0f : (float)random.NextDouble() * 3f,
-                    m_Future = (float)random.NextDouble() * 3f,
-                    m_Access = (float)random.NextDouble(),
-                };
-                SuitabilityScoring.CalibrationFeatures(in cell, in weights, features);
-                float fromFeatures = (weights.Demand * features[0]) + (weights.Jobs * features[1]) + (weights.Future * features[2]);
-                AssertEqual(SuitabilityScoring.Combine(in cell, in weights, 1f), fromFeatures, 1e-5f, "W1·f0 + W2·f1 + W5·f2 is the score without stop terms");
-            }
         }
 
         private static WalkAccessInputs LineInputs(int nodes)
@@ -4049,33 +3616,6 @@ namespace TransitArchitect.Tests
             }
         }
 
-        // GOLDEN VECTOR, produced by the other side of the contract:
-        //   json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-        // then sha256 of its ASCII bytes (verification/common/canonical.py). If this
-        // test fails, every instance the mod exports becomes unloadable — the pipeline
-        // recomputes this digest on load and refuses a file it cannot reproduce.
-        private const string GoldenCanonical =
-            "{\"data\":{\"label\":\"Gr\\u00fc\\u00dfe \\\"x\\\" \\\\ y\",\"values_b32\":"
-            + "[1069547520,2147483648]},\"kind\":\"demo\",\"name\":\"golden\",\"schema_version\":1}";
-
-        private const string GoldenHash =
-            "ed592da4e2e64bf1a8dde36156ecdacd83812eb864ca1a1b75fdc9a802c453db";
-
-        private static JsonObject GoldenBody()
-        {
-            string data = new JsonObject()
-                // Added out of order on purpose: the writer sorts, so the canonical
-                // form must not depend on the order the export code gathers things in.
-                .Add("values_b32", ExportJson.BitsArray(new[] { 1.5f, -0.0f }))
-                .Add("label", ExportJson.Str("Grüße \"x\" \\ y"))
-                .Build();
-
-            return new JsonObject()
-                .Add("name", ExportJson.Str("golden"))
-                .Add("kind", ExportJson.Str("demo"))
-                .Add("data", data);
-        }
-
         private static void CapacityWeightIsRelativeToBus()
         {
             // CS2's base subway (1080 seats) against its bus (80): 13.5 buses' worth.
@@ -4083,74 +3623,6 @@ namespace TransitArchitect.Tests
             AssertEqual(1f, TransitModes.CapacityWeight(80f, 80f), 1e-6f, "a bus is one bus");
             AssertEqual(0f, TransitModes.CapacityWeight(0f, 80f), 0f, "unknown mode is no partner");
             AssertEqual(0f, TransitModes.CapacityWeight(1080f, 0f), 0f, "no bus to compare against");
-        }
-
-        private static void ExportJsonIsCanonical()
-        {
-            JsonObject body = GoldenBody();
-            _ = body.Add("schema_version", ExportJson.Int(1));
-            string canonical = body.Build();
-            if (!string.Equals(canonical, GoldenCanonical, StringComparison.Ordinal))
-            {
-                throw new TestFailedException(
-                    $"canonical form drifted from canonical.py:\n  got      {canonical}\n  expected {GoldenCanonical}");
-            }
-
-            string hash = ExportJson.Sha256Hex(canonical);
-            if (!string.Equals(hash, GoldenHash, StringComparison.Ordinal))
-            {
-                throw new TestFailedException($"digest drifted: {hash} != {GoldenHash}");
-            }
-        }
-
-        private static void ExportJsonEscapes()
-        {
-            // Control characters, the short forms, a surrogate pair, and lowercase hex
-            // — all four are what ensure_ascii=True produces.
-            AssertJson("\"\\u0000\\b\\t\\n\\f\\r\"", ExportJson.Str("\0\b\t\n\f\r"));
-            AssertJson("\"\\ud83d\\ude00\"", ExportJson.Str("\U0001F600"));
-            AssertJson("\"~\"", ExportJson.Str("~"));
-            AssertJson("null", ExportJson.Str(null));
-        }
-
-        private static void ExportJsonBitsRoundTrip()
-        {
-            float[] values = { 0f, -0f, 1f, -1.5f, 3.4028235e38f, 1.4e-45f, 128f * 1.41421356f };
-            foreach (float value in values)
-            {
-                uint bits = ExportJson.ToBits(value);
-                byte[] bytes = BitConverter.GetBytes(bits);
-                float back = BitConverter.ToSingle(bytes, 0);
-                if (!back.Equals(value))
-                {
-                    throw new TestFailedException($"bit pattern for {value} did not round-trip");
-                }
-            }
-        }
-
-        private static void ExportJsonHashesBody()
-        {
-            string file = GoldenBody().BuildHashed(1);
-            // The digest is OVER THE BODY, so it must be the golden hash, and the file
-            // must still contain the body verbatim after the inserted member.
-            if (!file.Contains(GoldenHash, StringComparison.Ordinal))
-            {
-                throw new TestFailedException("the written instance does not carry the body's digest");
-            }
-
-            if (!file.StartsWith("{\"hash\":", StringComparison.Ordinal)
-                || !file.EndsWith(GoldenCanonical.Substring(1), StringComparison.Ordinal))
-            {
-                throw new TestFailedException($"the written instance is not body-plus-digest: {file}");
-            }
-        }
-
-        private static void AssertJson(string expected, string actual)
-        {
-            if (!string.Equals(expected, actual, StringComparison.Ordinal))
-            {
-                throw new TestFailedException($"expected {expected}, got {actual}");
-            }
         }
 
         private static void AssertEqual(float expected, float actual, float tolerance, string because)

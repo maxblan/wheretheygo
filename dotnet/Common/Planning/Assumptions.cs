@@ -137,24 +137,6 @@ namespace TransitArchitect
         // "already served" as a tile gets.
         public const float MaxCoveragePenalty = 1.5f;
 
-        // ---- S2 sites
-        // A chosen site is painted as a disc of this many tiles around its tile.
-        public const int SiteMarkerRadiusTiles = 2;
-
-        // Ceiling on the 3x3 local maxima FindTopSites will consider. A real city
-        // produces far fewer; a noisy score field could produce far more, and a
-        // truncated sweep is biased towards low grid indices, so callers are told.
-        public const int MaxSiteCandidates = 65536;
-
-        // Nodes the search may expand before it settles for best-found plus bound.
-        // Sized so a real city (some 700 candidates, K ≤ 20) closes with room to spare
-        // while a pathological field still returns within a fraction of a second.
-        public const long SiteSearchNodeBudget = 2_000_000;
-
-        // A site set differs if it picked different tiles, or if any score moved by
-        // more than this fraction of its previous value.
-        public const float SiteScoreLogThreshold = 0.05f;
-
         // ---- S3 demand
         // Backstop against a player leaving the game running for days at speed; far
         // above what a day of a large city produces.
@@ -465,30 +447,6 @@ namespace TransitArchitect
         // and their positions need not agree exactly.
         public const float StopMatchRadiusSq = 40f * 40f;
 
-        // ---- Calibration
-        public const int CalibrationMinSamplesPerStop = 30;
-
-        public const int CalibrationMinStops = 8;
-
-        public const int CalibrationMaxTrackedStops = 256;
-
-        // ---- Diagnostics
-        // Share of the city's longest journey below which a line cannot plausibly be
-        // what unlocks a large part of its travel, whatever the transfer model credits
-        // it with. A share rather than a distance because a city's scale is the whole
-        // point of the test — see the sanity check that reads it.
-        public const float ShortLineShareOfCity = 0.25f;
-
-        public const float ImplausibleDemandShare = 0.15f;
-
-        // How far a suggestion's termini may move and still count as the same corridor.
-        public const float ChurnSameEndsRadiusSq = 200f * 200f;
-
-        // ---- Refresh cadence (real seconds unless named otherwise)
-        public const float RidershipSampleSeconds = 60f;
-
-        public const float RidershipSaveSeconds = 300f;
-
         // How often the live city is scanned for shopping and leisure journeys under
         // way (register A0.1). A citizen stays inside a building for game-hours and a
         // journey lasts game-minutes, so one scan a second — a few game minutes at
@@ -531,8 +489,6 @@ namespace TransitArchitect
         public const int UtilisationFloorDefaultPercent = 15;
 
         public const int MaxSlopeDefaultDegrees = 15;
-
-        public const int SiteCountDefault = 8;
 
         public const int RouteCountDefault = 5;
 

@@ -32,9 +32,6 @@ namespace TransitArchitect
         private readonly EntityQuery m_ActiveInfomodeQuery;
         private readonly EntityQuery m_PlaceableInfoviewQuery;
         private readonly EntityQuery m_PlaceableInfoviewChangedQuery;
-        // Where the one-shot "this game version moved the internals" report goes: the
-        // options page shows it beside the calibration status.
-        private readonly Action<string> m_OnPipelineFault;
 
         public SuitabilityInfoview(
             EntityManager entityManager,
@@ -43,8 +40,7 @@ namespace TransitArchitect
             OverlayInfomodeSystem overlayInfomodeSystem,
             EntityQuery activeInfomodeQuery,
             EntityQuery placeableInfoviewQuery,
-            EntityQuery placeableInfoviewChangedQuery,
-            Action<string> onPipelineFault)
+            EntityQuery placeableInfoviewChangedQuery)
         {
             m_EntityManager = entityManager;
             m_PrefabSystem = prefabSystem;
@@ -53,7 +49,6 @@ namespace TransitArchitect
             m_ActiveInfomodeQuery = activeInfomodeQuery;
             m_PlaceableInfoviewQuery = placeableInfoviewQuery;
             m_PlaceableInfoviewChangedQuery = placeableInfoviewChangedQuery;
-            m_OnPipelineFault = onPipelineFault;
         }
 
         // Whether a layer is registered as an infomode and can therefore be drawn.
@@ -568,7 +563,7 @@ namespace TransitArchitect
         [SuppressMessage("Design", "CA1031:Do not catch general exception types",
             Justification = "Reading the game's version string is only for the diagnostic below. " +
                 "Any failure there must not stop the check from reporting what it found.")]
-        private bool CheckPipeline()
+        private static bool CheckPipeline()
         {
             if (s_ReflectionChecked)
             {
@@ -609,10 +604,8 @@ namespace TransitArchitect
                 // Version lookup is best-effort diagnostics only.
             }
 
-            m_OnPipelineFault(
-                "The overlay cannot draw: this game version moved the internals it renders through " +
-                $"(game {version}). The mod needs an update.");
             DeferredLog.Error(
+                "The overlay cannot draw: this game version moved the internals it renders through. " +
                 "OverlayInfomodeSystem internals not found or the wrong shape " +
                 $"(GetTerrainTextureData bound={s_GetTerrainTextureData is not null}, " +
                 $"m_TerrainTexture={s_TerrainTextureField != null}) on game {version}; the overlay cannot render.");

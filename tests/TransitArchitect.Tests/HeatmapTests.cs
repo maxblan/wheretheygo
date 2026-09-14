@@ -47,7 +47,7 @@ namespace TransitArchitect.Tests
             AssertTrue(one[0] == 64, "WriteTerm writes into a registered layer and ignores an absent one");
         }
 
-        private static void HeatmapNodeDemandAndSitePainting()
+        private static void HeatmapNodeDemand()
         {
             var network = new AlignmentNetwork();
             network.Adopt(CompactGraph.Build(2, new[] { 0 }, new[] { 1 }, new[] { 100f }, 1), new[] { 16f, 48f }, new[] { 16f, 900f }, RouteNetwork.Road);
@@ -60,52 +60,6 @@ namespace TransitArchitect.Tests
             AssertTrue(demand[1] == 1f, "node 1 clamps onto the grid's last row and saturates its demand");
             float[] uncapped = SuitabilityHeatmap.NodeDemand(network, terms, 0f, 0f, new float2Like(0f, 0f), 32f, new int2Like(4, 4));
             AssertTrue(uncapped[0] == 0f && uncapped[1] == 0f, "a zero cap drops the term");
-
-            var layer = new byte[64];
-            SuitabilityHeatmap.PaintSites(layer, new[] { 27, 0 }, 2, 8, 8);
-            int bright = 0;
-            int dim = 0;
-            for (int i = 0; i < layer.Length; i++)
-            {
-                bright += layer[i] == 255 ? 1 : 0;
-                dim += layer[i] == 155 ? 1 : 0;
-            }
-
-            AssertTrue(bright == 13 && dim == 6, $"the best site paints a 13-tile disc at full intensity, the second a clipped corner disc dimmer: {bright.ToString(CultureInfo.InvariantCulture)} / {dim.ToString(CultureInfo.InvariantCulture)}");
-            AssertTrue(layer[27] == 255 && layer[27 - 2] == 255 && layer[27 - 16] == 255 && layer[27 - 9] == 255 && layer[27 - 17] == 0 && layer[9] == 155, "disc membership is dx² + dy² ≤ 4, and the corner disc reaches (1,1)");
-        }
-
-        private static void SiteCandidatesOnTheNetwork()
-        {
-            WalkGraph graph = LineGraph(4, 72f);
-            graph.Siteable[2] = false;
-            WalkAccessInputs inputs = LineInputs(4);
-            inputs.Homes = Sources((0f, 10f));
-            inputs.Jobs = Sources((216f, 5f));
-            inputs.Future = Sources();
-            inputs.StopCount = 0;
-            inputs.StopX = Array.Empty<float>();
-            inputs.StopZ = Array.Empty<float>();
-            inputs.StopType = Array.Empty<int>();
-            inputs.Graph = graph;
-            var typeWeight = new float[14];
-            var buildable = new byte[] { 1, 1, 1, 1, 1, 1, 1, 0 };
-            WalkAccessOutput output = SuitabilityWalkAccess.Run(inputs, 8, 1, -16f, -16f, 32f, buildable, 0, 0, typeWeight);
-            var worldMin = new float2Like(-16f, -16f);
-            var grid = new int2Like(8, 1);
-            AssertTrue(SuitabilityExactSites.TileOfNode(graph, 0, worldMin, 32f, grid) == 0 && SuitabilityExactSites.TileOfNode(graph, 3, worldMin, 32f, grid) == 7, "nodes map to the tiles under them");
-
-            var weights = new CombineWeights(1f, 0f, 0f, 0f, 0f, 0f, 0f, 0.1f, 0f, 0f);
-            int[] nodes = Array.Empty<int>();
-            float[] scores = Array.Empty<float>();
-            int count = SuitabilityExactSites.CollectNetworkCandidates(graph, output.Result, 0, 0, typeWeight, buildable, worldMin, 32f, grid, in weights, 1f, ref nodes, ref scores);
-            AssertTrue(nodes.Length == 4 && scores.Length == 4, "the arrays grow to the node count");
-            AssertTrue(count == 2 && nodes[0] == 0 && nodes[1] == 1, $"the node in a tunnel and the node on an unbuildable tile are no candidates: {count.ToString(CultureInfo.InvariantCulture)} kept");
-            SuitabilityCell node0 = SuitabilityWalkAccess.NodeTerms(output.Result, 0, 0, 0, typeWeight);
-            AssertTrue(scores[0] == SuitabilityScoring.Combine(in node0, in weights, 1f) && scores[0] > scores[1] && scores[1] > 0f, "candidates carry the combine of their node's terms, fading with the walk from the homes");
-
-            var nothing = new CombineWeights(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f);
-            AssertTrue(SuitabilityExactSites.CollectNetworkCandidates(graph, output.Result, 0, 0, typeWeight, buildable, worldMin, 32f, grid, in nothing, 1f, ref nodes, ref scores) == 0, "a node scoring zero is not a candidate");
         }
 
         // Bridging the pedestrian network. Two streets of three nodes each, 40 m apart

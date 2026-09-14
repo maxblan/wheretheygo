@@ -282,7 +282,6 @@ namespace TransitArchitect
             m_RestoredRoutes = false;
             m_LastRoutePassStart = UnityEngine.Time.realtimeSinceStartup;
             UpdateRouteList();
-            LogRoutes();
             DeferredLog.Info($"Suggestions restored from the save: {(m_Routes.Count).ToString(CultureInfo.InvariantCulture)}; the next route pass is due in {Assumptions.RoutePassIntervalSeconds.ToString("F0", CultureInfo.InvariantCulture)} s");
         }
     }

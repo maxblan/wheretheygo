@@ -161,7 +161,6 @@ namespace TransitArchitect
             public float W6;
             public float W7;
             public int HighlightShare;
-            public int SiteCount;
 
             public static CombineSnapshot Capture(Setting settings)
             {
@@ -175,7 +174,6 @@ namespace TransitArchitect
                     W6 = settings.W6,
                     W7 = settings.W7,
                     HighlightShare = settings.HighlightShare,
-                    SiteCount = settings.SiteCount,
                 };
             }
 
@@ -183,7 +181,7 @@ namespace TransitArchitect
             {
                 return W1 == other.W1 && W2 == other.W2 && W3 == other.W3 && W4 == other.W4 && W5 == other.W5
                     && W6 == other.W6 && W7 == other.W7
-                    && HighlightShare == other.HighlightShare && SiteCount == other.SiteCount;
+                    && HighlightShare == other.HighlightShare;
             }
 
             public readonly override bool Equals(object obj)
@@ -204,7 +202,6 @@ namespace TransitArchitect
                     hash = (hash * 31) ^ W6.GetHashCode();
                     hash = (hash * 31) ^ W7.GetHashCode();
                     hash = (hash * 31) ^ HighlightShare.GetHashCode();
-                    hash = (hash * 31) ^ SiteCount.GetHashCode();
                     return hash;
                 }
             }
@@ -337,10 +334,7 @@ namespace TransitArchitect
             {
                 m_LastComputeSettings = ComputeSnapshot.Capture(settings);
                 m_LastCombineSettings = CombineSnapshot.Capture(settings);
-                m_Calibration.Deserialize(settings.RidershipData);
             }
-
-            UpdateCalibrationStatus();
         }
 
         // The infoview presenter and the queries it watches. Created here, by the system,
@@ -360,8 +354,7 @@ namespace TransitArchitect
             });
             m_Infoview = new SuitabilityInfoview(
                 EntityManager, m_PrefabSystem, m_ToolSystem, m_OverlayInfomodeSystem,
-                m_ActiveInfomodeQuery, m_PlaceableInfoviewQuery, m_PlaceableInfoviewChangedQuery,
-                static fault => s_PipelineStatus = fault);
+                m_ActiveInfomodeQuery, m_PlaceableInfoviewQuery, m_PlaceableInfoviewChangedQuery);
         }
 
         // Live entities only — the None clause every gathering query here carries.
@@ -439,13 +432,11 @@ namespace TransitArchitect
             m_Infoview.SweepPlaceableInfoviews();
             TrackInputChanges();
             HandleInfoviewRequest();
-            HandleExportRequest();
             FinishRoutesIfReady(settings);
             if (!m_RoutesPending)
             {
                 HandleImprovementRequest();
                 HandleLineActionRequests();
-                HandleCalibrationRequests(settings);
                 FinishComputeIfReady();
             }
 
@@ -546,7 +537,6 @@ namespace TransitArchitect
             if (!m_RoutesPending)
             {
                 MaybeUpdateTravelDemand(settings, now);
-                SampleRidership(settings, now);
             }
 
             m_Infoview.ApplyOverlayState(active, signature, m_RawTerms is not null, m_LayerIntensities, m_IntensityGrid);
@@ -601,7 +591,6 @@ namespace TransitArchitect
 
             float2 mapSize = new float2(m_IntensityGrid.x, m_IntensityGrid.y) * Assumptions.TileSize;
             UpdateTravelDemand(settings, m_IntensityGrid, m_ScoreWorldMin, mapSize, objectiveChanged);
-            LogRoutes();
         }
 
         // Change tags live for a single frame, so the caches must be invalidated
