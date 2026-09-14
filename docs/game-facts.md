@@ -164,6 +164,29 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
   `CameraRayPlaneIntersect` uses the CAMERA's forward as the plane normal — it is not a
   ground intersection.
 
+- **`moduleRegistry.append("GameTopLeft", Component)`** puts a button in the row at the
+  top left, beside the infoview menu button: `index.js` renders
+  `<ModdingHook name="GameTopLeft"/>` inside the same `infoMenuLayout` div. It is where
+  the other mods with a button put theirs (Road Builder). Not to be confused with
+  `game-ui/game/components/toolbar/top/toggles.tsx`, which is the row at the bottom
+  RIGHT (economy, transport overview, statistics, photo mode) — that one is extended
+  rather than appended to, and Move It's button lives there.
+- `registry.extend(modulePath, exportName, callback)` **throws** when the path is
+  unknown, so every call needs a try/catch or it takes the rest of the registration
+  with it. `append` with a component as the second argument does not throw on an
+  unknown location name.
+- A button in the top-left row is a `Button` with `variant: "floating"` — a bare
+  rounded square that styles neither its fill nor its child. The icon goes in as an
+  `<img>` whose `maskImage` is the file; for anything to appear, that img needs a size,
+  a `background-color` (the mask shows the fill through the shape) and
+  `mask-size: contain`.
+- The entry in the Infoansicht menu is one `InfoviewButton`
+  (`game-ui/game/components/infoviews/infoviews-button/infoview-button.tsx`), given
+  `props.infoview` whose `id` is the PREFAB'S NAME. Extending it is the way to leave an
+  infoview out of the menu without touching the prefab — `InfoviewPrefab.isValid` is
+  `m_Infomodes != null && m_Infomodes.Length != 0`, and an invalid view cannot be
+  activated at all.
+
 ## The selected-object window
 
 - `SelectedInfoUISystem.AddMiddleSection(ISectionSource)` adds a section; `InfoSectionBase`

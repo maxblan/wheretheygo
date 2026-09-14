@@ -76,6 +76,8 @@ const VANILLA = {
     responsiveChart: "game-ui/common/charts/responsive-chart/responsive-chart.tsx",
     mouseTooltip: "game-ui/common/tooltip/floating-mouse-tooltip/floating-mouse-tooltip.tsx",
     colorLegend: "game-ui/common/charts/legends/color-legend.tsx",
+    // One entry in the Infoansicht menu. Extended to leave ours out of it.
+    infoviewButton: "game-ui/game/components/infoviews/infoviews-button/infoview-button.tsx",
     // The map from a C# section's type name to the component that draws it.
     sections: "game-ui/game/components/selected-info-panel/selected-info-sections/selected-info-sections.tsx",
 };
@@ -769,6 +771,10 @@ function registerSections(registry) {
 // take their colour from the button and not from the file.
 const ICON = "coui://wheretheygo/WhereTheyGo.svg";
 
+// The infoview prefab's name, which is the id the menu knows it by (Infoview.cs:
+// PrefabBase.Create<InfoviewPrefab>("WhereTheyGo")).
+const INFOVIEW_ID = "WhereTheyGo";
+
 // Opens and closes the infoview. It is a TOGGLE and holds no state of its own:
 // `selected` comes straight back from C#, so the button cannot disagree with the map.
 function ToolbarButton() {
@@ -786,6 +792,24 @@ function ToolbarButton() {
         : button;
 }
 
+// With a button of its own in the top row, the entry in the Infoansicht menu is a
+// second door to the same room. Hidden HERE rather than on the prefab: a prefab is
+// only listed while it is valid, and an invalid one cannot be activated at all — so
+// hiding it that way would take the infoview with it (docs/game-facts.md).
+//
+// Only ever called once the button is known to have registered, so the mod cannot end
+// up with no door at all.
+function hideFromInfoviewMenu(registry) {
+    try {
+        registry.extend(VANILLA.infoviewButton, "InfoviewButton", (Button) => (props) =>
+            (props && props.infoview && props.infoview.id === INFOVIEW_ID)
+                ? h(React.Fragment, null)
+                : h(Button, props));
+    } catch (error) {
+        console.warn("[WhereTheyGo] the infoview menu's button has moved, so the menu keeps its entry: " + error);
+    }
+}
+
 const register = (moduleRegistry) => {
     if (!React || !Api || !moduleRegistry || !moduleRegistry.append) {
         console.error("[WhereTheyGo] UI module could not register.");
@@ -796,14 +820,20 @@ const register = (moduleRegistry) => {
     // already looking: the figures in the game's infoview panel, one section in the
     // selected-building window, one in the selected-line window, and every setting on
     // the Options page. The one mark it makes on the screen is a toggle in the top-left
-    // row, beside the other mods' — the infoview is still in the Infoansicht menu too,
-    // so losing the row to a game update costs convenience rather than the mod.
+    // row, beside the other mods'. That button REPLACES the entry in the Infoansicht
+    // menu, and only once it is known to have registered.
     //
     // "GameTopLeft" is the game's own name for the slot next to the infoview menu
     // button: index.js renders <ModdingHook name="GameTopLeft"/> inside the same
     // infoMenuLayout div. It is where the other mods with a button put theirs.
     resolveVanilla(moduleRegistry);
-    moduleRegistry.append("GameTopLeft", ToolbarButton);
+    try {
+        moduleRegistry.append("GameTopLeft", ToolbarButton);
+        hideFromInfoviewMenu(moduleRegistry);
+    } catch (error) {
+        console.warn("[WhereTheyGo] no toolbar button, so the infoview menu keeps its entry: " + error);
+    }
+
     extendInfoview(moduleRegistry);
     registerSections(moduleRegistry);
     console.info("[WhereTheyGo] UI registered.");

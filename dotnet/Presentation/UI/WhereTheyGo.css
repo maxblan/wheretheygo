@@ -377,6 +377,17 @@
     background-color: var(--accentColorNormal-hover);
 }
 
+/* A mask shows nothing until the element it masks has something to show. The
+   floating button does not style its child, so the size, the fill and the fit are all
+   ours to give — the same four declarations the game's own masked icons carry. */
+.wtg-toolbar-button img {
+    width: 30rem;
+    height: 30rem;
+    background-color: #ffffff;
+    mask-size: contain;
+    mask-position: 50% 50%;
+}
+
 .wtg-toolbar-button-on {
     background-color: #ffffff;
 }
