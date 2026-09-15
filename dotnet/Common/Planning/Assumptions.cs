@@ -551,6 +551,12 @@ namespace WhereTheyGo
         // right trade for an infoview.
         public const float SnapIntervalSeconds = 60f;
 
+        // How long to wait before asking again while there is no tile snap at all.
+        // Short, because the only reason to be in that state is that the game has not
+        // finished building the world yet.
+        public const float WalkNetworkRetrySeconds = 2f;
+
+
 
 
 

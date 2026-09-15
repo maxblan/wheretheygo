@@ -72,7 +72,14 @@ namespace WhereTheyGo
 
             float now = UnityEngine.Time.realtimeSinceStartup;
             bool cold = m_TileSnap is null;
-            if (!cold && now - m_LastSnapAt < Assumptions.SnapIntervalSeconds)
+            // While there is no snap at all, try often; once there is one, rarely. The
+            // slow cadence exists because a live city tags nodes Updated without
+            // moving a pavement — but on a load the first pass runs before the game
+            // has built the street entities at all, and waiting a whole minute to
+            // notice is what kept the coverage figures and the building colours empty
+            // for a minute after every load.
+            float wait = cold ? Assumptions.WalkNetworkRetrySeconds : Assumptions.SnapIntervalSeconds;
+            if (now - m_LastSnapAt < wait)
             {
                 return false;
             }
@@ -102,6 +109,15 @@ namespace WhereTheyGo
             WalkGraph? graph = m_WalkGraph;
             if (graph is null)
             {
+                return false;
+            }
+
+            // A walk network with no nodes is not a city without pavements, it is a
+            // city whose streets the game has not created yet. Snapping it would cache
+            // an answer of "nothing is reachable" and stop asking.
+            if (graph.NodeCount == 0)
+            {
+                m_LastSnapAt = now;
                 return false;
             }
 

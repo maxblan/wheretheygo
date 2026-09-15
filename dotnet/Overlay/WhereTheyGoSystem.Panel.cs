@@ -53,10 +53,18 @@ namespace WhereTheyGo
 
         internal static PanelFigures Figures => s_Figures;
 
-        internal static void SetCoverageFigures(float coverageShare, int walkMinutes, float carriedShare)
+        internal static void SetCoverageFigures(float coverageShare, int walkMinutes)
         {
             s_Figures.CoverageShare = coverageShare;
             s_Figures.CoverageWalkMinutes = walkMinutes;
+        }
+
+        // Published by the ROUTING pass, which is the only thing that knows it. It used
+        // to be handed over by the coverage pass, and so it waited on a walk network
+        // it does not depend on: after a load the panel read "0 % carried" for as long
+        // as the streets took to appear, while the log had the real figure already.
+        internal static void SetCarriedFigure(float carriedShare)
+        {
             s_Figures.CarriedShare = carriedShare;
         }
 

@@ -318,6 +318,7 @@ namespace WhereTheyGo
             m_Routed = pass.Result;
             m_RoutedProblem = pass.Problem;
             m_CarriedReport = pass.Carried;
+            SetCarriedFigure(m_CarriedReport.Share);
             m_Bands = pass.Bands;
             m_Baseline = pass.Result.After;
             m_ExistingLineRiders.Clear();

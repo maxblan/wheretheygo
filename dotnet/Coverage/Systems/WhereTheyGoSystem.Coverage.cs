@@ -385,7 +385,7 @@ namespace WhereTheyGo
                 m_ServedWalkMs, m_CoverageHorizonMs,
                 m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
                 m_JourneyWeight, m_Journeys.Count);
-            SetCoverageFigures(m_Coverage.Share, settings.CoverageWalkMinutes, m_CarriedReport.Share);
+            SetCoverageFigures(m_Coverage.Share, settings.CoverageWalkMinutes);
             DeferredLog.Info(
                 $"Coverage ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
                 $"{settings.CoverageWalkMinutes.ToString(CultureInfo.InvariantCulture)} min, " +
