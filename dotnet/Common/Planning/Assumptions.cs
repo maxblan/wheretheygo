@@ -556,6 +556,12 @@ namespace WhereTheyGo
         // finished building the world yet.
         public const float WalkNetworkRetrySeconds = 2f;
 
+        // How far a line's ridden loop may exceed the one the game's own clamp admits
+        // before it is treated as broken rather than as slow. The reconstruction of
+        // the game's fleet target is exact to within a second or two, and the loops
+        // that are actually broken overshoot by five times and more, so anything in
+        // between is rounding.
+        public const float RiddenLoopTolerance = 1.1f;
 
 
 

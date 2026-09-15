@@ -336,7 +336,10 @@ namespace WhereTheyGo
             // TransportLineSystem.CalculateVehicleCount, mirrored.
             int fleetTarget = Math.Max(1, (int)Math.Round(line.m_StableDurationSeconds / Math.Max(1f, line.m_TargetInterval), MidpointRounding.AwayFromZero));
             float trusted = line.m_VehicleInterval * fleetTarget;
-            if (line.m_LineDurationSeconds <= trusted)
+            // With room for the rounding in that reconstruction: a healthy line lands
+            // within a second or two of the clamp, and saying so in a warning every
+            // refresh would bury the lines that are genuinely broken.
+            if (line.m_LineDurationSeconds <= trusted * Assumptions.RiddenLoopTolerance)
             {
                 return;
             }
@@ -348,10 +351,12 @@ namespace WhereTheyGo
             }
 
             DeferredLog.Warn(
-                $"Line \"{line.m_Name}\" reports a ridden loop of {(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                $"which the game's own clamp puts at {(trusted).ToString("F0", CultureInfo.InvariantCulture)}s " +
+                $"Line \"{line.m_Name}\": the route segments add up to a ridden loop of " +
+                $"{(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
+                $"{(line.m_LineDurationSeconds / trusted).ToString("F0", CultureInfo.InvariantCulture)}x the " +
+                $"{(trusted).ToString("F0", CultureInfo.InvariantCulture)}s the game's own clamp admits " +
                 $"({(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s interval x {(fleetTarget).ToString(CultureInfo.InvariantCulture)} vehicles). " +
-                "Its average travel time has wrapped; riding it is charged the clamped figure.");
+                "Charged the clamped figure; the cause is normally an average travel time that has wrapped.");
             line.m_LineDurationSeconds = trusted;
         }
 
