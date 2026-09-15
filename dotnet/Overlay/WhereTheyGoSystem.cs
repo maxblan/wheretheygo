@@ -1,7 +1,6 @@
 ﻿using System;
 using Game;
 using Game.Common;
-using Game.Companies;
 using Game.Net;
 using Game.Citizens;
 using Game.Prefabs;
@@ -9,10 +8,8 @@ using Game.Rendering;
 using Game.SceneFlow;
 using Game.Simulation;
 using Game.Tools;
-using Game.Zones;
 using Unity.Entities;
 using Unity.Mathematics;
-using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
@@ -32,25 +29,11 @@ namespace WhereTheyGo
         // every use site for a state (OnCreate not yet run) in which nothing works anyway.
         private TerrainSystem m_TerrainSystem;
 
-        private WaterSystem m_WaterSystem;
-
         private PopulationToGridSystem m_PopulationSystem;
-
-        private Game.Prefabs.ZoneSystem m_ZoneSystem;
 
         private PrefabSystem m_PrefabSystem;
 
         private ToolSystem m_ToolSystem;
-
-        // Carrying out a recommendation goes through the game's own systems: the policy
-        // system applies the vehicle-count and schedule policies, the camera system
-        // follows a line the player asked to see (F9Actions).
-        private Game.UI.InGame.PoliciesUISystem m_PoliciesUISystem;
-
-        private Game.Rendering.CameraUpdateSystem? m_CameraUpdateSystem;
-
-        // Map markers on the lines that need rebuilding (F9Notifications).
-        private Game.Notifications.IconCommandSystem m_IconCommandSystem;
 
         private Game.UI.NameSystem m_NameSystem;
 
@@ -60,8 +43,6 @@ namespace WhereTheyGo
         private TripObserver m_TripObserver;
 
 #pragma warning restore CS8618
-
-        private EntityQuery m_StopQuery;
 
         private EntityQuery m_NodeQuery;
 
@@ -76,8 +57,6 @@ namespace WhereTheyGo
         private ComponentLookup<Transform> m_TransformLookup;
 
         private ComponentLookup<Game.Buildings.PropertyRenter> m_PropertyRenterLookup;
-
-        private ComponentLookup<ZoneData> m_ZoneDataLookup;
 
         private bool m_LastActive;
 
@@ -94,28 +73,12 @@ namespace WhereTheyGo
             base.OnCreate();
 
             m_TerrainSystem = World.GetOrCreateSystemManaged<TerrainSystem>();
-            m_WaterSystem = World.GetOrCreateSystemManaged<WaterSystem>();
             m_PopulationSystem = World.GetOrCreateSystemManaged<PopulationToGridSystem>();
-            m_ZoneSystem = World.GetOrCreateSystemManaged<Game.Prefabs.ZoneSystem>();
             m_PrefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             m_ToolSystem = World.GetOrCreateSystemManaged<ToolSystem>();
-            m_PoliciesUISystem = World.GetOrCreateSystemManaged<Game.UI.InGame.PoliciesUISystem>();
-            m_CameraUpdateSystem = World.GetExistingSystemManaged<Game.Rendering.CameraUpdateSystem>();
-            m_IconCommandSystem = World.GetOrCreateSystemManaged<Game.Notifications.IconCommandSystem>();
             m_TimeSystem = World.GetOrCreateSystemManaged<TimeSystem>();
             m_NameSystem = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             m_OverlayInfomodeSystem = World.GetOrCreateSystemManaged<OverlayInfomodeSystem>();
-
-            m_StopQuery = GetEntityQuery(new EntityQueryDesc
-            {
-                All = new[]
-                {
-                    ComponentType.ReadOnly<Game.Routes.TransportStop>(),
-                    ComponentType.ReadOnly<PrefabRef>(),
-                    ComponentType.ReadOnly<Transform>(),
-                },
-                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() },
-            });
 
             m_NodeQuery = GetEntityQuery(new EntityQueryDesc
             {
@@ -130,8 +93,7 @@ namespace WhereTheyGo
             });
 
             // The city's working hours, which place every commute's two rides
-            // (Daytime.CommuteHours). Created here since the fleet reader that used to
-            // own this query went with the suggestions.
+            // (Daytime.WorkHours).
             m_EconomyQuery = GetEntityQuery(ComponentType.ReadOnly<EconomyParameterData>());
 
             m_LineQuery = GetEntityQuery(new EntityQueryDesc
@@ -165,10 +127,8 @@ namespace WhereTheyGo
 
             m_WorkerLookup = GetComponentLookup<Worker>(isReadOnly: true);
             m_StudentLookup = GetComponentLookup<Game.Citizens.Student>(isReadOnly: true);
-            m_TouristLookup = GetComponentLookup<TouristHousehold>(isReadOnly: true);
             m_TransformLookup = GetComponentLookup<Transform>(isReadOnly: true);
             m_PropertyRenterLookup = GetComponentLookup<Game.Buildings.PropertyRenter>(isReadOnly: true);
-            m_ZoneDataLookup = GetComponentLookup<ZoneData>(isReadOnly: true);
 
             CreateInfoview();
 
@@ -314,8 +274,10 @@ namespace WhereTheyGo
             MaybeUpdateTravelDemand(settings, now);
 
             // Clicking a line asks its question straight away rather than waiting for
-            // the next demand refresh, which is up to thirty seconds off.
-            if (LineSelectionChanged() && !m_RoutingPending && m_TileSnap is not null)
+            // the next demand refresh, which is up to thirty seconds off. The gates come
+            // FIRST: LineSelectionChanged consumes the click, and consuming it while a
+            // pass was out or the snap not yet in lost the click until that refresh.
+            if (!m_RoutingPending && m_TileSnap is not null && LineSelectionChanged())
             {
                 _ = StartRoutingPass();
             }
@@ -333,7 +295,7 @@ namespace WhereTheyGo
                 return;
             }
 
-            if (now - m_LastDemandRefresh < Assumptions.DemandRefreshSeconds && m_ZoneFlows.Count > 0)
+            if (now - m_LastDemandRefresh < Assumptions.DemandRefreshSeconds && m_DemandRefreshed)
             {
                 return;
             }

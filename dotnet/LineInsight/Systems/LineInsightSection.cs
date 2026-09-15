@@ -1,8 +1,5 @@
-﻿using Colossal.Entities;
-using Colossal.UI.Binding;
-using Game.Prefabs;
+﻿using Colossal.UI.Binding;
 using Game.UI.InGame;
-using Unity.Entities;
 
 namespace WhereTheyGo
 {
@@ -57,11 +54,13 @@ namespace WhereTheyGo
             System.Array.Clear(m_HourlySamples, 0, m_HourlySamples.Length);
         }
 
-        // Passenger transport lines only. A cargo line carries no journeys the mod
-        // knows about, and a section with nothing to say is worse than no section.
+        // Only the lines the routing models: passenger lines of a surface mode with two
+        // stops in the city (Lines.IsInsightLine). For any other line the measurement
+        // would never arrive, and a section saying "measuring" for ever is worse than
+        // no section.
         protected override void OnUpdate()
         {
-            visible = IsPassengerLine(selectedEntity);
+            visible = Lines.IsInsightLine(EntityManager, selectedEntity);
             if (visible)
             {
                 // Telling the system which line is open is what starts the measurement;
@@ -74,14 +73,6 @@ namespace WhereTheyGo
             }
 
             base.OnUpdate();
-        }
-
-        private bool IsPassengerLine(Entity entity)
-        {
-            return EntityManager.HasComponent<Game.Routes.TransportLine>(entity)
-                && EntityManager.TryGetComponent(entity, out PrefabRef prefab)
-                && EntityManager.TryGetComponent(prefab.m_Prefab, out TransportLineData data)
-                && data.m_PassengerTransport;
         }
 
         protected override void OnProcess()

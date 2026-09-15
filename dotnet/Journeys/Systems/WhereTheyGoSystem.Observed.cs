@@ -1,8 +1,6 @@
 ﻿using Game.Citizens;
 using Game.Simulation;
 using Unity.Entities;
-using Block = Game.Zones.Block;
-using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
 {

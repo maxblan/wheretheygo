@@ -3,8 +3,6 @@ using System.Globalization;
 using Game.Simulation;
 using Unity.Entities;
 using Unity.Mathematics;
-using Block = Game.Zones.Block;
-using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
 {
@@ -23,10 +21,6 @@ namespace WhereTheyGo
 
         private readonly Dictionary<Entity, int> m_StopIndices = new Dictionary<Entity, int>();
 
-        // The readings the panel is looking at, captured at the refresh so a later
-        // reading cannot change what it shows (LineReadings).
-        private LineReadings? m_LineReadings;
-
         // A game day of line readings, one every ReadingIntervalFrames of simulation
         // time. Reading a line off the single sample a refresh happens to land on
         // showed a one-boat ferry as empty whenever its boat was mid-crossing; the
@@ -44,50 +38,12 @@ namespace WhereTheyGo
         private readonly Dictionary<int, (float riders, float day, float night)> m_ExistingLineRiders =
             new Dictionary<int, (float riders, float day, float night)>();
 
+        // The ridden loop each line was last warned about, by line id (Lines.WarnOnce).
+        private readonly Dictionary<int, float> m_WarnedRiddenLoops = new Dictionary<int, float>();
+
         private uint m_LastLineRefreshFrame;
 
         private float m_LastLineSample;
-
-        // Expected rider wait in seconds at a stop position, taken from the best line
-        // that actually calls there — the same windowed interval the transit router
-        // uses. Zero when no collected line has a stop within reach, which tells the
-        // calibration there is nothing honest to record here.
-        private float ExpectedWaitAt(float2 position)
-        {
-            float best = 0f;
-            for (int i = 0; i < m_ExistingLines.Count; i++)
-            {
-                ExistingLine line = m_ExistingLines[i];
-                float wait = line.ExpectedWait;
-                if (wait <= 0f)
-                {
-                    continue;
-                }
-
-                for (int j = 0; j < line.m_StopIndices.Count; j++)
-                {
-                    int index = line.m_StopIndices[j];
-                    if (index < 0 || index >= m_TransitStops.Count)
-                    {
-                        continue;
-                    }
-
-                    if (float2Like.DistanceSq(m_TransitStops[index], new float2Like(position.x, position.y)) > Assumptions.StopMatchRadiusSq)
-                    {
-                        continue;
-                    }
-
-                    // The shortest wait wins: a rider at an interchange takes whichever
-                    // service turns up first.
-                    if (best <= 0f || wait < best)
-                    {
-                        best = wait;
-                    }
-                }
-            }
-
-            return best;
-        }
 
         // One reading of every line into the window when one is due (register A8.5:
         // every ReadingIntervalFrames of SIMULATION time, so the sample is the same at
@@ -126,7 +82,7 @@ namespace WhereTheyGo
 
             m_LastLineRefreshFrame = frame;
             Lines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
-                m_ExistingLines, m_TransitStops, m_StopIndices, m_LineEntities);
+                m_ExistingLines, m_TransitStops, m_StopIndices, m_LineEntities, m_WarnedRiddenLoops);
             for (int i = 0; i < m_ExistingLines.Count; i++)
             {
                 ExistingLine line = m_ExistingLines[i];
@@ -138,9 +94,11 @@ namespace WhereTheyGo
                 }
             }
 
-            LineReadings problem = LineWindow.Capture(m_ExistingLines, m_LineHistory);
-            LineWindow.ApplyWindow(problem);
-            m_LineReadings = problem;
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                LineWindow.ApplyWindow(m_LineHistory, m_ExistingLines[i]);
+            }
+
             LogLineHealth(frame);
             UpdateDataCoverage();
         }
@@ -161,7 +119,7 @@ namespace WhereTheyGo
                 DeferredLog.Info(
                     $"Line {(i + 1).ToString(CultureInfo.InvariantCulture)} \"{line.m_Name}\" inputs: mode={line.m_Mode}, stops={line.m_StopIndices.Count}, " +
                     $"loop={(line.m_LengthMetres).ToString("F0", CultureInfo.InvariantCulture)}m, " +
-                    $"roundTrip={(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s ridden (free-flow ideal {(line.m_PathDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, fleet-sizing {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s), " +
+                    $"roundTrip={(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s ridden (closing hop {(line.m_ClosingRideSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, free-flow ideal {(line.m_PathDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, fleet-sizing {(line.m_StableDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"gameInterval={(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s (planned, not measured; target {(line.m_TargetInterval).ToString("F0", CultureInfo.InvariantCulture)}s), " +
                     $"routerWait={(line.ExpectedWait).ToString("F0", CultureInfo.InvariantCulture)}s, " +
                     $"vehicles={(line.m_Vehicles).ToString(CultureInfo.InvariantCulture)} ({(line.CapacityPerVehicle).ToString(CultureInfo.InvariantCulture)} seats each), " +

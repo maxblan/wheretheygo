@@ -42,9 +42,14 @@ namespace WhereTheyGo
 
         public static Action<DeferredLogLevel, string>? Sink { get; set; }
 
-        public static void Bind(List<DeferredLogLine> buffer)
+        // Binds a buffer to the calling thread and hands back whatever was bound before,
+        // so a thread that is borrowed for a while - a pool thread inside a parallel
+        // loop - can be given a buffer of its own and then restored.
+        public static List<DeferredLogLine>? Bind(List<DeferredLogLine>? buffer)
         {
+            List<DeferredLogLine>? previous = s_Buffer;
             s_Buffer = buffer;
+            return previous;
         }
 
         public static void Unbind()
@@ -78,7 +83,9 @@ namespace WhereTheyGo
             buffer.Clear();
         }
 
-        private static void Write(DeferredLogLevel level, string text)
+        // A line at any level. Public so lines gathered on other threads can be handed
+        // on to whatever this thread is bound to.
+        public static void Write(DeferredLogLevel level, string text)
         {
             List<DeferredLogLine>? buffer = s_Buffer;
             if (buffer is null)

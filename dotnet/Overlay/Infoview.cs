@@ -9,9 +9,6 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
-using Block = Game.Zones.Block;
-using Transform = Game.Objects.Transform;
-using System.Diagnostics.CodeAnalysis;
 
 namespace WhereTheyGo
 {
@@ -89,15 +86,6 @@ namespace WhereTheyGo
             m_ToolSystem.activeInfoview is not null
             && m_ToolSystem.activeInfoview != m_InfoviewPrefab;
 
-        private const float PlaceableReverifySeconds = 60f;
-
-        private const int InfomodePriority = 200;
-
-
-
-
-
-
         // Registered layer prefabs, and the mapping from the infomode entity the
         // game activates back to the layer it draws.
         private readonly Dictionary<OverlayLayer, InfomodeBasePrefab> m_LayerPrefabs =
@@ -150,7 +138,7 @@ namespace WhereTheyGo
 
                 var info = new InfomodeInfo();
                 SetField(info, "m_Mode", prefab);
-                SetField(info, "m_Priority", InfomodePriority - i);
+                SetField(info, "m_Priority", Assumptions.InfomodePriority - i);
                 SetField(info, "m_Supplemental", value: false);
                 SetField(info, "m_Optional", value: false);
                 infomodeInfos.Add(info);
@@ -159,10 +147,10 @@ namespace WhereTheyGo
             m_InfoviewPrefab = PrefabBase.Create<InfoviewPrefab>("WhereTheyGo");
             SetField(m_InfoviewPrefab, "m_Infomodes", infomodeInfos.ToArray());
             SetField(m_InfoviewPrefab, "m_IconPath", "coui://wheretheygo/WhereTheyGo.svg");
-            SetField(m_InfoviewPrefab, "m_Priority", 900);
+            SetField(m_InfoviewPrefab, "m_Priority", Assumptions.InfoviewPriority);
             SetField(m_InfoviewPrefab, "m_Group", 0);
-            SetField(m_InfoviewPrefab, "m_DefaultColor", new Color(0.35f, 0.35f, 0.38f, 1f));
-            SetField(m_InfoviewPrefab, "m_SecondaryColor", new Color(0.5f, 0.5f, 0.55f, 1f));
+            SetField(m_InfoviewPrefab, "m_DefaultColor", OverlayLayers.Opaque(Assumptions.InfoviewDefaultColour));
+            SetField(m_InfoviewPrefab, "m_SecondaryColor", OverlayLayers.Opaque(Assumptions.InfoviewSecondaryColour));
             // The view MUST stay valid and non-editor. InfoviewsUISystem.BindInfoviews
             // skips invalid views, which is tempting as a way to keep this out of the
             // Infoansicht menu — but ToolSystem.SetInfoview only activates a view's
@@ -187,12 +175,12 @@ namespace WhereTheyGo
             InfomodeBasePrefab prefab = PrefabBase.Create<AccessInfomodePrefab>(OverlayLayers.NameOf(layer));
             OverlayLayers.ColorsOf(layer, out Color low, out Color medium, out Color high);
 
-            SetField(prefab, "m_Priority", InfomodePriority);
+            SetField(prefab, "m_Priority", Assumptions.InfomodePriority);
             SetField(prefab, "editor", value: false);
             SetField(prefab, "m_Low", low);
             SetField(prefab, "m_Medium", medium);
             SetField(prefab, "m_High", high);
-            SetField(prefab, "m_Steps", 16);
+            SetField(prefab, "m_Steps", Assumptions.InfomodeGradientSteps);
             SetField(prefab, "m_LegendType", GradientLegendType.Gradient);
             // A label per LAYER, not one pair for both: the two ramps mean different
             // things at their ends, and "Low — High" under each of them says neither.
@@ -271,7 +259,7 @@ namespace WhereTheyGo
                 {
                     _ = buffer.Add(new InfoviewMode(
                         entity,
-                        InfomodePriority - i,
+                        Assumptions.InfomodePriority - i,
                         supplemental: false,
                         optional: false));
                     added++;
@@ -329,7 +317,7 @@ namespace WhereTheyGo
             float now = UnityEngine.Time.realtimeSinceStartup;
             bool full = !m_PlaceableSweepDone
                 || placeableCount != m_LastPlaceableCount
-                || now - m_LastPlaceableSweep >= PlaceableReverifySeconds;
+                || now - m_LastPlaceableSweep >= Assumptions.PlaceableReverifySeconds;
 
             if (!full && m_PlaceableInfoviewChangedQuery.IsEmptyIgnoreFilter)
             {

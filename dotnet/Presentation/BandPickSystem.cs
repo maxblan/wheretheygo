@@ -17,19 +17,8 @@ namespace WhereTheyGo
     // about the player's input is intercepted.
     public sealed partial class BandPickSystem : GameSystemBase
     {
-        // The arc is tested in this many pieces. More than the renderer draws: a hit
-        // test that is coarser than the line it tests looks like a mis-aimed pointer.
-        private const int PickSamples = 24;
-
-        // How far outside its own edge a band may still be grabbed, in PIXELS.
-        //
-        // In pixels rather than in metres because the bands now fly: an arc is drawn
-        // where it appears on screen, not where it lies on the map, so the only honest
-        // question is how far the pointer is from the drawn line. It also fixes what
-        // the old slack in metres got wrong at both ends of the zoom — forty metres is
-        // half the screen from up close and invisible from far away.
-        private const float PickSlackPixels = 14f;
-
+        // How finely the arc is sampled and how far outside its edge it may still be
+        // grabbed are Assumptions.BandPickSamples and .BandPickSlackPixels.
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate.
         private WhereTheyGoSystem m_Overlay;
@@ -92,7 +81,7 @@ namespace WhereTheyGo
                 // Half the band's own width on screen would be the exact answer; the
                 // band is drawn in metres, so the slack alone stands in for it. A
                 // thick band is easier to hit anyway because its arc is the same line.
-                if (distanceSq <= PickSlackPixels * PickSlackPixels)
+                if (distanceSq <= Assumptions.BandPickSlackPixels * Assumptions.BandPickSlackPixels)
                 {
                     bestDistance = distanceSq;
                     best = band;
@@ -112,10 +101,10 @@ namespace WhereTheyGo
             bool havePrevious = false;
             float lastX = 0f;
             float lastY = 0f;
-            for (int i = 0; i <= PickSamples; i++)
+            for (int i = 0; i <= Assumptions.BandPickSamples; i++)
             {
                 BandGeometry.PointOnArc(
-                    band.Ax, footA, band.Az, band.Bx, footB, band.Bz, i / (float)PickSamples,
+                    band.Ax, footA, band.Az, band.Bx, footB, band.Bz, i / (float)Assumptions.BandPickSamples,
                     out float x, out float y, out float z);
                 if (!TryProject(viewProjection, pixelWidth, pixelHeight, x, y, z, out float sx, out float sy))
                 {

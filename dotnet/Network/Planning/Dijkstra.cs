@@ -158,12 +158,23 @@ namespace WhereTheyGo
         }
 
         // Single-source shortest paths, stopping once every reachable node within
-        // maxCost is settled. One call serves every destination from that source,
-        // which is why flow assignment runs one search per origin zone rather than
-        // one per origin/destination pair.
+        // maxCost is settled. One call serves every destination from that source.
         public void Run(CompactGraph graph, int source, float maxCost)
         {
-            Run(graph, source, maxCost, int.MaxValue);
+            Resize(graph.NodeCount);
+            ClearTouched();
+
+            if (source < 0 || source >= graph.NodeCount)
+            {
+                return;
+            }
+
+            m_HeapCount = 0;
+            Touch(source);
+            Dist[source] = 0f;
+            PrevEdge[source] = -1;
+            HeapPush(source);
+            Settle(graph, maxCost);
         }
 
         // Several starting nodes at once, each with its own starting cost — the stops a
@@ -191,51 +202,18 @@ namespace WhereTheyGo
                 }
             }
 
-            Settle(graph, maxCost, int.MaxValue, wanted: null, source: -1);
-        }
-
-        // As above, but nodes numbered `expandBelow` and up are SINKS: they receive a
-        // distance and a predecessor yet never relax their own edges (the source
-        // excepted). The line-set routing puts every journey door in that range, so a
-        // door can be walked to but not through — otherwise two stops within reach of
-        // one door were joined by an 800 m "walk" the transfer rule never allows.
-        public void Run(CompactGraph graph, int source, float maxCost, int expandBelow)
-        {
-            Run(graph, source, maxCost, expandBelow, wanted: null);
-        }
-
-        // As above, and a sink is only RELAXED INTO when `wanted[sink]` is set: the
-        // line-set routing asks one origin door about its own destinations, not about
-        // every door in the city, and a central stop has edges to hundreds of them.
-        // Distances to the wanted sinks are unchanged — a sink never expands, so no
-        // path runs through the ones skipped.
-        public void Run(CompactGraph graph, int source, float maxCost, int expandBelow, bool[]? wanted)
-        {
-            Resize(graph.NodeCount);
-            ClearTouched();
-
-            if (source < 0 || source >= graph.NodeCount)
-            {
-                return;
-            }
-
-            m_HeapCount = 0;
-            Touch(source);
-            Dist[source] = 0f;
-            PrevEdge[source] = -1;
-            HeapPush(source);
-            Settle(graph, maxCost, expandBelow, wanted, source);
+            Settle(graph, maxCost);
         }
 
         // The main loop shared by every entry point: pops the heap and relaxes edges
         // until nothing within maxCost is left.
-        private void Settle(CompactGraph graph, float maxCost, int expandBelow, bool[]? wanted, int source)
+        private void Settle(CompactGraph graph, float maxCost)
         {
             while (m_HeapCount > 0)
             {
                 int node = HeapPop();
                 float nodeDist = Dist[node];
-                if (nodeDist > maxCost || (node >= expandBelow && node != source))
+                if (nodeDist > maxCost)
                 {
                     continue;
                 }
@@ -255,7 +233,7 @@ namespace WhereTheyGo
 
                     int next = graph.AdjOther[i];
                     float candidate = nodeDist + graph.EdgeCost[edge];
-                    if (candidate > maxCost || (wanted is not null && next >= expandBelow && !wanted[next]))
+                    if (candidate > maxCost)
                     {
                         continue;
                     }

@@ -52,8 +52,6 @@ namespace WhereTheyGo
 
     internal sealed class RoutingResult
     {
-        // Σ w · max(0, before − after) in seconds·journeys per day.
-        public double TimeSaved;
         // Journey weight riding each EXISTING line (index = position in BaseLines):
         // what the network as it stands carries, which is what the line verdicts read
         // as a line's demand (register A8.2, decided 2026-09-06).
@@ -72,11 +70,6 @@ namespace WhereTheyGo
         public bool[] Carried = Array.Empty<bool>();
         // Whether each pair's fastest itinerary rides RoutingProblem.TargetLine.
         public bool[] RidesTarget = Array.Empty<bool>();
-        // Time-weighted components over all pairs for the realism diagnostic
-        // (walk 2.2, wait 2.1, ride 1 — TCQSM): what the set's journeys spend.
-        public double WalkSeconds;
-        public double WaitSeconds;
-        public double RideSeconds;
     }
 
     // What "the network carries this journey" means, and how much of the city's travel
@@ -147,20 +140,15 @@ namespace WhereTheyGo
     internal static class JourneyRouting
     {
 
-        // One search per origin DOOR rather than per pair, capped at the largest
-        // door-to-door time the door's pairs can still improve on. Doors are not nodes
-        // of the transit graph: a search starts at every stop within reach of the
-        // origin door (at the walking time to it) and a destination's time is the least
-        // over the stops within reach of its door — the same distances the door-node
-        // graph of the specification gives (a door is reached, never walked through),
-        // at a fraction of the edges. Both the per-door grouping and the cap are exact
-        // rewrites of the per-pair search: pairs from one door see the same stops, and
-        // a network with lines added never lengthens a journey, so a destination
-        // further than a pair's own `before` yields `before` whether or not the search
-        // finished the distance. The sums stay in pair order: per-pair results are
-        // collected during the searches and folded afterwards, so one thread or sixteen
-        // give the same bits.
-        public static RoutingResult Evaluate(RoutingProblem problem, float[]? before)
+        // One search per origin DOOR rather than per pair, capped at the longest walk
+        // among the door's pairs - past it transit cannot beat walking, so the answer is
+        // the walk either way. Doors are not nodes of the transit graph: a search starts
+        // at every stop within reach of the origin door (at the walking time to it) and
+        // a destination's time is the least over the stops within reach of its door -
+        // a door is reached, never walked through. The sums stay in pair order: per-pair
+        // results are collected during the searches and folded afterwards, so one
+        // thread or sixteen give the same bits.
+        public static RoutingResult Evaluate(RoutingProblem problem)
         {
             RoutingGeometry geometry = GeometryOf(problem);
             TransitNetwork network = TransitGraph.Build(
@@ -183,26 +171,42 @@ namespace WhereTheyGo
             int nodeCount = network.Graph.NodeCount;
             // The origins are independent (each writes only its own pairs' legs), so
             // they are spread over half the cores — the other half stays the game's.
+            //
+            // The pool threads doing the work have no DeferredLog buffer of their own,
+            // and the game's logger must not be written from them (DeferredLog). Each
+            // thread is therefore given a buffer for the duration and its lines are
+            // handed on to the calling thread's afterwards.
             var options = new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) };
+            var pooledLines = new List<DeferredLogLine>();
+            object gate = new object();
             _ = System.Threading.Tasks.Parallel.For(
                 0,
                 geometry.ZoneCount,
                 options,
-                () => new DijkstraWorkspace(nodeCount),
-                (zone, _, workspace) =>
+                () => new SearchThread(nodeCount),
+                (zone, _, thread) =>
                 {
-                    SearchOrigin(problem, geometry, network, access, before, lineCount, zone, workspace, legs);
-                    return workspace;
+                    SearchOrigin(problem, geometry, network, access, lineCount, zone, thread.Workspace, legs);
+                    return thread;
                 },
-                static _ => { });
+                thread =>
+                {
+                    _ = DeferredLog.Bind(thread.PreviousBuffer);
+                    lock (gate)
+                    {
+                        pooledLines.AddRange(thread.Lines);
+                    }
+                });
+            for (int i = 0; i < pooledLines.Count; i++)
+            {
+                DeferredLog.Write(pooledLines[i].Level, pooledLines[i].Text);
+            }
+
             for (int i = 0; i < problem.PairCount; i++)
             {
                 evaluation.After[i] = legs.After[i];
                 evaluation.Transit[i] = legs.Transit[i];
                 double weight = problem.PairWeight[i];
-                evaluation.WalkSeconds += weight * legs.Walk[i];
-                evaluation.WaitSeconds += weight * legs.Wait[i];
-                evaluation.RideSeconds += weight * legs.Ride[i];
                 int[]? ridden = legs.Ridden[i];
                 if (ridden is not null)
                 {
@@ -220,13 +224,24 @@ namespace WhereTheyGo
                     }
                 }
 
-                if (before is not null && before[i] > evaluation.After[i])
-                {
-                    evaluation.TimeSaved += weight * (double)(before[i] - evaluation.After[i]);
-                }
             }
 
             return evaluation;
+        }
+
+        // One pool thread's scratch for the searches and the log lines it writes while
+        // it holds them.
+        private sealed class SearchThread
+        {
+            public readonly DijkstraWorkspace Workspace;
+            public readonly List<DeferredLogLine> Lines = new List<DeferredLogLine>();
+            public readonly List<DeferredLogLine>? PreviousBuffer;
+
+            public SearchThread(int nodeCount)
+            {
+                Workspace = new DijkstraWorkspace(nodeCount);
+                PreviousBuffer = DeferredLog.Bind(Lines);
+            }
         }
 
         // Compares the network as it stands with the same network minus one line.
@@ -329,7 +344,7 @@ namespace WhereTheyGo
                         if (distSq <= reachSq)
                         {
                             stops.Add(stop);
-                            costs.Add(Math.Max(0.01f, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed));
+                            costs.Add(Math.Max(Assumptions.MinEdgeSeconds, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed));
                         }
                     }
                 }
@@ -344,7 +359,7 @@ namespace WhereTheyGo
         // The door-to-door times of every pair leaving one origin door: one search from
         // the stops the door reaches, then the least stop-plus-walk for each destination.
         private static void SearchOrigin(
-            RoutingProblem problem, RoutingGeometry geometry, TransitNetwork network, DoorAccess access, float[]? before,
+            RoutingProblem problem, RoutingGeometry geometry, TransitNetwork network, DoorAccess access,
             int lineCount, int zone, DijkstraWorkspace workspace, PairLegs legs)
         {
             int first = geometry.OriginStart[zone];
@@ -358,7 +373,7 @@ namespace WhereTheyGo
             for (int k = first; k < last; k++)
             {
                 int pair = geometry.PairsByOrigin[k];
-                cap = Math.Max(cap, before is null ? geometry.WalkOnly[pair] : before[pair]);
+                cap = Math.Max(cap, geometry.WalkOnly[pair]);
             }
 
             cap = Math.Min(problem.MaxTravelSeconds, cap);
@@ -377,7 +392,6 @@ namespace WhereTheyGo
                 float walkOnly = geometry.WalkOnly[pair];
                 float transit = float.MaxValue;
                 int alight = -1;
-                float alightWalk = 0f;
                 for (int d = access.Start[destination]; d < access.Start[destination + 1]; d++)
                 {
                     int stop = access.Stop[d];
@@ -392,7 +406,6 @@ namespace WhereTheyGo
                     {
                         transit = total;
                         alight = stop;
-                        alightWalk = access.Cost[d];
                     }
                 }
 
@@ -400,35 +413,24 @@ namespace WhereTheyGo
                 legs.Transit[pair] = transit;
                 if (transit < walkOnly)
                 {
-                    legs.Walk[pair] += alightWalk;
-                    AttributeItinerary(network, workspace, alight, lineCount, pair, legs);
-                }
-                else
-                {
-                    legs.Walk[pair] = walkOnly;
+                    legs.Ridden[pair] = RiddenLines(network, workspace, alight, lineCount);
                 }
             }
         }
 
-        // Per-pair itinerary components, held until the pair-ordered fold.
+        // Per-pair results, held until the pair-ordered fold.
         private sealed class PairLegs
         {
             public readonly float[] After;
             // The best transit itinerary's own time, float.MaxValue where there is
             // none — apart from After, which is the better of transit and walking.
             public readonly float[] Transit;
-            public readonly double[] Walk;
-            public readonly double[] Wait;
-            public readonly double[] Ride;
             public readonly int[]?[] Ridden;
 
             public PairLegs(int pairCount)
             {
                 After = new float[pairCount];
                 Transit = new float[pairCount];
-                Walk = new double[pairCount];
-                Wait = new double[pairCount];
-                Ride = new double[pairCount];
                 Ridden = new int[]?[pairCount];
             }
         }
@@ -505,12 +507,9 @@ namespace WhereTheyGo
         }
 
         // Walks the retained shortest itinerary back from the alighting stop to the
-        // stop the journey started at, splitting its cost into walk, wait and ride and
-        // noting each ridden line once, by its index in the transit network. The
-        // starting stop's distance is the origin's access walk.
-        private static void AttributeItinerary(
-            TransitNetwork network, DijkstraWorkspace workspace, int alight,
-            int lineCount, int pair, PairLegs into)
+        // stop the journey started at and notes each ridden line once, by its index in
+        // the transit network. Null when no line was boarded.
+        private static int[]? RiddenLines(TransitNetwork network, DijkstraWorkspace workspace, int alight, int lineCount)
         {
             int node = alight;
             int guard = network.Graph.EdgeCount + 2;
@@ -520,41 +519,26 @@ namespace WhereTheyGo
                 int edge = workspace.PrevEdge[node];
                 if (edge < 0)
                 {
-                    into.Walk[pair] += workspace.Dist[node];
                     break;
                 }
 
-                float cost = network.Graph.EdgeCost[edge];
-                switch (network.EdgeKind[edge])
+                if (network.EdgeKind[edge] == TransitEdgeKind.Access)
                 {
-                    case TransitEdgeKind.Walk:
-                        into.Walk[pair] += cost;
-                        break;
-                    case TransitEdgeKind.Access:
-                        into.Wait[pair] += cost;
-                        int line = network.EdgeLine[edge];
-                        if (line >= 0 && line < lineCount)
+                    int line = network.EdgeLine[edge];
+                    if (line >= 0 && line < lineCount)
+                    {
+                        ridden ??= new List<int>();
+                        if (!ridden.Contains(line))
                         {
-                            ridden ??= new List<int>();
-                            if (!ridden.Contains(line))
-                            {
-                                ridden.Add(line);
-                            }
+                            ridden.Add(line);
                         }
-
-                        break;
-                    default:
-                        into.Ride[pair] += cost;
-                        break;
+                    }
                 }
 
                 node = network.Graph.OtherEnd(edge, node);
             }
 
-            if (ridden is not null)
-            {
-                into.Ridden[pair] = ridden.ToArray();
-            }
+            return ridden?.ToArray();
         }
 
     }

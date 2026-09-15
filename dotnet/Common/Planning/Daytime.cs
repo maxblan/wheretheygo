@@ -25,7 +25,6 @@ namespace WhereTheyGo
     // separately.
     internal static class Daytime
     {
-
         public static bool IsNight(float timeOfDay)
         {
             float t = Frac(timeOfDay);
@@ -113,59 +112,5 @@ namespace WhereTheyGo
             return (IsNightHour(outHour) ? 0f : 0.5f) + (IsNightHour(backHour) ? 0f : 0.5f);
         }
 
-        // Boardings over the seats a line offers during one period only: the seats of a
-        // vehicle scaled by the period's share of the day (the day's runs happen in
-        // both periods in proportion), through the one utilisation formula.
-        public static float UtilisationInPeriod(float ridersInPeriod, float headwaySeconds, float vehicleCapacity, float periodShareOfDay)
-        {
-            if (periodShareOfDay <= 0f)
-            {
-                return 0f;
-            }
-
-            return Coverage.Utilisation(ridersInPeriod, headwaySeconds, (double)vehicleCapacity * periodShareOfDay);
-        }
-
-        // The schedule a line should run, suggested or existing (register A8, decided
-        // 2026-09-06: one rule for both, on the boardings the routing attributes to the
-        // line in each period): all day unless one period falls under the utilisation
-        // floor while the other does not. A line under the floor in both is not a
-        // schedule question and stays all day here.
-        // The same rule asked of an EXISTING line: when both periods are under the floor
-        // (or no floor is set) there is no schedule question and the line keeps the
-        // schedule it runs — a day-only line with no demand in either period is not told
-        // to extend into the night (found on Valmare 2026-09-06: three trains with zero
-        // routed riders were advised "run it all day").
-        public static LineSchedule Advise(LineSchedule current, float dayUtilisation, float nightUtilisation, float floor)
-        {
-            if (floor <= 0f || (dayUtilisation < floor && nightUtilisation < floor))
-            {
-                return current;
-            }
-
-            return Recommend(dayUtilisation, nightUtilisation, floor);
-        }
-
-        public static LineSchedule Recommend(float dayUtilisation, float nightUtilisation, float floor)
-        {
-            if (floor <= 0f)
-            {
-                return LineSchedule.DayAndNight;
-            }
-
-            bool dayOk = dayUtilisation >= floor;
-            bool nightOk = nightUtilisation >= floor;
-            if (dayOk && !nightOk)
-            {
-                return LineSchedule.Day;
-            }
-
-            if (nightOk && !dayOk)
-            {
-                return LineSchedule.Night;
-            }
-
-            return LineSchedule.DayAndNight;
-        }
     }
 }

@@ -9,15 +9,6 @@ namespace WhereTheyGo
     // line carries.
     public sealed partial class WhereTheyGoSystem
     {
-        // Door-to-door seconds of every pair in the table over the existing network:
-        // the better of its transit itinerary and walking the whole way.
-        private float[]? m_Baseline;
-
-        // What the last routing found, kept for the figures and the bands that read it.
-        private RoutingResult? m_Routed;
-
-        private RoutingProblem? m_RoutedProblem;
-
         private CarriedReport m_CarriedReport;
 
         internal CarriedReport Carried => m_CarriedReport;
@@ -192,7 +183,7 @@ namespace WhereTheyGo
             m_PendingRouting = System.Threading.Tasks.Task.Run(
                 () =>
                 {
-                    DeferredLog.Bind(pass.Log);
+                    _ = DeferredLog.Bind(pass.Log);
                     try
                     {
                         RunRoutingPass(pass);
@@ -234,7 +225,7 @@ namespace WhereTheyGo
         private static void RunRoutingPass(RoutingPass pass)
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            RoutingResult routed = JourneyRouting.Evaluate(pass.Problem, before: null);
+            RoutingResult routed = JourneyRouting.Evaluate(pass.Problem);
             pass.Carried = JourneyRouting.MarkCarried(pass.Problem, routed, new float[pass.Problem.PairCount]);
             pass.Result = routed;
             pass.RouteMs = clock.ElapsedMilliseconds;
@@ -287,7 +278,7 @@ namespace WhereTheyGo
                 }
             }
 
-            RoutingResult without = JourneyRouting.Evaluate(reduced, before: null);
+            RoutingResult without = JourneyRouting.Evaluate(reduced);
             return JourneyRouting.Measure(full, routed, without);
         }
 
@@ -315,12 +306,9 @@ namespace WhereTheyGo
 
             m_ContributionLineId = pass.TargetLine >= 0 ? pass.TargetLineId : -1;
             m_LineContribution = pass.Contribution;
-            m_Routed = pass.Result;
-            m_RoutedProblem = pass.Problem;
             m_CarriedReport = pass.Carried;
             SetCarriedFigure(m_CarriedReport.Share);
             m_Bands = pass.Bands;
-            m_Baseline = pass.Result.After;
             m_ExistingLineRiders.Clear();
             for (int i = 0; i < pass.Result.BaseRiders.Length && i < m_ExistingLines.Count; i++)
             {
@@ -337,14 +325,12 @@ namespace WhereTheyGo
                 RefreshCoverage(settings, "routed");
             }
 
-            LogRoutingPass(pass);
+            LogRoutingPass(pass, pass.Result, pass.Bands);
         }
 
-        private void LogRoutingPass(RoutingPass pass)
+        private void LogRoutingPass(RoutingPass pass, RoutingResult routed, BandSet bands)
         {
             RoutingProblem problem = pass.Problem;
-            RoutingResult routed = pass.Result!;
-            BandSet bands = pass.Bands!;
             DeferredLog.Info(
                 $"Door-to-door routing: {(problem.PairCount).ToString(CultureInfo.InvariantCulture)} pairs from " +
                 $"{(JourneyRouting.GeometryOf(problem).ZoneCount).ToString(CultureInfo.InvariantCulture)} doors over " +

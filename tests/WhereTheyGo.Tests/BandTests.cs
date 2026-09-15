@@ -440,6 +440,42 @@ namespace WhereTheyGo.Tests
             AssertEqual(BandView.WidthOf(0), BandView.WidthOf(-3), 1e-6f, "a class below the first clamps rather than throwing");
             AssertEqual(BandView.WidthOf(BandView.ClassCount - 1), BandView.WidthOf(99), 1e-6f, "and one above the last");
 
+            // Bands too close together for three readable boundaries to fit between the
+            // lightest and the heaviest: the boundaries that do not fit collapse onto the
+            // last that does and stay BELOW the heaviest - the legend then skips the empty
+            // class instead of promising "5000 and more" for a width nothing is drawn at.
+            var narrow = new List<Journey>
+            {
+                Commute(100f, 100f, 3000f, 100f, 4200f, 8, 17),
+                Commute(100f, 1000f, 3000f, 1000f, 2500f, 8, 17),
+                Commute(100f, 1900f, 3000f, 1900f, 1000f, 8, 17),
+            };
+            BandView tight = BandView.Of(BundleOf(narrow, carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands), hour: -1, Band.AllPurposes, thresholdShare: 0f);
+            for (int i = 0; i < tight.ClassBreaks.Length; i++)
+            {
+                AssertTrue(tight.ClassBreaks[i] < tight.Heaviest, $"no boundary above the heaviest band: {tight.ClassBreaks[i].ToString("F0", CultureInfo.InvariantCulture)} vs {tight.Heaviest.ToString("F0", CultureInfo.InvariantCulture)}");
+                AssertTrue(i == 0 || tight.ClassBreaks[i] >= tight.ClassBreaks[i - 1], "boundaries never run backwards");
+                AssertTrue(IsReadableNumber(tight.ClassBreaks[i]), "and stay readable");
+            }
+
+            AssertTrue(tight.Drawn[0].WidthClass == BandView.ClassCount - 1, "the heaviest band is still in the widest class");
+            AssertTrue(tight.Drawn[^1].WidthClass == 0, "the lightest in the thinnest");
+            AssertTrue(tight.Drawn[1].WidthClass <= tight.Drawn[0].WidthClass && tight.Drawn[1].WidthClass >= tight.Drawn[2].WidthClass, "and the one between them between them");
+
+            // Two bands a tenth apart have no readable number between them at all and
+            // are drawn the same width - but still never under a boundary above them.
+            var twins = new List<Journey>
+            {
+                Commute(100f, 100f, 3000f, 100f, 1100f, 8, 17),
+                Commute(100f, 1000f, 3000f, 1000f, 1000f, 8, 17),
+            };
+            BandView pair = BandView.Of(BundleOf(twins, carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands), hour: -1, Band.AllPurposes, thresholdShare: 0f);
+            AssertTrue(pair.Drawn[0].WidthClass == pair.Drawn[1].WidthClass, "1000 and 1100 share a class");
+            foreach (float edge in pair.ClassBreaks)
+            {
+                AssertTrue(edge <= pair.Heaviest, "and no boundary sits above 1100");
+            }
+
             // Degenerate: every band the same weight. One class is the honest answer,
             // and nothing may be promoted out of it.
             var flat = new List<Journey>

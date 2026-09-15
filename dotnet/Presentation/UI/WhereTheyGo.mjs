@@ -351,7 +351,7 @@ function Purposes({ mask, weights }) {
 }
 
 // How much of the map the threshold is hiding, and what each width class means.
-function Bands({ thresholdPercent, shown, total, hiddenShare, breaks, widths, ramp }) {
+function Bands({ thresholdPercent, thresholdMax, shown, total, hiddenShare, breaks, widths, ramp }) {
     const t = useTranslate();
     return h("div", { className: "wtg-bands" },
         h(Row, {
@@ -362,7 +362,9 @@ function Bands({ thresholdPercent, shown, total, hiddenShare, breaks, widths, ra
         h(Slider, {
             value: thresholdPercent,
             start: 0,
-            end: 25,
+            // The range is C#'s (Assumptions.BandThresholdMaxPercent); the fallback only
+            // covers a map state written before the field existed.
+            end: thresholdMax || 25,
             onChange: (value) => trigger("setBandThreshold", value),
         }),
         h(Caption, null,
@@ -384,6 +386,12 @@ function WidthLegend({ breaks, widths, ramp }) {
     for (let i = 0; i < widths.length; i++) {
         const low = i === 0 ? 0 : breaks[i - 1];
         const high = i < breaks.length ? breaks[i] : null;
+        // Two equal boundaries are an empty class (BandView.ClassBreaks): nothing on the
+        // map is drawn at that width, so the legend has no row for it.
+        if (high !== null && low === high) {
+            continue;
+        }
+
         const text = high === null
             ? t("ClassOver", "{0} and more").replace("{0}", String(Math.round(low)))
             : low === 0
@@ -549,6 +557,7 @@ function InfoviewFigures() {
         })),
         h(Section, null, h(Bands, {
             thresholdPercent: state.thresholdPercent,
+            thresholdMax: state.thresholdMaxPercent,
             shown: state.bandsShown,
             total: state.bandsTotal,
             hiddenShare: state.hiddenShare,
@@ -565,13 +574,15 @@ function InfoviewFigures() {
 
 // The walk-to-transit row in the game's own selected-building window, drawn from what
 // BuildingAccessSection wrote. The props are that section's JSON.
-function BuildingAccessRow({ walkSeconds, served, horizonMinutes }) {
+function BuildingAccessRow({ walkSeconds, served, reached, horizonMinutes }) {
     const t = useTranslate();
     const minutes = Math.round((walkSeconds || 0) / 60);
     // Three cases, and the third is why this is not one line: within the horizon, beyond
     // it but measured, and beyond the search itself. "over 10 min" for the last two
     // together is what made a 12-minute walk and no service at all look the same.
-    const value = walkSeconds > 0
+    // `reached` rather than a non-zero walk decides the third: a building at a stop
+    // walks zero seconds and is not "no stop in reach".
+    const value = reached
         ? t("WalkMinutes", "{0} min").replace("{0}", String(minutes))
         : t("WalkNone", "no stop in reach");
 

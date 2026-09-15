@@ -7,16 +7,15 @@ using Game.Citizens;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using Block = Game.Zones.Block;
 using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
 {
-    // Observed shopping and leisure journeys (register A0.1; formal-specification.md
-    // §7b step 1 v2): the once-a-second scan of citizens queued inside buildings and
-    // travelling, keyed per (citizen, purpose) so one journey is recorded once, the
-    // window they are held in, and the hand-over into the demand refresh's queue. The
-    // overlay system owns the queries and the lookups and calls Scan on its cadence.
+    // Observed shopping and leisure journeys (register A0.1): the once-a-second scan
+    // of citizens queued inside buildings and travelling, keyed per (citizen, purpose)
+    // so one journey is recorded once, the window they are held in, and the hand-over
+    // into the demand refresh's queue. The overlay system owns the queries and the
+    // lookups and calls Scan on its cadence.
     internal sealed class TripObserver
     {
         private readonly EntityManager m_EntityManager;
@@ -71,7 +70,12 @@ namespace WhereTheyGo
 
         private readonly Dictionary<Entity, byte> m_CurrentJourney = new Dictionary<Entity, byte>();
 
+        // Bounded by the citizens that EXIST: entries for the dead and the departed are
+        // swept out on every Drain (ForgetGoneCitizens), so a long session with churn
+        // does not keep every citizen the city ever had.
         private readonly Dictionary<Entity, Entity> m_LastBuilding = new Dictionary<Entity, Entity>();
+
+        private int m_ForgottenCitizens;
 
 
         private int m_ObservedWithoutOrigin;
@@ -186,6 +190,32 @@ namespace WhereTheyGo
             m_ObserveCount++;
             m_ObserveMsSum += clock.ElapsedMilliseconds;
             m_ObserveMsMax = Math.Max(m_ObserveMsMax, clock.ElapsedMilliseconds);
+        }
+
+        // Drops the remembered building of every citizen the world no longer has.
+        private void ForgetGoneCitizens()
+        {
+            List<Entity>? gone = null;
+            foreach (Entity citizen in m_LastBuilding.Keys)
+            {
+                if (!m_EntityManager.Exists(citizen))
+                {
+                    gone ??= new List<Entity>();
+                    gone.Add(citizen);
+                }
+            }
+
+            if (gone is null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < gone.Count; i++)
+            {
+                _ = m_LastBuilding.Remove(gone[i]);
+            }
+
+            m_ForgottenCitizens += gone.Count;
         }
 
         private void RememberBuildings()
@@ -407,6 +437,7 @@ namespace WhereTheyGo
         // queue, each observed journey weighted so the window reads as one day.
         public void Drain(NativeQueue<Journey> trips)
         {
+            ForgetGoneCitizens();
             float scale = Window.ScaleFor(Assumptions.FramesPerGameDay);
             m_ObservedLastDemand = Window.Count;
             m_ObservedScaleLastDemand = scale;
@@ -436,7 +467,8 @@ namespace WhereTheyGo
                 $"Journey scan: {(m_ObservedQueued).ToString(CultureInfo.InvariantCulture)} shopping/leisure trips queued inside buildings, " +
                 $"{(m_ObservedTravelling).ToString(CultureInfo.InvariantCulture)} under way ({(m_ObservedTravellingWithBuilding).ToString(CultureInfo.InvariantCulture)} newly recorded from the creature's building target; " +
                 $"targets unreadable this scan: none={(m_ObservedTargetMissing).ToString(CultureInfo.InvariantCulture)}, vehicle without building target={(m_ObservedTargetVehicle).ToString(CultureInfo.InvariantCulture)}, other={(m_ObservedTargetOther).ToString(CultureInfo.InvariantCulture)}); " +
-                $"buildings remembered for {(m_LastBuilding.Count).ToString(CultureInfo.InvariantCulture)} citizens; purposes under way: {PurposeHistogram()}");
+                $"buildings remembered for {(m_LastBuilding.Count).ToString(CultureInfo.InvariantCulture)} citizens ({(m_ForgottenCitizens).ToString(CultureInfo.InvariantCulture)} gone citizens forgotten); purposes under way: {PurposeHistogram()}");
+            m_ForgottenCitizens = 0;
             if (Window.EvictedSinceLastReport > 0 || Window.DroppedAtCapSinceLastReport > 0 || m_ObservedWithoutOrigin > 0)
             {
                 DeferredLog.Info(

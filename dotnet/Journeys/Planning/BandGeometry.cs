@@ -86,9 +86,11 @@ namespace WhereTheyGo
         public static void Colour(float carriedShare, out float r, out float g, out float b)
         {
             float t = carriedShare < 0f ? 0f : carriedShare > 1f ? 1f : carriedShare;
-            r = Lerp(0.99f, 0.13f, t);
-            g = Lerp(0.55f, 0.25f, t);
-            b = Lerp(0.24f, 0.55f, t);
+            float[] warm = Assumptions.BandColourWarm;
+            float[] cool = Assumptions.BandColourCool;
+            r = Lerp(warm[0], cool[0], t);
+            g = Lerp(warm[1], cool[1], t);
+            b = Lerp(warm[2], cool[2], t);
         }
 
         // How far a point lies from a straight piece of a line, squared. The hit test
@@ -115,12 +117,10 @@ namespace WhereTheyGo
         public static void OutlineColour(float carriedShare, out float r, out float g, out float b)
         {
             Colour(carriedShare, out float fillR, out float fillG, out float fillB);
-            r = fillR * OutlineDarkening;
-            g = fillG * OutlineDarkening;
-            b = fillB * OutlineDarkening;
+            r = fillR * Assumptions.BandOutlineDarkening;
+            g = fillG * Assumptions.BandOutlineDarkening;
+            b = fillB * Assumptions.BandOutlineDarkening;
         }
-
-        private const float OutlineDarkening = 0.28f;
 
         private static float Lerp(float from, float to, float t) => from + ((to - from) * t);
     }

@@ -7,12 +7,6 @@ charset = utf-8-bom
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[dotnet/F11Export/Planning/ExportJson.cs]
-end_of_line = lf
-
-[dotnet/F11Export/Systems/TransitArchitectSystem.VerificationExport.cs]
-end_of_line = lf
-
 [*.{json,mjs,css,md,yml}]
 indent_style = space
 indent_size = 2

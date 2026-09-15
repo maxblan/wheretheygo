@@ -24,8 +24,9 @@ namespace WhereTheyGo
     // way the ridership sampler watches stops. Home-to-work and home-to-school
     // journeys are read whole from the save as one journey per citizen per day; to
     // sit beside them on equal footing (A0.1: every purpose weighs the same), the
-    // observed journeys are kept for one game day and scaled to a per-day rate when
-    // the window is not yet a day long.
+    // observed journeys are kept for Assumptions.ObservationWindowDays game days and
+    // scaled to a per-day rate - down when the window holds several days, up when it
+    // is not yet a day long.
     //
     // Frames, not wall-clock seconds, for the same reason as LineHistory: the window
     // must not drain while the game is paused nor shrink when it is fast-forwarded.
@@ -111,9 +112,14 @@ namespace WhereTheyGo
             }
         }
 
-        // Weight per observed trip so the window reads as one day's demand: a full
-        // window weighs 1 per trip; a shorter one is scaled up by day/span, capped at
-        // Assumptions.ObservedTripMaxDayScale. With fewer than two trips there is no span, so 1.
+        // Weight per observed trip so the window reads as ONE day's demand: day/span,
+        // so three days of observations weigh a third each and half a day's weigh two,
+        // capped at Assumptions.ObservedTripMaxDayScale so a few minutes of readings are
+        // not multiplied into a full day. With fewer than two trips there is no span, so 1.
+        //
+        // No floor at 1: the window was widened to three days on 2026-09-14 and a floor
+        // then made every shopping and leisure journey count three times against the
+        // commutes read from the save.
         public float ScaleFor(uint dayFrames)
         {
             uint span = SpanFrames;
@@ -123,7 +129,7 @@ namespace WhereTheyGo
             }
 
             double scale = (double)dayFrames / span;
-            return (float)Math.Max(1.0, Math.Min(Assumptions.ObservedTripMaxDayScale, scale));
+            return (float)Math.Min(Assumptions.ObservedTripMaxDayScale, scale);
         }
     }
 }

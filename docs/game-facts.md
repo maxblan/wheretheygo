@@ -78,6 +78,14 @@ DOTNET_ROLL_FORWARD=LatestMajor ilspycmd \
 - **A transit edge is one-way.** The same method sets `m_Flags |= EdgeFlags.Forward` and
   no backward flag. A line is a closed loop driven in one direction: stepping one stop
   "backwards" is not a cheap shortcut, it is riding the whole loop round.
+- **The segment buffer closes the loop.** `RouteSegment[i]` is the hop from waypoint `i` to
+  waypoint `i + 1`, and the last one runs back to waypoint 0 — which is why summing
+  `RouteInfo.m_Duration` over the buffer gives `lineDuration` exactly. The router's stop
+  sequence therefore repeats the first stop at the end with that closing ride
+  (`ExistingLine.m_ClosingRideSeconds`, `Lines.ToTransitLines`); until 2026-09-15 it
+  dropped it, and no rider could stay aboard across the seam. The line log prints the
+  closing hop beside the loop; a line whose closing hop reads 0 s has an open segment
+  buffer, which would be the first such line seen.
 - `TransportLine.m_VehicleInterval` is **not** a measured headway: it is
   `min(10 × target, lineDuration / targetFleet)` — note `lineDuration`, the RIDDEN one
   above, not the pathfinder's ideal. On a running line it is the planned interval, on an

@@ -60,18 +60,20 @@ namespace WhereTheyGo
                     high = new Color(highR, highG, highB, 1f);
                     break;
                 default:
-                    // Walking time from a building to the nearest served stop: pale
-                    // straw is a short walk, deep red-brown is at or beyond the horizon.
-                    // ColorBrewer YlOrRd (author's request 2026-09-06): it runs
-                    // monotonically from light to dark, so red-green and blue-yellow
-                    // colour blindness — and a greyscale screenshot — still read it.
-                    // Object colours are opaque; alpha here would make the building
-                    // translucent rather than tinted.
-                    low = new Color(1f, 0.97f, 0.75f, 1f);
-                    medium = new Color(0.99f, 0.55f, 0.24f, 1f);
-                    high = new Color(0.50f, 0f, 0.15f, 1f);
+                    // Walking time from a building to the nearest served stop
+                    // (Assumptions.WalkColour*). Object colours are opaque; alpha here
+                    // would make the building translucent rather than tinted.
+                    low = Opaque(Assumptions.WalkColourNear);
+                    medium = Opaque(Assumptions.WalkColourMid);
+                    high = Opaque(Assumptions.WalkColourFar);
                     break;
             }
+        }
+
+        // An RGB triple from Assumptions as the game's colour, fully opaque.
+        public static Color Opaque(float[] rgb)
+        {
+            return new Color(rgb[0], rgb[1], rgb[2], 1f);
         }
     }
 

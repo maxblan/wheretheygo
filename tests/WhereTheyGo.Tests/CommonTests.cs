@@ -71,18 +71,22 @@ namespace WhereTheyGo.Tests
                 new Journey { m_Origin = new float2Like(100f, 100f), m_Destination = new float2Like(200f, 200f), m_Weight = 5f, m_OutHour = 9, m_BackHour = 17 },
                 new Journey { m_Origin = new float2Like(-5f, 100f), m_Destination = new float2Like(900f, 100f), m_Weight = 7f, m_OutHour = 9, m_BackHour = 17 },
             };
-            var flows = new List<ZoneFlow>();
             var journeys = new List<Journey>();
-            float total = DemandZones.Aggregate(trips, worldMin, grid, flows, out int count, journeys);
+            float total = DemandZones.Aggregate(trips, worldMin, grid, journeys, out int count);
             AssertTrue(count == 3 && total == 6f, $"three trips survive (self-zone and off-map dropped): count {count.ToString(CultureInfo.InvariantCulture)}, weight {total.ToString(CultureInfo.InvariantCulture)}");
             AssertTrue(journeys.Count == 3, "the surviving trips are handed back as journeys");
-            AssertTrue(flows.Count == 2, "two zone pairs");
-            AssertTrue(flows[0].m_Origin == 0 && flows[0].m_Destination == 3 && flows[0].m_Weight == 5f, "pair 0->3 sums both trips' weights");
-            AssertTrue(flows[1].m_Origin == 15 && flows[1].m_Destination == 0 && flows[1].m_Weight == 1f, "pairs come out in (origin, destination) order");
+            AssertTrue(journeys[0].m_Origin.x == 100f && journeys[1].m_Origin.x == 120f && journeys[2].m_Origin.x == 900f, "journeys come out ordered by origin, whatever order the job handed them in");
             AssertTrue(DemandZones.ZoneOf(new float2Like(1023f, 1023f), worldMin, grid) == 15 && DemandZones.ZoneOf(new float2Like(1024f, 0f), worldMin, grid) == -1, "zone index and the open upper edge");
-            float2Like centre = DemandZones.ZoneCentre(5, worldMin, grid);
-            AssertTrue(centre.x == 384f && centre.y == 384f, "zone centre");
 
+            // The same trips in another order give the same list, bit for bit: the
+            // order the parallel job hands them back in must not reach the map.
+            trips.Reverse();
+            var again = new List<Journey>();
+            _ = DemandZones.Aggregate(trips, worldMin, grid, again, out _);
+            for (int i = 0; i < journeys.Count; i++)
+            {
+                AssertTrue(journeys[i].m_Origin == again[i].m_Origin && journeys[i].m_Destination == again[i].m_Destination && journeys[i].m_Weight == again[i].m_Weight, "the order is a function of the journeys, not of their arrival");
+            }
         }
     }
 }

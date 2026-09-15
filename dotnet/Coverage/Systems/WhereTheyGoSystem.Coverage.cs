@@ -2,8 +2,6 @@
 using System.Collections.Generic;
 using System.Globalization;
 using Unity.Mathematics;
-using Block = Game.Zones.Block;
-using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
 {
@@ -77,11 +75,14 @@ namespace WhereTheyGo
         // equity horizon, which is a setting, so it means nothing on its own. `served`
         // is false at or beyond the horizon — 255 is the far end of the ramp, not a
         // measurement, and reporting "10 min" for a building an hour from any stop would
-        // be a lie the colour does not tell.
-        internal bool TryGetAccessAt(float3 position, out int walkSeconds, out bool served)
+        // be a lie the colour does not tell. `reached` is false beyond the search itself,
+        // where there is no number to give at all - separately from the seconds, because
+        // a building AT a stop has a walk of zero seconds and is reached all the same.
+        internal bool TryGetAccessAt(float3 position, out int walkSeconds, out bool served, out bool reached)
         {
             walkSeconds = 0;
             served = false;
+            reached = false;
             int[]? field = m_AccessWalkMs;
             int2 grid = m_AccessFieldGrid;
             if (field is null || grid.x <= 0 || grid.y <= 0 || field.Length != grid.x * grid.y || m_CoverageHorizonMs <= 0)
@@ -104,6 +105,7 @@ namespace WhereTheyGo
                 return true;
             }
 
+            reached = true;
             walkSeconds = walk / 1000;
             served = walk < m_CoverageHorizonMs;
             return true;

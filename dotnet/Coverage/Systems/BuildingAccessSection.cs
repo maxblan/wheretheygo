@@ -41,6 +41,8 @@ namespace WhereTheyGo
 
         private bool m_Served;
 
+        private bool m_Reached;
+
         private int m_HorizonMinutes;
 
         protected override void OnCreate()
@@ -54,6 +56,7 @@ namespace WhereTheyGo
         {
             m_WalkSeconds = 0;
             m_Served = false;
+            m_Reached = false;
             m_HorizonMinutes = 0;
         }
 
@@ -63,7 +66,7 @@ namespace WhereTheyGo
         {
             visible = EntityManager.HasComponent<Building>(selectedEntity)
                 && EntityManager.TryGetComponent(selectedEntity, out Transform transform)
-                && m_Overlay.TryGetAccessAt(transform.m_Position, out m_WalkSeconds, out m_Served);
+                && m_Overlay.TryGetAccessAt(transform.m_Position, out m_WalkSeconds, out m_Served, out m_Reached);
 
             base.OnUpdate();
         }
@@ -73,8 +76,9 @@ namespace WhereTheyGo
             m_HorizonMinutes = m_Overlay.CoverageHorizonMinutes;
         }
 
-        // walkSeconds is 0 with served false when the walk is beyond the search itself,
-        // which the UI shows as "no stop within reach" rather than as a zero-minute walk.
+        // `reached` false means the walk is beyond the search itself and walkSeconds
+        // says nothing; the UI then shows "no stop within reach". A zero-second walk
+        // with reached true is a building at a stop.
         public override void OnWriteProperties(IJsonWriter writer)
         {
             if (writer is null)
@@ -86,6 +90,8 @@ namespace WhereTheyGo
             writer.Write(m_WalkSeconds);
             writer.PropertyName("served");
             writer.Write(m_Served);
+            writer.PropertyName("reached");
+            writer.Write(m_Reached);
             writer.PropertyName("horizonMinutes");
             writer.Write(m_HorizonMinutes);
         }

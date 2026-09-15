@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 
 namespace WhereTheyGo.Tests
 {
@@ -35,7 +34,7 @@ namespace WhereTheyGo.Tests
             Run("Integer Dijkstra is exact, bounded and reusable", IntDijkstraExactBoundedReusable);
             Run("Nearest node breaks ties by index and respects the access walk", NearestNodeTiesAndReach);
             Run("Tiles and sites skip tunnel and bridge nodes that homes still walk from", NearestSiteSkipsOffGroundNodes);
-            Run("Observed trips are held for a game day and scaled to a day's rate", ObservedTripWindowHoldsADay);
+            Run("Observed trips are scaled to a day's rate, down over several days and up over part of one", ObservedTripWindowHoldsADay);
             Run("Observed trips restart on a rewound clock and stop at the cap", ObservedTripWindowRestartsAndCaps);
             Run("Coverage counts journeys served at both ends within the horizon", CoverageShare);
 
@@ -55,7 +54,7 @@ namespace WhereTheyGo.Tests
             Run("Usage is averaged per sample, not as a ratio of sums", WindowUsageIsPerSample);
             Run("Loading another save restarts the window", WindowResetsWhenFramesRewind);
             Run("Windows can be written out and re-recorded in frame order without changing their averages", WindowsRoundTripThroughTheSave);
-            Run("Daytime: the game's night is 22:00–06:00, shifts place a commute's rides, and a schedule follows the emptier period", DaytimeRules);
+            Run("Daytime: the game's night is 22:00–06:00 and the shifts place a commute's rides", DaytimeRules);
             Run("Daytime: period averages read only the readings of that period with vehicles out", PeriodAverages);
             Run("A deleted line stops being tracked", WindowForgetsDeletedLines);
 
@@ -63,14 +62,14 @@ namespace WhereTheyGo.Tests
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
 
             Run("A loop is driven one way, so riding it backwards is not a shortcut", RidingALoopBackwardsIsNotAShortcut);
-            Run("Interchange weight is capacity relative to a bus, zero when unknown", CapacityWeightIsRelativeToBus);
+            Run("The ridden loop is held to the game's clamp: slack per vehicle, a floor at the cap, ties rounded to even", RiddenLoopIsHeldToTheGamesClamp);
 
             // F4/F5 — the alignment stage, pure since 2026-09-05 (float2Like). The pinned
             // figures are the game-typed code's own outputs on the same synthetic city,
             // recorded before the conversion; a change here is a behaviour change.
             Run("float2Like reproduces Unity's vector formulas bit for bit", Float2LikeMatchesUnityFormulas);
             Run("TileGrid clamps to the grid and a cell centre inverts its cell", TileGridClampsAndInverts);
-            Run("Zones: trips aggregate per pair in total order, self and off-map trips drop", ZonesAggregate);
+            Run("Zones: journeys come out in total order, self-zone and off-map trips drop", ZonesAggregate);
 
             // F3 steps 3–4, the panel contract and the disagreement pass, pure since 2026-09-05.
             Run("Journeys route door to door over the existing lines, and each line gets its riders", JourneysRouteOverTheExistingNetwork);
@@ -81,7 +80,7 @@ namespace WhereTheyGo.Tests
             Run("Bands: the direction follows the hour, and a whole day has none", BandDirectionFollowsTheHour);
             Run("Bands: the arc rises over its middle, the tangent turns the arrow, the casing darkens the fill", BandArcRisesAndAimsAlongItself);
             Run("Bands: the view draws exactly what the hour and the purposes describe", BandViewFiltersExactlyAndClassesWidths);
-            Run("Bands: the width classes are ordered and their boundaries readable", BandWidthClassesAreOrderedAndReadable);
+            Run("Bands: the width classes are ordered, their boundaries readable and never above the heaviest band", BandWidthClassesAreOrderedAndReadable);
             Run("Bands: pointing at one measures against the arc, not the chord", PointingMeasuresAgainstTheArcNotTheChord);
             Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
             Run("A line's worth is what its riders lose when it is taken out", LineContributionComesFromTakingTheLineOut);
@@ -103,92 +102,6 @@ namespace WhereTheyGo.Tests
         }
 
         // ---- tests ----------------------------------------------------------
-
-        private static long BruteForceSites(int[] candidates, float[] candidateScores, int count, int width, int separation, int maxSites)
-        {
-            long best = 0;
-            var chosen = new int[Math.Max(1, maxSites)];
-            Recurse(0, 0, 0);
-            return best;
-
-            void Recurse(int from, int depth, long value)
-            {
-                if (value > best)
-                {
-                    best = value;
-                }
-
-                if (depth == maxSites)
-                {
-                    return;
-                }
-
-                for (int i = from; i < count; i++)
-                {
-                    bool ok = true;
-                    for (int j = 0; j < depth && ok; j++)
-                    {
-                        int dx = Math.Abs((candidates[i] % width) - (chosen[j] % width));
-                        int dy = Math.Abs((candidates[i] / width) - (chosen[j] / width));
-                        ok = Math.Max(dx, dy) >= separation;
-                    }
-
-                    if (ok)
-                    {
-                        chosen[depth] = candidates[i];
-                        Recurse(i + 1, depth + 1, value + (long)candidateScores[i]);
-                    }
-                }
-            }
-        }
-
-        private static void AssertSitesFeasible(int[] indices, int count, int width, int separation)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                for (int j = i + 1; j < count; j++)
-                {
-                    int dx = Math.Abs((indices[i] % width) - (indices[j] % width));
-                    int dy = Math.Abs((indices[i] / width) - (indices[j] / width));
-                    AssertTrue(Math.Max(dx, dy) >= separation, "chosen sites respect the separation");
-                }
-            }
-        }
-
-        private static long[][] AllPairsMs(WalkGraph graph)
-        {
-            int n = graph.NodeCount;
-            var dist = new long[n][];
-            for (int i = 0; i < n; i++)
-            {
-                dist[i] = new long[n];
-                for (int j = 0; j < n; j++)
-                {
-                    dist[i][j] = i == j ? 0 : long.MaxValue / 4;
-                }
-            }
-
-            for (int e = 0; e < graph.EdgeMs.Length; e++)
-            {
-                int u = graph.EdgeA[e];
-                int v = graph.EdgeB[e];
-                dist[u][v] = Math.Min(dist[u][v], graph.EdgeMs[e]);
-                dist[v][u] = Math.Min(dist[v][u], graph.EdgeMs[e]);
-            }
-
-            for (int k = 0; k < n; k++)
-            {
-                for (int i = 0; i < n; i++)
-                {
-                    for (int j = 0; j < n; j++)
-                    {
-                        dist[i][j] = Math.Min(dist[i][j], dist[i][k] + dist[k][j]);
-                    }
-                }
-            }
-
-            return dist;
-        }
 
         private static void CoverageShare()
         {
@@ -213,13 +126,6 @@ namespace WhereTheyGo.Tests
             AssertEqual(0.5f, report.Share, 0f, "2 of 4 weight covered");
             AssertTrue(Coverage.EndServed(served, 7, 240000, 600000), "6 + 4 minutes fits the horizon exactly");
             AssertTrue(!Coverage.EndServed(served, 7, 240001, 600000), "one millisecond over does not");
-
-            // Adding a stop at node 7 covers the second journey as well (5 min access ≤ 10).
-            int[] merged = Coverage.WithStops(graph, dijkstra, served, new[] { 7 }, new[] { 0 }, 1, 600000);
-            AssertEqual(0, merged[7], 0, "node 7 is now a stop");
-            AssertEqual(0, served[7] == 360000 ? 0 : 1, 0, "the original field is untouched");
-            CoverageReport after = Coverage.Measure(merged, 600000, origin, originAccess, dest, destAccess, weight, 3);
-            AssertEqual(0.75f, after.Share, 0f, "3 of 4 weight covered with the new stop");
         }
 
         private static ObservedTrip TripAt(uint frame, byte purpose)
@@ -251,6 +157,16 @@ namespace WhereTheyGo.Tests
             brief.Record(TripAt(10u, 1));
             brief.Record(TripAt(20u, 1));
             AssertEqual(Assumptions.ObservedTripMaxDayScale, brief.ScaleFor(day), 0f, "ten frames of readings cannot be scaled past the cap");
+
+            // The window the mod actually runs holds three days. Once it spans them,
+            // each observed journey weighs a third: three days of shopping against one
+            // day of commutes read from the save is averaging, not tripling.
+            var wide = new ObservedTripWindow(Assumptions.ObservationWindowFrames);
+            wide.Record(TripAt(1000u, 1));
+            wide.Record(TripAt(1000u + (day * 3), 1));
+            AssertEqual(1f / 3f, wide.ScaleFor(day), 1e-6f, "three days of observations weigh a third each");
+            wide.Record(TripAt(1000u + (day * 3) + (day / 2), 1));
+            AssertTrue(wide.ScaleFor(day) < 1f / 3f, "and a longer span weighs less still");
         }
 
         private static void ObservedTripWindowRestartsAndCaps()
@@ -613,62 +529,6 @@ namespace WhereTheyGo.Tests
             AssertEqual(5f, ws.Dist[5], 1e-4f, "the workspace must still be usable after an empty graph");
         }
 
-        private static ExistingLine HealthLine(int id, ModePreset mode, int vehicles, int perVehicle, float roundTrip, int stops, float loopMetres = 6000f)
-        {
-            var line = new ExistingLine
-            {
-                m_Id = id,
-                m_Name = "L" + id.ToString(CultureInfo.InvariantCulture),
-                m_Mode = mode,
-                m_Vehicles = vehicles,
-                m_Capacity = vehicles * perVehicle,
-                m_StableDurationSeconds = roundTrip,
-                m_LineDurationSeconds = roundTrip - (stops * 15f),
-                m_TargetInterval = roundTrip / Math.Max(1, vehicles),
-                m_LengthMetres = loopMetres,
-                m_StopDuration = 15f,
-                m_VehicleInterval = roundTrip / Math.Max(1, vehicles),
-            };
-            for (int s = 0; s < stops; s++)
-            {
-                line.m_StopIndices.Add(s);
-            }
-
-            return line;
-        }
-
-        // `aboard` per reading over the last part of a game day, a quarter of an hour
-        // apart, by day; `idle` readings with nothing out are appended.
-        private static void Readings(LineReadings problem, ExistingLine line, int[] aboard, int idle = 0, float timeOfDay = 0.5f)
-        {
-            var samples = new List<LineObservation>();
-            uint frame = 1000u;
-            for (int i = 0; i < aboard.Length; i++)
-            {
-                frame += Assumptions.ReadingIntervalFrames;
-                samples.Add(new LineObservation { m_Frame = frame, m_Passengers = aboard[i], m_Capacity = line.m_Capacity, m_Vehicles = line.m_Vehicles, m_IntervalSeconds = line.m_VehicleInterval, m_TimeOfDay = timeOfDay });
-            }
-
-            for (int i = 0; i < idle; i++)
-            {
-                frame += Assumptions.ReadingIntervalFrames;
-                samples.Add(new LineObservation { m_Frame = frame, m_Passengers = 0, m_Capacity = 0, m_Vehicles = 0, m_IntervalSeconds = 0f, m_TimeOfDay = 0.95f });
-            }
-
-            problem.Samples[line.m_Id] = samples.ToArray();
-            line.m_Passengers = aboard.Length > 0 ? aboard[aboard.Length - 1] : 0;
-        }
-
-        private static LineReadings HealthProblem(params ExistingLine[] lines)
-        {
-            var problem = new LineReadings
-            {
-                WindowFrames = Assumptions.FramesPerGameDay,
-            };
-            problem.Lines.AddRange(lines);
-            return problem;
-        }
-
         // The walk pass is bucketed because route scoring rebuilds this network once per
         // candidate. A bucket that drops a pair silently un-links an interchange, so
         // the result is checked against the exhaustive sweep it replaced.
@@ -776,17 +636,6 @@ namespace WhereTheyGo.Tests
                 TransitGraph.ServedCeiling(Array.Empty<float>(), 0, 3f, 3600f, 20, out _),
                 1e-3f,
                 "a network carrying nothing falls back too");
-        }
-
-        private static float[] NewNovelty(int nodes)
-        {
-            var novelty = new float[nodes];
-            for (int i = 0; i < nodes; i++)
-            {
-                novelty[i] = 1f;
-            }
-
-            return novelty;
         }
 
         // A ferry with one boat reads zero passengers whenever that boat is mid
@@ -929,25 +778,6 @@ namespace WhereTheyGo.Tests
             AssertEqual(0.5f, Daytime.DayShareOfHours(eveOut, eveBack), 1e-6f, "evening shift straddles the night");
             AssertEqual(0.5f, Daytime.DayShareOfHours(nightOut, nightBack), 1e-6f, "night shift straddles the night");
             AssertEqual(1f, new Journey { m_OutHour = dayOut, m_BackHour = dayBack }.DayShare, 1e-6f, "a journey states its own day share from its two hours");
-
-            // 4369 s a day at 300 s and 80 seats both ways = 2330 seats a day, 1553 of
-            // them by day (16 h) and 777 by night; 500 riders by day = 1000 boardings /
-            // 1553 = 64.4 %, 20 riders by night = 40 / 777 = 5.1 %.
-            float dayUtil = Daytime.UtilisationInPeriod(500f, 300f, 80f, Assumptions.DayShareOfDay);
-            AssertTrue(dayUtil is > 0.64f and < 0.65f, $"day utilisation {dayUtil}");
-            float nightUtil = Daytime.UtilisationInPeriod(20f, 300f, 80f, 1f - Assumptions.DayShareOfDay);
-            AssertTrue(nightUtil is > 0.05f and < 0.06f, $"night utilisation {nightUtil}");
-            AssertTrue(Daytime.Recommend(dayUtil, nightUtil, 0.15f) == LineSchedule.Day, "empty nights: run by day");
-            AssertTrue(Daytime.Recommend(nightUtil, dayUtil, 0.15f) == LineSchedule.Night, "empty days: run by night");
-            AssertTrue(Daytime.Recommend(dayUtil, dayUtil, 0.15f) == LineSchedule.DayAndNight, "both full: all day");
-            AssertTrue(Daytime.Recommend(nightUtil, nightUtil, 0.15f) == LineSchedule.DayAndNight, "both empty is not a schedule question");
-            AssertTrue(Daytime.Advise(LineSchedule.Day, nightUtil, nightUtil, 0.15f) == LineSchedule.Day, "an existing line under the floor in both periods keeps its schedule");
-            AssertTrue(Daytime.Advise(LineSchedule.Day, dayUtil, dayUtil, 0.15f) == LineSchedule.DayAndNight, "demand in both periods extends it");
-            AssertTrue(Daytime.Advise(LineSchedule.DayAndNight, dayUtil, nightUtil, 0.15f) == LineSchedule.Day, "otherwise the same rule as for suggestions");
-
-            // Period utilisation is the one formula on the period's share of a vehicle's seats.
-            AssertEqual(Coverage.Utilisation(500f, 300f, 80f * Assumptions.DayShareOfDay), dayUtil, 0f, "the period share scales the seats");
-            AssertEqual(0f, Daytime.UtilisationInPeriod(500f, 300f, 80f, 0f), 0f, "a period of no length has no utilisation");
         }
 
         private static void PeriodAverages()
@@ -1083,19 +913,6 @@ namespace WhereTheyGo.Tests
 
         // ---- harness --------------------------------------------------------
 
-        private static int CountSaturated(byte[] values)
-        {
-            int count = 0;
-            for (int i = 0; i < values.Length; i++)
-            {
-                if (values[i] == 255)
-                {
-                    count++;
-                }
-            }
-            return count;
-        }
-
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031:Do not catch general exception types",
             Justification = "A test runner must report any failure and continue; narrowing this " +
                 "would let one unexpected exception abort the whole suite.")]
@@ -1131,13 +948,79 @@ namespace WhereTheyGo.Tests
             }
         }
 
-        private static void CapacityWeightIsRelativeToBus()
+        // A loop of `stops` stops ridden in `ridden` seconds: stops - 1 hops between
+        // them and one closing hop back to the first, all the same length.
+        private static ExistingLine LoopLine(float ridden, float interval, float target, float stable, int stops)
         {
-            // CS2's base subway (1080 seats) against its bus (80): 13.5 buses' worth.
-            AssertEqual(13.5f, TransitModes.CapacityWeight(1080f, 80f), 1e-6f, "subway vs bus");
-            AssertEqual(1f, TransitModes.CapacityWeight(80f, 80f), 1e-6f, "a bus is one bus");
-            AssertEqual(0f, TransitModes.CapacityWeight(0f, 80f), 0f, "unknown mode is no partner");
-            AssertEqual(0f, TransitModes.CapacityWeight(1080f, 0f), 0f, "no bus to compare against");
+            float hop = ridden / stops;
+            var line = new ExistingLine
+            {
+                m_Id = 1,
+                m_Name = "L1",
+                m_LineDurationSeconds = ridden,
+                m_VehicleInterval = interval,
+                m_TargetInterval = target,
+                m_StableDurationSeconds = stable,
+                m_ClosingRideSeconds = hop,
+            };
+            for (int s = 0; s < stops; s++)
+            {
+                line.m_StopIndices.Add(s);
+                line.m_RideSeconds.Add(s == 0 ? 0f : hop);
+            }
+
+            return line;
+        }
+
+        // The route segments' sum against interval x fleet, the game's own clamp on a
+        // wrapped average travel time (RiddenLoop; the log evidence is in Assumptions).
+        private static void RiddenLoopIsHeldToTheGamesClamp()
+        {
+            // Below the cap the clamp is exact to a second per vehicle: a five-vehicle
+            // line may read five seconds over and is left alone, six is wrapped.
+            ExistingLine sound = LoopLine(ridden: 4505f, interval: 900f, target: 900f, stable: 4500f, stops: 6);
+            RiddenLoopVerdict kept = RiddenLoop.Clamp(sound);
+            AssertTrue(!kept.Clamped && kept.FleetTarget == 5 && !kept.IntervalCapped, "five seconds over a five-vehicle loop is the game's own hysteresis");
+            AssertEqual(4505f, sound.m_LineDurationSeconds, 0f, "and the ridden figure stands");
+
+            ExistingLine wrapped = LoopLine(ridden: 4950f, interval: 900f, target: 900f, stable: 4500f, stops: 6);
+            float closingBefore = wrapped.m_ClosingRideSeconds;
+            RiddenLoopVerdict clamped = RiddenLoop.Clamp(wrapped);
+            AssertTrue(clamped.Clamped && !clamped.IntervalCapped, "a tenth over on an uncapped line is not rounding");
+            AssertEqual(4500f, wrapped.m_LineDurationSeconds, 1e-3f, "the loop is charged the game's figure");
+            AssertEqual(4500f, clamped.TrustedSeconds, 0f, "and says which figure that was");
+            AssertEqual(closingBefore * (4500f / 4950f), wrapped.m_ClosingRideSeconds, 1e-3f, "the closing ride is scaled with the rest");
+            float sum = wrapped.m_ClosingRideSeconds;
+            for (int i = 0; i < wrapped.m_RideSeconds.Count; i++)
+            {
+                sum += wrapped.m_RideSeconds[i];
+            }
+
+            AssertEqual(4500f, sum, 1e-2f, "so the hops still add up to the loop");
+            AssertTrue(clamped.Describe("L1").Contains("1.1x", StringComparison.Ordinal), "the warning prints the overshoot to a decimal, not as \"1x\"");
+
+            // AT the cap (interval = 10 x target) the clamp is a floor: a tram genuinely
+            // running its loop in 1000 s against a 900 s floor is slow, not broken.
+            ExistingLine slow = LoopLine(ridden: 1000f, interval: 900f, target: 90f, stable: 122f, stops: 8);
+            RiddenLoopVerdict honest = RiddenLoop.Clamp(slow);
+            AssertTrue(!honest.Clamped && honest.IntervalCapped && honest.FleetTarget == 1, "a capped line above its floor is left as it rides");
+            AssertEqual(1000f, slow.m_LineDurationSeconds, 0f, "its ridden loop stands");
+
+            ExistingLine broken = LoopLine(ridden: 6986f, interval: 900f, target: 90f, stable: 122f, stops: 8);
+            RiddenLoopVerdict caught = RiddenLoop.Clamp(broken);
+            AssertTrue(caught.Clamped && caught.IntervalCapped, "past the wrap multiple even a capped line is read as wrapped");
+            AssertEqual(900f, broken.m_LineDurationSeconds, 1e-3f, "and charged the floor");
+            AssertTrue(caught.Describe("L1").Contains("floor", StringComparison.Ordinal), "the warning says the floor is all the game admits, not that the line is slow");
+
+            // The fleet mirror rounds a tie to even like Unity's math.round: 2.5 is 2.
+            ExistingLine tie = LoopLine(ridden: 500f, interval: 168f, target: 76f, stable: 190f, stops: 4);
+            RiddenLoopVerdict rounded = RiddenLoop.Clamp(tie);
+            AssertTrue(rounded.FleetTarget == 2, $"stable 190 / target 76 = 2.5 rounds to 2, got {rounded.FleetTarget.ToString(CultureInfo.InvariantCulture)}");
+            AssertTrue(rounded.Clamped, "so a 500 s loop against a 336 s clamp is caught rather than admitted under a 504 s one");
+
+            // Nothing to hold against: a line before its first interval is left alone.
+            ExistingLine fresh = LoopLine(ridden: 800f, interval: 0f, target: 90f, stable: 122f, stops: 3);
+            AssertTrue(!RiddenLoop.Clamp(fresh).Clamped && fresh.m_LineDurationSeconds == 800f, "no interval, no clamp");
         }
 
         private static void AssertEqual(float expected, float actual, float tolerance, string because)

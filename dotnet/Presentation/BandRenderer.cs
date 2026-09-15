@@ -31,46 +31,8 @@ namespace WhereTheyGo
         // work is CustomMeshType.Cylinder: a 64-sided tube whose axis is its local Y,
         // freely rotated, with `width` its RADIUS and `height` its full length. All of
         // them go out in one instanced draw call, so a chain costs less than the two
-        // passes the flat band used to take. Both facts are in docs/game-facts.md.
-        private const float ArcMetresPerSegment = 200f;
-
-        // Enough pieces that the arc reads as a curve rather than as a folded rule:
-        // a band turns through some seventy degrees between its two ends, so ten is
-        // the floor however short it is.
-        private const int MinArcSegments = 10;
-
-        private const int MaxArcSegments = 20;
-
-        // The tube has no end caps, so consecutive pieces would show a wedge of empty
-        // air at every joint. Each piece is lengthened by this share of its own radius,
-        // which closes the wedge by letting neighbours interpenetrate.
-        private const float JointOverlapShareOfRadius = 0.5f;
-
-        // Lifted off the ground by the same margin the route polylines used, so the
-        // feet of an arc are not swallowed by the terrain they stand on.
-        private const float TerrainOffset = 4f;
-
-        // Near enough to opaque to read as one solid thing, near enough to transparent
-        // that a band behind another is still there. Flow maps are drawn opaque almost
-        // without exception (Jenny et al. 2016: 89 % of their sample); where two arcs
-        // cross, depth now does the separating that a casing used to do.
-        private const float BandOpacity = 0.88f;
-
-        // While a line is selected: what it carries, and everything else.
-        private const float HighlightOpacity = 1f;
-
-        private const float DimmedOpacity = 0.16f;
-
-        // The arrowhead's barbs, 35 degrees back from the tip either side, and how
-        // thick they are drawn relative to the tube they sit on.
-        private const float ArrowCos = 0.819f;
-
-        private const float ArrowSin = 0.574f;
-
-        private const float ArrowStrokeShare = 0.28f;
-
-        private const float MinArrowStrokeMetres = 2.5f;
-
+        // passes the flat band used to take. Both facts are in docs/game-facts.md; the
+        // numbers - pieces, overlap, opacities, the arrowhead - are Assumptions'.
 #pragma warning disable CS8618 // Assigned in OnCreate, which the ECS lifecycle always
         // runs before OnUpdate. Annotating these nullable would force a null check at
         // every use site for a state in which nothing works anyway.
@@ -82,7 +44,7 @@ namespace WhereTheyGo
 
         // The sampled arc of the band being drawn, kept here rather than allocated
         // once per band per frame.
-        private readonly float3[] m_Arc = new float3[MaxArcSegments + 1];
+        private readonly float3[] m_Arc = new float3[Assumptions.BandMaxArcSegments + 1];
 
         protected override void OnCreate()
         {
@@ -117,8 +79,8 @@ namespace WhereTheyGo
             dependencies.Complete();
             TerrainHeightData heightData = m_TerrainSystem.GetHeightData(waitForPending: false);
 
-            int hour = m_OverlaySystem.SelectedHour;
-            int purposes = m_OverlaySystem.PurposeFilter;
+            int hour = WhereTheyGoSystem.SelectedHour;
+            int purposes = WhereTheyGoSystem.PurposeFilter;
             // With a line selected, the bands it carries stay as they are and every
             // other band steps back. Without one, nothing is dimmed.
             bool highlighting = AnyBandCarriesTheSelectedLine(view);
@@ -132,12 +94,12 @@ namespace WhereTheyGo
             {
                 DrawnBand drawn = view.Drawn[i];
                 Band band = drawn.Band;
-                float opacity = !highlighting ? BandOpacity
-                    : band.CarriesTarget ? HighlightOpacity
-                    : DimmedOpacity;
+                float opacity = !highlighting ? Assumptions.BandOpacity
+                    : band.CarriesTarget ? Assumptions.BandHighlightOpacity
+                    : Assumptions.BandDimmedOpacity;
                 if (ReferenceEquals(band, hovered))
                 {
-                    opacity = HighlightOpacity;
+                    opacity = Assumptions.BandHighlightOpacity;
                 }
 
                 // Only the two feet touch the ground now; everything between them
@@ -180,7 +142,7 @@ namespace WhereTheyGo
             float width = BandView.WidthOf(drawn.WidthClass);
             float radius = width * 0.5f;
 
-            float overlap = radius * JointOverlapShareOfRadius;
+            float overlap = radius * Assumptions.BandJointOverlapShareOfRadius;
             for (int step = 0; step < segments; step++)
             {
                 DrawTube(buffer, fill, m_Arc[step], m_Arc[step + 1], radius, overlap);
@@ -217,7 +179,7 @@ namespace WhereTheyGo
         // straight pieces it came to, so m_Arc[0..segments] are the points.
         private int Sample(Band band, float footA, float footB)
         {
-            int segments = math.clamp((int)(band.LengthMetres / ArcMetresPerSegment), MinArcSegments, MaxArcSegments);
+            int segments = math.clamp((int)(band.LengthMetres / Assumptions.BandArcMetresPerSegment), Assumptions.BandMinArcSegments, Assumptions.BandMaxArcSegments);
             for (int step = 0; step <= segments; step++)
             {
                 BandGeometry.PointOnArc(
@@ -271,27 +233,28 @@ namespace WhereTheyGo
             // The barbs run back along the arc at 35 degrees either side, and they open
             // out HORIZONTALLY: a chevron that opened in the arc's own vertical plane
             // would be edge-on from directly above, which is where this map is read.
-            float3 back = new float3(-dx, -dy, -dz) * ArrowCos;
+            float3 back = new float3(-dx, -dy, -dz) * Assumptions.BandArrowCos;
             float plan = math.sqrt((dx * dx) + (dz * dz));
             float3 side = plan > 1e-4f
-                ? new float3(-dz / plan, 0f, dx / plan) * ArrowSin
-                : new float3(0f, 0f, ArrowSin);
+                ? new float3(-dz / plan, 0f, dx / plan) * Assumptions.BandArrowSin
+                : new float3(0f, 0f, Assumptions.BandArrowSin);
 
             // White rather than the band's own colour: the head has to read against the
             // band it sits on, and it is the one mark on this map that answers "which
             // way" rather than "how much" or "how well carried". Held back a little on
             // the cool end of the ramp, which is already light.
-            var colour = new Color(1f, 1f, 1f, opacity * (0.55f + (0.45f * (1f - band.CarriedShare))));
+            float arrowOpacity = opacity * (Assumptions.BandArrowBaseOpacity + (Assumptions.BandArrowOpacityLift * (1f - band.CarriedShare)));
+            var colour = new Color(1f, 1f, 1f, arrowOpacity);
 
             var tip = new float3(tipX, tipY, tipZ);
-            float stroke = Math.Max(width * ArrowStrokeShare, MinArrowStrokeMetres) * 0.5f;
+            float stroke = Math.Max(width * Assumptions.BandArrowStrokeShare, Assumptions.BandMinArrowStrokeMetres) * 0.5f;
             DrawTube(buffer, colour, tip + ((back + side) * arm), tip, stroke, 0f);
             DrawTube(buffer, colour, tip + ((back - side) * arm), tip, stroke, 0f);
         }
 
         private static float GroundHeight(ref TerrainHeightData heightData, float x, float z)
         {
-            return TerrainUtils.SampleHeight(ref heightData, new float3(x, 0f, z)) + TerrainOffset;
+            return TerrainUtils.SampleHeight(ref heightData, new float3(x, 0f, z)) + Assumptions.BandTerrainOffsetMetres;
         }
     }
 }

@@ -80,15 +80,17 @@ namespace WhereTheyGo
             // over twenty-four hours here would be an expensive answer to a question
             // whose answer does not change.
             BandView view = m_OverlaySystem.CurrentBandView;
-            int purposes = m_OverlaySystem.PurposeFilter;
+            int purposes = WhereTheyGoSystem.PurposeFilter;
 
             writer.TypeBegin("WhereTheyGo.MapState");
             writer.PropertyName("hour");
-            writer.Write(m_OverlaySystem.SelectedHour);
+            writer.Write(WhereTheyGoSystem.SelectedHour);
             writer.PropertyName("purposes");
             writer.Write(purposes);
             writer.PropertyName("thresholdPercent");
-            writer.Write(m_OverlaySystem.BandThresholdPercent);
+            writer.Write(WhereTheyGoSystem.BandThresholdPercent);
+            writer.PropertyName("thresholdMaxPercent");
+            writer.Write(Assumptions.BandThresholdMaxPercent);
             writer.PropertyName("playing");
             writer.Write(WhereTheyGoSystem.PlayingHours);
 
@@ -158,10 +160,10 @@ namespace WhereTheyGo
                 return;
             }
 
-            int purposes = m_OverlaySystem.PurposeFilter;
+            int purposes = WhereTheyGoSystem.PurposeFilter;
             writer.TypeBegin("WhereTheyGo.HoveredBand");
             writer.PropertyName("journeys");
-            writer.Write(band.WeightAtHour(m_OverlaySystem.SelectedHour, purposes));
+            writer.Write(band.WeightAtHour(WhereTheyGoSystem.SelectedHour, purposes));
             writer.PropertyName("dayJourneys");
             writer.Write(band.DayWeight(purposes));
             writer.PropertyName("carriedShare");

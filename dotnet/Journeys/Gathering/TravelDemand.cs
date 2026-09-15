@@ -27,7 +27,6 @@ namespace WhereTheyGo
         [ReadOnly] public ComponentLookup<Worker> WorkerLookup;
         [ReadOnly] public ComponentLookup<Game.Citizens.Student> StudentLookup;
         [ReadOnly] public ComponentLookup<PropertyRenter> PropertyRenterLookup;
-        [ReadOnly] public ComponentLookup<TouristHousehold> TouristLookup;
         [ReadOnly] public ComponentLookup<Transform> TransformLookup;
 
         public float WorkTripWeight;
@@ -163,16 +162,15 @@ namespace WhereTheyGo
 
     internal static class TravelDemand
     {
-        // Drains the job's queue in the order it hands the trips back and aggregates
-        // them (DemandZones.Aggregate). The order is thread-dependent, which is
-        // why the aggregation sorts the flows totally before anything reads them.
+        // Drains the job's queue in the order it hands the trips back and keeps the
+        // journeys among them (DemandZones.Aggregate). The order is thread-dependent,
+        // which is why the aggregation sorts them totally before anything reads them.
         public static float Aggregate(
             NativeQueue<Journey> trips,
             float2 worldMin,
             int2 zoneGrid,
-            List<ZoneFlow> flows,
-            out int tripCount,
-            List<Journey>? journeys = null)
+            List<Journey> journeys,
+            out int tripCount)
         {
             var drained = new List<Journey>(trips.Count);
             while (trips.TryDequeue(out Journey trip))
@@ -181,7 +179,7 @@ namespace WhereTheyGo
             }
 
             return DemandZones.Aggregate(
-                drained, new float2Like(worldMin.x, worldMin.y), new int2Like(zoneGrid.x, zoneGrid.y), flows, out tripCount, journeys);
+                drained, new float2Like(worldMin.x, worldMin.y), new int2Like(zoneGrid.x, zoneGrid.y), journeys, out tripCount);
         }
     }
 }

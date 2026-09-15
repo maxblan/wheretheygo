@@ -153,41 +153,5 @@ namespace WhereTheyGo
             return 1.0 - (area / (totalWeight * totalValue));
         }
 
-        // The served-walk field once `newStopNodes` are also served: the minimum of the
-        // existing field and the walk from the new stops. The existing field is not
-        // modified, so a candidate can be weighed without being accepted.
-        public static int[] WithStops(WalkGraph graph, IntDijkstra dijkstra, int[] served, int[] newStopNodes, int[] newStopAccessMs, int count, int horizonMs)
-        {
-            var merged = (int[])served.Clone();
-            int[] added = ServedWalkMs(graph, dijkstra, newStopNodes, newStopAccessMs, count, horizonMs);
-            for (int n = 0; n < merged.Length; n++)
-            {
-                if (added[n] < merged[n])
-                {
-                    merged[n] = added[n];
-                }
-            }
-
-            return merged;
-        }
-
-        // Boardings a line would carry in a game day over the seats it offers in that
-        // day: journeys × RidesPerJourney (out and back) against the runs its headway
-        // fits into the day, both directions, times capacity. A throughput ratio — not
-        // the game's instantaneous "usage" (passengers on board over capacity). The one
-        // utilisation formula of the mod: the mode ladder, the set feasibility, the
-        // period split and the line verdicts all call it. Computed in double, in this
-        // bracketing, and rounded once to binary32 on return.
-        public static float Utilisation(double journeysPerDay, double headwaySeconds, double vehicleCapacity)
-        {
-            if (headwaySeconds <= 0.0 || vehicleCapacity <= 0.0)
-            {
-                return 0f;
-            }
-
-            double boardings = journeysPerDay * Assumptions.RidesPerJourney;
-            double seatsPerDay = Assumptions.MovementSecondsPerGameDay / headwaySeconds * 2.0 * vehicleCapacity;
-            return (float)(boardings / seatsPerDay);
-        }
     }
 }

@@ -12,9 +12,9 @@
     <!-- CS0649: TransitLine.m_RideSeconds is assigned in Lines.cs, which is
          part of the mod and deliberately not linked here (it needs Unity types). Inside
          this project alone the field looks write-free. -->
-    <!-- CA1515: ModePreset and RouteGoal are public because Setting exposes them
-         through public properties the game's Options UI binds to by reflection. That
-         reason does not exist in this console harness, which links the same file. -->
+    <!-- CA1515: ModePreset and LineSchedule are public in the mod, where the game
+         reaches them by reflection; that reason does not exist in this console
+         harness, which links the same files. -->
     <NoWarn>CS0649;CA1515</NoWarn>
   </PropertyGroup>
 
@@ -26,10 +26,7 @@
     <Compile Include="WalkNetworkTests.cs" />
     <!-- The mod's whole pure core, linked rather than duplicated: every file in a
          Planning folder under dotnet/ uses System.* only, precisely so it compiles here. A Unity
-         type in any of them breaks this build, which is the purity check.
-         ExportJson.cs is among them so the golden-vector test can pin the
-         wire format against verification/common/canonical.py, which refuses any file
-         whose digest it cannot reproduce. -->
+         type in any of them breaks this build, which is the purity check. -->
     <Compile Include="../../dotnet/**/Planning/*.cs" Link="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 

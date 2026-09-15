@@ -69,7 +69,8 @@ namespace WhereTheyGo
             List<ExistingLine> lines,
             List<float2Like> stopPositions,
             Dictionary<Entity, int> stopIndices,
-            Dictionary<int, Entity> lineEntities)
+            Dictionary<int, Entity> lineEntities,
+            Dictionary<int, float> warnedRiddenLoops)
         {
             lines.Clear();
             stopPositions.Clear();
@@ -121,7 +122,7 @@ namespace WhereTheyGo
                 line.m_StableDurationSeconds = line.m_PathDurationSeconds + (line.m_StopIndices.Count * dwell);
                 line.m_TargetInterval = TargetInterval(entityManager, lineEntity, lineData);
                 line.m_StopDuration = dwell;
-                ClampRiddenDuration(line);
+                WarnOnce(line, RiddenLoop.Clamp(line), warnedRiddenLoops);
 
                 TransportLineFlags flags = transportLine.m_Flags;
                 line.m_RequireVehicles = (flags & TransportLineFlags.RequireVehicles) != 0;
@@ -136,6 +137,42 @@ namespace WhereTheyGo
                 DeferredLog.Info(
                     $"Lines ignored — fewer than two stops inside the city, so they carry only outside connections the demand model does not see: {string.Join("; ", ignored)}");
             }
+        }
+
+        // Says once per line that its ridden loop was clamped, and again only when the
+        // figure it was clamped from has changed: the collection runs every
+        // DemandRefreshSeconds and a wrapped average never heals, so an unconditional
+        // warning repeated itself a hundred times an hour and buried everything else.
+        private static void WarnOnce(ExistingLine line, RiddenLoopVerdict verdict, Dictionary<int, float> warned)
+        {
+            if (!verdict.Clamped)
+            {
+                _ = warned.Remove(line.m_Id);
+                return;
+            }
+
+            if (warned.TryGetValue(line.m_Id, out float lastRidden) && lastRidden == verdict.RiddenSeconds)
+            {
+                return;
+            }
+
+            warned[line.m_Id] = verdict.RiddenSeconds;
+            DeferredLog.Warn(verdict.Describe(line.m_Name));
+        }
+
+        // Whether the selected-line section has anything to say about this entity: a
+        // passenger line of a modelled mode with at least two stops in the city - the
+        // same test Collect applies, so a line the routing never sees is not shown a
+        // measurement that will never come.
+        public static bool IsInsightLine(EntityManager entityManager, Entity lineEntity)
+        {
+            return entityManager.TryGetComponent(lineEntity, out PrefabRef prefabRef)
+                && entityManager.HasComponent<TransportLine>(lineEntity)
+                && entityManager.TryGetComponent(prefabRef.m_Prefab, out TransportLineData lineData)
+                && lineData.m_PassengerTransport
+                && IsModelled(lineData.m_TransportType)
+                && entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteWaypoint> waypoints)
+                && CityStopCount(entityManager, waypoints) >= 2;
         }
 
         // How many of the line's stops are in the city rather than on an outside
@@ -165,7 +202,7 @@ namespace WhereTheyGo
         private static bool IsOutsideConnection(EntityManager entityManager, Entity stop)
         {
             Entity owner = stop;
-            for (int depth = 0; depth < 4 && owner != Entity.Null; depth++)
+            for (int depth = 0; depth < Assumptions.StopOwnerChainDepth && owner != Entity.Null; depth++)
             {
                 if (entityManager.HasComponent<Game.Objects.OutsideConnection>(owner))
                 {
@@ -243,7 +280,10 @@ namespace WhereTheyGo
         // Walks the line's waypoints in travel order. Not every waypoint is a stop —
         // shaping waypoints have no TransportStop behind them — but the segment
         // buffer is index-aligned with the waypoints, so hop durations accumulate
-        // across skipped waypoints rather than being lost.
+        // across skipped waypoints rather than being lost. The segment after the last
+        // waypoint closes the loop back to the first; what accumulates past the last
+        // stop is that closing ride, and it is kept (m_ClosingRideSeconds) rather than
+        // dropped, or the router could never carry a rider across the seam.
         private static void ReadWaypoints(
             EntityManager entityManager,
             DynamicBuffer<RouteWaypoint> waypoints,
@@ -307,57 +347,8 @@ namespace WhereTheyGo
                     line.m_LineDurationSeconds += ridden;
                 }
             }
-        }
 
-        // The ridden duration, held to what the game itself is willing to believe.
-        //
-        // RouteInfo.m_Duration is scaled by VehicleTiming.m_AverageTravelTime, and that
-        // field can be garbage: RouteUtils.UpdateAverageTravelTime computes
-        // (arrivalFrame - departureFrame) / 60f on two UNSIGNED frame counters, and a
-        // vehicle whose next departure is scheduled ahead of now makes the subtraction
-        // wrap. 2^32 / 60 = 71 582 788 seconds, and that is very nearly what a line's
-        // RouteInfo durations then add up to — seen on this city at 71 587 250 s for a
-        // six-stop metro loop. Later halvings of the running average leave smaller but
-        // equally false numbers behind, so there is no threshold that separates them.
-        //
-        // The game has the same problem and answers it by CLAMPING: the interval it
-        // publishes is min(10 x target, lineDuration / fleetTarget), so
-        // m_VehicleInterval x fleetTarget is the longest loop it will admit to. Where
-        // the data is sound the two agree exactly — checked against seven of this
-        // city's eighteen lines, to the second. Where they do not, this takes the
-        // game's number and says so.
-        private static void ClampRiddenDuration(ExistingLine line)
-        {
-            if (line.m_TargetInterval <= 0f || line.m_VehicleInterval <= 0f || line.m_LineDurationSeconds <= 0f)
-            {
-                return;
-            }
-
-            // TransportLineSystem.CalculateVehicleCount, mirrored.
-            int fleetTarget = Math.Max(1, (int)Math.Round(line.m_StableDurationSeconds / Math.Max(1f, line.m_TargetInterval), MidpointRounding.AwayFromZero));
-            float trusted = line.m_VehicleInterval * fleetTarget;
-            // With room for the rounding in that reconstruction: a healthy line lands
-            // within a second or two of the clamp, and saying so in a warning every
-            // refresh would bury the lines that are genuinely broken.
-            if (line.m_LineDurationSeconds <= trusted * Assumptions.RiddenLoopTolerance)
-            {
-                return;
-            }
-
-            float scale = trusted / line.m_LineDurationSeconds;
-            for (int i = 0; i < line.m_RideSeconds.Count; i++)
-            {
-                line.m_RideSeconds[i] *= scale;
-            }
-
-            DeferredLog.Warn(
-                $"Line \"{line.m_Name}\": the route segments add up to a ridden loop of " +
-                $"{(line.m_LineDurationSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                $"{(line.m_LineDurationSeconds / trusted).ToString("F0", CultureInfo.InvariantCulture)}x the " +
-                $"{(trusted).ToString("F0", CultureInfo.InvariantCulture)}s the game's own clamp admits " +
-                $"({(line.m_VehicleInterval).ToString("F0", CultureInfo.InvariantCulture)}s interval x {(fleetTarget).ToString(CultureInfo.InvariantCulture)} vehicles). " +
-                "Charged the clamped figure; the cause is normally an average travel time that has wrapped.");
-            line.m_LineDurationSeconds = trusted;
+            line.m_ClosingRideSeconds = pendingSeconds;
         }
 
         // Fleet size, and how full it is. Capacity comes from the vehicle prefab, and
@@ -470,8 +461,9 @@ namespace WhereTheyGo
             return ModeOf(type).ToString();
         }
 
-        // The health rows reach the panel as a '|'-delimited, newline-separated string,
-        // and a renamed line may contain either character.
+        // Line names go into the log one per line; a renamed line may carry a line
+        // break, and the pipe is kept out for the same reason it was in the old
+        // delimited panel payload.
         private static string Sanitize(string name)
         {
             return name.Replace('|', '/').Replace('\n', ' ').Replace('\r', ' ').Trim();
@@ -506,17 +498,32 @@ namespace WhereTheyGo
             }
         }
 
-        // Turns the gathered lines into the router's view of them.
+        // Turns the gathered lines into the router's view of them: the stop sequence
+        // with the first stop repeated at the end where the loop closes, so a rider can
+        // stay aboard round the whole loop. Only when the route has a closing segment -
+        // a line read before its vehicles have run once may not.
         public static List<TransitLine> ToTransitLines(List<ExistingLine> lines)
         {
             var result = new List<TransitLine>(lines.Count);
             for (int i = 0; i < lines.Count; i++)
             {
                 ExistingLine line = lines[i];
+                bool closes = line.m_ClosingRideSeconds > 0f && line.m_StopIndices.Count >= 2;
+                int count = line.m_StopIndices.Count + (closes ? 1 : 0);
+                var stops = new int[count];
+                var rides = new float[count];
+                line.m_StopIndices.CopyTo(stops, 0);
+                line.m_RideSeconds.CopyTo(rides, 0);
+                if (closes)
+                {
+                    stops[count - 1] = line.m_StopIndices[0];
+                    rides[count - 1] = line.m_ClosingRideSeconds;
+                }
+
                 result.Add(new TransitLine
                 {
-                    m_Stops = line.m_StopIndices.ToArray(),
-                    m_RideSeconds = line.m_RideSeconds.ToArray(),
+                    m_Stops = stops,
+                    m_RideSeconds = rides,
                     m_ExpectedWait = line.ExpectedWait,
                     // Per mode rather than a flat 10 m/s for everything: this is the
                     // fallback when a route segment carries no pathfound duration, and

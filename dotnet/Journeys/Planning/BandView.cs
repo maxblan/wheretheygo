@@ -64,8 +64,9 @@ namespace WhereTheyGo
         public float Heaviest { get; }
 
         // The ClassCount - 1 weights where one width class becomes the next, lowest
-        // first. The legend prints them, so they are rounded to numbers a player can
-        // read rather than to whatever the data happened to land on.
+        // first and never above Heaviest. The legend prints them, so they are rounded
+        // to numbers a player can read rather than to whatever the data happened to
+        // land on. Two equal boundaries mean the class between them is empty.
         public float[] ClassBreaks { get; }
 
         // Bands the filters left out, and what they weigh. Said out loud in the panel:
@@ -208,10 +209,15 @@ namespace WhereTheyGo
                 }
 
                 // Rounding can also collapse two boundaries onto each other; nudging
-                // the second up keeps every class reachable.
+                // the second up keeps every class reachable - unless the nudge would
+                // itself pass the heaviest band, which is the case above again. Then
+                // the two boundaries stay equal and that class is simply empty: the
+                // legend skips a class of no width, and a band on the boundary lands in
+                // the class above it, so the widest class still holds the heaviest band.
                 if (i > 0 && breaks[i] <= breaks[i - 1])
                 {
-                    breaks[i] = Nice(breaks[i - 1] * 1.5f);
+                    float nudged = Nice(breaks[i - 1] * 1.5f);
+                    breaks[i] = nudged < heaviest ? nudged : breaks[i - 1];
                 }
             }
 

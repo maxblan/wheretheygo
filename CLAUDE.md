@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -156,8 +156,8 @@ against a named game system.
 | `Journeys` | `Journey`/`DemandZones`, `ObservedTrips`, `DesireBands`, `BandView`, `BandGeometry` | `TravelDemand` (Burst job), `TripObserver` | `.Journeys`, `.Observed` |
 | `Network` | `TransitGraph`, `JourneyRouting`, `Dijkstra` | `Lines` | `.Routing` |
 | `Coverage` | `WalkAccess` (graph, Dijkstra, snap), `WalkBridging`, `Coverage` | `WalkNetwork` | `.WalkNetwork`, `.Coverage`, `BuildingAccessColorSystem`, `BuildingAccessSection` |
-| `LineInsight` | `ExistingLine`, `LineHistory`, `LineWindow` | — | `.LineInsight`, `LineInsightSection` |
-| `Common` | `Assumptions` (EVERY numeric constant), `float2Like`/`int2Like`, `TileGrid`, `Daytime`, `TransitMode`, `DeferredLog` | — | — |
+| `LineInsight` | `ExistingLine`, `LineHistory`, `LineWindow`, `RiddenLoop` | — | `.LineInsight`, `LineInsightSection` |
+| `Common` | `Assumptions` (EVERY numeric constant, drawing included), `float2Like`/`int2Like`, `TileGrid`, `Daytime`, `TransitMode` (the `ModePreset` enum), `DeferredLog` | — | — |
 | `Overlay` | — | — | `WhereTheyGoSystem`, `.Panel`, `.SaveState`, `Infoview`, `InfomodePrefab` |
 | `Presentation` | `PanelFigures` | — | `BandRenderer`, `BandPickSystem`, `PanelUISystem`, `UI/` |
 

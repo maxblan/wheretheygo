@@ -1,6 +1,4 @@
 ﻿using System.Globalization;
-using Block = Game.Zones.Block;
-using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
 {
@@ -86,13 +84,13 @@ namespace WhereTheyGo
 
         public static void SetBandThreshold(int percent) => s_BandThresholdPercent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
 
-        internal int SelectedHour => s_SelectedHour;
+        internal static int SelectedHour => s_SelectedHour;
 
-        internal int PurposeFilter => s_PurposeFilter;
+        internal static int PurposeFilter => s_PurposeFilter;
 
-        internal float BandThresholdShare => s_BandThresholdPercent / 100f;
+        internal static float BandThresholdShare => s_BandThresholdPercent / 100f;
 
-        internal int BandThresholdPercent => s_BandThresholdPercent;
+        internal static int BandThresholdPercent => s_BandThresholdPercent;
 
         // What the map is drawing, worked out once and handed to everyone who needs it:
         // the renderer, the hit test, the panel's band count and the legend. Rebuilt

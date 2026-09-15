@@ -92,7 +92,7 @@ namespace WhereTheyGo.Tests
                 m_SpeedMetresPerSecond = 15f,
             });
 
-            RoutingResult routed = JourneyRouting.Evaluate(problem, before: null);
+            RoutingResult routed = JourneyRouting.Evaluate(problem);
 
             float walkOnly = JourneyRouting.WalkOnlySeconds(problem, 0);
             AssertTrue(routed.After.Length == 3, "one door-to-door time per pair");
@@ -107,18 +107,44 @@ namespace WhereTheyGo.Tests
             AssertEqual(30f, (float)routed.BaseRidersByDay[0], 1e-3f, "the day share of those riders");
             AssertEqual(10f, (float)routed.BaseRidersByNight[0], 1e-3f, "and the night share");
 
-            // Nothing is saved against a baseline of itself.
-            RoutingResult again = JourneyRouting.Evaluate(problem, routed.After);
-            AssertTrue(again.TimeSaved == 0.0, "routing the same network twice saves nothing");
+            // Routing the same network twice gives the same times, bit for bit.
+            RoutingResult again = JourneyRouting.Evaluate(problem);
             for (int i = 0; i < problem.PairCount; i++)
             {
-                AssertTrue(again.After[i] == routed.After[i], "and gives the same times");
+                AssertTrue(again.After[i] == routed.After[i], "a second evaluation gives the same times");
             }
+
+            // The loop closes: a journey from the trunk's LAST stop back to its first
+            // rides round the seam the closing hop provides, and cannot without it.
+            var seam = new RoutingProblem
+            {
+                PairOx = new[] { 3000f },
+                PairOz = new[] { 0f },
+                PairDx = new[] { 0f },
+                PairDz = new[] { 0f },
+                PairWeight = new[] { 1f },
+                PairCount = 1,
+                BaseStopX = problem.BaseStopX,
+                BaseStopZ = problem.BaseStopZ,
+                BaseStopCount = 3,
+                WalkRadius = problem.WalkRadius,
+                BoardPenaltySeconds = problem.BoardPenaltySeconds,
+                MaxTravelSeconds = problem.MaxTravelSeconds,
+                ZoneReachMetres = problem.ZoneReachMetres,
+            };
+            seam.BaseLines.Add(new TransitLine { m_Stops = new[] { 0, 1, 2 }, m_ExpectedWait = 120f, m_SpeedMetresPerSecond = 15f });
+            RoutingResult open = JourneyRouting.Evaluate(seam);
+            AssertTrue(open.Transit[0] == float.MaxValue, "with the loop left open the last stop cannot reach the first by riding");
+            seam.BaseLines.Clear();
+            seam.BaseLines.Add(new TransitLine { m_Stops = new[] { 0, 1, 2, 0 }, m_RideSeconds = new[] { 0f, 100f, 100f, 200f }, m_ExpectedWait = 120f, m_SpeedMetresPerSecond = 15f });
+            RoutingResult closed = JourneyRouting.Evaluate(seam);
+            AssertTrue(closed.Transit[0] < float.MaxValue && closed.After[0] < JourneyRouting.WalkOnlySeconds(seam, 0), "with the closing hop the rider stays aboard round the loop");
+            AssertEqual(1f, (float)closed.BaseRiders[0], 1e-6f, "and rides the line");
 
             // With no line at all every journey walks.
             problem.BaseLines.Clear();
             problem.Geometry = null;
-            RoutingResult walking = JourneyRouting.Evaluate(problem, before: null);
+            RoutingResult walking = JourneyRouting.Evaluate(problem);
             for (int i = 0; i < problem.PairCount; i++)
             {
                 AssertTrue(walking.After[i] == JourneyRouting.WalkOnlySeconds(problem, i), "a city with no transit walks every journey");

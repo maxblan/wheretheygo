@@ -31,37 +31,28 @@ namespace WhereTheyGo
         public readonly float DayShare => Daytime.DayShareOfHours(m_OutHour, m_BackHour);
     }
 
-    // Aggregated demand between two zones. Individual trips are collapsed into
-    // these before anything expensive touches them: a city has tens of thousands of
-    // trips but only a few hundred zone pairs that matter.
-    internal struct ZoneFlow
-    {
-        public int m_Origin;
-        public int m_Destination;
-        public float m_Weight;
-    }
-
     internal static class DemandZones
     {
-
-        // Collapses trips into zone-to-zone flows. Returns the total trip weight so
-        // the caller can sanity-check the extraction against the city's population.
+        // Keeps the trips that are journeys - both ends on the map, in different zones -
+        // in a TOTAL order, and returns their weight so the caller can sanity-check the
+        // extraction against the city's population.
+        //
+        // The order matters. The trips arrive from a PARALLEL job through a NativeQueue,
+        // so the dequeue order depends on thread scheduling, and everything downstream
+        // sums binary32 weights in list order: the pair table, the bands' hourly
+        // departures, the riders per line. Float addition is not associative, so an
+        // unsorted list gave every refresh slightly different last bits. Sorted on every
+        // field a journey has, the whole pipeline is a function of the save.
         public static float Aggregate(
             List<Journey> trips,
             float2Like worldMin,
             int2Like zoneGrid,
-            List<ZoneFlow> flows,
-            out int tripCount,
-            List<Journey>? journeys = null)
+            List<Journey> journeys,
+            out int tripCount)
         {
-            flows.Clear();
-            journeys?.Clear();
+            journeys.Clear();
             tripCount = 0;
-
-            var totals = new Dictionary<long, float>();
             float totalWeight = 0f;
-            int zoneCount = zoneGrid.x * zoneGrid.y;
-
             for (int t = 0; t < trips.Count; t++)
             {
                 Journey trip = trips[t];
@@ -74,47 +65,23 @@ namespace WhereTheyGo
 
                 tripCount++;
                 totalWeight += trip.m_Weight;
-                // The journeys themselves, for the equity measure: zones are too coarse
-                // to say whether a door is within a walk of a stop.
-                journeys?.Add(trip);
-
-                long key = (long)origin * zoneCount + destination;
-                // Absent key leaves `existing` at zero, which is the wanted starting total.
-                _ = totals.TryGetValue(key, out float existing);
-                totals[key] = existing + trip.m_Weight;
+                journeys.Add(trip);
             }
 
-            foreach (KeyValuePair<long, float> pair in totals)
-            {
-                flows.Add(new ZoneFlow
-                {
-                    m_Origin = (int)(pair.Key / zoneCount),
-                    m_Destination = (int)(pair.Key % zoneCount),
-                    m_Weight = pair.Value,
-                });
-            }
-
-            // A TOTAL order, not merely grouped by origin.
-            //
-            // Grouping is what lets the flow assignment run one search per origin zone
-            // rather than one per pair. But the trips arrive from a PARALLEL job
-            // through a NativeQueue, so the dequeue order depends on thread
-            // scheduling; that became the insertion order of `totals`, then its
-            // enumeration order, and List.Sort is not stable, so pairs sharing an
-            // origin kept whatever order the dictionary happened to yield.
-            //
-            // Float addition is not associative, so AssignFlow then accumulated
-            // slightly different edge flows on every run, and GrowCorridor seeds on a
-            // strict `score > seedScore` — a last-bit difference between two
-            // near-equal edges flipped which corridor was grown first, and peeling and
-            // novelty decay carried that through every later suggestion. Sorting on
-            // the destination too makes the whole pipeline a function of the save.
-            flows.Sort(static (a, b) =>
-            {
-                int byOrigin = a.m_Origin.CompareTo(b.m_Origin);
-                return byOrigin != 0 ? byOrigin : a.m_Destination.CompareTo(b.m_Destination);
-            });
+            journeys.Sort(static (a, b) => Compare(a, b));
             return totalWeight;
+        }
+
+        private static int Compare(Journey a, Journey b)
+        {
+            int order = a.m_Origin.x.CompareTo(b.m_Origin.x);
+            if (order == 0) { order = a.m_Origin.y.CompareTo(b.m_Origin.y); }
+            if (order == 0) { order = a.m_Destination.x.CompareTo(b.m_Destination.x); }
+            if (order == 0) { order = a.m_Destination.y.CompareTo(b.m_Destination.y); }
+            if (order == 0) { order = ((byte)a.m_Purpose).CompareTo((byte)b.m_Purpose); }
+            if (order == 0) { order = a.m_OutHour.CompareTo(b.m_OutHour); }
+            if (order == 0) { order = a.m_BackHour.CompareTo(b.m_BackHour); }
+            return order != 0 ? order : a.m_Weight.CompareTo(b.m_Weight);
         }
 
         public static int ZoneOf(float2Like position, float2Like worldMin, int2Like zoneGrid)
@@ -128,13 +95,6 @@ namespace WhereTheyGo
             }
 
             return x + y * zoneGrid.x;
-        }
-
-        public static float2Like ZoneCentre(int zone, float2Like worldMin, int2Like zoneGrid)
-        {
-            int x = zone % zoneGrid.x;
-            int y = zone / zoneGrid.x;
-            return worldMin + new float2Like((x + 0.5f) * Assumptions.ZoneSize, (y + 0.5f) * Assumptions.ZoneSize);
         }
     }
 }

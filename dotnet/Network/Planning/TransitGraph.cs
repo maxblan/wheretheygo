@@ -25,18 +25,16 @@ namespace WhereTheyGo
     internal sealed class TransitNetwork
     {
         public int StopCount;
-        // First node of the zone block (v2 line-set objective): one node per journey
-        // zone, joined by walk edges to every stop within reach. int.MaxValue when the
-        // network was built without zones.
-        public int ZoneNodeStart = int.MaxValue;
         public CompactGraph Graph = new CompactGraph();
         // Per edge, parallel to Graph's edge arrays.
         public TransitEdgeKind[] EdgeKind = Array.Empty<TransitEdgeKind>();
         public int[] EdgeLine = Array.Empty<int>();
     }
 
-    // One line as the router needs it: the stops it calls at in travel order, how long
-    // a rider waits for it, and how fast it covers ground.
+    // One line as the router needs it: the stops it calls at in travel order - the
+    // first one repeated at the end where the loop closes (Lines.ToTransitLines), so a
+    // rider can stay aboard round the whole loop - how long a rider waits for it, and
+    // how fast it covers ground.
     internal struct TransitLine
     {
         public int[]? m_Stops;
@@ -50,122 +48,6 @@ namespace WhereTheyGo
         // is unused. Null falls back to distance over m_SpeedMetresPerSecond.
         public float[]? m_RideSeconds;
         public float m_SpeedMetresPerSecond;
-    }
-
-    // The served stops of the existing network, each carrying the set of modes a
-    // rider can reach on foot from it. Built by
-    // TransitGraph.BuildInterchangeMap, which is where the union is explained.
-    internal readonly struct InterchangeMap
-    {
-        private readonly float[] m_StopX;
-        private readonly float[] m_StopZ;
-        private readonly int[] m_Reachable;
-        private readonly int m_Count;
-        private readonly float m_Radius;
-
-        public InterchangeMap(float[] stopX, float[] stopZ, int[] reachable, int count, float radius)
-        {
-            m_StopX = stopX;
-            m_StopZ = stopZ;
-            m_Reachable = reachable;
-            m_Count = count;
-            m_Radius = radius;
-        }
-
-        public int Count => m_Count;
-
-        // How far a rider will walk to change vehicle. The one owner of that distance:
-        // the walk edges in the transit graph, this map and anything aiming a line at
-        // an interchange all have to agree on it or a suggestion promises a transfer
-        // the routing will not credit.
-        public float Radius => m_Radius;
-
-        // Squared distance to the nearest served stop within `radius`, or false when
-        // there is none. Squared because the caller only ever compares it with another
-        // distance, and a square root per sampled position buys nothing.
-        public bool TryNearest(float x, float z, float radius, out float distanceSq)
-        {
-            distanceSq = 0f;
-            if (m_StopX is null || m_StopZ is null)
-            {
-                return false;
-            }
-
-            float radiusSq = radius * radius;
-            bool found = false;
-            for (int i = 0; i < m_Count; i++)
-            {
-                float dx = m_StopX[i] - x;
-                float dz = m_StopZ[i] - z;
-                float candidate = (dx * dx) + (dz * dz);
-                if (candidate > radiusSq || (found && candidate >= distanceSq))
-                {
-                    continue;
-                }
-
-                found = true;
-                distanceSq = candidate;
-            }
-
-            return found;
-        }
-
-        // The best place near (x, z) for a line of `ownMode` to call at: the one
-        // offering the most OTHER modes, nearest among equals. False when there is no
-        // served stop within the walk radius at all.
-        //
-        // Any served stop counts, its own mode included. A SUGGESTION is never the line
-        // that is already there, so a new tram calling at an existing tram station lets
-        // riders change between tram lines — the heatmap's interchange term excludes the
-        // same mode only because, scoring a bare tile, it cannot know which line would
-        // run there. Mode still decides the RANKING, so a place where three modes meet
-        // beats a lone stop; it no longer decides whether the place counts at all.
-        // `otherModes` is how many modes OTHER than `ownMode` a rider could change to
-        // there — what the hub is worth, as distinct from where it is. A caller
-        // deciding whether to bend a whole alignment towards it needs to know that; one
-        // merely nudging a terminus already standing beside it does not.
-        public bool TryFindNear(
-            ModePreset ownMode, float x, float z, float radius,
-            out float hubX, out float hubZ, out int otherModes)
-        {
-            hubX = 0f;
-            hubZ = 0f;
-            otherModes = 0;
-            if (m_StopX is null || m_StopZ is null || m_Reachable is null)
-            {
-                return false;
-            }
-
-            int ownBit = TransitModes.ModeBit(ownMode);
-            float radiusSq = radius * radius;
-            int bestModes = 0;
-            float bestSq = 0f;
-            bool found = false;
-
-            for (int i = 0; i < m_Count; i++)
-            {
-                float dx = m_StopX[i] - x;
-                float dz = m_StopZ[i] - z;
-                float distanceSq = (dx * dx) + (dz * dz);
-                if (distanceSq > radiusSq)
-                {
-                    continue;
-                }
-
-                int modes = TransitModes.ModeCount(m_Reachable[i] & ~ownBit);
-                if (!found || modes > bestModes || (modes == bestModes && distanceSq < bestSq))
-                {
-                    found = true;
-                    bestModes = modes;
-                    bestSq = distanceSq;
-                    hubX = m_StopX[i];
-                    hubZ = m_StopZ[i];
-                    otherModes = modes;
-                }
-            }
-
-            return found;
-        }
     }
 
     internal static class TransitGraph
@@ -185,27 +67,6 @@ namespace WhereTheyGo
             float walkRadius,
             float boardPenaltySeconds)
         {
-            return BuildWithZones(stopX, stopZ, stopCount, lines, walkRadius, boardPenaltySeconds,
-                Array.Empty<float>(), Array.Empty<float>(), 0, 0f);
-        }
-
-        // The same network plus one node per journey zone, each joined by a walk edge to
-        // every stop within `zoneReach` (Euclidean, at Assumptions.WalkSpeed). A journey's door-to-
-        // door time is then the true minimum over access stops, which makes the time-saved
-        // objective monotone in the line set — the property the exact selection's bound
-        // rests on. Zone nodes come after the line-stop nodes; see TransitNetwork.ZoneNodeStart.
-        public static TransitNetwork BuildWithZones(
-            float[] stopX,
-            float[] stopZ,
-            int stopCount,
-            List<TransitLine> lines,
-            float walkRadius,
-            float boardPenaltySeconds,
-            float[] zoneX,
-            float[] zoneZ,
-            int zoneCount,
-            float zoneReach)
-        {
             var edgeA = new List<int>();
             var edgeB = new List<int>();
             var edgeCost = new List<float>();
@@ -219,7 +80,7 @@ namespace WhereTheyGo
             {
                 edgeA.Add(a);
                 edgeB.Add(b);
-                edgeCost.Add(Math.Max(0.01f, cost));
+                edgeCost.Add(Math.Max(Assumptions.MinEdgeSeconds, cost));
                 kinds.Add(kind);
                 edgeLines.Add(line);
                 // Riding is one-way: a line is a loop driven in one direction, and the
@@ -287,28 +148,9 @@ namespace WhereTheyGo
                 }
             }
 
-            int zoneStart = nextNode;
-            float reachSq = zoneReach * zoneReach;
-            for (int z = 0; z < zoneCount; z++)
-            {
-                int zoneNode = zoneStart + z;
-                for (int stop = 0; stop < stopCount; stop++)
-                {
-                    float dx = stopX[stop] - zoneX[z];
-                    float dz = stopZ[stop] - zoneZ[z];
-                    float distSq = (dx * dx) + (dz * dz);
-                    if (distSq <= reachSq)
-                    {
-                        AddEdge(zoneNode, stop, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed, TransitEdgeKind.Walk, -1);
-                    }
-                }
-            }
-
-            nextNode += zoneCount;
             return new TransitNetwork
             {
                 StopCount = stopCount,
-                ZoneNodeStart = zoneCount > 0 ? zoneStart : int.MaxValue,
                 Graph = CompactGraph.Build(nextNode, edgeA.ToArray(), edgeB.ToArray(), edgeCost.ToArray(), edgeA.Count, forwardOnly.ToArray()),
                 EdgeKind = kinds.ToArray(),
                 EdgeLine = edgeLines.ToArray(),
@@ -317,11 +159,9 @@ namespace WhereTheyGo
 
         // Joins every pair of stops within walking distance.
         //
-        // Bucketed on a grid of the walk radius rather than swept exhaustively. Route
-        // scoring rebuilds this network once per candidate line — up to ninety-six
-        // times per refresh — and an all-pairs sweep over a city's five hundred stops
-        // is a hundred and twenty-five thousand distance tests each time, on the main
-        // thread.
+        // Bucketed on a grid of the walk radius rather than swept exhaustively: an
+        // all-pairs sweep over a city's five hundred stops is a hundred and twenty-five
+        // thousand distance tests for every network built.
         //
         // Pairs are still emitted in ascending (a, b) order, so the edge list is
         // identical to the sweep it replaces and nothing downstream can tell them
@@ -472,49 +312,6 @@ namespace WhereTheyGo
                     }
                 }
             }
-        }
-
-        // Where a rider could change vehicle and carry on. Built from the served stops
-        // of the existing network, so a suggested line can be aimed at one.
-        //
-        // A hub in Cities: Skylines II is several stop entities a few metres apart —
-        // the train platform, the metro entrance below it, the bus stand out front —
-        // so what is on offer at one PLACE is only visible as a union over the stops
-        // within walking distance of it. Reading a single stop's own mode would call
-        // the city's biggest interchange a train station and nothing more.
-        public static InterchangeMap BuildInterchangeMap(
-            float[] stopX, float[] stopZ, int[] stopModes, int stopCount, float radius)
-        {
-            var reachable = new int[stopCount];
-            if (stopCount <= 0 || radius <= 0f)
-            {
-                return new InterchangeMap(stopX, stopZ, reachable, 0, radius);
-            }
-
-            Array.Copy(stopModes, reachable, stopCount);
-            if (stopCount > 1)
-            {
-                StopGrid grid = StopGrid.Build(stopX, stopZ, stopCount, radius);
-                float radiusSq = radius * radius;
-                var neighbours = new List<int>();
-                for (int a = 0; a < stopCount; a++)
-                {
-                    neighbours.Clear();
-                    grid.CollectNeighboursAfter(a, stopX, stopZ, radiusSq, neighbours);
-
-                    // CollectNeighboursAfter reports each pair once, so both directions
-                    // have to be unioned here or the lower-indexed stop of every pair
-                    // would never learn about the higher one.
-                    for (int n = 0; n < neighbours.Count; n++)
-                    {
-                        int b = neighbours[n];
-                        reachable[a] |= stopModes[b];
-                        reachable[b] |= stopModes[a];
-                    }
-                }
-            }
-
-            return new InterchangeMap(stopX, stopZ, reachable, stopCount, radius);
         }
 
         // Walks the shortest itinerary back from `destStop`, reporting how many times
