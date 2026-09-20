@@ -74,10 +74,18 @@ dotnet_diagnostic.MA0181.severity = none
 # than a fix and must not be done blind, so the ratchet holds the line meanwhile.
 # Lower these numbers as methods are split; never raise them.
 #
-# Both figures are what the build says, not what anyone counted: 111 lines fails one
-# method and 51 statements fails two. They came down from 138/60 when the suggestion
-# pipeline was removed (2026-09-14).
-MA0051.maximum_lines_per_method = 112
+# Both figures are what the build says, not what anyone counted. They came down from
+# 138/60 when the suggestion pipeline was removed (2026-09-14) and from 112 when
+# PanelEntries was inlined into the locale dictionaries (2026-09-20).
+#
+# The two numbers are limited by different things, which is worth knowing before trying
+# to lower either. LINES is pinned by the locale tables — LocaleEN.ReadEntries at 101,
+# the five translations at 99 — which are data, not control flow; the longest real method
+# is WalkBridging.Bridge at 96, so this figure says little about method complexity until
+# the locale tables stop being methods. STATEMENTS is pinned by WalkBridging.Bridge
+# itself at exactly 52, so that one is already at its floor and cannot drop without
+# splitting that method.
+MA0051.maximum_lines_per_method = 101
 MA0051.maximum_statements_per_method = 52
 
 # One type per file, named after the file. `Lines.cs` deliberately holds
@@ -98,10 +106,6 @@ dotnet_diagnostic.IDE0066.severity = none
 # the branches carry comments.
 dotnet_diagnostic.IDE0045.severity = none
 dotnet_diagnostic.IDE0046.severity = none
-
-# 5x. The score grids are genuinely rectangular; a jagged array would add an
-# indirection per access in a loop over ~200k cells.
-dotnet_diagnostic.CA1814.severity = none
 
 # Add StructLayoutAttribute. Two of the flagged structs are Burst-compiled job
 # structs, and whether an explicit layout upsets Burst's own layout handling cannot be
