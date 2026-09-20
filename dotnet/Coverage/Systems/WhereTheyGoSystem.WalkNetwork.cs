@@ -185,12 +185,16 @@ namespace WhereTheyGo
         private void FinishComputeIfReady()
         {
             System.Threading.Tasks.Task? pending = m_PendingSnap;
-            TileSnap? snap = m_PendingBox?.m_Snap;
             if (!m_JobPending || pending is null || !pending.IsCompleted)
             {
                 return;
             }
 
+            // Read the worker's box only AFTER IsCompleted, which is what publishes the
+            // write to this thread. Reading it first raced the task's last assignment:
+            // a snap that had just landed read back as null, was logged as a failure
+            // with no exception, and was thrown away for a whole SnapIntervalSeconds.
+            TileSnap? snap = m_PendingBox?.m_Snap;
             m_JobPending = false;
             m_PendingSnap = null;
             m_PendingBox = null;
