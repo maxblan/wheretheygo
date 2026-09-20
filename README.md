@@ -10,9 +10,15 @@ journeys out of your save and draws them.
 
 ## What it is
 
-One infoview in the game's own infoview menu, and one section in the window of a line
-you click. No window of its own, no toolbar button, no column in the transport overview,
-and no button anywhere in it that changes your city.
+One infoview, one section in the window of a line you click, and one in the window of a
+building. No window of its own, no column in the transport overview, and no button
+anywhere in it that changes your city.
+
+The way in is a **button in the top-left row**, beside the other mods' — it hangs on
+`GameTopLeft`, the hook the game provides for exactly that, so it takes no surface a
+large mod might want. The mod's entry in the infoview menu is hidden in exchange, so that
+two doors do not lead into one room; if the button cannot register, the menu entry stays
+and nothing is lost.
 
 ### Desire lines
 

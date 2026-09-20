@@ -2,30 +2,45 @@
 	<!--Id must be set in order to update existed mod. it is not required for publishing mod for the first time-->
 	<ModId Value="" />
 	<!--Name of the mod to display to players-->
-	<DisplayName Value="Transit Architect" />
+	<DisplayName Value="Where They Go" />
 	<!--Short description of the mod-->
-	<ShortDescription Value="MCDA overlay for optimal transit station suitability." />
+	<ShortDescription Value="Draws the journeys your citizens actually make, coloured by how much of each your transit already carries." />
 	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
 	<!--LongDescription Value="This is a long description" /-->
 	<LongDescription>
-# Transit Architect
+# Where They Go
 
-Renders a vanilla-style infoview heatmap that scores every 32 m tile for transit station placement, so you can see at a glance where a new bus stop or metro station would serve the most people.
+Shows **where the people of your city want to go, and how much of that your transit network already carries.** You build; it only ever tells you what is there. It suggests nothing and changes nothing.
 
-## Scoring
+The game already knows every home, every workplace, every school and every errand. This reads those journeys out of your save and draws them.
 
-Each tile is scored with a weighted multi-criteria formula over a configurable catchment (350 m bus / 600 m metro by default):
+## Desire lines
 
-- **Demand** — residents within the catchment
-- **Jobs** — workplaces within the catchment
-- **Coverage penalty** — existing stops of the selected mode reduce the score nearby, avoiding redundant stations
-- **Accessibility** — road network density around the tile
+Every journey the mod knows — home to work and home to school out of the save, shopping and leisure from watching the city run — drawn as a band between its two ends.
 
-The best tiles reach the top of the green-yellow-red gradient; how large that top share is (1-20%, default 5%) is configurable. Bus and Metro presets ship with sensible defaults, and all weights and radii are adjustable in Options.
+- **Width** is how many journeys, in four classes with a legend that names what each one means in journeys a day.
+- **Colour** is how much of it your network already carries. Warm means those people are in their cars; cool means they are already on your metro.
+- **Time of day.** The panel draws the city's day as twenty-four columns, each split into the part your network carries and the part it does not. Click one and the map shows that hour, with an arrowhead on each band saying which way the traffic runs; press play and watch the day go by.
+- **Purposes.** Work, school, shopping and leisure switch on and off separately.
+- **Point at a band** for its numbers: journeys on it, how many travel without transit, its busiest hour, how far apart its two ends are.
 
-## Usage
+## Walk to transit
 
-Open the infoview menu and select **Station Suitability**. The brightest red tiles are the best locations for a new stop. Tune mode preset, weights and radii under Options > Transit Architect; the overlay recalculates automatically when stops change or settings move.
+Every building coloured by the walk from its door to the nearest stop a line actually calls at — real walking time over the pedestrian network, not a circle on the map. The building's own window shows the number the colour came from.
+
+## What a line does
+
+Click a line and its window gains a reading, not a verdict: how many journeys ride it and how many rider-minutes a day it saves them; how many are genuinely faster with it, and how many take just as long without it — which is the answer to "why is my line empty"; where it stands among your lines; what it makes its riders wait; and how full it runs hour by hour.
+
+A line's worth is measured by **taking it away**: the routed figures come from routing the whole city a second time without that line.
+
+## What it does not do
+
+It does not suggest lines, place stops, choose modes, set vehicle counts, write timetables, price tickets, or change anything at all about your city. It hangs only on vanilla surfaces that no large mod replaces: a button in the top-left row, the infoview panel, and the window of the object you clicked.
+
+## Notes
+
+The demand is real, not modelled — there is no gravity model and no calibration. Where routing is needed the game's own pathfinding costs are mirrored. Mods that change those costs (Realistic PathFinding and the like) are not modelled.
 	</LongDescription>
 	<!--Thumbnail-->
 	<Thumbnail Value="Properties/Thumbnail.png" />
