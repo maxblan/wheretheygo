@@ -1,0 +1,20 @@
+version: 2
+
+# GitHub Actions only.
+#
+# NuGet is deliberately NOT watched. The one package reference
+# (Meziantou.Analyzer) is pinned in dotnet/WhereTheyGo.csproj and locked in
+# dotnet/packages.lock.json, and `make strict` restores with --locked-mode. A
+# bump has to regenerate that lock file, which needs the CS2 modding toolchain to
+# resolve the project at all — so it cannot be done on a runner, and a Dependabot
+# PR would only ever land a csproj edit with a stale lock beside it. Bump the
+# analyzer locally and let `make strict` prove the restore.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies

@@ -30,7 +30,7 @@ DOTNET_WIN  := powershell.exe -NoProfile -Command
 UNLOCK      := powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(shell wslpath -w tools/wait-for-unlock.ps1)" -Path "$(shell wslpath -w '$(USERDATA)/Mods/WhereTheyGo')"
 
 .DEFAULT_GOAL := help
-.PHONY: help build compile debug test check-ui verify strict format format-check deploy wait-for-game status logs errors clean
+.PHONY: help build compile debug test check-ui check-links verify strict format format-check deploy wait-for-game status logs errors clean thumbnail
 
 help: ## Show this help
 	@echo "WhereTheyGo — targets:"
@@ -59,12 +59,22 @@ test: ## Run the offline test harness (exit code = number of failures)
 check-ui: ## Syntax-check the UI module, which is never compiled
 	node --check $(UI_MODULE)
 
-verify: check-ui test build ## Everything a change should pass before a run
+# Locale key parity across the six locale files, every panel key the .mjs asks
+# for, and the binding/trigger names in both directions. All three are matched by
+# STRING across languages, so a typo is a blank row in the running game and never
+# a build error. Same three checks CI runs.
+check-links: ## Check the cross-file couplings no compiler sees
+	python3 tools/check-consistency.py
+
+thumbnail: ## Redraw Properties/Thumbnail.png from the ramp in Assumptions.cs
+	python3 tools/make-thumbnail.py
+
+verify: check-ui check-links test build ## Everything a change should pass before a run
 	@$(MAKE) --no-print-directory status
 
 # The compiler's TreatWarningsAsErrors covers C# diagnostics; MSBuild's own
 # --warnaserror also fails on warnings raised by build tasks outside the compiler.
-strict: check-ui format-check ## The full gate: locked restore, no warnings from anything, tests
+strict: check-ui check-links format-check ## The full gate: locked restore, no warnings from anything, tests
 	@$(UNLOCK) || { echo "Refused: the game still holds the deployed files, and this target deploys. Close it first." >&2; exit 1; }
 	$(DOTNET_WIN) "dotnet restore $(PROJECT) --locked-mode"
 	$(DOTNET_WIN) "dotnet build $(PROJECT) -c $(CONFIG) --no-restore --warnaserror"

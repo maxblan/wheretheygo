@@ -24,9 +24,11 @@ There is a `Makefile` wrapping the awkward parts; `make` lists the targets.
 
 ```bash
 make strict        # the full gate: locked restore, --warnaserror both projects, format, tests
-make verify        # check-ui + test + build + status — the quick gate before a run
+make verify        # check-ui + check-links + test + build + status — before a run
 make test          # offline harness; exit code = number of failures
 make check-ui      # node --check on the .mjs, which nothing else validates
+make check-links   # locale/panel-key/binding parity across files — see below
+make thumbnail     # redraw Properties/Thumbnail.png from Assumptions' ramp
 make build         # compile AND deploy (close the game first)
 make compile       # compile only, analyzers included — safe while the game runs
 make deploy        # wait for the game to close, build, confirm by file size
@@ -35,6 +37,19 @@ make errors        # warnings and errors from the mod and UI logs
 make logs          # tail the mod log
 make CONFIG=Debug build
 ```
+
+**Three couplings are held together by matching strings**, not by types: the six locale
+files must carry the same key set, every `t("Key")` in the `.mjs` needs a
+`WhereTheyGo.Panel[Key]` in `LocaleEN`, and every binding and trigger name must match
+`PanelUISystem` in both directions. All three fail as a blank row or a dead control in
+the running game rather than as a build error, so `tools/check-consistency.py`
+(`make check-links`) is what guards them.
+
+**CI runs the half that runs anywhere.** `.github/workflows/ci.yml` builds and runs the
+offline harness with `--warnaserror`, format-checks it, syntax-checks the `.mjs`, and runs
+`check-links`. It CANNOT build the mod project: that needs `CSII_TOOLPATH` and the game's
+own non-redistributable assemblies, and building is also deploying. The mod half stays
+verified locally by `make verify` and then by the log after a run.
 
 The C# toolchain is Windows-only, so from WSL the build has to run as a Windows process —
 that is what resolves the user-level `CSII_TOOLPATH` and `CSII_USERDATAPATH` environment
