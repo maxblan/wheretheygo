@@ -17,16 +17,12 @@ namespace WhereTheyGo
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            var entries = new Dictionary<string, string>(StringComparer.Ordinal)
+            return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Allgemein" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planung" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Angebotsstandards" },
-
-
-
-
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Gehzeit-Horizont f\u00fcr \u201ebedient\u201c (min)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "Ein Weg gilt als bedient, wenn beide Enden innerhalb so vieler Gehminuten einer bedienten Haltestelle liegen." },
@@ -98,9 +94,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[CarriedCaption]", "aller Wege; gez\u00e4hlt wird ein Weg, wenn der \u00d6PNV ihn schneller macht als Gehen" },
                 { "WhereTheyGo.Panel[Coverage]", "In Gehweite" },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Infoansicht anzeigen" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Öffnet die Infoansicht der Mod. Im Infoansichts-Menü des Spiels liegt derselbe Schalter." },
-
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Infoansicht anzeigen" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Öffnet die Infoansicht der Mod. Im Infoansichts-Menü des Spiels liegt derselbe Schalter." },
 
                 { "WhereTheyGo.Infomode", "Where They Go" },
                 { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
@@ -117,27 +112,7 @@ namespace WhereTheyGo
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Low]", "An der Haltestelle" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Medium]", "Auf halbem Weg" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.High]", "Zu weit zu Fuß" },
-            };
 
-            foreach (KeyValuePair<string, string> panel in PanelEntries())
-            {
-                entries.Add(panel.Key, panel.Value);
-            }
-
-            return entries;
-        }
-
-        // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
-        // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by WhereTheyGo.mjs.
-        private static Dictionary<string, string> PanelEntries()
-        {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                // Control panel strings. The panel resolves these itself through cs2/l10n with
-                // the English text inline as a fallback, so a key missing here shows English
-                // rather than a raw key.
-                // Statuszeilen, die die Optionsseite unverändert ausgibt (siehe Loc).
                 { "WhereTheyGo.Panel[CoverageCaption]", "erreichen an beiden Enden eine bediente Haltestelle in {0} min" },
             };
         }

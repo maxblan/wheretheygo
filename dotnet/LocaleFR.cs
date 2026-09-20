@@ -19,7 +19,7 @@ namespace WhereTheyGo
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            var entries = new Dictionary<string, string>(StringComparer.Ordinal)
+            return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Général" },
@@ -96,8 +96,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[CarriedCaption]", "de tous les déplacements ; un déplacement compte lorsque le transport public le rend plus rapide que la marche" },
                 { "WhereTheyGo.Panel[Coverage]", "À distance de marche" },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Afficher l'affichage des infos" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Ouvre l'affichage des infos du mod. Le menu des affichages des infos du jeu contient le même interrupteur." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Afficher l'affichage des infos" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Ouvre l'affichage des infos du mod. Le menu des affichages des infos du jeu contient le même interrupteur." },
 
                 { "WhereTheyGo.Infomode", "Where They Go" },
                 { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
@@ -114,23 +114,7 @@ namespace WhereTheyGo
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Low]", "À l'arrêt" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Medium]", "À mi-chemin" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.High]", "Trop loin à pied" },
-            };
 
-            foreach (KeyValuePair<string, string> panel in PanelEntries())
-            {
-                entries.Add(panel.Key, panel.Value);
-            }
-
-            return entries;
-        }
-
-        // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
-        // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by WhereTheyGo.mjs.
-        private static Dictionary<string, string> PanelEntries()
-        {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
-            {
                 { "WhereTheyGo.Panel[CoverageCaption]", "atteignent un arrêt desservi en {0} min aux deux extrémités" },
             };
         }

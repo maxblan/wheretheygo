@@ -249,8 +249,8 @@ namespace WhereTheyGo
             }
 
             // Deliberately NOT gated on `active`. The window is a 24 GAME-HOUR
-            // measurement, and `active` means the suitability heat map is currently
-            // being drawn — a player has no reason to leave the map recoloured for a
+            // measurement, and `active` means the infoview is currently being
+            // drawn — a player has no reason to leave the map recoloured for a
             // game day, and the moment they switch it off the readings stopped. The
             // panel then showed line verdicts and "1 Messung" beside them, which is
             // exactly as broken as it sounds. Reading six lines is cheap.

@@ -57,9 +57,6 @@ namespace WhereTheyGo
             GameManager.instance.localizationManager.AddSource("ru-RU", new LocaleRU(Settings));
             GameManager.instance.localizationManager.AddSource("zh-HANS", new LocaleZHHANS(Settings));
 
-            // Zero the tuning fields so ClampAll can distinguish "loaded from file"
-            // from "absent in a pre-1.1 file" and fill in mode-aware defaults.
-            Settings.MarkTuningUnset();
             AssetDatabase.global.LoadSettings(nameof(WhereTheyGo), Settings, new Setting(this));
             Settings.ClampAll();
 

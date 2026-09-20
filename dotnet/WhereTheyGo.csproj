@@ -10,9 +10,9 @@
 		<PublishConfigurationPath>Properties\PublishConfiguration.xml</PublishConfigurationPath>
 
 		<!--Checked arithmetic is deliberately OFF for the mod, and only for the mod.
-		    SuitabilityJob and ExtractTripsJob are Burst-compiled and run per cell over
-		    ~200k tiles; Burst does not support throwing, so an overflow check there is
-		    either a compile failure or an abort, and the branch costs vectorization.
+		    ExtractTripsJob and ColorBuildingsJob are Burst-compiled and run per citizen
+		    and per building; Burst does not support throwing, so an overflow check there
+		    is either a compile failure or an abort, and the branch costs vectorization.
 		    The test project (Directory.Build.props) keeps it on, and the pure math files
 		    are compiled into BOTH — so overflow is still checked where it is reachable.-->
 		<CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>

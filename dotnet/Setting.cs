@@ -30,7 +30,7 @@ namespace WhereTheyGo
         public const int kCoverageMinutesMax = 20;
 
         private int m_CoverageWalkMinutes;
-        private bool m_ShowHeatmap = true;
+        private bool m_ShowInfoview = true;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -49,36 +49,29 @@ namespace WhereTheyGo
         // same switch in the place a player looks for settings, and it is persisted so
         // a city opens the way it was left.
         [SettingsUISection(kSection, kPlanningGroup)]
-        public bool ShowHeatmap
+        public bool ShowInfoview
         {
-            get => m_ShowHeatmap;
+            get => m_ShowInfoview;
             set
             {
-                m_ShowHeatmap = value;
+                m_ShowInfoview = value;
                 WhereTheyGoSystem.RequestInfoview(value);
             }
         }
 
         public override void SetDefaults()
         {
-            m_ShowHeatmap = true;
+            m_ShowInfoview = true;
             m_CoverageWalkMinutes = Assumptions.CoverageWalkMinutesDefault;
         }
 
-        // Called before LoadSettings: zeroing the tuning fields lets ClampAll tell
-        // whether the loaded file actually contained them (releases before 1.1
-        // didn't persist tuning keys, so nothing overwrites the zeros).
-        public void MarkTuningUnset()
-        {
-            m_CoverageWalkMinutes = 0;
-        }
-
-        // Called once after settings are loaded from disk to sanitize persisted
-        // values. A tuning field still zero was absent from the file and gets its
-        // default.
+        // Called once after settings are loaded from disk. The property setter already
+        // clamps, but a settings file is user-editable and deserialization is the game's
+        // to arrange, so the range is enforced once more where the values arrive rather
+        // than trusted to the path they came in by.
         public void ClampAll()
         {
-            m_CoverageWalkMinutes = m_CoverageWalkMinutes == 0 ? Assumptions.CoverageWalkMinutesDefault : ClampInt(m_CoverageWalkMinutes, kCoverageMinutesMin, kCoverageMinutesMax);
+            m_CoverageWalkMinutes = ClampInt(m_CoverageWalkMinutes, kCoverageMinutesMin, kCoverageMinutesMax);
         }
 
         // The game targets .NET Framework, which has no Math.Clamp.
@@ -99,16 +92,12 @@ namespace WhereTheyGo
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            var entries = new Dictionary<string, string>(StringComparer.Ordinal)
+            return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "General" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Service standards" },
-
-
-
-
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Walking horizon for \"served\" (min)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "A journey counts as served when both its ends are within this many minutes' walk of a served stop." },
@@ -180,8 +169,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[CarriedCaption]", "of all journeys; a journey counts when transit makes it faster than walking" },
                 { "WhereTheyGo.Panel[Coverage]", "Within walking distance" },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "Show the infoview" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "Opens the mod's infoview. The game's infoview menu holds the same switch." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Show the infoview" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Opens the mod's infoview. The game's infoview menu holds the same switch." },
 
                 { "WhereTheyGo.Infomode", "Where They Go" },
                 { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
@@ -200,27 +189,7 @@ namespace WhereTheyGo
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Low]", "At a stop" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Medium]", "Halfway" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.High]", "Too far to walk" },
-            };
 
-            foreach (KeyValuePair<string, string> panel in PanelEntries())
-            {
-                entries.Add(panel.Key, panel.Value);
-            }
-
-            return entries;
-        }
-
-        // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
-        // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by WhereTheyGo.mjs.
-        private static Dictionary<string, string> PanelEntries()
-        {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                // Control panel strings. The panel resolves these itself through cs2/l10n with
-                // the English text inline as a fallback, so a key missing here shows English
-                // rather than a raw key.
-                // Status lines the Options page prints verbatim (see Loc).
                 { "WhereTheyGo.Panel[CoverageCaption]", "reach a served stop within {0} min at both ends" },
             };
         }

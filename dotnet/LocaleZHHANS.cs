@@ -19,7 +19,7 @@ namespace WhereTheyGo
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
-            var entries = new Dictionary<string, string>(StringComparer.Ordinal)
+            return new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "常规" },
@@ -96,8 +96,8 @@ namespace WhereTheyGo
                 { "WhereTheyGo.Panel[CarriedCaption]", "占全部出行；当公共交通比步行更快时，这次出行才计入" },
                 { "WhereTheyGo.Panel[Coverage]", "在步行可达范围内" },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowHeatmap)), "显示信息视图" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowHeatmap)), "打开本模组的信息视图。游戏的信息视图菜单里有同一个开关。" },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "显示信息视图" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "打开本模组的信息视图。游戏的信息视图菜单里有同一个开关。" },
 
                 { "WhereTheyGo.Infomode", "Where They Go" },
                 { "Infoviews.INFOVIEW[WhereTheyGo]", "Where They Go" },
@@ -114,23 +114,7 @@ namespace WhereTheyGo
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Low]", "就在站点" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.Medium]", "一半路程" },
                 { "Infoviews.LABEL[WhereTheyGo.Legend.WhereTheyGoTransitAccess.High]", "步行太远" },
-            };
 
-            foreach (KeyValuePair<string, string> panel in PanelEntries())
-            {
-                entries.Add(panel.Key, panel.Value);
-            }
-
-            return entries;
-        }
-
-        // Strings the mod's own panel resolves through cs2/l10n. Kept apart from the
-        // block above because they have a different consumer: those are rendered by the
-        // game's Options UI, these by WhereTheyGo.mjs.
-        private static Dictionary<string, string> PanelEntries()
-        {
-            return new Dictionary<string, string>(StringComparer.Ordinal)
-            {
                 { "WhereTheyGo.Panel[CoverageCaption]", "两端都能在 {0} 分钟内到达已服务站点" },
             };
         }
