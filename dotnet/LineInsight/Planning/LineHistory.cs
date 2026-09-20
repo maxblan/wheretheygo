@@ -132,8 +132,6 @@ namespace WhereTheyGo
             return m_ByLine.TryGetValue(lineId, out List<LineObservation>? samples) ? samples : Array.Empty<LineObservation>();
         }
 
-        // Wipes the history. Loading a different save rewinds the frame counter, and
-        // readings from the previous city must not be averaged into this one.
         // What one line carried in each hour of the day, over every reading in the
         // window: the mean riders aboard and the mean seats offered. Hours the window
         // never saw come back with no samples, which the panel draws as a gap rather
@@ -177,6 +175,8 @@ namespace WhereTheyGo
             }
         }
 
+        // Wipes the history. Loading a different save rewinds the frame counter, and
+        // readings from the previous city must not be averaged into this one.
         public void Clear()
         {
             m_ByLine.Clear();

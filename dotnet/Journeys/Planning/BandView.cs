@@ -134,10 +134,14 @@ namespace WhereTheyGo
                     profile, carriedProfile, purposeWeights);
             }
 
+            // One pass over the bands, not two: the hour's weight is the same answer
+            // both times, and asking twice invited the two filters to drift apart.
             float floor = heaviest * thresholdShare;
+            var shown = new List<Band>(set.Bands.Length);
             var weights = new List<float>(set.Bands.Length);
             int hiddenCount = 0;
             float hiddenWeight = 0f;
+            float shownWeight = 0f;
             for (int i = 0; i < set.Bands.Length; i++)
             {
                 float weight = set.Bands[i].WeightAtHour(hour, purposeMask);
@@ -148,23 +152,16 @@ namespace WhereTheyGo
                     continue;
                 }
 
+                shown.Add(set.Bands[i]);
                 weights.Add(weight);
+                shownWeight += weight;
             }
 
             float[] breaks = Breaks(weights.Count > 0 ? Lowest(weights) : heaviest, heaviest);
             var drawn = new DrawnBand[weights.Count];
-            int next = 0;
-            float shownWeight = 0f;
-            for (int i = 0; i < set.Bands.Length; i++)
+            for (int i = 0; i < weights.Count; i++)
             {
-                float weight = set.Bands[i].WeightAtHour(hour, purposeMask);
-                if (weight <= 0f || weight < floor)
-                {
-                    continue;
-                }
-
-                drawn[next++] = new DrawnBand(set.Bands[i], weight, ClassOf(weight, breaks));
-                shownWeight += weight;
+                drawn[i] = new DrawnBand(shown[i], weights[i], ClassOf(weights[i], breaks));
             }
 
             return new BandView(

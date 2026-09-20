@@ -115,15 +115,14 @@ namespace WhereTheyGo
                     report.TripsOffNetwork++;
                 }
 
-                bool covered = EndServed(served, originNode[i], originAccessMs[i], horizonMs)
-                    && EndServed(served, destinationNode[i], destinationAccessMs[i], horizonMs);
-                if (covered)
+                bool originServed = EndServed(served, originNode[i], originAccessMs[i], horizonMs);
+                if (originServed && EndServed(served, destinationNode[i], destinationAccessMs[i], horizonMs))
                 {
                     report.TripsCovered++;
                     report.CoveredWeight += weight[i];
                 }
 
-                walk[i] = EndServed(served, originNode[i], originAccessMs[i], horizonMs)
+                walk[i] = originServed
                     ? served[originNode[i]] + originAccessMs[i]
                     : 2.0 * horizonMs;
 

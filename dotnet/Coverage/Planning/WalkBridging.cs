@@ -37,7 +37,7 @@ namespace WhereTheyGo
         {
             if (nodeX is null || nodeZ is null || edgeA is null || edgeB is null || edgeMetres is null)
             {
-                throw new ArgumentNullException(nameof(nodeX));
+                throw new ArgumentNullException(nodeX is null ? nameof(nodeX) : nodeZ is null ? nameof(nodeZ) : edgeA is null ? nameof(edgeA) : edgeB is null ? nameof(edgeB) : nameof(edgeMetres));
             }
 
             int count = nodeX.Length;

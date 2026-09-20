@@ -61,8 +61,6 @@ namespace WhereTheyGo
             return lineId >= 0 && lineId == m_ContributionLineId;
         }
 
-        private RoutingProblem? m_PairTable;
-
         // The journeys as door-to-door pairs: every trip at its own two positions, not
         // a zone centre; trips between the same two doors (one household's commuters to
         // one workplace) are one pair with their summed weight. Evaluate then searches
@@ -144,7 +142,7 @@ namespace WhereTheyGo
         // routed over.
         private RoutingProblem BuildRoutingProblem()
         {
-            RoutingProblem pairs = m_PairTable ??= BuildPairTable();
+            RoutingProblem pairs = BuildPairTable();
             var problem = new RoutingProblem
             {
                 PairCount = pairs.PairCount,
@@ -190,7 +188,6 @@ namespace WhereTheyGo
                 return false;
             }
 
-            m_PairTable = null;
             var pass = new RoutingPass
             {
                 Problem = BuildRoutingProblem(),
