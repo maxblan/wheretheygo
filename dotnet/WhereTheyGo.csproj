@@ -22,9 +22,39 @@
 		<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 	</PropertyGroup>
 	
+	<!--The game's modding toolchain. That lookup reads a Windows USER environment
+	    variable, which only a Windows process can see: from a Linux process (an editor's
+	    design-time build under WSL) it returns nothing, and the two Imports below used to
+	    expand to a missing "\Mod.props" and fail the project before it could even be
+	    restored. Guarding them instead lets the project evaluate everywhere, and the
+	    fallback further down gives an editor enough to bind against.-->
+	<PropertyGroup>
+		<ModToolPath>$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))</ModToolPath>
+		<HasModToolchain>false</HasModToolchain>
+		<HasModToolchain Condition="Exists('$(ModToolPath)\Mod.props')">true</HasModToolchain>
+	</PropertyGroup>
+
 	<!--Imports must be after PropertyGroup block-->
-	<Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.props" />
-	<Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.targets" />
+	<Import Project="$(ModToolPath)\Mod.props" Condition="'$(HasModToolchain)' == 'true'" />
+	<Import Project="$(ModToolPath)\Mod.targets" Condition="'$(HasModToolchain)' == 'true'" />
+
+	<!--EDITOR ONLY, and never a mod: what Mod.props would have set, plus the game's own
+	    assemblies, so a design-time build resolves every type instead of reporting a
+	    CS0246 on each one. It deliberately does NOT reproduce a real build: Mod.props also
+	    brings the Entities source generators and Mod.targets the post-processor and the
+	    deploy, so an output produced this way is unshippable. CheckModToolchain below says
+	    so out loud. The Managed folder is looked up the way Mod.props looks it up, at the
+	    same two default install locations, seen through the WSL mount.-->
+	<PropertyGroup Condition="'$(HasModToolchain)' != 'true'">
+		<TargetFramework>net48</TargetFramework>
+		<LangVersion>9.0</LangVersion>
+		<WslSteamManagedPath>/mnt/c/Program Files (x86)/Steam/steamapps/common/Cities Skylines II/Cities2_Data/Managed</WslSteamManagedPath>
+		<WslXboxManagedPath>/mnt/c/XboxGames/Cities- Skylines II - PC Edition/Content/Cities2_Data/Managed</WslXboxManagedPath>
+		<ManagedPath Condition="'$(ManagedPath)' == '' AND Exists('$(CSII_MANAGEDPATH)/Game.dll')">$(CSII_MANAGEDPATH)</ManagedPath>
+		<ManagedPath Condition="'$(ManagedPath)' == '' AND Exists('$(WslSteamManagedPath)/Game.dll')">$(WslSteamManagedPath)</ManagedPath>
+		<ManagedPath Condition="'$(ManagedPath)' == '' AND Exists('$(WslXboxManagedPath)/Game.dll')">$(WslXboxManagedPath)</ManagedPath>
+		<AssemblySearchPaths>$(AssemblySearchPaths);$(ManagedPath)</AssemblySearchPaths>
+	</PropertyGroup>
 
 	<ItemGroup>
 		<!--Analyzer only: PrivateAssets keeps it out of the deployed mod.-->
@@ -112,5 +142,15 @@
 		<None Include="Presentation\UI\WhereTheyGo.mjs" Link="WhereTheyGo.mjs" CopyToOutputDirectory="PreserveNewest" />
 		<None Include="Presentation\UI\WhereTheyGo.css" Link="WhereTheyGo.css" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
+
+	<!--Reached only without the toolchain, so: either the fallback found nothing to bind
+	    against and the 800-odd CS0246s that would follow are worth one message instead, or
+	    it did and somebody is compiling a mod that cannot be deployed.-->
+	<Target Name="CheckModToolchain" BeforeTargets="CoreCompile" Condition="'$(HasModToolchain)' != 'true'">
+		<Error Condition="'$(ManagedPath)' == ''"
+		       Text="Neither CSII_TOOLPATH (set by the game's modding toolchain, and readable only by a Windows process) nor the game's Managed folder was found. Build the mod on Windows; see CLAUDE.md." />
+		<Warning Condition="'$(DesignTimeBuild)' != 'true'"
+		         Text="Compiling against $(ManagedPath) without the modding toolchain: no Entities source generators, no ModPostProcessor and no deploy. This output is for an editor to bind against, not a mod. Build on Windows to produce one." />
+	</Target>
 
 </Project>

@@ -54,7 +54,7 @@ you did not.
 Every folder holds one concept, split three ways:
 
 | | |
-|---|---|
+| --- | --- |
 | `Planning/` | pure arithmetic, `System.*` only |
 | `Gathering/` | reads the game's ECS data |
 | `Systems/` | the ECS systems and the partials of `WhereTheyGoSystem` |

@@ -65,6 +65,16 @@ variables the csproj imports `Mod.props`/`Mod.targets` from:
 powershell.exe -NoProfile -Command "dotnet build dotnet/WhereTheyGo.csproj -c Release"
 ```
 
+A Linux process reads neither of those variables, so `Mod.props`/`Mod.targets` are imported
+under a condition and the csproj falls back to what they would have set plus the game's
+`Managed` folder seen through `/mnt/c`, found at the same two default install locations
+`Mod.props` itself tries. That exists **so an editor's design-time build under WSL can
+resolve the game's types** rather than reporting a `CS0246` on each of 852 of them, and it
+is not a second way to build the mod: it brings neither the Entities source generators nor
+the post-processor nor the deploy, so its output is unshippable, and a real build through
+it warns that it is. `make compile` still reports zero warnings on Windows, where the
+fallback never runs.
+
 **Building deploys.** `Mod.targets` copies the build straight into
 `%CSII_USERDATAPATH%\Mods\WhereTheyGo`, so there is no separate install step, and the
 running game holds a lock on the deployed DLL. Close the game before building. To check
@@ -194,7 +204,7 @@ against a named game system.
 ### Layout: one folder per concept, three kinds of code inside
 
 | Folder | Planning (pure) | Gathering (reads the game) | Systems |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `Journeys` | `Journey`/`DemandZones`, `ObservedTrips`, `DesireBands`, `BandView`, `BandGeometry` | `TravelDemand` (Burst job), `TripObserver` | `.Journeys`, `.Observed` |
 | `Network` | `TransitGraph`, `JourneyRouting`, `Dijkstra` | `Lines` | `.Routing` |
 | `Coverage` | `WalkAccess` (graph, Dijkstra, snap), `WalkBridging`, `Coverage` | `WalkNetwork` | `.WalkNetwork`, `.Coverage`, `BuildingAccessColorSystem`, `BuildingAccessSection` |

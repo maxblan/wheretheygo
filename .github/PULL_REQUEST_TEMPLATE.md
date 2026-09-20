@@ -1,3 +1,7 @@
+<!-- markdownlint-disable-file MD041 -->
+<!-- A pull request template has no title of its own: its first heading is a
+     section of the pull request body, not a document title. -->
+
 ## What changes
 
 <!-- What observable behaviour is different afterwards, and what stays identical. -->
