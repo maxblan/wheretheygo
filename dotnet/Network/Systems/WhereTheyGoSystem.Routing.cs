@@ -117,6 +117,29 @@ namespace WhereTheyGo
             return table;
         }
 
+        // The hour strip's two profiles against the headline figure. They are measured
+        // differently on purpose - the figure weighs door pairs, the strip weighs the
+        // departures of the bands those pairs folded into - so they will not match to
+        // the decimal; a wide gap between them means bands lost journeys the routing
+        // counted, which is what the cap does and is worth seeing.
+        private static void LogCarriedHours(BandSet bands, float carriedShare)
+        {
+            float[] hours = bands.HourlyProfile(AllPurposes);
+            float[] carried = bands.CarriedHourlyProfile(AllPurposes);
+            float total = 0f;
+            float ridden = 0f;
+            for (int hour = 0; hour < Band.HoursPerDay; hour++)
+            {
+                total += hours[hour];
+                ridden += carried[hour];
+            }
+
+            DeferredLog.Info(
+                $"Hour strip: {(total * 0.5f).ToString("F0", CultureInfo.InvariantCulture)} journeys/day over 24 hours, " +
+                $"{((total > 0f ? ridden / total : 0f) * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of them carried " +
+                $"(the panel's headline figure reads {(carriedShare * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, weighed over door pairs rather than bands)");
+        }
+
         // The pairs plus the existing served stops and lines as the network they are
         // routed over.
         private RoutingProblem BuildRoutingProblem()
@@ -349,6 +372,7 @@ namespace WhereTheyGo
                 (bands.HiddenPairs > 0
                     ? $"; NOT SHOWN: {(bands.HiddenPairs).ToString(CultureInfo.InvariantCulture)} zone pairs past the cap of {(Assumptions.MaxBands).ToString(CultureInfo.InvariantCulture)} bands, together {(bands.HiddenWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day"
                     : string.Empty));
+            LogCarriedHours(bands, pass.Carried.Share);
             if (pass.TargetLine >= 0 && pass.TargetLine < m_ExistingLines.Count)
             {
                 ExistingLine target = m_ExistingLines[pass.TargetLine];

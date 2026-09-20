@@ -18,17 +18,16 @@
         public float CoverageShare;
         public int CoverageWalkMinutes;
 
-        // How much observed history the line readings rest on: hours covered, how many
-        // readings that was, and how long the window is. A mean over twenty minutes and
-        // a mean over a full day are the same number on screen and mean very different
-        // things.
-        public float CoveredHours;
-        public int Readings;
-        public float WindowHours;
+        // The walk from a journey's start to the nearest served stop, in four classes
+        // as shares that sum to 1 (Coverage.WalkClassOf). The figure above says how
+        // much of the city is within the horizon; this says what the rest of it walks.
+        public float[] WalkClassShare;
 
-        // Shopping and leisure journeys seen so far, and over how long. The commutes
-        // are read from the save and need no watching; these do.
-        public int ObservedJourneys;
-        public float ObservedHours;
+        // What everything else is measured against: the lines, and the stops they
+        // actually call at. Without them a player reads "5 294 journeys" with nothing
+        // to read it against. The city's journeys a day sit on the map state instead,
+        // beside the purpose weights they are the sum of.
+        public int LineCount;
+        public int ServedStopCount;
     }
 }

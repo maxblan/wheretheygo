@@ -209,6 +209,26 @@ namespace WhereTheyGo
             return profile;
         }
 
+        // The same profile, but only the departures the network already carries. The
+        // routing has no clock — a door pair is carried or it is not, whatever hour it
+        // travels at — so a band's carried share applies unchanged to each of its
+        // hours. Summed over the SAME bands as HourlyProfile, so the two can be drawn
+        // as one column and the carried part can never exceed it.
+        public float[] CarriedHourlyProfile(int purposeMask)
+        {
+            var profile = new float[Band.HoursPerDay];
+            for (int i = 0; i < Bands.Length; i++)
+            {
+                float carried = Bands[i].CarriedShare;
+                for (int hour = 0; hour < Band.HoursPerDay; hour++)
+                {
+                    profile[hour] += Bands[i].WeightAtHour(hour, purposeMask) * carried;
+                }
+            }
+
+            return profile;
+        }
+
         // Journeys a day per purpose, in JourneyPurpose order. What the panel's four
         // switches are worth, so they carry their own weight beside their name.
         public float[] PurposeWeights()

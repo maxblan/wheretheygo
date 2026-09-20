@@ -149,6 +149,19 @@
 .wtg-hour-fill {
     background-color: rgba(120, 155, 190, 0.55);
     border-radius: 1rem 1rem 0 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+}
+
+/* The part of the hour the network already carries, drawn INSIDE the column from the
+   bottom up in the cool end of the map's own ramp — the same colour the map paints a
+   corridor everybody rides. The remainder above it keeps the column's own neutral fill
+   rather than the ramp's warm, because that fill is also what marks the picked hour and
+   two meanings on one surface would fight. */
+.wtg-hour-carried {
+    width: 100%;
+    border-radius: 0 0 1rem 1rem;
 }
 
 .wtg-hour:hover .wtg-hour-fill {
@@ -222,6 +235,20 @@
     flex: 0 0 auto;
     color: #ffffff;
     font-size: 11rem;
+}
+
+/* The share the absolute number is of the city, on a fixed width so the column of them
+   lines up rather than ragging against the numbers to its left. */
+.wtg-purpose-share {
+    flex: 0 0 auto;
+    width: 30rem;
+    text-align: right;
+    color: #8fa1b8;
+    font-size: 10rem;
+}
+
+.wtg-purpose-off .wtg-purpose-share {
+    color: #5b6980;
 }
 
 .wtg-check {
@@ -331,6 +358,36 @@
     font-size: 10rem;
 }
 
+.wtg-tip-purposes {
+    margin-top: 2rem;
+}
+
+.wtg-tip-purpose {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    color: #b9c7d8;
+    font-size: 10rem;
+}
+
+.wtg-tip-purpose .wtg-purpose-swatch {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    margin: 0 4rem 0 0;
+}
+
+/* ---------------------------------------------------------------------------
+   The folded-away detail under the two figures. */
+
+.wtg-detail-head {
+    cursor: pointer;
+}
+
+.wtg-detail-body {
+    margin-top: 1rem;
+}
+
 /* ---------------------------------------------------------------------------
    The line's own reading, in the window of the line the player clicked. */
 
@@ -338,31 +395,86 @@
     margin-top: 3rem;
 }
 
+/* Nearly twice the sixty it was. This is the most useful thing in the line's window
+   and it was drawn in the height of two rows of text. */
 .wtg-load-chart {
     width: 100%;
-    height: 60rem;
-}
-
-/* Bars, for when the chart component has moved. An unwatched hour is a gap, never a
-   zero: the two must not look alike. */
-.wtg-load-bars {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    height: 36rem;
     margin-top: 2rem;
 }
 
-.wtg-load-bar {
+.wtg-load-plot {
+    display: flex;
+    flex-direction: row;
+    height: 110rem;
+}
+
+/* The two marks and the floor. The top one is the line's own busiest hour rounded up
+   (LoadAxis.TopOf), which is why the caption underneath says so. */
+.wtg-load-marks {
+    flex: 0 0 auto;
+    width: 26rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding-right: 3rem;
+    color: #7f90a4;
+    font-size: 9rem;
+}
+
+.wtg-load-mark {
+    line-height: 9rem;
+}
+
+.wtg-load-bars {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    border-left: 1rem solid rgba(255, 255, 255, 0.14);
+    border-bottom: 1rem solid rgba(255, 255, 255, 0.14);
+}
+
+/* One hit target per hour, the full height of the plot, so an hour at two percent can
+   be pointed at as easily as one at sixty. */
+.wtg-load-slot {
     flex: 1 1 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
     margin-right: 1rem;
+}
+
+.wtg-load-slot-on {
+    background-color: rgba(255, 255, 255, 0.07);
+}
+
+.wtg-load-bar {
+    width: 100%;
     background-color: #5fa8d3;
     border-radius: 1rem 1rem 0 0;
 }
 
+/* An hour nobody watched is a gap, never a zero: a line that stood in the depot and a
+   line nobody rode must not draw the same. */
 .wtg-load-gap {
+    width: 100%;
     height: 2rem;
     background-color: rgba(255, 255, 255, 0.12);
+}
+
+.wtg-load-axis {
+    display: flex;
+    flex-direction: row;
+    margin-top: 2rem;
+    padding-left: 26rem;
+}
+
+.wtg-load-tick {
+    flex: 1 1 0;
+    color: #7f90a4;
+    font-size: 9rem;
 }
 
 /* The button beside the infoview menu. A floating button is a bare round-cornered

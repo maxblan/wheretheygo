@@ -221,5 +221,52 @@ namespace WhereTheyGo.Tests
             }
         }
 
+        // A line's own number means nothing until it is put beside the others. Ties
+        // share a rank on purpose: a tie-break invented here would move between two
+        // refreshes with nothing in the city having changed.
+        internal static void LineStandingRanksAgainstTheOtherLines()
+        {
+            var riders = new List<float> { 400f, 1200f, 400f, 0f };
+
+            LineStanding busiest = LineStanding.Of(1200f, riders, 10000f);
+            AssertEqual(1, busiest.Rank, 0, "the busiest line is first");
+            AssertEqual(4, busiest.LineCount, 0, "out of four lines");
+            AssertEqual(0.12f, busiest.CityShare, 1e-5f, "1200 of the city's 10000 journeys");
+
+            LineStanding tied = LineStanding.Of(400f, riders, 10000f);
+            AssertEqual(2, tied.Rank, 0, "two lines at 400 are both second, not second and third");
+
+            LineStanding empty = LineStanding.Of(0f, riders, 10000f);
+            AssertEqual(4, empty.Rank, 0, "the line nobody rides is last");
+            AssertEqual(0f, empty.CityShare, 0f, "and carries none of the city");
+
+            LineStanding only = LineStanding.Of(50f, new List<float> { 50f }, 0f);
+            AssertEqual(1, only.Rank, 0, "the only line is first");
+            AssertEqual(0f, only.CityShare, 0f, "a city with no journeys yields no share rather than infinity");
+
+            LineStanding unrouted = LineStanding.Of(-1f, riders, 10000f);
+            AssertEqual(0, unrouted.Rank, 0, "a line the routing has not reached yet has no rank at all");
+        }
+
+        // The load chart's y axis follows the line rather than sitting at 0-100 %: a
+        // metro carrying fifteen people in an 840-seat train drew as a flat line.
+        internal static void LoadAxisFollowsTheLinesOwnBusiestHour()
+        {
+            AssertEqual(0.6f, LoadAxis.TopOf(new[] { 0.58f, 0.1f, -1f }), 1e-5f, "a peak of 58 % tops out at 60, which halves to 30");
+            AssertEqual(0.04f, LoadAxis.TopOf(new[] { 0.03f, -1f, 0.01f }), 1e-5f, "a peak of 3 % tops out at 4, not at 100");
+            AssertEqual(0.02f, LoadAxis.TopOf(new[] { -1f, -1f }), 1e-5f, "an unwatched line still gets the smallest axis, not a zero-high one");
+            AssertEqual(0.02f, LoadAxis.TopOf(null), 1e-5f, "and so does no data at all");
+            AssertEqual(1f, LoadAxis.TopOf(new[] { 0.99f }), 1e-5f, "a full line tops out at its seats");
+            AssertEqual(1.14f, LoadAxis.TopOf(new[] { 1.135f }), 1e-4f, "standing room past the seats is drawn, not clipped to the top");
+
+            float[] tops = new float[Assumptions.LoadAxisTopsPercent.Length];
+            for (int i = 0; i < tops.Length; i++)
+            {
+                tops[i] = Assumptions.LoadAxisTopsPercent[i] / 100f;
+                AssertTrue(i == 0 || tops[i] > tops[i - 1], "the ladder climbs");
+                AssertEqual(tops[i], LoadAxis.TopOf(new[] { tops[i] }), 1e-5f, "a peak exactly on a rung stays on it rather than jumping to the next");
+            }
+        }
+
     }
 }

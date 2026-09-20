@@ -72,5 +72,57 @@ namespace WhereTheyGo.Tests
             AssertTrue(none.TilesOnNetwork == 0 && none.TileNode[0] == -1 && none.TileWalkMs[3] == -1,
                 "a city with no pedestrian network snaps nothing");
         }
+        // The panel draws the walk to transit as four classes, and the classes move
+        // with the horizon the player set rather than sitting at fixed minutes. What
+        // matters is that they partition: every journey lands in exactly one, and the
+        // last one holds everything the field never reached.
+        internal static void WalkClassesPartitionEveryJourney()
+        {
+            // Thirty nodes a minute apart, one served stop at node 1, ten-minute
+            // horizon, and a field searched four times as far - the same arrangement
+            // the coverage pass uses.
+            WalkGraph graph = LineGraph(30, 72f);
+            var dijkstra = new IntDijkstra(graph.NodeCount);
+            const int horizon = 600_000;
+            int[] served = Coverage.ServedWalkMs(
+                graph, dijkstra, new[] { 1 }, new[] { 0 }, 1, horizon * Assumptions.AccessFieldHorizonMultiple);
+
+            AssertEqual(0, Coverage.WalkClassOf(0, horizon), 0, "at the stop is the nearest class");
+            AssertEqual(0, Coverage.WalkClassOf(299_999, horizon), 0, "just under five minutes still is");
+            AssertEqual(1, Coverage.WalkClassOf(300_000, horizon), 0, "five minutes exactly starts the second class");
+            AssertEqual(2, Coverage.WalkClassOf(horizon, horizon), 0, "the horizon itself starts the third");
+            AssertEqual(3, Coverage.WalkClassOf(1_200_000, horizon), 0, "twice the horizon is the last class");
+            AssertEqual(3, Coverage.WalkClassOf(long.MaxValue, horizon), 0, "and so is a stop nothing reaches");
+
+            // Origins at 2, 7, 13 and 25 minutes' walk, plus one off the network.
+            var origin = new[] { 3, 8, 14, 26, -1 };
+            var originAccess = new[] { 0, 0, 0, 0, 0 };
+            var dest = new[] { 3, 8, 14, 26, 3 };
+            var destAccess = new[] { 0, 0, 0, 0, 0 };
+            var weight = new[] { 4f, 3f, 2f, 1f, 2f };
+            CoverageReport report = Coverage.Measure(served, horizon, origin, originAccess, dest, destAccess, weight, 5);
+
+            AssertEqual(4f / 12f, report.WalkClassShare[0], 1e-4f, "two minutes out is the nearest class");
+            AssertEqual(3f / 12f, report.WalkClassShare[1], 1e-4f, "seven minutes is inside the horizon");
+            AssertEqual(2f / 12f, report.WalkClassShare[2], 1e-4f, "thirteen minutes is past it but measured");
+            AssertEqual(3f / 12f, report.WalkClassShare[3], 1e-4f, "twenty-five minutes and the off-network end share the last class");
+
+            float sum = 0f;
+            for (int c = 0; c < Coverage.WalkClassCount; c++)
+            {
+                sum += report.WalkClassShare[c];
+            }
+
+            AssertEqual(1f, sum, 1e-4f, "the four classes are the whole city and nothing twice");
+
+            // No journeys at all must not divide by a total of zero.
+            CoverageReport nothing = Coverage.Measure(
+                served, horizon, Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<float>(), 0);
+            for (int c = 0; c < Coverage.WalkClassCount; c++)
+            {
+                AssertEqual(0f, nothing.WalkClassShare[c], 0f, "an empty city has no classes, not a division by zero");
+            }
+        }
+
     }
 }

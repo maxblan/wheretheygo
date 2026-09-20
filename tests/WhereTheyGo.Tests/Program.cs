@@ -37,6 +37,7 @@ namespace WhereTheyGo.Tests
             Run("Observed trips are scaled to a day's rate, down over several days and up over part of one", ObservedTripWindowHoldsADay);
             Run("Observed trips restart on a rewound clock and stop at the cap", ObservedTripWindowRestartsAndCaps);
             Run("Coverage counts journeys served at both ends within the horizon", CoverageShare);
+            Run("Coverage splits the walk to transit into four classes that partition the city", WalkClassesPartitionEveryJourney);
 
             Run("Graph adjacency covers both directions", GraphAdjacencyBothDirections);
             Run("Dijkstra finds the cheapest path, not the fewest hops", DijkstraPrefersCheapPath);
@@ -80,11 +81,14 @@ namespace WhereTheyGo.Tests
             Run("Bands: the direction follows the hour, and a whole day has none", BandDirectionFollowsTheHour);
             Run("Bands: the arc rises over its middle, the tangent turns the arrow, the casing darkens the fill", BandArcRisesAndAimsAlongItself);
             Run("Bands: the view draws exactly what the hour and the purposes describe", BandViewFiltersExactlyAndClassesWidths);
+            Run("Bands: the carried part of an hour sits inside the hour it belongs to", CarriedHoursSitInsideTheHoursTheyBelongTo);
             Run("Bands: the width classes are ordered, their boundaries readable and never above the heaviest band", BandWidthClassesAreOrderedAndReadable);
             Run("Bands: pointing at one measures against the arc, not the chord", PointingMeasuresAgainstTheArcNotTheChord);
             Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
             Run("A line's worth is what its riders lose when it is taken out", LineContributionComesFromTakingTheLineOut);
             Run("Hourly load tells an unwatched hour from a quiet one", HourlyLoadSeparatesQuietHoursFromUnwatchedOnes);
+            Run("A line is ranked against the others and against the city", LineStandingRanksAgainstTheOtherLines);
+            Run("The load chart's axis follows the line's own busiest hour", LoadAxisFollowsTheLinesOwnBusiestHour);
 
             // F1's grid pass and F2's candidate set, pure since 2026-09-05.
             Run("Walk network: the pieces the game's data leaves are bridged", WalkBridgingJoinsWhatTheDataCuts);

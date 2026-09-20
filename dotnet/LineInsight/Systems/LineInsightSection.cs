@@ -36,6 +36,14 @@ namespace WhereTheyGo
         private readonly float[] m_HourlyCapacity = new float[Band.HoursPerDay];
         private readonly int[] m_HourlySamples = new int[Band.HoursPerDay];
 
+        // The load of each hour as the panel draws it: riders over the seats that were
+        // actually out, or -1 for an hour the window never watched. Built here rather
+        // than while writing, because the chart's own axis is measured from it.
+        private readonly float[] m_HourlyLoad = new float[Band.HoursPerDay];
+
+        private bool m_Read;
+        private LineReading m_Reading;
+
         protected override void OnCreate()
         {
             base.OnCreate();
@@ -52,6 +60,9 @@ namespace WhereTheyGo
             System.Array.Clear(m_HourlyRiders, 0, m_HourlyRiders.Length);
             System.Array.Clear(m_HourlyCapacity, 0, m_HourlyCapacity.Length);
             System.Array.Clear(m_HourlySamples, 0, m_HourlySamples.Length);
+            System.Array.Clear(m_HourlyLoad, 0, m_HourlyLoad.Length);
+            m_Read = false;
+            m_Reading = default;
         }
 
         // Only the lines the routing models: passenger lines of a surface mode with two
@@ -87,6 +98,16 @@ namespace WhereTheyGo
             }
 
             m_Overlay.ReadHourlyLoad(lineId, m_HourlyRiders, m_HourlyCapacity, m_HourlySamples);
+            for (int hour = 0; hour < Band.HoursPerDay; hour++)
+            {
+                // -1 is the sentinel for an hour nobody watched, which the panel draws
+                // as a gap. Nobody watching is not the same as nobody riding.
+                m_HourlyLoad[hour] = m_HourlySamples[hour] > 0 && m_HourlyCapacity[hour] > 0f
+                    ? m_HourlyRiders[hour] / m_HourlyCapacity[hour]
+                    : -1f;
+            }
+
+            m_Read = m_Overlay.TryGetLineReading(lineId, m_HourlyLoad, out m_Reading);
         }
 
         public override void OnWriteProperties(IJsonWriter writer)
@@ -106,19 +127,45 @@ namespace WhereTheyGo
             writer.Write(m_DuplicatePercent);
 
             // The load hour by hour, as a share of the seats that were actually out in
-            // that hour. An hour the window never watched writes -1, which the panel
-            // draws as a gap: nobody watching is not the same as nobody riding.
+            // that hour, with -1 for an hour the window never watched.
             writer.PropertyName("hourlyLoad");
             writer.ArrayBegin(Band.HoursPerDay);
             for (int hour = 0; hour < Band.HoursPerDay; hour++)
             {
-                float share = m_HourlySamples[hour] > 0 && m_HourlyCapacity[hour] > 0f
-                    ? m_HourlyRiders[hour] / m_HourlyCapacity[hour]
-                    : -1f;
-                writer.Write(share);
+                writer.Write(m_HourlyLoad[hour]);
             }
 
             writer.ArrayEnd();
+            WriteReading(writer);
+        }
+
+        // Everything the mod already knew about this line and never showed. Written
+        // even when the routing has not landed yet: these come from the line itself,
+        // not from the pass, and there is no reason to make the player wait for them.
+        private void WriteReading(IJsonWriter writer)
+        {
+            writer.PropertyName("read");
+            writer.Write(m_Read);
+            writer.PropertyName("rank");
+            writer.Write(m_Reading.Standing.Rank);
+            writer.PropertyName("lineCount");
+            writer.Write(m_Reading.Standing.LineCount);
+            writer.PropertyName("cityShare");
+            writer.Write(m_Reading.Standing.CityShare);
+            writer.PropertyName("waitSeconds");
+            writer.Write(m_Reading.WaitSeconds);
+            writer.PropertyName("peakAboard");
+            writer.Write(m_Reading.PeakAboard);
+            writer.PropertyName("capacity");
+            writer.Write(m_Reading.Capacity);
+            writer.PropertyName("loopSeconds");
+            writer.Write(m_Reading.LoopSeconds);
+            writer.PropertyName("idealLoopSeconds");
+            writer.Write(m_Reading.IdealLoopSeconds);
+            writer.PropertyName("loadAxisTop");
+            writer.Write(m_Reading.LoadAxisTop);
+            writer.PropertyName("fromWindow");
+            writer.Write(m_Reading.FromWindow);
         }
     }
 }

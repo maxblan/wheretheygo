@@ -387,16 +387,39 @@ namespace WhereTheyGo
                 m_ServedWalkMs, m_CoverageHorizonMs,
                 m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
                 m_JourneyWeight, m_Journeys.Count);
-            SetCoverageFigures(m_Coverage.Share, settings.CoverageWalkMinutes);
+            SetCoverageFigures(m_Coverage.Share, settings.CoverageWalkMinutes, m_Coverage.WalkClassShare);
             DeferredLog.Info(
                 $"Coverage ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
                 $"{settings.CoverageWalkMinutes.ToString(CultureInfo.InvariantCulture)} min, " +
                 $"{(m_Coverage.TripsCovered).ToString(CultureInfo.InvariantCulture)}/{(m_Coverage.Trips).ToString(CultureInfo.InvariantCulture)} journeys, " +
                 $"{(m_Coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
                 $"Gini of access walk {m_Coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +
+                $"walk classes {WalkClassText(m_Coverage.WalkClassShare)}, " +
                 $"served stops {(m_TransitStops.Count).ToString(CultureInfo.InvariantCulture)}; " +
                 $"main thread {(m_SnapMs).ToString(CultureInfo.InvariantCulture)} ms snapping {(m_Journeys.Count).ToString(CultureInfo.InvariantCulture)} journey ends, " +
                 $"{(m_FieldMs).ToString(CultureInfo.InvariantCulture)} ms {(m_FieldRebuilt ? "rebuilding the served-walk field" : "(field unchanged, not rebuilt)")}");
+        }
+
+        // The shape behind the Gini, and the bar the panel draws: the walk to a served
+        // stop in four classes. Logged with their SUM, which is the point of logging it
+        // at all - it must read 100 %, and a bar the player cannot check is one the log
+        // has to.
+        private static string WalkClassText(float[] shares)
+        {
+            if (shares is null || shares.Length == 0)
+            {
+                return "not measured yet";
+            }
+
+            var parts = new string[shares.Length];
+            float sum = 0f;
+            for (int i = 0; i < shares.Length; i++)
+            {
+                parts[i] = (shares[i] * 100f).ToString("F1", CultureInfo.InvariantCulture);
+                sum += shares[i];
+            }
+
+            return $"{string.Join("/", parts)} % (sums to {(sum * 100f).ToString("F1", CultureInfo.InvariantCulture)} %)";
         }
     }
 }

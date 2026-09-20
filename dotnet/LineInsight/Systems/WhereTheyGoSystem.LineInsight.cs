@@ -2,7 +2,6 @@
 using System.Globalization;
 using Game.Simulation;
 using Unity.Entities;
-using Unity.Mathematics;
 
 namespace WhereTheyGo
 {
@@ -100,7 +99,7 @@ namespace WhereTheyGo
             }
 
             LogLineHealth(frame);
-            UpdateDataCoverage();
+            UpdateNetworkFigures();
         }
 
         // What one line carried in each hour of the day, for the section in its own
@@ -109,6 +108,34 @@ namespace WhereTheyGo
         internal void ReadHourlyLoad(int lineId, float[] riders, float[] capacity, int[] samples)
         {
             m_LineHistory.HourlyLoad(lineId, riders, capacity, samples);
+        }
+
+        // The rest of what is known about the line whose window is open: where it
+        // stands among the others, what it makes its riders wait, how full it gets, and
+        // how long its loop takes against free flow. All of it was already measured;
+        // until now it only ever reached the log.
+        internal bool TryGetLineReading(int lineId, float[]? hourlyLoad, out LineReading reading)
+        {
+            reading = default;
+            ExistingLine? found = null;
+            var riders = new float[m_ExistingLines.Count];
+            for (int i = 0; i < m_ExistingLines.Count; i++)
+            {
+                ExistingLine line = m_ExistingLines[i];
+                riders[i] = line.m_RidersPerDay;
+                if (line.m_Id == lineId)
+                {
+                    found = line;
+                }
+            }
+
+            if (found is null)
+            {
+                return false;
+            }
+
+            reading = LineReading.Of(found, riders, CurrentBandView.DayWeight, hourlyLoad);
+            return true;
         }
 
         private void LogLineHealth(uint frame)
@@ -142,22 +169,13 @@ namespace WhereTheyGo
             m_LineHistory.ClearCounters();
         }
 
-        // The widest coverage any line has, which is what the oldest reading in the
-        // window buys us. Lines added later have less and say so on their own row.
-        private void UpdateDataCoverage()
+        // What the panel reads every other figure against. How much history the window
+        // holds used to be published here too; it was only ever shown by the provenance
+        // block, and LogLineHealth still logs it per line, where it says more than one
+        // maximum over all of them ever did.
+        private void UpdateNetworkFigures()
         {
-            float coveredHours = 0f;
-            int readings = 0;
-            for (int i = 0; i < m_ExistingLines.Count; i++)
-            {
-                ExistingLine line = m_ExistingLines[i];
-                coveredHours = math.max(coveredHours, line.m_WindowGameHours);
-                readings = math.max(readings, line.m_WindowReadings);
-            }
-
-            SetHistoryFigures(
-                coveredHours, readings, LineHistory.GameHours(m_LineHistory.WindowFrames),
-                m_TripObserver.Window.Count, LineHistory.GameHours(m_TripObserver.Window.SpanFrames));
+            SetNetworkFigures(m_ExistingLines.Count, m_TransitStops.Count);
         }
 
     }

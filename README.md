@@ -29,15 +29,18 @@ and leisure from watching the city run — drawn as a band between its two ends.
 - **Bundling.** Journeys are summed per 256 m zone pair, and zone pairs whose two ends
   lie close together fold into one band, heaviest corridor first. A slider in the panel
   hides the thin ones and says how many that is.
-- **Time of day.** The panel draws the city's day as twenty-four columns — that alone
-  tells you when it travels. Click one and the map shows that hour, with an arrowhead on
-  each band saying which way the traffic runs; press play and watch the day go by. Over a
-  whole day there is no direction to show, because every journey is made twice.
+- **Time of day.** The panel draws the city's day as twenty-four columns, each split
+  into the part your network carries and the part it does not — that alone tells you when
+  the city travels and when it is left to drive. Point at a column for its numbers. Click
+  one and the map shows that hour, with an arrowhead on each band saying which way the
+  traffic runs; press play and watch the day go by. Over a whole day there is no direction
+  to show, because every journey is made twice.
 - **Purposes.** Work, school, shopping and leisure switch on and off separately, each
   carrying what it is worth, and switching one off takes its journeys out of the widths
   rather than merely hiding whole bands.
 - **Point at a band** and a tooltip at the cursor names its numbers: journeys on it, how
-  many of them travel without transit, and its busiest hour.
+  many of them travel without transit, its busiest hour, how far apart its two ends are,
+  and what those people are travelling for.
 
 ### Walk to transit
 
@@ -52,15 +55,26 @@ building's own window shows the number the colour came from.
 
 Both say what they are made of, and the walking horizon is yours to set.
 
+Folded away under them: the walk to a served stop in four classes, and the lines, served
+stops and journeys a day that every other number in the panel is a share of. The classes
+are there because "71 % within walking distance" does not say whether the other 29 % are
+five minutes too far or have no stop at all.
+
 ### What a line does
 
 Click a line and its window gains a reading — not a verdict:
 
 - how many journeys ride it, and how many passenger-minutes a day it saves them against
   walking and the rest of your network;
-- how many of those journeys would be **no slower without it**, which is the answer to
-  "why is my line empty": it runs beside something that already carries them;
-- how full it runs hour by hour, from its own readings;
+- how many of those journeys are **faster with it**, and how many take just as long
+  without it, which is the answer to "why is my line empty": there it runs beside
+  something that already carries them;
+- where it stands among your lines and what share of the city it carries;
+- what it makes its riders wait, the busiest single reading it has had against its
+  seats, and how long its round trip takes against the same trip in free flow;
+- how full it runs hour by hour, from its own readings, drawn against its own busiest
+  hour rather than against a full vehicle — point at an hour for the number, and an hour
+  nobody watched stays a gap rather than a zero;
 - and the bands it carries light up on the map.
 
 No advice on fleets, modes or timetables follows. That is the game.

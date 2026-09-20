@@ -42,7 +42,7 @@ namespace WhereTheyGo
         private BandView(
             DrawnBand[] drawn, float heaviest, float[] breaks,
             int hiddenCount, float hiddenWeight, float shownWeight,
-            float[] hourlyProfile, float[] purposeWeights)
+            float[] hourlyProfile, float[] carriedProfile, float[] purposeWeights)
         {
             Drawn = drawn;
             Heaviest = heaviest;
@@ -51,6 +51,7 @@ namespace WhereTheyGo
             HiddenWeight = hiddenWeight;
             ShownWeight = shownWeight;
             HourlyProfile = hourlyProfile;
+            CarriedHourlyProfile = carriedProfile;
             PurposeWeights = purposeWeights;
         }
 
@@ -84,11 +85,34 @@ namespace WhereTheyGo
         // the slider instead.
         public float[] HourlyProfile { get; }
 
+        // The part of each of those hours the network already carries, off the same
+        // bands. The hour strip draws it inside the column rather than beside it, so
+        // the strip answers "when does the city travel" and "when does the network
+        // fail it" with one picture.
+        public float[] CarriedHourlyProfile { get; }
+
         // Journeys a day per purpose, in JourneyPurpose order, regardless of which are
         // switched on — a switch has to be able to say what it would let back in.
         public float[] PurposeWeights { get; }
 
         public int TotalCount => Drawn.Length + HiddenCount;
+
+        // The city's journeys a day, whatever the filters say - the sum of the four
+        // purpose weights, so the panel's total and its four rows are the same
+        // arithmetic and cannot drift apart.
+        public float DayWeight
+        {
+            get
+            {
+                float total = 0f;
+                for (int i = 0; i < PurposeWeights.Length; i++)
+                {
+                    total += PurposeWeights[i];
+                }
+
+                return total;
+            }
+        }
 
         public static BandView Of(BandSet? set, int hour, int purposeMask, float thresholdShare)
         {
@@ -96,17 +120,18 @@ namespace WhereTheyGo
             {
                 return new BandView(
                     Array.Empty<DrawnBand>(), 0f, EmptyBreaks(), 0, 0f, 0f,
-                    new float[Band.HoursPerDay], new float[Band.PurposeCount]);
+                    new float[Band.HoursPerDay], new float[Band.HoursPerDay], new float[Band.PurposeCount]);
             }
 
             float[] profile = set.HourlyProfile(purposeMask);
+            float[] carriedProfile = set.CarriedHourlyProfile(purposeMask);
             float[] purposeWeights = set.PurposeWeights();
             float heaviest = set.HeaviestAt(hour, purposeMask);
             if (heaviest <= 0f)
             {
                 return new BandView(
                     Array.Empty<DrawnBand>(), 0f, EmptyBreaks(), set.Bands.Length, 0f, 0f,
-                    profile, purposeWeights);
+                    profile, carriedProfile, purposeWeights);
             }
 
             float floor = heaviest * thresholdShare;
@@ -144,7 +169,7 @@ namespace WhereTheyGo
 
             return new BandView(
                 drawn, heaviest, breaks, hiddenCount, hiddenWeight, shownWeight,
-                profile, purposeWeights);
+                profile, carriedProfile, purposeWeights);
         }
 
         // Which class a weight falls in: the first break it does not reach.

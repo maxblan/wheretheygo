@@ -52,6 +52,16 @@ namespace WhereTheyGo
 
         public const float TileSize = 32f;
 
+        // Where one class of walk-to-transit ends and the next begins, as multiples of
+        // the player's own coverage horizon, so the four classes the panel draws move
+        // with the setting instead of contradicting it. At the default ten minutes
+        // they read under 5 / 5-10 / 10-20 / no stop reached. The last class holds
+        // everything the access field never reached, which it searches to
+        // AccessFieldHorizonMultiple times the horizon.
+        public const float WalkClassNearShare = 0.5f;
+
+        public const float WalkClassFarShare = 2f;
+
         // ---- Walking
         // Walking-time horizons of the access model (register A1.1/A1.2, decided
         // 2026-09-05). Access: the straight-line walk from a door to the pavement
@@ -296,6 +306,13 @@ namespace WhereTheyGo
         // ---- The transit graph (TransitGraph, JourneyRouting)
         // No edge is free: a zero-cost edge lets the search walk it for nothing.
         public const float MinEdgeSeconds = 0.01f;
+
+        // The tops the load chart's y axis may take, in percent, smallest first: the
+        // smallest one at or above the line's own busiest hour is chosen. A fixed
+        // 0-100 axis drew a metro that runs at 1-3 % as a flat line on the floor.
+        // Each entry halves to a readable number, because the chart marks the top and
+        // its half and nothing else.
+        public static readonly int[] LoadAxisTopsPercent = { 2, 4, 10, 20, 40, 60, 80, 100 };
 
         // ---- Line readings
         // The planning load of a line is this quantile (nearest rank) of the passengers

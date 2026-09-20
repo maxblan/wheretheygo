@@ -126,12 +126,30 @@ keine Kalibrierung, keine Modusgewichte. Der Spieler liest sie so: „Eine Halte
 für so viele Autofahrer erreichbar." Ob er dort einen Bus oder eine Metro hinstellt, entscheidet
 er anhand der Wunschlinien.
 
-### 3.4 Zwei Kennzahlen im Panel
+### 3.4 Zwei Kennzahlen im Panel, der Rest zugeklappt
+
+Sichtbar, sobald das Infoview offen ist:
 
 - Anteil aller Wege, die das Netz heute trägt.
 - Anteil der Einwohner, die Wohnung **und** Ziel in Gehzeit einer bedienten Haltestelle haben.
 
-Beide mit Tooltip, der sagt, woraus sie gerechnet sind. Keine weiteren Zahlen, keine Diagramme.
+Darunter ein Bereich „Genauer", **zugeklappt als Voreinstellung** (Entscheidung des Autors
+2026-09-20). Er trägt, was die beiden Kennzahlen verschweigen: den Fußweg zur nächsten
+bedienten Haltestelle in vier Klassen, und die Bezugsgrößen, an denen jede andere Zahl im
+Panel hängt — Linien, bediente Haltestellen, Wege am Tag.
+
+Die frühere Fassung dieses Abschnitts sagte „keine weiteren Zahlen, keine Diagramme".
+Der Stundenstreifen und der Zweck-Balken waren da schon gebaut, sind Diagramme und
+beantworten Frage 1 besser als jede Zahl. Und die Sparsamkeit hat geschadet: „Arbeit
+35 606" allein bleibt unlesbar, wie viele Zahlen daneben stehen. Es gelten also drei
+Regeln statt einer Obergrenze:
+
+- **Ruhig als Voreinstellung.** Was ein Spieler beim Öffnen sieht, ist die Karte und zwei
+  Kennzahlen. Alles andere ist eine Geste entfernt.
+- **Keine Zahl ohne Bezugsgröße.** Jede absolute Zahl steht neben ihrem Anteil, ihrem Rang
+  oder dem Ganzen, von dem sie ein Teil ist.
+- **Der Prüfstein aus Abschnitt 1 gilt unverändert.** Keine dieser Zahlen sagt, was zu bauen
+  ist, und jede lässt sich auf ihre Herkunft zurückführen.
 
 ### 3.5 Linienprüfung: eine Sektion im Fenster der angeklickten Linie
 

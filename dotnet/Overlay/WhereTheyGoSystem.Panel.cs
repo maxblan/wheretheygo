@@ -51,10 +51,21 @@ namespace WhereTheyGo
 
         internal static PanelFigures Figures => s_Figures;
 
-        internal static void SetCoverageFigures(float coverageShare, int walkMinutes)
+        internal static void SetCoverageFigures(float coverageShare, int walkMinutes, float[] walkClassShare)
         {
             s_Figures.CoverageShare = coverageShare;
             s_Figures.CoverageWalkMinutes = walkMinutes;
+            s_Figures.WalkClassShare = walkClassShare;
+        }
+
+        // The lines and the stops the other figures are read against, published by the
+        // pass that reads them. The city's journey total is NOT here: it comes off the
+        // same BandView the purpose rows do, so the total and the four rows above it
+        // cannot disagree.
+        internal static void SetNetworkFigures(int lineCount, int servedStopCount)
+        {
+            s_Figures.LineCount = lineCount;
+            s_Figures.ServedStopCount = servedStopCount;
         }
 
         // Published by the ROUTING pass, which is the only thing that knows it. It used
@@ -64,15 +75,6 @@ namespace WhereTheyGo
         internal static void SetCarriedFigure(float carriedShare)
         {
             s_Figures.CarriedShare = carriedShare;
-        }
-
-        internal static void SetHistoryFigures(float coveredHours, int readings, float windowHours, int observedJourneys, float observedHours)
-        {
-            s_Figures.CoveredHours = coveredHours;
-            s_Figures.Readings = readings;
-            s_Figures.WindowHours = windowHours;
-            s_Figures.ObservedJourneys = observedJourneys;
-            s_Figures.ObservedHours = observedHours;
         }
 
         internal static bool PlayingHours => s_PlayingHours;

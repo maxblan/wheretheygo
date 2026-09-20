@@ -552,5 +552,57 @@ namespace WhereTheyGo.Tests
             AssertTrue(rLow == r0 && bHigh == b1, "a share outside 0..1 clamps rather than running off the ramp");
 
         }
+
+        // The hour strip draws the carried part of each hour inside the whole of it.
+        // The two profiles therefore have to come off the SAME bands: a carried hour
+        // taller than its own column would be a picture of an arithmetic mistake.
+        internal static void CarriedHoursSitInsideTheHoursTheyBelongTo()
+        {
+            var journeys = new List<Journey>
+            {
+                // One corridor, two door pairs in the same zone pair: one the network
+                // carries, one it does not. Equal weights, so the band is half carried.
+                Commute(100f, 100f, 3000f, 100f, 40f, 8, 17),
+                Commute(150f, 100f, 3050f, 100f, 40f, 8, 17),
+                // A second corridor nobody rides at all.
+                Commute(100f, 3000f, 3000f, 3000f, 10f, 9, 18),
+            };
+
+            BandSet set = BundleOf(journeys, new[] { true, false, false }, Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            AssertTrue(set.Bands.Length == 2, $"two corridors, got {set.Bands.Length.ToString(CultureInfo.InvariantCulture)}");
+
+            float[] hours = set.HourlyProfile(Band.AllPurposes);
+            float[] carried = set.CarriedHourlyProfile(Band.AllPurposes);
+            AssertEqual(80f, hours[8], 1e-3f, "eighty journeys leave the heavy corridor at eight");
+            AssertEqual(40f, carried[8], 1e-3f, "half of them on the network, because half the corridor is carried");
+            AssertEqual(10f, hours[9], 1e-3f, "the second corridor leaves at nine");
+            AssertEqual(0f, carried[9], 1e-3f, "and nobody on it rides");
+
+            float totalHours = 0f;
+            float totalCarried = 0f;
+            for (int hour = 0; hour < Band.HoursPerDay; hour++)
+            {
+                AssertTrue(carried[hour] <= hours[hour] + 1e-3f, $"hour {hour.ToString(CultureInfo.InvariantCulture)} carries no more than it holds");
+                totalHours += hours[hour];
+                totalCarried += carried[hour];
+            }
+
+            // Both directions of every journey, so twice the day's weight on each side.
+            AssertEqual(180f, totalHours, 1e-2f, "the day is every departure in both directions");
+            AssertEqual(80f, totalCarried, 1e-2f, "and the carried part is the carried share of each corridor");
+
+            // The purpose filter composes with it, exactly as it does for the whole.
+            float[] shopping = set.CarriedHourlyProfile(1 << (int)JourneyPurpose.Shopping);
+            for (int hour = 0; hour < Band.HoursPerDay; hour++)
+            {
+                AssertEqual(0f, shopping[hour], 1e-4f, "no shopping travels here, so no shopping is carried here");
+            }
+
+            // A band with no weight must not divide by its own zero.
+            BandSet empty = BundleOf(new List<Journey>(), carried: null, Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            float[] none = empty.CarriedHourlyProfile(Band.AllPurposes);
+            AssertTrue(none.Length == Band.HoursPerDay, "an empty city still has a day");
+            AssertEqual(0f, none[0], 0f, "and nothing rides in it");
+        }
     }
 }

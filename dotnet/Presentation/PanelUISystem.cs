@@ -57,16 +57,14 @@ namespace WhereTheyGo
             writer.Write(figures.CoverageShare);
             writer.PropertyName("coverageWalkMinutes");
             writer.Write(figures.CoverageWalkMinutes);
-            writer.PropertyName("coveredHours");
-            writer.Write(figures.CoveredHours);
-            writer.PropertyName("readings");
-            writer.Write(figures.Readings);
-            writer.PropertyName("windowHours");
-            writer.Write(figures.WindowHours);
-            writer.PropertyName("observedJourneys");
-            writer.Write(figures.ObservedJourneys);
-            writer.PropertyName("observedHours");
-            writer.Write(figures.ObservedHours);
+            // The walk to transit as four shares, and the network the whole panel is
+            // read against.
+            writer.PropertyName("walkClasses");
+            WriteFloats(writer, figures.WalkClassShare, Coverage.WalkClassCount);
+            writer.PropertyName("lineCount");
+            writer.Write(figures.LineCount);
+            writer.PropertyName("servedStops");
+            writer.Write(figures.ServedStopCount);
             writer.TypeEnd();
         }
 
@@ -100,10 +98,18 @@ namespace WhereTheyGo
             writer.PropertyName("hourly");
             WriteFloats(writer, view.HourlyProfile, Band.HoursPerDay);
 
+            // And the part of each hour the network already carries, drawn inside the
+            // column rather than beside it.
+            writer.PropertyName("hourlyCarried");
+            WriteFloats(writer, view.CarriedHourlyProfile, Band.HoursPerDay);
+
             // What the four switches are worth, so each carries its own weight beside
-            // its name.
+            // its name, and their sum, which is the city every other figure is read
+            // against.
             writer.PropertyName("purposeWeights");
             WriteFloats(writer, view.PurposeWeights, Band.PurposeCount);
+            writer.PropertyName("journeysPerDay");
+            writer.Write(view.DayWeight);
 
             // How much of the map the threshold is currently hiding. Said out loud:
             // a map that quietly dropped a third of the city's travel reads as a map of

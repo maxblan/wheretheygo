@@ -21,11 +21,38 @@ namespace WhereTheyGo
         // served stop, uncovered journeys counted at twice the horizon. 0 = everyone
         // equally close, 1 = one journey has all the access.
         public double GiniWalk;
+
+        // The same walks in four classes, as shares of TotalWeight that sum to 1:
+        // under half the horizon, under it, under twice it, and everything the access
+        // field never reached. The Gini is scale-free and unreadable on its own; this
+        // is the shape behind it, and it is what the panel draws.
+        public float[] WalkClassShare = new float[Coverage.WalkClassCount];
     }
 
     internal static class Coverage
     {
         public const int NotServed = int.MaxValue;
+
+        public const int WalkClassCount = 4;
+
+        // Which class a walk to the nearest served stop falls in. `walkMs` is
+        // long.MaxValue for a journey end the field never reached, which is the last
+        // class together with everything past twice the horizon: a walk nobody makes
+        // and a stop nobody can reach are the same answer to the player.
+        public static int WalkClassOf(long walkMs, int horizonMs)
+        {
+            if (walkMs < (long)(horizonMs * Assumptions.WalkClassNearShare))
+            {
+                return 0;
+            }
+
+            if (walkMs < horizonMs)
+            {
+                return 1;
+            }
+
+            return walkMs < (long)(horizonMs * Assumptions.WalkClassFarShare) ? 2 : WalkClassCount - 1;
+        }
 
         // Walking time from each network node to the nearest served stop, bounded by
         // `horizonMs`; NotServed beyond it. Stops are (node, access) pairs as snapped
@@ -79,6 +106,7 @@ namespace WhereTheyGo
         {
             var report = new CoverageReport { Trips = count };
             var walk = new double[count];
+            var classWeight = new double[WalkClassCount];
             for (int i = 0; i < count; i++)
             {
                 report.TotalWeight += weight[i];
@@ -98,10 +126,23 @@ namespace WhereTheyGo
                 walk[i] = EndServed(served, originNode[i], originAccessMs[i], horizonMs)
                     ? served[originNode[i]] + originAccessMs[i]
                     : 2.0 * horizonMs;
+
+                // The classes take the REAL walk, not the capped one above: the field
+                // is searched well past the horizon on purpose, and a journey twelve
+                // minutes from a stop is not the same as one with no stop at all.
+                long reach = originNode[i] >= 0 && originNode[i] < served.Length && served[originNode[i]] != NotServed
+                    ? (long)served[originNode[i]] + originAccessMs[i]
+                    : long.MaxValue;
+                classWeight[WalkClassOf(reach, horizonMs)] += weight[i];
             }
 
             report.Share = report.TotalWeight > 0.0 ? (float)(report.CoveredWeight / report.TotalWeight) : 0f;
             report.GiniWalk = Gini(walk, weight, count);
+            for (int c = 0; c < WalkClassCount; c++)
+            {
+                report.WalkClassShare[c] = report.TotalWeight > 0.0 ? (float)(classWeight[c] / report.TotalWeight) : 0f;
+            }
+
             return report;
         }
 
