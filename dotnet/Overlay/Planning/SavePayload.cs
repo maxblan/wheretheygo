@@ -46,14 +46,31 @@ namespace WhereTheyGo
         private const int MaxSavedLines = 4096;
         private const int MaxSamplesPerLine = 4096;
 
+        // Bytes one trip occupies in the section (uint, four floats, byte, float), so a
+        // claimed count can be checked against what the section could possibly hold
+        // before it is used to size a list.
+        private const int TripByteSize = (4 * 6) + 1;
+
         public static byte[] Write(ObservedTripWindow window, LineHistory history)
         {
+            // Counted rather than written as a literal: a third section behind a count
+            // that still said two would be written into the payload and silently
+            // ignored by every reader, which is a whole feature's data lost with
+            // nothing to show for it and no version to catch it.
+            var sections = new List<(int Id, int Version, byte[] Bytes)>
+            {
+                (ObservedTripsSection, ObservedTripsVersion, TripBytes(window)),
+                (LineReadingsSection, LineReadingsVersion, ReadingBytes(history)),
+            };
+
             using var stream = new MemoryStream();
             using (var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
             {
-                w.Write(2);
-                WriteSection(w, ObservedTripsSection, ObservedTripsVersion, TripBytes(window));
-                WriteSection(w, LineReadingsSection, LineReadingsVersion, ReadingBytes(history));
+                w.Write(sections.Count);
+                for (int i = 0; i < sections.Count; i++)
+                {
+                    WriteSection(w, sections[i].Id, sections[i].Version, sections[i].Bytes);
+                }
             }
 
             return stream.ToArray();
@@ -190,7 +207,11 @@ namespace WhereTheyGo
             using var stream = new MemoryStream(bytes, writable: false);
             using var r = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             int count = ReadCount(r, Assumptions.ObservedTripCapacity);
-            var trips = new List<ObservedTrip>(count);
+
+            // The count is only a claim until the bytes back it up, and the cap alone
+            // lets a four-byte field ask for a 600 000-element list out of an eight-byte
+            // section. The section's own remaining length is the honest bound.
+            var trips = new List<ObservedTrip>(Math.Min(count, (int)((stream.Length - stream.Position) / TripByteSize)));
             for (int i = 0; i < count; i++)
             {
                 trips.Add(new ObservedTrip
