@@ -24,6 +24,7 @@
     <Compile Include="BandTests.cs" />
     <Compile Include="PipelineTests.cs" />
     <Compile Include="WalkNetworkTests.cs" />
+    <Compile Include="SaveStateTests.cs" />
     <!-- The mod's whole pure core, linked rather than duplicated: every file in a
          Planning folder under dotnet/ uses System.* only, precisely so it compiles here. A Unity
          type in any of them breaks this build, which is the purity check. -->

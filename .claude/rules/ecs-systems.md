@@ -30,10 +30,12 @@ enough that a wrong number is visible in the log rather than only on screen.
   are not obvious. A quantity you are unsure about gets logged with what it actually is
   (`waitAccumulator=… (game units, not seconds)`), never silently presented as seconds.
 - **The save block is consumed exactly or the load fails.** `WhereTheyGoSystem.SaveState` writes one
-  length-prefixed payload behind `SaveFormatVersion`; anything added to it goes INSIDE the payload
-  (BinaryWriter), never as extra fields beside it, and a layout change bumps the version. Parsing
-  errors inside the payload are caught and mean "start cold"; a length the reader cannot consume
-  must throw, because reading past the block corrupts the rest of the save.
+  length-prefixed payload behind `SaveFormatVersion`; anything added to it goes INSIDE the payload,
+  never as extra fields beside it. The layout itself belongs in `Overlay/Planning/SavePayload.cs`,
+  which is pure and tested: add a SECTION there and give it its own version, so a reader that cannot
+  read one section still keeps the others. Parsing errors inside the payload are caught and mean
+  "start cold"; a length the reader cannot consume must throw, because reading past the block
+  corrupts the rest of the save.
 - **Anything the routing worker may execute logs through `DeferredLog`.** `Mod.Log` is an
   unguarded `StreamWriter`; two threads writing at once corrupt it. `DeferredLog` writes straight
   through on the main thread and buffers on a thread that bound a buffer, so the same code logs

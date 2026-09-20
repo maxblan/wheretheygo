@@ -158,7 +158,7 @@ against a named game system.
 | `Coverage` | `WalkAccess` (graph, Dijkstra, snap), `WalkBridging`, `Coverage` | `WalkNetwork` | `.WalkNetwork`, `.Coverage`, `BuildingAccessColorSystem`, `BuildingAccessSection` |
 | `LineInsight` | `ExistingLine`, `LineHistory`, `LineWindow`, `RiddenLoop` | — | `.LineInsight`, `LineInsightSection` |
 | `Common` | `Assumptions` (EVERY numeric constant, drawing included), `float2Like`/`int2Like`, `TileGrid`, `Daytime`, `TransitMode` (the `ModePreset` enum), `DeferredLog` | — | — |
-| `Overlay` | — | — | `WhereTheyGoSystem`, `.Panel`, `.SaveState`, `Infoview`, `InfomodePrefab` |
+| `Overlay` | `SavePayload` | — | `WhereTheyGoSystem`, `.Panel`, `.SaveState`, `Infoview`, `InfomodePrefab` |
 | `Presentation` | `PanelFigures` | — | `BandRenderer`, `BandPickSystem`, `PanelUISystem`, `UI/` |
 
 ### The purity rule
@@ -213,8 +213,15 @@ type name). It carries the observed shopping/leisure journeys and the line readi
 loaded city does not start cold. Two rules the format lives by: the block is **one
 length-prefixed byte payload behind a format version**, because `ComponentSystemSerializer`
 throws "Data size mismatch" unless a load consumes exactly what was written; and a save
-made with the mod loads without it. Bump `SaveFormatVersion` whenever the payload layout
-changes; never make the parser depend on game state at load.
+made with the mod loads without it.
+
+The payload's layout lives in `Overlay/Planning/SavePayload.cs` — pure, so it is tested
+offline. It is a list of **sections**, each behind its own id, version and byte length, and
+a reader skips a section it does not know while keeping the ones it does. So **bump the
+SECTION's version** when its own bytes change: `SaveFormatVersion` is the framing, and
+moving it throws away every existing block, which is three game days of observed journeys
+and a game day of line readings that only game time can gather again. Never make the parser
+depend on game state at load.
 
 ## Working method
 

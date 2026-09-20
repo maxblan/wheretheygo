@@ -36,6 +36,10 @@ namespace WhereTheyGo.Tests
             Run("Tiles and sites skip tunnel and bridge nodes that homes still walk from", NearestSiteSkipsOffGroundNodes);
             Run("Observed trips are scaled to a day's rate, down over several days and up over part of one", ObservedTripWindowHoldsADay);
             Run("Observed trips restart on a rewound clock and stop at the cap", ObservedTripWindowRestartsAndCaps);
+            Run("The save payload carries every observed journey and reading back", SavePayloadRoundTrips);
+            Run("A city with nothing measured saves and loads without a word", SavePayloadHandlesAnEmptyCity);
+            Run("A section this build cannot read costs only itself, not the journeys beside it", SavePayloadKeepsWhatItStillUnderstands);
+            Run("A save block that cannot be consumed exactly is refused, never guessed at", SavePayloadRefusesBytesItCannotConsume);
             Run("Coverage counts journeys served at both ends within the horizon", CoverageShare);
             Run("Coverage splits the walk to transit into four classes that partition the city", WalkClassesPartitionEveryJourney);
 
