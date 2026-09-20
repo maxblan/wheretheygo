@@ -31,7 +31,10 @@
 	<PropertyGroup>
 		<ModToolPath>$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))</ModToolPath>
 		<HasModToolchain>false</HasModToolchain>
-		<HasModToolchain Condition="Exists('$(ModToolPath)\Mod.props')">true</HasModToolchain>
+		<!--BOTH files, because both are imported below: a directory holding only
+		    Mod.props would otherwise fail on the second import with a raw MSB4019 and
+		    none of the guidance CheckModToolchain gives.-->
+		<HasModToolchain Condition="Exists('$(ModToolPath)\Mod.props') AND Exists('$(ModToolPath)\Mod.targets')">true</HasModToolchain>
 	</PropertyGroup>
 
 	<!--Imports must be after PropertyGroup block-->
@@ -54,6 +57,19 @@
 		<ManagedPath Condition="'$(ManagedPath)' == '' AND Exists('$(WslSteamManagedPath)/Game.dll')">$(WslSteamManagedPath)</ManagedPath>
 		<ManagedPath Condition="'$(ManagedPath)' == '' AND Exists('$(WslXboxManagedPath)/Game.dll')">$(WslXboxManagedPath)</ManagedPath>
 		<AssemblySearchPaths>$(AssemblySearchPaths);$(ManagedPath)</AssemblySearchPaths>
+		<!--Microsoft.NET.Sdk.props copies AssemblySearchPaths into this one BEFORE this
+		    file's body runs, so the Managed folder has to be appended here as well or
+		    the design-time resolver - the one this whole block exists for - searches
+		    without it.-->
+		<DesignTimeAssemblySearchPaths>$(DesignTimeAssemblySearchPaths);$(ManagedPath)</DesignTimeAssemblySearchPaths>
+
+		<!--And nowhere near bin\$(Configuration)\net48. That path is the DEPLOYABLE mod:
+		    `make status` and `make deploy` compare its byte size against the copy in the
+		    game's Mods folder to tell a landed deploy from a stale one. An output built
+		    without the source generators and the post-processor must never be able to
+		    stand in for it, and before this it did - a plain `dotnet build` under WSL
+		    succeeds and writes there.-->
+		<BaseOutputPath>bin\editor\</BaseOutputPath>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -147,10 +163,12 @@
 	    against and the 800-odd CS0246s that would follow are worth one message instead, or
 	    it did and somebody is compiling a mod that cannot be deployed.-->
 	<Target Name="CheckModToolchain" BeforeTargets="CoreCompile" Condition="'$(HasModToolchain)' != 'true'">
-		<Error Condition="'$(ManagedPath)' == ''"
+		<Error Code="WTG0001" Condition="'$(ManagedPath)' == ''"
 		       Text="Neither CSII_TOOLPATH (set by the game's modding toolchain, and readable only by a Windows process) nor the game's Managed folder was found. Build the mod on Windows; see CLAUDE.md." />
-		<Warning Condition="'$(DesignTimeBuild)' != 'true'"
-		         Text="Compiling against $(ManagedPath) without the modding toolchain: no Entities source generators, no ModPostProcessor and no deploy. This output is for an editor to bind against, not a mod. Build on Windows to produce one." />
+		<!--A code, because a warning without one prints as a bare "warning :" and is the
+		    one thing NoWarn and MSBuildWarningsAsMessages cannot name.-->
+		<Warning Code="WTG0002" Condition="'$(DesignTimeBuild)' != 'true'"
+		         Text="Compiling against $(ManagedPath) without the modding toolchain: no Entities source generators, no ModPostProcessor and no deploy. This output goes to $(OutputPath) for an editor to bind against; it is not a mod. Build on Windows to produce one." />
 	</Target>
 
 </Project>

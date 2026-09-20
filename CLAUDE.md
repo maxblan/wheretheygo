@@ -72,7 +72,10 @@ under a condition and the csproj falls back to what they would have set plus the
 resolve the game's types** rather than reporting a `CS0246` on each of 852 of them, and it
 is not a second way to build the mod: it brings neither the Entities source generators nor
 the post-processor nor the deploy, so its output is unshippable, and a real build through
-it warns that it is. `make compile` still reports zero warnings on Windows, where the
+it warns that it is (`WTG0002`). It also writes to `dotnet/bin/editor/` rather than to
+`dotnet/bin/$(CONFIG)/net48/`, because that second path is the DEPLOYABLE mod and is what
+`make status` and `make deploy` compare byte sizes against; an unshippable DLL must not be
+able to stand in for it. `make compile` still reports zero warnings on Windows, where the
 fallback never runs.
 
 **Building deploys.** `Mod.targets` copies the build straight into
