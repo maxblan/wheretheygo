@@ -52,6 +52,10 @@ namespace WhereTheyGo
             Settings.RegisterInOptionsUI();
             GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(Settings));
             GameManager.instance.localizationManager.AddSource("de-DE", new LocaleDE(Settings));
+            GameManager.instance.localizationManager.AddSource("fr-FR", new LocaleFR(Settings));
+            GameManager.instance.localizationManager.AddSource("pt-BR", new LocalePTBR(Settings));
+            GameManager.instance.localizationManager.AddSource("ru-RU", new LocaleRU(Settings));
+            GameManager.instance.localizationManager.AddSource("zh-HANS", new LocaleZHHANS(Settings));
 
             // Zero the tuning fields so ClampAll can distinguish "loaded from file"
             // from "absent in a pre-1.1 file" and fill in mode-aware defaults.

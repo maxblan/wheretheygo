@@ -177,7 +177,8 @@ Benachrichtigungen, keine Ein-Klick-Aktionen. Das Wort „Empfehlung" kommt in d
 - Kein Element bewegt sich schnell. Die Bänder sind die Bühne, nicht das Feuerwerk.
 - Nichts der Mod ist aktiv, solange der Spieler das Infoview nicht geöffnet hat, außer der
   stillen Beobachtung der Reisen, die die Tageszeit- und Einkaufsdaten liefert.
-- Englisch und Deutsch vollständig.
+- Englisch, Deutsch, Französisch, brasilianisches Portugiesisch, Russisch und vereinfachtes
+  Chinesisch vollständig; jede fehlende Zeile fällt auf Englisch zurück.
 
 ---
 

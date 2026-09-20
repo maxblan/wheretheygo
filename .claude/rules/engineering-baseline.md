@@ -39,9 +39,9 @@ assumes Rust, read the intent — the design advice transfers, the toolchain nou
 - When one conceptual change forces edits across files that are not otherwise related, stop and
   name the missing boundary before continuing. Two fan-outs here are the design, not a smell: a new
   panel control moves together through `WhereTheyGoSystem.Panel.cs`, `PanelUISystem.cs`, the
-  `.mjs`, the `.css` and both locale files; and a new overlay layer moves through `OverlayLayer`,
+  `.mjs`, the `.css` and all six locale files; and a new overlay layer moves through `OverlayLayer`,
   `OverlayLayers.NameOf`/`ColorsOf`, the infomode registration in `Infoview.cs`, its renderer and
-  the legend labels in both locale files. Complete those in one change rather than reporting them
+  the legend labels in all six locale files. Complete those in one change rather than reporting them
   as coupling.
 - When a change needs yet another special-case branch, look for the missing named concept first.
 
