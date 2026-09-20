@@ -1,13 +1,36 @@
-# Produktplan: Transit Architect als Nachfrage- und Lückenkarte
+# Produktplan: Where They Go, die Nachfragekarte
 
-Stand 2026-09-14. Ergebnis der Richtungsentscheidung vom 2026-09-13/14 (Autor + Recherche über
-die CS2-Modlandschaft und die Spielererwartungen). Dieses Dokument beschreibt das **Endresultat**
-aus Sicht des Spielers: was die Mod ist, was sie zeigt, was sie ausdrücklich nicht tut und warum.
-Es enthält keine Implementierungsschritte. Eine neue Session soll daraus den Umbau ableiten.
+Stand 2026-09-14, Umsetzung eingetragen am 2026-09-20. Ergebnis der Richtungsentscheidung
+vom 2026-09-13/14 (Autor + Recherche über die CS2-Modlandschaft und die Spielererwartungen).
+Dieses Dokument beschreibt das **Endresultat** aus Sicht des Spielers: was die Mod ist, was
+sie zeigt, was sie ausdrücklich nicht tut und warum.
+Es enthält keine Implementierungsschritte.
 
-Vorrang: Dieses Dokument löst `docs/redesign-plan.md` (Umbau zur beweisbar optimalen Planung)
-und den Abschnitt „Route suggestion" der `README.md` ab. Wo `docs/formal-specification.md` die
-Stufen S4 bis S7 beschreibt, gilt sie nur noch als Beschreibung des Ist-Zustands, nicht als Ziel.
+Die Dokumente, die dieses hier abgelöst hat (`redesign-plan.md`, `formal-specification.md`,
+`scientific-model-review.md`, `correctness-claims.md`, `verification-architecture.md`,
+`assumptions-register.md`), sind entfernt; was an Spielfakten in ihnen stand, steht in
+`docs/game-facts.md`.
+
+---
+
+## 0. Stand der Umsetzung
+
+**2026-09-20: Der Umbau ist gebaut.** Ab hier beschreiben die Abschnitte 3 bis 6 den
+Ist-Zustand, nicht mehr ein Ziel. Wo der Bau anders ausgefallen ist als der Plan vom 14.9.,
+steht die geänderte Entscheidung an Ort und Stelle, ausgezeichnet als **Geändert** oder
+**Verworfen**. Die vier offenen Fragen aus Abschnitt 7 sind beantwortet. Nichts in diesem
+Dokument ist noch eine Aufgabe.
+
+Was anders kam, auf einen Blick:
+
+- Ein **Knopf oben links** statt des Eintrags im Infoansicht-Menü (3).
+- Die **Lückenschicht** wird nicht gebaut (3.3, Frage 7.1).
+- Der **straßenzugeordnete Fluss** entfällt mit der alten Schicht „Travel demand" (3.1,
+  Frage 7.3).
+- Die zweite Kennzahl zählt **Wege**, nicht Einwohner (3.4).
+- Die Mod **rechnet auch bei geschlossenem Infoview** (3.6).
+- Der Pathfinder-Hinweis steht in der README statt im Tooltip (4).
+- Die Optionsseite bekommt **weder Schwellwert noch Beobachtungsfenster** (5).
 
 ---
 
@@ -75,10 +98,15 @@ Funktion eine andere Frage beantworten, nicht dieselbe besser.
 
 ## 3. Das Endresultat aus Spielersicht
 
-Die Mod ist ein **einziges Infoview** im Infoview-Menü des Spiels, in Vanilla-Optik, plus eine
-**Sektion im Fenster einer angeklickten Linie**. Es gibt keinen Toolbar-Knopf, kein eigenes
-Fenster und keinen Eingriff in die Verkehrsübersicht. Alle Einstellungen liegen in Options →
-Transit Architect.
+Die Mod ist ein **einziges Infoview** in Vanilla-Optik, plus je eine **Sektion im Fenster
+einer angeklickten Linie** und eines angeklickten Gebäudes. Es gibt kein eigenes Fenster und
+keinen Eingriff in die Verkehrsübersicht. Alle Einstellungen liegen in Options → Where They Go.
+
+**Geändert 2026-09-20:** Der Weg ins Infoview ist ein **Knopf oben links**, neben denen der
+anderen Mods; der Eintrag im Infoansicht-Menü wird dafür ausgeblendet, damit nicht zwei Türen
+in denselben Raum führen. Der Plan vom 14.9. schloss einen Toolbar-Knopf aus, um keine Fläche
+zu belegen, die eine große Mod ersetzt. Der Knopf belegt keine: er hängt am Modding-Haken
+„GameTopLeft", den das Spiel selbst dafür vorsieht.
 
 ### 3.1 Schicht „Wunschlinien"
 
@@ -106,10 +134,12 @@ gezeichnet, gebündelt über die Stadt.
   ÖPNV, Spitzenstunde. Das braucht ein eigenes Werkzeug, weil der Overlay-Puffer nur Geometrie
   zeichnet; es ist Teil des Endresultats, nicht optional.
 
-Die Wunschlinie ist die reine Nachfrage, ohne Straßenzuordnung. Eine zweite Darstellung, der auf
-die Straßen verteilte Fluss (was heute die Schicht „Travel demand" zeigt), bleibt als
-Unteransicht erhalten, weil sie zeigt, wo ein Bus fahren müsste, um dieselbe Nachfrage
-einzusammeln. Die reine Form ist die Voreinstellung.
+Die Wunschlinie ist die reine Nachfrage, ohne Straßenzuordnung.
+
+**Verworfen 2026-09-20 (Frage 7.3):** Der auf die Straßen verteilte Fluss bleibt nicht als
+Unteransicht erhalten. Die alte Schicht „Travel demand" ist mit dem Abriss aus Abschnitt 5
+gefallen, und eine zweite Schicht, die fast dasselbe sagt, kostet mehr Lesbarkeit als sie
+einbringt. Eine Schicht, eine Bedeutung.
 
 ### 3.2 Schicht „Erschließung"
 
@@ -118,20 +148,21 @@ heute, bleibt). Bedient heißt: eine Linie hält dort. Eine Haltestelle ohne Lin
 Gehzeit ist echte Gehzeit über das Fußwegenetz, nicht Luftlinie. Das Gebäudefenster zeigt den
 Wert, der die Farbe bestimmt hat.
 
-### 3.3 Schicht „Lücken" (Entscheidung offen, siehe 7)
+### 3.3 Schicht „Lücken" — verworfen
 
-Eine einzige Geländeschicht mit einer einzigen Bedeutung: **Wie viele unbediente Wege haben
-eine Tür in Gehzeit dieser Stelle.** Keine sieben gewichteten Terme, keine Perzentil-Normierung,
-keine Kalibrierung, keine Modusgewichte. Der Spieler liest sie so: „Eine Haltestelle hier wäre
-für so viele Autofahrer erreichbar." Ob er dort einen Bus oder eine Metro hinstellt, entscheidet
-er anhand der Wunschlinien.
+**Verworfen 2026-09-20 (Frage 7.1).** Die Schicht wird nicht gebaut. Die warmen Enden der
+Bänder und die Gebäudefärbung beantworten „wo hin mit der Haltestelle" zusammen schon; damit
+ist auch die einzige Grauzone gegenüber Transit Hotspots ausgeräumt. Eine Schicht weniger ist
+die klarere Identität.
 
 ### 3.4 Zwei Kennzahlen im Panel, der Rest zugeklappt
 
 Sichtbar, sobald das Infoview offen ist:
 
 - Anteil aller Wege, die das Netz heute trägt.
-- Anteil der Einwohner, die Wohnung **und** Ziel in Gehzeit einer bedienten Haltestelle haben.
+- Anteil der **Wege**, deren beide Enden in Gehzeit einer bedienten Haltestelle liegen.
+  (**Geändert 2026-09-20:** gezählt wird Weggewicht, nicht Einwohner. Die Kennzahl steht
+  neben der ersten, die Wege zählt, und zwei Bezugsgrößen nebeneinander liest niemand.)
 
 Darunter ein Bereich „Genauer", **zugeklappt als Voreinstellung** (Entscheidung des Autors
 2026-09-20). Er trägt, was die beiden Kennzahlen verschweigen: den Fußweg zur nächsten
@@ -175,8 +206,11 @@ Benachrichtigungen, keine Ein-Klick-Aktionen. Das Wort „Empfehlung" kommt in d
 - Vanilla-Optik: das Infoview sieht aus wie Grundwasser oder Bodenwert, die Legende zeichnet das
   Spiel. Farbrampen farbenblind-sicher, kühl gegen warm, beide in der Helligkeit monoton.
 - Kein Element bewegt sich schnell. Die Bänder sind die Bühne, nicht das Feuerwerk.
-- Nichts der Mod ist aktiv, solange der Spieler das Infoview nicht geöffnet hat, außer der
-  stillen Beobachtung der Reisen, die die Tageszeit- und Einkaufsdaten liefert.
+- **Geändert 2026-09-20:** Die Mod rechnet auch bei geschlossenem Infoview weiter — die
+  Beobachtung der Reisen, die Erschließung, das Routing und die Linienlesung. Die Sektionen
+  im Gebäude- und im Linienfenster sind ohne Infoview sichtbar und wären sonst leer, und ein
+  Beobachtungsfenster, das beim Zuklappen stehenbleibt, liefert hinterher falsche Zahlen. Am
+  Infoview hängt das Zeichnen.
 - Englisch, Deutsch, Französisch, brasilianisches Portugiesisch, Russisch und vereinfachtes
   Chinesisch vollständig; jede fehlende Zeile fällt auf Englisch zurück.
 
@@ -190,10 +224,15 @@ Benachrichtigungen, keine Ein-Klick-Aktionen. Das Wort „Empfehlung" kommt in d
 - **Wo ein Modell nötig ist, wird Vanilla gespiegelt und offengelegt.** Die Frage „trägt das
   Netz diesen Weg" braucht ein Routing über die bestehenden Linien. Es rechnet mit den Regeln
   des Spiel-Pathfinders (Gehen, Warten, Fahren gleich gewichtet, Umstieg kostet Gehweg und
-  Wartezeit). Die Mod sagt im Tooltip, dass sie so rechnet, und dass Mods wie Realistic
-  PathFinding andere Regeln setzen; sie versucht nicht, diese nachzubilden.
-- **Jede Zahl hat eine Herkunft**, die der Spieler mit einem Blick in den Tooltip nachlesen
-  kann: „1 240 Wege, davon 840 ohne ÖPNV; Wohnungen im Norden, Arbeitsplätze im Hafen."
+  Wartezeit). **Geändert 2026-09-20:** Dieser Hinweis steht in der README, nicht im
+  Tooltip. Im Panel sagt jede Zahl, woraus sie gemacht ist; den Pathfinder nennt keine.
+  Nachgebildet wird Realistic PathFinding weiterhin nicht.
+- **Jede Zahl hat eine Herkunft**, die der Spieler mit einem Blick nachlesen kann. Der
+  Tooltip eines Bandes nennt Wege, Anteil ohne ÖPNV, Spitzenstunde, Abstand der Enden und
+  die Zwecke; jede Zahl im Panel trägt eine Bildunterschrift, woraus sie gemacht ist.
+  (**Geändert 2026-09-20:** die Enden werden mit Zahlen beschrieben, nicht mit Ortsnamen —
+  „Wohnungen im Norden, Arbeitsplätze im Hafen" hätte eine Benennung von Stadtteilen
+  gebraucht, die das Spiel nicht hergibt.)
 - **Zeit ist Gehzeit über das Fußwegenetz**, nie Luftlinie, außer die Darstellung sagt es
   ausdrücklich (die Wunschlinie selbst ist Luftlinie, das ist ihr Sinn).
 - **Jede Konstante steht in `Assumptions.cs`**, unverändert die Regel vom 2026-09-06.
@@ -213,7 +252,7 @@ Benachrichtigungen, keine Ein-Klick-Aktionen. Das Wort „Empfehlung" kommt in d
 | Ridership-Kalibrierung (Regression, R², „Apply fitted weights") | Existierte nur für die Gewichte der Heatmap. Liegt schon hinter dem Entwicklerschalter. |
 | Linienurteile (ModeUp, ModeDown, Remove, Fleet, Schedule), Benachrichtigungen, Ein-Klick-Aktionen auf Flotte und Fahrplan | Flottenautomatik ist besetzt (SmartTransportation u. a.); Urteile sind Automation im Gewand der Beratung. Ersetzt durch die Lesung in 3.5. |
 | Spalte je Linie und Vorschlags-Tab in der Verkehrsübersicht | Kollidiert mit Better Transit View (139 k). Die Mod hängt nur an Vanilla-Flächen, die keine große Mod ersetzt: Infoview-Menü, Infoview-Panel, Fenster des angeklickten Objekts. |
-| Route-Objective-Einstellung (Ridership / Coverage / Balanced), Modus-Voreinstellungen mit Gewichten und Radien | Ohne Vorschläge und Heatmap gegenstandslos. Die Optionsseite schrumpft auf: Gehzeit-Horizont für „erschlossen", Bänder-Schwellwert-Voreinstellung, Beobachtungsfenster. |
+| Route-Objective-Einstellung (Ridership / Coverage / Balanced), Modus-Voreinstellungen mit Gewichten und Radien | Ohne Vorschläge und Heatmap gegenstandslos. Die Optionsseite schrumpft auf zwei Schalter: den Gehzeit-Horizont für „erschlossen" und das Infoview selbst. **Geändert 2026-09-20:** Schwellwert und Beobachtungsfenster bleiben Konstanten in `Assumptions.cs` — der Schwellwert steht als Schieber im Panel, wo er wirkt, und das Beobachtungsfenster ist eine Messgröße, keine Vorliebe. |
 | Verifikationspipeline (`verification/`, SCIP, VIPR, Lean-Beweise, Export-Knopf, `ExportJson`) | Diente dem Nachweis, dass der Optimierer korrekt ist. Ohne Optimierer bleibt der Offline-Test des reinen Kerns als Nachweis. |
 | Dokumente `redesign-plan.md`, `scientific-model-review.md`, `correctness-claims.md`, `verification-architecture.md`, `assumptions-register.md` in ihrer heutigen Form | Beschreiben den alten Schnitt. Was an Fakten über das Spiel darin steht (Fahrzeugkapazitäten, Pathfinder-Kosten, Halteverzögerung aus Prefabs), wandert in ein kurzes Faktenblatt. |
 
@@ -238,18 +277,18 @@ Benachrichtigungen, keine Ein-Klick-Aktionen. Das Wort „Empfehlung" kommt in d
 
 ---
 
-## 7. Offene Entscheidungen des Autors
+## 7. Die offenen Entscheidungen, beantwortet
 
-1. **Lückenschicht behalten oder nicht?** Sie ist die einzige Grauzone gegenüber Transit
-   Hotspots (10 k, wahrscheinlich verwaist). Für: Sie beantwortet „wo hin mit der Haltestelle"
-   mit einer einzigen lesbaren Zahl. Gegen: Die Enden der warmen Bänder zeigen fast dasselbe,
-   und eine Schicht weniger ist eine klarere Identität.
-2. **Name der Mod.** „Transit Architect" verspricht, dass jemand für den Spieler entwirft. Der
-   neue Schnitt verspricht das Gegenteil. Eine Umbenennung vor der ersten Veröffentlichung ist
-   billig, danach nicht mehr. Das Infoview heißt jedenfalls nicht mehr „Station Suitability".
-3. **Straßenzugeordneter Fluss als Unteransicht** behalten oder nur die reine Wunschlinie zeigen?
-4. **Beobachtungsfenster** für Einkauf und Freizeit: ein Spieltag (heute) oder länger, damit die
-   Tageszeit-Animation ruhiger wird?
+Alle vier am 2026-09-20 entschieden.
+
+1. **Lückenschicht: nein.** Sie wird nicht gebaut. Siehe 3.3.
+2. **Name: „Where They Go".** Umbenannt vor der ersten Veröffentlichung, wie es billig war;
+   `TransitArchitect` und der `Suitability`-Präfix kommen nirgends mehr vor.
+3. **Straßenzugeordneter Fluss: nein.** Nur die reine Wunschlinie. Siehe 3.1.
+4. **Beobachtungsfenster: drei Spieltage** statt einem. Ein einzelner Tag lässt das Bild
+   Stunde für Stunde springen, weil eine Stunde nur ein paar hundert Beobachtungen bringt;
+   drei Tage beruhigen es bei dreifachem Speicher. Jede beobachtete Reise wiegt dafür ein
+   Drittel, damit sie neben den aus dem Save gelesenen Wegen nicht dreifach zählt.
 
 ## 8. Woran das Ergebnis gemessen wird
 
@@ -265,16 +304,14 @@ Benachrichtigungen, keine Ein-Klick-Aktionen. Das Wort „Empfehlung" kommt in d
 - Bei einer Stadt mit 200 000 Einwohnern bleibt das Spiel flüssig, während das Infoview offen
   ist und der Tageszeit-Schieber läuft.
 
-## 9. Was der neuen Session mitzugeben ist
+## 9. Was einer neuen Session mitzugeben ist
 
-Lesen, in dieser Reihenfolge: dieses Dokument, `CLAUDE.md`, `README.md` (Abschnitte „Travel
-demand" und „Line health" beschreiben die Datenquellen, die bleiben), `docs/ui-architecture.md`
-(die Vanilla-Flächen, an die die Mod andocken darf), `.claude/rules/*.md`. Die Recherche zur
-Modlandschaft und zu den Spielererwartungen liegt im Gedächtnis der Vorsession unter
-„Mod identity rethink 2026-09-13"; ihre Kernaussagen stehen in Abschnitt 1 und 2.
+Lesen, in dieser Reihenfolge: dieses Dokument, `CLAUDE.md`, `README.md` (die beschreibt das
+Ergebnis für einen Spieler), `docs/game-facts.md` (die dekompilierten Spielfakten, auf die der
+Code sich stützt), `.claude/rules/*.md`. Die Recherche zur Modlandschaft und zu den
+Spielererwartungen liegt im Gedächtnis der Session vom 2026-09-13; ihre Kernaussagen stehen in
+Abschnitt 1 und 2.
 
-Die erste Aufgabe der neuen Session ist nicht Code, sondern ein Umbauplan aus diesem Dokument,
-mit der Reihenfolge: zuerst Bündelung, Schwellwert und die Farbe bedient / unbedient, weil sie
-die Lesbarkeit entscheiden; dann Tageszeit mit Richtung; dann die Linienprüfung; zuletzt das
-Anklicken der Bänder, weil es ein eigenes Werkzeug braucht. Abrisse (Abschnitt 5) laufen davon
-getrennt, jeder als eigener Schritt, jeder mit grünem `make strict`.
+Der Umbau, den dieses Dokument beschrieben hat, ist abgeschlossen. Es ist ab hier die
+Beschreibung dessen, was die Mod ist, und der Prüfstein aus Abschnitt 1 ist das, woran ein
+Vorschlag für eine neue Funktion gemessen wird.
