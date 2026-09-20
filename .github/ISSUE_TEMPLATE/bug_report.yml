@@ -1,0 +1,95 @@
+name: Bug report
+description: A number looks wrong, something does not draw, or the game complains.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The mod logs every input and decision on purpose, so the log usually
+        says what happened. Please attach it. You will find it at:
+
+        `%LOCALAPPDATA%Low\Colossal Order\Cities Skylines II\Logs\WhereTheyGo.Mod.log`
+
+        If the panel itself misbehaved, `UI.log` in the same folder has the
+        JavaScript side. Only the lines mentioning `WhereTheyGo` are ours; the
+        rest of that file belongs to the game and the other mods.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to get there
+      description: |
+        What you clicked, and what the city looked like. A wrong number is much
+        easier to chase with the line, building or corridor it appeared on.
+      placeholder: |
+        1. Opened the infoview from the top-left button
+        2. Clicked bus line 4
+        3. The round trip read 9:58, but the line takes about three minutes
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: WhereTheyGo.Mod.log
+      description: Attach the file, or paste the part around the problem.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: game-version
+    attributes:
+      label: Game version
+      placeholder: "1.6.2f1"
+    validations:
+      required: true
+
+  - type: input
+    id: mod-version
+    attributes:
+      label: Mod version
+      placeholder: "1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: other-mods
+    attributes:
+      label: Other mods you have enabled
+      description: |
+        This matters more than it looks. The mod reads the game's own pathfinding
+        and transit data, so anything that changes those changes the numbers.
+        Realistic PathFinding, Realistic Trips and similar mods are not modelled.
+        Mods that replace UI surfaces can also collide with the panel.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: city
+    attributes:
+      label: The city
+      options:
+        - An existing save
+        - A new city
+        - Both
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: warmup
+    attributes:
+      label: Before you file
+      options:
+        - label: The city ran for a while, not just the first few seconds after loading. Shopping and leisure journeys are watched as the city runs, so they start empty and fill in over about three game days.
+          required: false
+        - label: The log says `Save state restored`, not `starting cold`. Starting cold means the saved observations were thrown away and everything derived from them begins again.
+          required: false

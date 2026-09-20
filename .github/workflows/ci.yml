@@ -1,0 +1,81 @@
+name: CI
+
+# What CI can and cannot do here, because it is not obvious:
+#
+# The mod project CANNOT be built on a runner. dotnet/WhereTheyGo.csproj imports
+# Mod.props and Mod.targets from CSII_TOOLPATH and references Game.dll,
+# Colossal.* and Unity.* from an installed copy of Cities: Skylines II. Those are
+# the game's proprietary assemblies; they are not redistributable and not on any
+# feed. Building is also DEPLOYING (Mod.targets copies into the game's Mods
+# folder), which is meaningless on a runner.
+#
+# So the mod half is verified locally, by `make verify` and then the log after a run,
+# and CI takes the half that runs anywhere: the pure core through its offline
+# harness, the UI module's syntax, and the cross-file string couplings that no
+# compiler checks. That covers every Planning/ folder, because
+# tests/WhereTheyGo.Tests links them all by glob.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Pure core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+
+      # The harness has no package references, so there is nothing to restore and
+      # no lock file to honour. --warnaserror keeps the analyzer ratchet honest:
+      # Directory.Build.props sets AnalysisLevel=latest-all with an empty
+      # WarningsNotAsErrors, so any new warning fails here.
+      - name: Build the harness (warnings are errors)
+        run: dotnet build tests/WhereTheyGo.Tests --warnaserror
+
+      # Exit code is the number of failures, not 1.
+      - name: Run the tests
+        run: dotnet run --project tests/WhereTheyGo.Tests --no-build
+
+      - name: Formatting
+        run: dotnet format tests/WhereTheyGo.Tests --verify-no-changes
+
+  ui:
+    name: UI module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # The .mjs is hand-written and never compiled by anything, so a syntax
+      # error would otherwise first appear as a blank panel in the game.
+      - name: Syntax-check WhereTheyGo.mjs
+        run: node --check dotnet/Presentation/UI/WhereTheyGo.mjs
+
+  consistency:
+    name: Cross-file couplings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Locale key parity across six files, every panel key the UI asks for, and
+      # the binding/trigger names in both directions. All three fail silently in
+      # the game rather than at build time, which is why they are checked here.
+      - name: Locale, panel key and binding parity
+        run: python3 tools/check-consistency.py

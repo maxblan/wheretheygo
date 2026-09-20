@@ -1,0 +1,44 @@
+<Project>
+
+  <!-- Applies to both projects below this directory: the mod and the test harness.
+       See CLAUDE.md for why the two are deliberately different in other respects. -->
+
+  <PropertyGroup>
+    <!-- Null safety. The toolchain pins LangVersion 9.0 / net48, which is new enough
+         for nullable reference types; BCL calls are "oblivious" rather than annotated,
+         so this catches our own nulls rather than the framework's. -->
+    <Nullable>enable</Nullable>
+
+    <!-- Microsoft's Roslyn analyzers, essentially the whole rule set. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-all</AnalysisLevel>
+
+    <!-- Make the .editorconfig severities participate in the build. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Catch integer overflow instead of letting it wrap silently. The mod project
+         turns this back off for Burst's sake; see its csproj for why. -->
+    <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+
+    <!-- Nothing here needs pointers. -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <Deterministic>true</Deterministic>
+
+    <!-- A ratchet that has reached the end of its travel. This began as a list of
+         pre-existing warnings exempted from TreatWarningsAsErrors, meant only ever to
+         shrink; as of 2026-09-20 both projects compile with ZERO warnings and the list
+         is empty, so every warning is now an error without exception.
+
+         The two cases the list used to cover are handled where they occur instead, which
+         is where a reader can see them: CS8618 by the seven `#pragma warning disable
+         CS8618` blocks on the ECS systems (fields assigned in OnCreate, which always runs
+         before OnUpdate), and CA1031 by the [SuppressMessage] on the one deliberate catch
+         in Lines.cs. Prefer that shape, a suppression that names its reason at the site,
+         over putting a rule back here. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Meziantou's rules as errors from the start: there was no backlog. -->
+    <MeziantouAnalysisMode>all-errors</MeziantouAnalysisMode>
+  </PropertyGroup>
+
+</Project>

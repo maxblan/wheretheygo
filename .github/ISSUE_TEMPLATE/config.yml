@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How the numbers are worked out
+    url: https://github.com/maxblan/WhereTheyGo#how-it-works
+    about: Before reporting a number as wrong, the README says where each one comes from and what is mirrored from the game's own formulas.
+  - name: Building and contributing
+    url: https://github.com/maxblan/WhereTheyGo/blob/main/CONTRIBUTING.md
+    about: You cannot build the mod without the game and the official toolchain. This explains what you can build, and the gates to run.

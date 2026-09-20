@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>WhereTheyGo.Tests</AssemblyName>
+    <RootNamespace>WhereTheyGo.Tests</RootNamespace>
+    <!-- No test framework package on purpose: this must run offline with nothing
+         to restore. Failures are reported by a non-zero exit code. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- CS0649: TransitLine.m_RideSeconds is assigned in Lines.cs, which is
+         part of the mod and deliberately not linked here (it needs Unity types). Inside
+         this project alone the field looks write-free. -->
+    <!-- CA1515: ModePreset and LineSchedule are public in the mod, where the game
+         reaches them by reflection; that reason does not exist in this console
+         harness, which links the same files. -->
+    <NoWarn>CS0649;CA1515</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="CommonTests.cs" />
+    <Compile Include="BandTests.cs" />
+    <Compile Include="PipelineTests.cs" />
+    <Compile Include="WalkNetworkTests.cs" />
+    <Compile Include="SaveStateTests.cs" />
+    <!-- The mod's whole pure core, linked rather than duplicated: every file in a
+         Planning folder under dotnet/ uses System.* only, precisely so it compiles here. A Unity
+         type in any of them breaks this build, which is the purity check. -->
+    <Compile Include="../../dotnet/**/Planning/*.cs" Link="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

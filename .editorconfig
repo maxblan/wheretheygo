@@ -1,0 +1,181 @@
+﻿root = true
+
+[*.{cs,csproj,props,targets}]
+indent_style = space
+indent_size = 4
+charset = utf-8-bom
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{json,mjs,css,md,yml}]
+indent_style = space
+indent_size = 2
+
+[*.cs]
+
+# ---------------------------------------------------------------------------
+# Correctness-oriented rules, as errors.
+# ---------------------------------------------------------------------------
+
+# Forbid the null-forgiving operator: "trust me" defeats the point of enabling
+# nullable reference types. Nothing in this repo uses one today.
+dotnet_diagnostic.MA0191.severity = error
+
+# Don't silently discard a returned value.
+dotnet_diagnostic.IDE0058.severity = error
+
+# Fields that are never reassigned must be readonly.
+dotnet_diagnostic.IDE0044.severity = error
+
+# A suppression that no longer suppresses anything is a lie about the code.
+dotnet_diagnostic.IDE0079.severity = error
+
+# A value assigned and never read. Three dead locals in DiscountServedDemand and two
+# write-only fields survived a full review because nothing flagged them; the analyzers
+# already reject an unused TYPE (MA0182) and this closes the same gap for values.
+dotnet_diagnostic.IDE0059.severity = error
+
+# Braces always: a one-line if without them is how a second statement gets
+# silently excluded from the branch.
+csharp_prefer_braces = true:error
+
+# ---------------------------------------------------------------------------
+# Style, as errors where it removes a way to be wrong.
+# ---------------------------------------------------------------------------
+
+dotnet_style_object_initializer = true:error
+dotnet_style_collection_initializer = true:error
+dotnet_style_prefer_auto_properties = true:silent
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+
+csharp_style_prefer_pattern_matching = true:error
+csharp_style_prefer_not_pattern = true:error
+csharp_style_prefer_switch_expression = true:silent
+
+# ---------------------------------------------------------------------------
+# Deliberately off, with reasons. Each of these fires in the hundreds on existing,
+# working code and asks for a house-style change rather than a fix. The counts are
+# from the build that first enabled `latest-all` + Meziantou `all-errors`.
+# ---------------------------------------------------------------------------
+
+# Discrete-value pattern matching: `count == 0` -> `count is 0`. Off because it reads
+# worse for arithmetic comparisons, which is most of this codebase. The null-check
+# half of the family (MA0141/MA0142) stays an error and is enforced.
+dotnet_diagnostic.MA0148.severity = none
+dotnet_diagnostic.MA0149.severity = none
+
+# 98x. "Do not use cast". This codebase is full of deliberate numeric conversions,
+# `(int)math.round(...)` and `(byte)` grid writes. Those are the domain, not a smell.
+dotnet_diagnostic.MA0181.severity = none
+
+# Method length. The rule stays ON, ratcheted to the current worst offender so no
+# method may grow past today's longest. Splitting the long ones is a refactor rather
+# than a fix and must not be done blind, so the ratchet holds the line meanwhile.
+# Lower these numbers as methods are split; never raise them.
+#
+# Both figures are what the build says, not what anyone counted. They came down from
+# 138/60 when the suggestion pipeline was removed (2026-09-14), to 112 and then 101 as
+# the locale dictionaries were tidied, and to 96 on 2026-09-20 when the locale tables
+# stopped being method bodies at all.
+#
+# That last step is why the number finally means something. The tables are DATA, and
+# eighty-odd rows of it inside ReadEntries made this rule measure the wrong thing: the
+# limit tracked how many strings the mod had been translated into, and adding one locale
+# key was a structural event that failed the build. The rows now live in a static
+# `Literals` field, so both figures are pinned by the same real method,
+# WalkBridging.Bridge, at 96 lines and exactly 52 statements. Neither can drop without
+# splitting that method, which is a genuine piece of work rather than a formatting one.
+MA0051.maximum_lines_per_method = 96
+MA0051.maximum_statements_per_method = 52
+
+# One type per file, named after the file. `Lines.cs` deliberately holds
+# `ExistingLine` beside the reader that builds it.
+dotnet_diagnostic.MA0048.severity = none
+
+# `var` policy: the codebase already uses `var` where the type is on the line and an
+# explicit type elsewhere. Enforcing either direction churns 62 lines to no end.
+csharp_style_var_for_built_in_types = false:silent
+csharp_style_var_when_type_is_apparent = true:silent
+csharp_style_var_elsewhere = false:silent
+
+# 33x. Rewriting the per-mode `switch` statements as switch expressions. The
+# statement form is what makes "one visible edit per table when a mode is added".
+dotnet_diagnostic.IDE0066.severity = none
+
+# Collapsing if/else into a ternary. Produces worse code in the scoring paths, where
+# the branches carry comments.
+dotnet_diagnostic.IDE0045.severity = none
+dotnet_diagnostic.IDE0046.severity = none
+
+# Add StructLayoutAttribute. Two of the flagged structs are Burst-compiled job
+# structs, and whether an explicit layout upsets Burst's own layout handling cannot be
+# verified outside the game. Nothing here does native interop, which is the risk the
+# rule exists for.
+dotnet_diagnostic.MA0008.severity = none
+
+# Deprecated duplicates of CA1822, which is enabled and enforced.
+dotnet_diagnostic.MA0038.severity = none
+dotnet_diagnostic.MA0041.severity = none
+
+# Use HasFlag instead of bitwise checks. Two of these sites are inside Burst jobs,
+# where Enum.HasFlag is not something to rely on, and the bitwise form is cheaper
+# everywhere else.
+dotnet_diagnostic.MA0192.severity = none
+
+# Explicit enum value instead of 0. Three of the game enums involved
+# (TransportLineFlags, PathMethod, RoadFlags) define no zero-valued member, so there
+# is no explicit value to name.
+dotnet_diagnostic.MA0099.severity = none
+
+# A class implementing IComparable should define comparison operators. The flagged
+# type is a game prefab whose IComparable comes from its base class; `<` on a prefab
+# would be meaningless.
+dotnet_diagnostic.MA0097.severity = none
+
+# Use readonly struct for an `in` parameter. The signature is Unity's IJobChunk.
+# Execute; the parameter type is theirs and cannot be changed.
+dotnet_diagnostic.MA0168.severity = none
+
+# Write-only property. A set-only property IS the Cities: Skylines II settings idiom
+# for a button in the Options UI.
+dotnet_diagnostic.CA1044.severity = none
+
+# Remove unnecessary partial modifier. Wrong here: Unity's ECS source generator
+# requires `partial` on every SystemBase-derived type and fails the build (EA0007)
+# without it, which is how this was found.
+dotnet_diagnostic.MA0204.severity = none
+
+# `Mod` collides with a VB keyword. The name is fixed by the modding toolchain, which
+# looks for the IMod implementation.
+dotnet_diagnostic.CA1716.severity = none
+
+# Deliberately NOT enabled: csharp_style_prefer_extended_property_pattern and
+# csharp_style_prefer_readonly_struct. The CS2 toolchain pins LangVersion 9.0, so
+# the code those rules ask for cannot be written here.
+
+# ---------------------------------------------------------------------------
+# The generated/vendored side.
+# ---------------------------------------------------------------------------
+
+[dotnet/Icons/**]
+generated_code = true
+
+# ---------------------------------------------------------------------------
+# The offline test harness. It is a console program with no localization, no
+# security surface and no hot paths, so three rules that are right for the mod are
+# noise here. Everything else applies to the tests too.
+# ---------------------------------------------------------------------------
+
+[tests/**/*.cs]
+
+# "Literal strings should be passed as localized parameters". The harness prints
+# test names to a console it owns.
+dotnet_diagnostic.CA1303.severity = none
+
+# "Do not use insecure randomness". Random generates test fixtures, not secrets.
+dotnet_diagnostic.CA5394.severity = none
+
+# "Prefer static readonly over a constant array argument". An inline expected-value
+# array beside its assertion is the readable form, and it runs once.
+dotnet_diagnostic.CA1861.severity = none

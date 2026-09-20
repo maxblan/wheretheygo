@@ -1,0 +1,27 @@
+﻿bin/
+obj/
+Temp/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.log
+
+node_modules/
+dist/
+build/
+.cache/
+.env
+*.log
+dotnet/Library/*.pid
+
+example-mods
+
+.verify-toolchain
+.verify-toolchain.hidden
+
+.claude
+
+docs
+# Local art generator: the assets it writes are committed, the script is not.
+tools/make-art.py

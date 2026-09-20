@@ -1,0 +1,59 @@
+name: Feature request
+description: Something the mod could show that it does not show yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One thing to know before you write, because it decides most of these:
+
+        **The mod shows what is there. It does not suggest what to do.** It will
+        not recommend a line, pick a spot for a stop, choose a mode, size a
+        fleet, write a timetable or price a ticket. That is deliberate, and it
+        is the reason the mod was rebuilt from an earlier version that did score
+        locations.
+
+        A request to show something nobody can see today is very welcome. A
+        request for the mod to decide something is almost certainly out of
+        scope, though it is still worth arguing for if you think the line is in
+        the wrong place.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What question would this answer
+      description: |
+        The question you have while playing that the mod cannot answer yet.
+      placeholder: "Which of my lines duplicate each other, and where?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How you answer it today
+      description: What you currently do instead, and where that falls down.
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: Where the number would come from
+      description: |
+        Optional, and only if you know. The mod reads real journeys out of the
+        save and mirrors the game's own formulas rather than inventing models,
+        so a request is much easier to judge if it is clear what the game
+        already knows.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This shows something rather than recommending something.
+          required: false
+        - label: I have checked that another widely used mod does not already do this well.
+          required: false

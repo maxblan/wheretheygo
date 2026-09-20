@@ -1,0 +1,69 @@
+﻿<Publish>
+	<!--Id must be set in order to update existed mod. it is not required for publishing mod for the first time-->
+	<ModId Value="" />
+	<!--Name of the mod to display to players-->
+	<DisplayName Value="Where They Go" />
+	<!--Short description of the mod-->
+	<ShortDescription Value="Draws the journeys your citizens actually make, coloured by how much of each your transit already carries." />
+	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
+	<!--LongDescription Value="This is a long description" /-->
+	<LongDescription>
+# Where They Go
+
+Shows **where the people of your city want to go, and how much of that your transit network already carries.** You build; it only ever tells you what is there. It suggests nothing and changes nothing.
+
+The game already knows every home, every workplace, every school and every errand. This reads those journeys out of your save and draws them.
+
+## Desire lines
+
+Every journey the mod knows, drawn as a band between its two ends: home to work and home to school out of the save, shopping and leisure from watching the city run.
+
+- **Width** is how many journeys, in four classes with a legend that names what each one means in journeys a day.
+- **Colour** is how much of it your network already carries. Warm means those people are in their cars; cool means they are already on your metro.
+- **Time of day.** The panel draws the city's day as twenty-four columns, each split into the part your network carries and the part it does not. Click one and the map shows that hour, with an arrowhead on each band saying which way the traffic runs; press play and watch the day go by.
+- **Purposes.** Work, school, shopping and leisure switch on and off separately.
+- **Point at a band** for its numbers: journeys on it, how many travel without transit, its busiest hour, how far apart its two ends are.
+
+## Walk to transit
+
+Every building coloured by the walk from its door to the nearest stop a line actually calls at. This is real walking time over the pedestrian network, not a circle on the map. The building's own window shows the number the colour came from.
+
+## What a line does
+
+Click a line and its window gains a reading, not a verdict: how many journeys ride it and how many rider-minutes a day it saves them; how many are genuinely faster with it, and how many take just as long without it, which answers "why is my line empty"; where it stands among your lines; what it makes its riders wait; and how full it runs hour by hour.
+
+A line's worth is measured by **taking it away**: the routed figures come from routing the whole city a second time without that line.
+
+## What it does not do
+
+It does not suggest lines, place stops, choose modes, set vehicle counts, write timetables, price tickets, or change anything at all about your city. It hangs only on vanilla surfaces that no large mod replaces: a button in the top-left row, the infoview panel, and the window of the object you clicked.
+
+## Notes
+
+The demand is real rather than modelled. There is no gravity model and no calibration. Where routing is needed the game's own pathfinding costs are mirrored. Mods that change those costs (Realistic PathFinding and the like) are not modelled.
+	</LongDescription>
+	<!--Thumbnail-->
+	<Thumbnail Value="Properties/Thumbnail.png" />
+	<!--Screenshot, can be set multiple times-->
+	<Screenshot Value="" />
+	<!--Tag, can be set multiple times-->
+	<Tag Value="Code Mod" />
+	<!--Link to the forum post where the mod can be discussed-->
+	<ForumLink Value="" />
+	<!--Version of the mod-->
+	<ModVersion Value="1.0" />
+	<!--Recommended version of the base game to use the mod-->
+	<GameVersion Value="1.6.*" />
+	<!--Dependency for the mod, can be set multiple times-->
+	<Dependency Id="" />
+	<!--Required DLC, can be set multiple times. Supported values are "Landmark Buildings", "San Fransisco Set", "Beach Properties", "Urban Promenades", "Modern Architecture"-->
+	<RequiredDLC Value="" />
+	<!--Change log for new version. Single line or multi line. Supports minimal markdown subset-->
+	<ChangeLog Value="Initial release." />
+	<!--<ChangeLog>
+	</ChangeLog>-->
+	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->
+	<ExternalLink Type="github" Url="https://github.com/maxblan/WhereTheyGo" />
+	<!--Supported values Public, Private, Unlisted-->
+	<AccessLevel Value="Public" />
+</Publish>
