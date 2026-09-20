@@ -65,10 +65,14 @@ namespace WhereTheyGo
         }
 
         // Observed shopping/leisure demand (register A0.1): the window of journeys
-        // seen, each citizen's current journey (so one journey is recorded once),
-        // and the building each citizen was last seen inside (a journey's origin).
-
-        private readonly Dictionary<Entity, byte> m_CurrentJourney = new Dictionary<Entity, byte>();
+        // seen, the journeys under way (so one journey is recorded once), and the
+        // building each citizen was last seen inside (a journey's origin).
+        //
+        // Keyed per (citizen, purpose), not per citizen: a citizen can have a shopping
+        // trip and an outing queued at the same time, and a dictionary of one purpose
+        // per citizen could only ever hold the first of them.
+        private readonly HashSet<(Entity Citizen, byte Purpose)> m_CurrentJourney =
+            new HashSet<(Entity Citizen, byte Purpose)>();
 
         // Bounded by the citizens that EXIST: entries for the dead and the departed are
         // swept out on every Drain (ForgetGoneCitizens), so a long session with churn
@@ -132,7 +136,10 @@ namespace WhereTheyGo
         //     watched purpose. Origin (CurrentBuilding) and destination (the entry's
         //     m_TargetAgent) are both exact. Visible only until TripNeededSystem
         //     dispatches the trip — it runs every 16 frames over update-frame groups,
-        //     so a second's sampling sees most but not all departures.
+        //     so a second's sampling sees most but not all departures. The WHOLE
+        //     buffer is walked: TripNeeded is a queue, and a shopping trip sitting
+        //     behind another entry stayed invisible until its maker was already on
+        //     the way, which is a journey seen an hour late or not at all.
         //  B. Travelling: a citizen carrying TravelPurpose with a CurrentTransport. The
         //     TripNeeded entry is gone by then (the first live scan proved it: 700
         //     shopping travellers, none with an entry), so the destination is read from
@@ -166,24 +173,12 @@ namespace WhereTheyGo
             m_TimeOfDay = timeOfDay;
             RememberBuildings();
 
-            var seen = new HashSet<Entity>();
+            var seen = new HashSet<(Entity Citizen, byte Purpose)>();
             ObserveQueued(frame, seen, entityType, tripType, buildingType);
             ObserveTravelling(frame, seen);
 
             // Journeys no longer under way: forget them so the next one is new.
-            var ended = new List<Entity>();
-            foreach (Entity citizen in m_CurrentJourney.Keys)
-            {
-                if (!seen.Contains(citizen))
-                {
-                    ended.Add(citizen);
-                }
-            }
-
-            for (int i = 0; i < ended.Count; i++)
-            {
-                _ = m_CurrentJourney.Remove(ended[i]);
-            }
+            m_CurrentJourney.IntersectWith(seen);
 
             Window.Prune(frame);
 
@@ -228,7 +223,7 @@ namespace WhereTheyGo
             }
         }
 
-        private void ObserveQueued(uint frame, HashSet<Entity> seen, EntityTypeHandle entityType, BufferTypeHandle<TripNeeded> tripType, ComponentTypeHandle<CurrentBuilding> buildingType)
+        private void ObserveQueued(uint frame, HashSet<(Entity Citizen, byte Purpose)> seen, EntityTypeHandle entityType, BufferTypeHandle<TripNeeded> tripType, ComponentTypeHandle<CurrentBuilding> buildingType)
         {
             m_ObservedQueued = 0;
             Array.Clear(m_ObservedPurposeHistogram, 0, m_ObservedPurposeHistogram.Length);
@@ -242,32 +237,30 @@ namespace WhereTheyGo
                 for (int i = 0; i < entities.Length; i++)
                 {
                     DynamicBuffer<TripNeeded> queue = trips[i];
-                    if (queue.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    TripNeeded trip = queue[0];
-                    if (!IsShoppingOrLeisure(trip.m_Purpose) || trip.m_TargetAgent == Entity.Null)
-                    {
-                        continue;
-                    }
-
-                    m_ObservedQueued++;
                     Entity citizen = entities[i];
-                    _ = seen.Add(citizen);
-                    if (m_CurrentJourney.TryGetValue(citizen, out byte current) && current == (byte)trip.m_Purpose)
+                    for (int q = 0; q < queue.Length; q++)
                     {
-                        continue;
-                    }
+                        TripNeeded trip = queue[q];
+                        if (!IsShoppingOrLeisure(trip.m_Purpose) || trip.m_TargetAgent == Entity.Null)
+                        {
+                            continue;
+                        }
 
-                    m_CurrentJourney[citizen] = (byte)trip.m_Purpose;
-                    RecordObservedTrip(buildings[i].m_CurrentBuilding, trip.m_TargetAgent, (byte)trip.m_Purpose, frame);
+                        m_ObservedQueued++;
+                        (Entity Citizen, byte Purpose) journey = (citizen, (byte)trip.m_Purpose);
+                        _ = seen.Add(journey);
+                        if (!m_CurrentJourney.Add(journey))
+                        {
+                            continue;
+                        }
+
+                        RecordObservedTrip(buildings[i].m_CurrentBuilding, trip.m_TargetAgent, (byte)trip.m_Purpose, frame);
+                    }
                 }
             }
         }
 
-        private void ObserveTravelling(uint frame, HashSet<Entity> seen)
+        private void ObserveTravelling(uint frame, HashSet<(Entity Citizen, byte Purpose)> seen)
         {
             m_ObservedTravelling = 0;
             m_ObservedTravellingWithBuilding = 0;
@@ -288,8 +281,9 @@ namespace WhereTheyGo
 
                 m_ObservedTravelling++;
                 Entity citizen = travellers[i];
-                _ = seen.Add(citizen);
-                if (m_CurrentJourney.TryGetValue(citizen, out byte current) && current == (byte)purpose)
+                (Entity Citizen, byte Purpose) journey = (citizen, (byte)purpose);
+                _ = seen.Add(journey);
+                if (m_CurrentJourney.Contains(journey))
                 {
                     continue;
                 }
@@ -300,7 +294,7 @@ namespace WhereTheyGo
                 }
 
                 m_ObservedTravellingWithBuilding++;
-                m_CurrentJourney[citizen] = (byte)purpose;
+                _ = m_CurrentJourney.Add(journey);
                 if (!m_LastBuilding.TryGetValue(citizen, out Entity origin))
                 {
                     m_ObservedWithoutOrigin++;
