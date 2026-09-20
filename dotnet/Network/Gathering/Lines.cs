@@ -222,13 +222,19 @@ namespace WhereTheyGo
             liveLineIds.Clear();
             ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
             {
+                // Live means the game still HAS the line, whatever its route looks like
+                // this frame — liveLineIds decides which histories survive
+                // (LineHistory.RetainOnly), and a line being re-routed drops below two
+                // city stops for as long as the player has a stop off it. Counting it
+                // dead for those frames threw away its whole game day of readings, and
+                // the hourly chart started from nothing after every route edit.
+                int id = IdentityOf(lineEntity);
+                _ = liveLineIds.Add(id);
                 if (CityStopCount(entityManager, waypoints) < 2)
                 {
                     return;
                 }
 
-                int id = IdentityOf(lineEntity);
-                _ = liveLineIds.Add(id);
                 ReadVehicles(entityManager, lineEntity, out int vehicles, out int passengers, out int capacity);
                 history.Record(id, new LineObservation
                 {
