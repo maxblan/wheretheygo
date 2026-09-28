@@ -232,7 +232,11 @@ namespace WhereTheyGo
             }
 
             int count = access.TileNode.Length;
-            int2 grid = m_PlayableGridAtCompute;
+            // The grid the snap was laid out on, which is the population map's, and the
+            // one m_ScoreWorldMin below belongs to. Not the terrain's playable grid: the
+            // two agree on every map seen so far, but a map where they did not would
+            // have failed the length check below and silently left every building grey.
+            int2 grid = m_IntensityGrid;
             if (grid.x <= 0 || grid.y <= 0 || grid.x * grid.y != count)
             {
                 m_AccessByTile = null;

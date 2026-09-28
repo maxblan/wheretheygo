@@ -40,7 +40,10 @@ namespace WhereTheyGo
         // The ridden loop each line was last warned about, by line id (Lines.WarnOnce).
         private readonly HashSet<int> m_WarnedRiddenLoops = new HashSet<int>();
 
-        private uint m_LastLineRefreshFrame;
+        // The RENDER frame of the last collection, not the simulation frame: the
+        // simulation stands still while the game is paused, and keyed on it a line
+        // laid or deleted in the pause was not read until the player pressed play.
+        private int m_LastLineRefreshFrame = -1;
 
         private float m_LastLineSample;
 
@@ -68,18 +71,19 @@ namespace WhereTheyGo
         // Reads the lines and hands them the window and the routing's riders. Cheap,
         // since it walks the lines and nothing else.
         //
-        // Idempotent within a simulation frame, so the demand pipeline can call it
-        // without the background tick making it happen twice.
+        // Idempotent within a frame, so the demand pipeline can call it without the
+        // background tick making it happen twice.
         private void RefreshLineHealth()
         {
-            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
-            uint frame = simulation?.frameIndex ?? 0u;
-            if (m_ExistingLines.Count > 0 && frame == m_LastLineRefreshFrame)
+            int renderFrame = UnityEngine.Time.frameCount;
+            if (m_ExistingLines.Count > 0 && renderFrame == m_LastLineRefreshFrame)
             {
                 return;
             }
 
-            m_LastLineRefreshFrame = frame;
+            m_LastLineRefreshFrame = renderFrame;
+            var simulation = World.GetExistingSystemManaged<SimulationSystem>();
+            uint frame = simulation?.frameIndex ?? 0u;
             Lines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
                 m_ExistingLines, m_TransitStops, m_StopIndices, m_LineEntities, m_WarnedRiddenLoops);
             for (int i = 0; i < m_ExistingLines.Count; i++)

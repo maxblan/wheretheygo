@@ -117,6 +117,9 @@ namespace WhereTheyGo
             // an answer of "nothing is reachable" and stop asking.
             if (graph.NodeCount == 0)
             {
+                // Nor may the empty graph be cached: EnsureWalkNetwork re-reads the
+                // streets only while dirty, and the retry found the same empty graph.
+                m_RoadCacheDirty = true;
                 m_LastSnapAt = now;
                 return false;
             }
@@ -127,6 +130,10 @@ namespace WhereTheyGo
             long signature = SignatureOf(graph, gridSize);
             if (!cold && signature == m_SnappedSignature)
             {
+                // Re-arms the minute's gate as a snap would. Left open, the pending
+                // request ran this whole prologue (Dependency.Complete, the population
+                // map, the signature, the street collection) on every frame.
+                m_LastSnapAt = now;
                 return false;
             }
 

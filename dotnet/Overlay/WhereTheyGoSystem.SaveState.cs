@@ -61,6 +61,9 @@ namespace WhereTheyGo
             if (version != SavePayload.SaveFormatVersion)
             {
                 DeferredLog.Info($"Save state of framing {version.ToString(CultureInfo.InvariantCulture)} skipped (this build reads {SavePayload.SaveFormatVersion.ToString(CultureInfo.InvariantCulture)}); starting cold");
+                // Cold means cold: whatever the window and the history held before
+                // this load goes, as it does when the payload is unreadable.
+                SetDefaults(default);
                 return;
             }
 

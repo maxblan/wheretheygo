@@ -1,11 +1,9 @@
-﻿using System.Globalization;
-
-namespace WhereTheyGo
+﻿namespace WhereTheyGo
 {
-    // The panel bridge: the static strings and requests the options page and the panel
+    // The panel bridge: the static state and requests the options page and the panel
     // module read and raise. The settings object is built before the world exists, so
-    // the panel talks to the system through statics rather than an instance, and the
-    // payloads are the delimited strings ui-module.md describes.
+    // the panel talks to the system through statics rather than an instance; the
+    // payloads themselves are the JSON PanelUISystem writes.
     public sealed partial class WhereTheyGoSystem
     {
         // The Options page's heat-map switch. A static request rather than a direct
@@ -133,32 +131,11 @@ namespace WhereTheyGo
 
         public static void SelectLine(int lineId) => s_SelectedLineId = lineId;
 
-        // The band under the pointer, as the panel reads it:
-        // "journeys|withoutTransitPercent|peakHour|carriedPercent", or empty for none.
-        // The figures are the band's own, at the hour the map is showing.
-        public static string HoveredBandText => s_HoveredBand;
-
+        // The band under the pointer. The panel reads its figures as JSON
+        // (PanelUISystem.WriteHoveredBand), at the hour the map is showing.
         internal static Band? HoveredBand => s_Hovered;
 
-        internal static void SetHoveredBand(Band? band)
-        {
-            s_Hovered = band;
-            if (band is null)
-            {
-                s_HoveredBand = string.Empty;
-                return;
-            }
-
-            float weight = band.WeightAtHour(s_SelectedHour, s_PurposeFilter);
-            float carried = band.CarriedShare;
-            s_HoveredBand =
-                $"{weight.ToString("F0", CultureInfo.InvariantCulture)}|" +
-                $"{((1f - carried) * 100f).ToString("F0", CultureInfo.InvariantCulture)}|" +
-                $"{band.PeakHour(s_PurposeFilter).ToString(CultureInfo.InvariantCulture)}|" +
-                $"{(carried * 100f).ToString("F0", CultureInfo.InvariantCulture)}";
-        }
-
-        private static string s_HoveredBand = string.Empty;
+        internal static void SetHoveredBand(Band? band) => s_Hovered = band;
 
         private static Band? s_Hovered;
 

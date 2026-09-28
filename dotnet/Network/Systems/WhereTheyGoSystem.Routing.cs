@@ -336,15 +336,11 @@ namespace WhereTheyGo
                     ((float)pass.Result.BaseRiders[i], (float)pass.Result.BaseRidersByDay[i], (float)pass.Result.BaseRidersByNight[i]);
             }
 
-            // The carried share is half of the panel's first figure, and the coverage
-            // measure ran before this pass started, so the figure is refreshed here
-            // rather than left a refresh behind.
-            Setting? settings = Mod.Settings;
-            if (settings is not null)
-            {
-                RefreshCoverage(settings, "routed");
-            }
-
+            // The coverage figure is NOT refreshed here. It rests on the served-walk
+            // field and the snapped journey ends, neither of which a routing pass
+            // touches, and the measure ran on the same inputs before the pass started:
+            // re-running it here sorted every journey again for the Gini and logged a
+            // second "Coverage" line that could only ever repeat the first.
             LogRoutingPass(pass, pass.Result, pass.Bands);
         }
 

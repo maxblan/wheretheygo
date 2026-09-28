@@ -708,8 +708,10 @@ function WalkClasses({ shares, horizon, ramp }) {
         total += value;
     }
 
+    // Keyed by position, not by label: before the first coverage measure the horizon
+    // is 0 and two of the labels read "0–0 min", which React refused as duplicate keys.
     const legend = h("div", { className: "wtg-purposes" },
-        labels.map((label, index) => h("div", { className: "wtg-purpose", key: label },
+        labels.map((label, index) => h("div", { className: "wtg-purpose", key: index },
             h("div", { className: "wtg-purpose-swatch", style: { backgroundColor: colours[index] } }),
             h("div", { className: "wtg-purpose-label" }, label),
             h("div", { className: "wtg-purpose-value" }, percent(values[index])))));

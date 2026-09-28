@@ -83,20 +83,10 @@ namespace WhereTheyGo
                 var line = new ExistingLine
                 {
                     m_Id = IdentityOf(lineEntity),
-                    m_EntityIndex = lineEntity.Index,
                     m_Mode = ModeOf(lineData.m_TransportType),
                     m_Name = ResolveName(entityManager, nameSystem, prefabSystem, lineEntity, lineData.m_TransportType),
                     m_Schedule = ScheduleOf(entityManager, lineEntity),
                 };
-
-                // A line with no segments is still readable; the reader handles an empty buffer.
-                _ = entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteSegment> segments);
-                ReadWaypoints(entityManager, waypoints, segments, line, stopPositions, stopIndices);
-
-                if (line.m_StopIndices.Count < 2)
-                {
-                    return;
-                }
 
                 // Outside connections are outside the mod's model (user decision
                 // 2026-09-04, reaffirmed 2026-09-06), so a line that cannot carry a
@@ -105,10 +95,24 @@ namespace WhereTheyGo
                 // Counted rather than "calls at one at all", so a regional train that
                 // also serves three city stations keeps them. Valmare's three train
                 // lines had no city stop at all.
-                int cityStops = CityStopCount(entityManager, waypoints);
+                //
+                // Decided BEFORE the waypoints are read: ReadWaypoints registers every
+                // stop it meets in the shared stop table, and a stop registered there is
+                // a served stop to the coverage measure, the building colours and the
+                // panel's count. A line the routing never sees must not serve anything.
+                int cityStops = CityStopCount(entityManager, waypoints, out int allStops);
                 if (cityStops < 2)
                 {
-                    ignored.Add($"{line.m_Name} ({cityStops.ToString(CultureInfo.InvariantCulture)} of {line.m_StopIndices.Count.ToString(CultureInfo.InvariantCulture)} stops in the city)");
+                    ignored.Add($"{line.m_Name} ({cityStops.ToString(CultureInfo.InvariantCulture)} of {allStops.ToString(CultureInfo.InvariantCulture)} stops in the city)");
+                    return;
+                }
+
+                // A line with no segments is still readable; the reader handles an empty buffer.
+                _ = entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteSegment> segments);
+                ReadWaypoints(entityManager, waypoints, segments, line, stopPositions, stopIndices);
+
+                if (line.m_StopIndices.Count < 2)
+                {
                     return;
                 }
 
@@ -183,16 +187,18 @@ namespace WhereTheyGo
                 && lineData.m_PassengerTransport
                 && IsModelled(lineData.m_TransportType)
                 && entityManager.TryGetBuffer(lineEntity, isReadOnly: true, out DynamicBuffer<RouteWaypoint> waypoints)
-                && CityStopCount(entityManager, waypoints) >= 2;
+                && CityStopCount(entityManager, waypoints, out _) >= 2;
         }
 
         // How many of the line's stops are in the city rather than on an outside
-        // connection. A stop belongs to an outside connection when
-        // Game.Objects.OutsideConnection sits on it or anywhere up its Owner chain
-        // (the stop is owned by the station building, which the game marks).
-        private static int CityStopCount(EntityManager entityManager, DynamicBuffer<RouteWaypoint> waypoints)
+        // connection, and how many stops it calls at in all. A stop belongs to an
+        // outside connection when Game.Objects.OutsideConnection sits on it or anywhere
+        // up its Owner chain (the stop is owned by the station building, which the game
+        // marks).
+        private static int CityStopCount(EntityManager entityManager, DynamicBuffer<RouteWaypoint> waypoints, out int allStops)
         {
             int cityStops = 0;
+            allStops = 0;
             for (int w = 0; w < waypoints.Length; w++)
             {
                 if (!entityManager.TryGetComponent(waypoints[w].m_Waypoint, out Connected connected)
@@ -201,6 +207,7 @@ namespace WhereTheyGo
                     continue;
                 }
 
+                allStops++;
                 if (!IsOutsideConnection(entityManager, connected.m_Connected))
                 {
                     cityStops++;
@@ -242,7 +249,7 @@ namespace WhereTheyGo
                 // the hourly chart started from nothing after every route edit.
                 int id = IdentityOf(lineEntity);
                 _ = liveLineIds.Add(id);
-                if (CityStopCount(entityManager, waypoints) < 2)
+                if (CityStopCount(entityManager, waypoints, out _) < 2)
                 {
                     return;
                 }
@@ -290,9 +297,17 @@ namespace WhereTheyGo
         // the game reuses after a deletion does not silently point at the new line.
         // The selected-line section resolves the clicked entity through the same
         // function, which is why it is internal rather than private.
+        //
+        // SEVEN bits of version, not eight, so the id is never negative. Every free
+        // index the ECS hands a new line has been through citizens and vehicles first,
+        // so a line laid in a mature city carries a high version as a matter of course;
+        // with the eighth bit landing on the sign, half of them came out negative, and
+        // -1 is the "no line" sentinel that IndexOfLine and TryGetLineContribution
+        // refuse: those lines were never measured and their window said "measuring"
+        // for ever. Ids under version 128 are unchanged, so saved readings still match.
         internal static int IdentityOf(Entity line)
         {
-            return (line.Index & 0xFFFFFF) | ((line.Version & 0xFF) << 24);
+            return (line.Index & 0xFFFFFF) | ((line.Version & 0x7F) << 24);
         }
 
         // Walks the line's waypoints in travel order. Not every waypoint is a stop,
@@ -316,17 +331,19 @@ namespace WhereTheyGo
             {
                 Entity waypoint = waypoints[w].m_Waypoint;
 
+                // A stop without a position is walked past like a shaping waypoint:
+                // the old fallback registered it at float2Like.Zero, which is a served
+                // stop standing in the middle of the map.
                 if (entityManager.TryGetComponent(waypoint, out Connected connected) &&
-                    entityManager.HasComponent<Game.Routes.TransportStop>(connected.m_Connected))
+                    entityManager.HasComponent<Game.Routes.TransportStop>(connected.m_Connected) &&
+                    entityManager.TryGetComponent(waypoint, out Game.Routes.Position stopPosition))
                 {
                     Entity stop = connected.m_Connected;
                     if (!stopIndices.TryGetValue(stop, out int index))
                     {
                         index = stopPositions.Count;
                         stopIndices[stop] = index;
-                        stopPositions.Add(entityManager.TryGetComponent(waypoint, out Game.Routes.Position stopPosition)
-                            ? new float2Like(stopPosition.m_Position.x, stopPosition.m_Position.z)
-                            : float2Like.Zero);
+                        stopPositions.Add(new float2Like(stopPosition.m_Position.x, stopPosition.m_Position.z));
                     }
 
                     line.m_StopIndices.Add(index);
