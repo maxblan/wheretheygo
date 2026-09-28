@@ -1,5 +1,14 @@
 ﻿root = true
 
+# LF everywhere, on every platform: .gitattributes holds git to the same rule.
+[*]
+end_of_line = lf
+
+# A recipe line indented with spaces is not a recipe to make, and it says so only
+# with "missing separator".
+[Makefile]
+indent_style = tab
+
 [*.{cs,csproj,props,targets}]
 indent_style = space
 indent_size = 4

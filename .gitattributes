@@ -1,0 +1,11 @@
+# Every text file is committed with LF and checked out with LF on every platform,
+# whatever core.autocrlf says on the machine. On 2026-09-28 a tool flipped 83 tracked
+# files to CRLF in one sitting, which would have buried a Makefile change under
+# seventeen thousand whitespace lines and left the python shebang ending in "\r".
+# .editorconfig says the same thing to editors; this says it to git.
+* text=auto eol=lf
+
+# Written by Visual Studio and NuGet on Windows, always with CRLF, and read back by
+# the same tools. Left as they are written rather than fought over.
+*.pubxml -text
+packages.lock.json -text
