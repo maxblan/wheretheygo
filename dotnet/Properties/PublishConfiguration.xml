@@ -63,7 +63,7 @@ The demand is real rather than modelled. There is no gravity model and no calibr
 	<!--<ChangeLog>
 	</ChangeLog>-->
 	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->
-	<ExternalLink Type="github" Url="https://github.com/maxblan/WhereTheyGo" />
+	<ExternalLink Type="github" Url="https://github.com/maxblan/wheretheygo" />
 	<!--Supported values Public, Private, Unlisted-->
 	<AccessLevel Value="Public" />
 </Publish>
