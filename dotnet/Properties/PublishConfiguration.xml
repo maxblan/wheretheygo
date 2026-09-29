@@ -53,7 +53,7 @@ The demand is real rather than modelled. There is no gravity model and no calibr
 	<!--Tag, can be set multiple times-->
 	<Tag Value="Code Mod" />
 	<!--Link to the forum post where the mod can be discussed-->
-	<ForumLink Value="" />
+	<ForumLink Value="https://forum.paradoxplaza.com/forum/threads/code-mod-where-they-go-see-the-journeys-your-citizens-actually-make.1943056/" />
 	<!--Version of the mod-->
 	<ModVersion Value="1.0" />
 	<!--Recommended version of the base game to use the mod-->
