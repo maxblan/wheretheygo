@@ -1,6 +1,8 @@
-<img src="assets/logo.png" width="96" align="right" alt="">
+<p align="center">
+  <img src="assets/logo.png" width="96" alt="">
+</p>
 
-# Where They Go
+<h1 align="center">Where They Go</h1>
 
 A Cities: Skylines II mod that shows **where the people of your city want to go, and how
 much of that your transit network already carries.** You build. It only ever tells you
@@ -9,10 +11,6 @@ what is there.
 The game already knows every home, every workplace, every school and every errand its
 citizens make, and gives you a utilisation percentage per line. This reads those journeys
 out of your save and draws them.
-
-<p align="center">
-  <img src="dotnet/Properties/Thumbnail.png" width="460" alt="Desire lines across a city, warm where nobody rides and cool where the network already carries them">
-</p>
 
 ## What it is
 
