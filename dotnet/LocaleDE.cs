@@ -88,7 +88,9 @@ namespace WhereTheyGo
             { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} Wege um {1}" },
             { "WhereTheyGo.Panel[BandJourneysDay]", "{0} am Tag insgesamt" },
             { "WhereTheyGo.Panel[Carried]", "Vom ÖPNV getragen" },
-            { "WhereTheyGo.Panel[CarriedCaption]", "aller Wege; gez\u00e4hlt wird ein Weg, wenn der \u00d6PNV ihn schneller macht als Gehen" },
+            { "WhereTheyGo.Panel[CarriedCaption]", "der Wege, die l\u00e4nger sind als ein Fu\u00dfweg; gez\u00e4hlt wird ein Weg, wenn der \u00d6PNV auf der ganzen Strecke schneller ist als Gehen und nicht viel langsamer als ein typischer \u00d6PNV-Weg dieser Stadt" },
+            { "WhereTheyGo.Panel[WalkedCaption]", "{0} % der Wege dieser Stadt sind k\u00fcrzer als der Gehzeit-Horizont: ein Fu\u00dfweg, keine Frage f\u00fcr den \u00d6PNV, und aus den Zahlen oben herausgenommen" },
+            { "WhereTheyGo.Panel[WalkedFolded]", "{0} Wege am Tag zu Fu\u00df, ihre Korridore nicht gezeichnet" },
             { "WhereTheyGo.Panel[Coverage]", "In Gehweite" },
 
 
@@ -117,12 +119,9 @@ namespace WhereTheyGo
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Allgemein" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planung" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Angebotsstandards" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Gehzeit-Horizont f\u00fcr \u201ebedient\u201c (min)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "Ein Weg gilt als bedient, wenn beide Enden innerhalb so vieler Gehminuten einer bedienten Haltestelle liegen." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Infoansicht anzeigen" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Öffnet die Infoansicht der Mod. Im Infoansichts-Menü des Spiels liegt derselbe Schalter." },
             };
 
             foreach (KeyValuePair<string, string> entry in Literals)

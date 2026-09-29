@@ -4,7 +4,7 @@ using Unity.Entities;
 
 namespace WhereTheyGo
 {
-    // Observed shopping and leisure journeys (register A0.1): the system's cadence for
+    // Observed shopping and leisure journeys: the system's cadence for
     // the live-city scan; the scan itself is TripObserver.
     public sealed partial class WhereTheyGoSystem
     {

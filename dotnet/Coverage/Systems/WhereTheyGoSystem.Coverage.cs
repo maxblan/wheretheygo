@@ -5,7 +5,7 @@ using Unity.Mathematics;
 
 namespace WhereTheyGo
 {
-    // The equity measure (register A1.8/A1.9) on the game side: every journey of the
+    // The equity measure on the game side: every journey of the
     // last demand refresh with its ends snapped to the pedestrian network, the walk
     // from each node to the nearest served stop, and the coverage share the panel
     // and the set objective read. The arithmetic is Coverage.
@@ -37,6 +37,10 @@ namespace WhereTheyGo
         // What the served-walk field was built for: the stops, the pedestrian network
         // and the horizon. Unchanged means there is nothing to rebuild.
         private long m_FieldSignature = -1;
+
+        // And the snap it was built on: a new snap is a new graph and a new numbering,
+        // whatever the counts say.
+        private TileSnap? m_FieldSnap;
 
         // Where the coverage pass spent its milliseconds, for the log: it runs on the
         // main thread every demand refresh and is the largest thing left there.
@@ -124,7 +128,11 @@ namespace WhereTheyGo
         private void MeasureCoverage(Setting settings)
         {
             TileSnap? snap = m_TileSnap;
-            WalkGraph? graph = m_WalkGraph;
+            // The snap's OWN graph, not m_WalkGraph: the streets are re-collected on
+            // every change tag, and a re-collection that keeps the counts keeps the
+            // snap while numbering its nodes afresh. A snapped index only means
+            // anything on the graph it was snapped to (TileSnap.Graph).
+            WalkGraph? graph = snap?.Graph;
             if (snap?.Index is null || graph is null)
             {
                 m_Coverage = null;
@@ -164,10 +172,11 @@ namespace WhereTheyGo
             // for an answer that had not moved: in the log the field's version counted
             // up while its own figure stayed at 87.1 % to the decimal.
             long fieldSignature = CoverageSignature(graph);
-            m_FieldRebuilt = m_ServedWalkMs is null || fieldSignature != m_FieldSignature;
+            m_FieldRebuilt = m_ServedWalkMs is null || fieldSignature != m_FieldSignature || !ReferenceEquals(snap, m_FieldSnap);
             if (m_FieldRebuilt)
             {
                 m_FieldSignature = fieldSignature;
+                m_FieldSnap = snap;
                 SnapStops(m_TransitStops, snap.Index, Assumptions.AccessWalkMs, out int[] stopNodes, out int[] stopAccess);
                 // Searched well past the coverage horizon on purpose. Every "is this
                 // served" test compares against the horizon itself (Coverage.EndServed),

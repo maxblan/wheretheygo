@@ -21,7 +21,8 @@ namespace WhereTheyGo
     // feeder lines score as worthless.
     //
     // Node layout: [0, StopCount) are stop nodes; the rest are line-stop nodes, one
-    // per (line, stop-along-that-line) pair.
+    // per (line, stop-along-that-line) pair, where a closing repeat of a line's first
+    // stop shares the first stop's node (Build).
     internal sealed class TransitNetwork
     {
         public int StopCount;
@@ -95,57 +96,7 @@ namespace WhereTheyGo
 
             for (int l = 0; l < lines.Count; l++)
             {
-                TransitLine line = lines[l];
-                if (line.m_Stops is null || line.m_Stops.Length < 2)
-                {
-                    continue;
-                }
-
-                int first = nextNode;
-                nextNode += line.m_Stops.Length;
-
-                for (int i = 0; i < line.m_Stops.Length; i++)
-                {
-                    int stop = line.m_Stops[i];
-                    if (stop < 0 || stop >= stopCount)
-                    {
-                        continue;
-                    }
-
-                    int aboard = first + i;
-
-                    // CompactGraph is undirected, so a zero-cost "alight" edge would
-                    // be traversable backwards as a FREE boarding, which made
-                    // transfers cost nothing at all. Instead there is one access edge
-                    // carrying half the boarding cost: using a line traverses it twice
-                    // (on and off), so each line used pays the full cost exactly once,
-                    // and every change of vehicle pays it again.
-                    AddEdge(stop, aboard, (line.m_ExpectedWait + boardPenaltySeconds) * 0.5f, TransitEdgeKind.Access, l);
-
-                    if (i > 0)
-                    {
-                        int previousStop = line.m_Stops[i - 1];
-                        if (previousStop >= 0 && previousStop < stopCount)
-                        {
-                            // Prefer the real pathfound duration the game keeps per
-                            // route segment; fall back to geometry only if absent.
-                            float ride;
-                            if (line.m_RideSeconds is not null && i < line.m_RideSeconds.Length && line.m_RideSeconds[i] > 0f)
-                            {
-                                ride = line.m_RideSeconds[i];
-                            }
-                            else
-                            {
-                                float dx = stopX[stop] - stopX[previousStop];
-                                float dz = stopZ[stop] - stopZ[previousStop];
-                                float distance = (float)Math.Sqrt(dx * dx + dz * dz);
-                                ride = distance / Math.Max(1f, line.m_SpeedMetresPerSecond);
-                            }
-
-                            AddEdge(first + i - 1, aboard, ride, TransitEdgeKind.Ride, l);
-                        }
-                    }
-                }
+                AddLineEdges(stopX, stopZ, stopCount, lines[l], l, boardPenaltySeconds, ref nextNode, AddEdge);
             }
 
             return new TransitNetwork
@@ -155,6 +106,85 @@ namespace WhereTheyGo
                 EdgeKind = kinds.ToArray(),
                 EdgeLine = edgeLines.ToArray(),
             };
+        }
+
+        // One line's nodes and edges: a line-stop node per call, the access edge that
+        // steps between the stop and the vehicle, and the one-way ride from the call
+        // before.
+        //
+        // A loop that closes arrives with its first stop repeated at the end
+        // (Lines.ToTransitLines). That repeat is NOT a line-stop node of its own: the
+        // ride into it lands on the FIRST line-stop node, so the line is a cycle and a
+        // rider whose journey runs past the seam simply stays aboard. As a node of its
+        // own it was a dead end, and every journey past the seam alighted there and
+        // paid a second full boarding to get from the stop back onto the same vehicle.
+        private static void AddLineEdges(
+            float[] stopX,
+            float[] stopZ,
+            int stopCount,
+            TransitLine line,
+            int lineIndex,
+            float boardPenaltySeconds,
+            ref int nextNode,
+            Action<int, int, float, TransitEdgeKind, int> addEdge)
+        {
+            if (line.m_Stops is null || line.m_Stops.Length < 2)
+            {
+                return;
+            }
+
+            int last = line.m_Stops.Length - 1;
+            bool closed = last >= 2 && line.m_Stops[last] == line.m_Stops[0];
+            int first = nextNode;
+            nextNode += closed ? last : line.m_Stops.Length;
+
+            for (int i = 0; i < line.m_Stops.Length; i++)
+            {
+                int stop = line.m_Stops[i];
+                if (stop < 0 || stop >= stopCount)
+                {
+                    continue;
+                }
+
+                bool seam = closed && i == last;
+                int aboard = seam ? first : first + i;
+
+                // CompactGraph is undirected, so a zero-cost "alight" edge would be
+                // traversable backwards as a FREE boarding, which made transfers cost
+                // nothing at all. Instead there is one access edge carrying half the
+                // boarding cost: using a line traverses it twice (on and off), so each
+                // line used pays the full cost exactly once, and every change of
+                // vehicle pays it again. The seam's node already has its access edge,
+                // from the first call.
+                if (!seam)
+                {
+                    addEdge(stop, aboard, (line.m_ExpectedWait + boardPenaltySeconds) * 0.5f, TransitEdgeKind.Access, lineIndex);
+                }
+
+                if (i > 0)
+                {
+                    int previousStop = line.m_Stops[i - 1];
+                    if (previousStop >= 0 && previousStop < stopCount)
+                    {
+                        // Prefer the real pathfound duration the game keeps per route
+                        // segment; fall back to geometry only if absent.
+                        float ride;
+                        if (line.m_RideSeconds is not null && i < line.m_RideSeconds.Length && line.m_RideSeconds[i] > 0f)
+                        {
+                            ride = line.m_RideSeconds[i];
+                        }
+                        else
+                        {
+                            float dx = stopX[stop] - stopX[previousStop];
+                            float dz = stopZ[stop] - stopZ[previousStop];
+                            float distance = (float)Math.Sqrt(dx * dx + dz * dz);
+                            ride = distance / Math.Max(1f, line.m_SpeedMetresPerSecond);
+                        }
+
+                        addEdge(first + i - 1, aboard, ride, TransitEdgeKind.Ride, lineIndex);
+                    }
+                }
+            }
         }
 
         // Joins every pair of stops within walking distance.
@@ -200,19 +230,27 @@ namespace WhereTheyGo
         }
 
         // Stops bucketed onto a grid of the walk radius, so a stop only has to be
-        // compared with the stops in its own cell and the eight around it.
-        private readonly struct StopGrid
+        // compared with the stops in its own cell and the eight around it. Internal
+        // rather than private because the door access lists (JourneyRouting.DoorAccess)
+        // ask it the same question from a point.
+        internal readonly struct StopGrid
         {
             private readonly int m_Cols;
             private readonly int m_Rows;
+            private readonly float m_MinX;
+            private readonly float m_MinZ;
+            private readonly float m_Cell;
             private readonly int[] m_CellOf;
             private readonly int[] m_Offsets;
             private readonly int[] m_ByCell;
 
-            private StopGrid(int cols, int rows, int[] cellOf, int[] offsets, int[] byCell)
+            private StopGrid(int cols, int rows, float minX, float minZ, float cell, int[] cellOf, int[] offsets, int[] byCell)
             {
                 m_Cols = cols;
                 m_Rows = rows;
+                m_MinX = minX;
+                m_MinZ = minZ;
+                m_Cell = cell;
                 m_CellOf = cellOf;
                 m_Offsets = offsets;
                 m_ByCell = byCell;
@@ -264,7 +302,49 @@ namespace WhereTheyGo
                     byCell[cursor[cellOf[i]]++] = i;
                 }
 
-                return new StopGrid(cols, rows, cellOf, offsets, byCell);
+                return new StopGrid(cols, rows, minX, minZ, cellSize, cellOf, offsets, byCell);
+            }
+
+            // Every stop within `radiusSq` of a point, in ascending index order, so the
+            // list is the one an exhaustive sweep in index order produces. The grid's
+            // cell is the radius it was built with, so the nine cells around the
+            // point's own hold every candidate; a point off the grid is clamped to the
+            // cell beside it, which still sees the edge cells it could reach.
+            public void CollectWithin(float x, float z, float[] stopX, float[] stopZ, float radiusSq, List<int> into)
+            {
+                int px = (int)Math.Max(-1.0, Math.Min(m_Cols, Math.Floor((x - m_MinX) / m_Cell)));
+                int pz = (int)Math.Max(-1.0, Math.Min(m_Rows, Math.Floor((z - m_MinZ) / m_Cell)));
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    int nz = pz + dz;
+                    if (nz < 0 || nz >= m_Rows)
+                    {
+                        continue;
+                    }
+
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int nx = px + dx;
+                        if (nx < 0 || nx >= m_Cols)
+                        {
+                            continue;
+                        }
+
+                        int cell = nx + (nz * m_Cols);
+                        for (int k = m_Offsets[cell]; k < m_Offsets[cell + 1]; k++)
+                        {
+                            int stop = m_ByCell[k];
+                            float sx = stopX[stop] - x;
+                            float sz = stopZ[stop] - z;
+                            if ((sx * sx) + (sz * sz) <= radiusSq)
+                            {
+                                into.Add(stop);
+                            }
+                        }
+                    }
+                }
+
+                into.Sort();
             }
 
             // Every stop after `stop` in index order that is within the radius of it.
@@ -378,61 +458,118 @@ namespace WhereTheyGo
             return node == originStop;
         }
 
-        // The k-th smallest of `values[0..length)`, by quickselect. The array is
-        // REORDERED in place, which is why the caller passes a scratch copy. Used for
-        // the median carried journey.
-        public static float SelectKth(float[] values, int length, int k)
+        // The weighted median of `values[0..length)`: the smallest value whose
+        // cumulative weight, summing the values in ascending order, EXCEEDS half the
+        // total. Strictly exceeds, so with unit weights it is the k-th smallest at
+        // k = length / 2 for odd and even lengths alike, which is exactly the unweighted
+        // median this replaced (the ceiling is set by the city's
+        // journeys, not by its zone pairs, so a pair made by two hundred people weighs
+        // two hundred pairs made by one). Null weights are unit weights.
+        //
+        // Both arrays are REORDERED in place, together, which is why the caller passes
+        // scratch copies. Quickselect: each round partitions about a pivot and keeps
+        // the side the half-weight falls on, so the cost is linear in expectation and
+        // nothing is allocated. Zero when there is nothing to take the median of.
+        public static float WeightedMedian(float[] values, float[]? weights, int length)
         {
             if (values is null || length <= 0)
             {
                 return 0f;
             }
 
-            k = Math.Min(length - 1, Math.Max(0, k));
+            double total = SumWeights(weights, 0, length);
+            if (total <= 0.0)
+            {
+                return 0f;
+            }
+
+            double half = total * 0.5;
+            // The weight of everything left of `lo`, all of it no larger than what is
+            // left in [lo, hi]. Never above half, or the answer would have been there.
+            double below = 0.0;
             int lo = 0;
             int hi = length - 1;
             while (lo < hi)
             {
-                float pivot = values[(lo + hi) >> 1];
-                int i = lo;
-                int j = hi;
-                while (i <= j)
-                {
-                    while (values[i] < pivot)
-                    {
-                        i++;
-                    }
-
-                    while (values[j] > pivot)
-                    {
-                        j--;
-                    }
-
-                    if (i <= j)
-                    {
-                        float tmp = values[i];
-                        values[i] = values[j];
-                        values[j] = tmp;
-                        i++;
-                        j--;
-                    }
-                }
-
-                if (k <= j)
+                Partition(values, weights, lo, hi, out int i, out int j);
+                double left = SumWeights(weights, lo, j + 1);
+                if (below + left > half)
                 {
                     hi = j;
+                    continue;
                 }
-                else if (k >= i)
+
+                double middle = SumWeights(weights, j + 1, i);
+                if (below + left + middle > half)
                 {
-                    lo = i;
+                    // Everything between the two parts is the pivot itself.
+                    return values[j + 1];
                 }
-                else
-                {
-                    return values[k];
-                }
+
+                below += left + middle;
+                lo = i;
             }
 
-            return values[k];
+            return values[lo];
+        }
+
+        // Hoare's partition of values[lo..hi] about its middle element, the weights
+        // moved alongside. On return values[lo..j] are no larger than the pivot,
+        // values[i..hi] no smaller, and whatever lies between (at most one element)
+        // is the pivot itself.
+        private static void Partition(float[] values, float[]? weights, int lo, int hi, out int i, out int j)
+        {
+            float pivot = values[(lo + hi) >> 1];
+            i = lo;
+            j = hi;
+            while (i <= j)
+            {
+                while (values[i] < pivot)
+                {
+                    i++;
+                }
+
+                while (values[j] > pivot)
+                {
+                    j--;
+                }
+
+                if (i <= j)
+                {
+                    Swap(values, i, j);
+                    if (weights is not null)
+                    {
+                        Swap(weights, i, j);
+                    }
+
+                    i++;
+                    j--;
+                }
+            }
+        }
+
+        private static void Swap(float[] values, int a, int b)
+        {
+            float tmp = values[a];
+            values[a] = values[b];
+            values[b] = tmp;
+        }
+
+        // The weight of [from, to), one per element when there are no weights.
+        private static double SumWeights(float[]? weights, int from, int to)
+        {
+            if (weights is null)
+            {
+                return Math.Max(0, to - from);
+            }
+
+            double sum = 0.0;
+            for (int k = from; k < to; k++)
+            {
+                sum += weights[k];
+            }
+
+            return sum;
         }
 
         // The travel time past which a journey counts as not carried at all, taken from
@@ -449,15 +586,22 @@ namespace WhereTheyGo
         // sets its other bars: the nearly-empty threshold is a share of the city's
         // median line usage and the long-wait bar a multiple of its median interval.
         //
-        // `travelTimes` is REORDERED in place. It is a scratch buffer, and must not be
-        // the array the caller still needs in journey order. `median` is handed back so
-        // the caller can report the figure the ceiling came from without running the
-        // selection again over a buffer that is now shuffled.
+        // The median is weighted by `weights`, the journeys a day each pair stands
+        // for (WeightedMedian), so it is the median JOURNEY and not the median zone
+        // pair. `minSamples` stays a count of pairs: it is the statistical support the
+        // median needs, and a single heavy pair is still one observation.
+        //
+        // `travelTimes` and `weights` are REORDERED in place, together. They are
+        // scratch buffers, and must not be the arrays the caller still needs in journey
+        // order. `median` is handed back so the caller can report the figure the
+        // ceiling came from without running the selection again over buffers that are
+        // now shuffled.
         //
         // Falls back when too few journeys are carried for a median to mean anything,
         // which is exactly the risk this approach carries on a thin network.
         public static float ServedCeiling(
             float[] travelTimes,
+            float[]? weights,
             int count,
             float multiple,
             float fallback,
@@ -470,7 +614,7 @@ namespace WhereTheyGo
                 return fallback;
             }
 
-            median = SelectKth(travelTimes, count, count / 2);
+            median = WeightedMedian(travelTimes, weights, count);
             if (median <= 0f)
             {
                 return fallback;
@@ -481,6 +625,19 @@ namespace WhereTheyGo
             // mean nothing is ever counted as fully carried.
             float ceiling = median * multiple;
             return ceiling > fallback ? fallback : ceiling;
+        }
+
+        // The same ceiling with every journey counting once: the unweighted median,
+        // which the weighted one reproduces exactly under unit weights.
+        public static float ServedCeiling(
+            float[] travelTimes,
+            int count,
+            float multiple,
+            float fallback,
+            int minSamples,
+            out float median)
+        {
+            return ServedCeiling(travelTimes, weights: null, count, multiple, fallback, minSamples, out median);
         }
     }
 }

@@ -34,9 +34,9 @@ namespace WhereTheyGo.Tests
             var result = new RoutingResult { Transit = transit, WalkOnly = walk };
             var problem = new RoutingProblem { PairCount = fast + 1, PairWeight = weight };
 
-            CarriedReport report = JourneyRouting.MarkCarried(problem, result, new float[fast + 1]);
+            CarriedReport report = JourneyRouting.MarkCarried(problem, result, new float[fast + 1], new float[fast + 1]);
 
-            AssertEqual(720f, report.MedianSeconds, 0f, "the median is taken over the journeys transit already helps");
+            AssertEqual(720f, report.MedianSeconds, 0f, "the median is taken over the journeys transit already helps, weighted by how many make each");
             AssertEqual(2160f, report.CeilingSeconds, 0f, "the ceiling is that median times the multiple");
             AssertTrue(report.CarriedPairs == fast, $"the outlier is the only one outside the ceiling, got {report.CarriedPairs.ToString(CultureInfo.InvariantCulture)} carried");
             AssertTrue(!result.Carried[fast], "a journey four times the city's normal length is not carried by it");
@@ -45,7 +45,7 @@ namespace WhereTheyGo.Tests
             // Walking faster than the bus is the other way out, whatever the ceiling.
             transit[0] = 3999f;
             walk[0] = 3000f;
-            _ = JourneyRouting.MarkCarried(problem, result, new float[fast + 1]);
+            _ = JourneyRouting.MarkCarried(problem, result, new float[fast + 1], new float[fast + 1]);
             AssertTrue(!result.Carried[0], "a journey quicker on foot is not carried, however short the ride");
 
             // A city whose network carries almost nothing has no median to speak of, so
@@ -56,7 +56,7 @@ namespace WhereTheyGo.Tests
                 WalkOnly = new[] { 4000f, 4000f },
             };
             var thinProblem = new RoutingProblem { PairCount = 2, PairWeight = new[] { 1f, 3f } };
-            CarriedReport thinReport = JourneyRouting.MarkCarried(thinProblem, thin, new float[2]);
+            CarriedReport thinReport = JourneyRouting.MarkCarried(thinProblem, thin, new float[2], new float[2]);
             AssertEqual(Assumptions.MaxJourneySeconds, thinReport.CeilingSeconds, 0f, "too few carried journeys: the fixed hour");
             AssertTrue(thin.Carried[0] && !thin.Carried[1], "the one journey it does carry still counts");
             AssertEqual(0.25f, thinReport.Share, 1e-6f, "and the share weighs it against everything else");
@@ -100,8 +100,14 @@ namespace WhereTheyGo.Tests
             AssertTrue(routed.After[0] == routed.After[1], "the same two doors give the same time whatever the time of day");
             AssertTrue(routed.After[2] == JourneyRouting.WalkOnlySeconds(problem, 2), "a journey no line reaches keeps the walk");
 
-            // Every pair that rides the line adds its whole weight to that line, split
-            // by the share of its rides in the day period.
+            // Three pairs are too few for a median, so the ceiling is the fixed hour and
+            // both trunk journeys, minutes long, are carried; the third walks.
+            AssertTrue(routed.Carried[0] && routed.Carried[1] && !routed.Carried[2], "the two trunk journeys are carried and the third is not");
+            AssertEqual(Assumptions.MaxJourneySeconds, routed.Report.CeilingSeconds, 0f, "too few pairs for a median: the ceiling is the fixed hour");
+            AssertEqual(40f / 47f, routed.Report.Share, 1e-6f, "the report on the result is the share of weight carried");
+
+            // Every CARRIED pair that rides the line adds its whole weight to that line,
+            // split by the share of its rides in the day period.
             AssertTrue(routed.BaseRiders.Length == 1, "one figure per existing line");
             AssertEqual(40f, (float)routed.BaseRiders[0], 1e-3f, "both carried journeys ride the trunk");
             AssertEqual(30f, (float)routed.BaseRidersByDay[0], 1e-3f, "the day share of those riders");
@@ -149,6 +155,281 @@ namespace WhereTheyGo.Tests
             {
                 AssertTrue(walking.After[i] == JourneyRouting.WalkOnlySeconds(problem, i), "a city with no transit walks every journey");
             }
+        }
+
+        // A city in which the served ceiling bites: one line along x with stops every
+        // 300 m, twenty short pairs riding one or two hops, and one pair riding the
+        // whole line. The long ride beats walking by far, but takes more than three
+        // times the city's typical carried journey, so it is faster by transit yet not
+        // carried. Weights: the short pairs three each, the long one five, so the
+        // weighted median stays with the short journeys. Fits a 4 km band grid.
+        private const int CeilingFixtureShortPairs = 20;
+
+        private static RoutingProblem CeilingBitesProblem()
+        {
+            const int stops = 14;
+            const float spacing = 300f;
+            int pairs = CeilingFixtureShortPairs + 1;
+            var problem = new RoutingProblem
+            {
+                PairOx = new float[pairs],
+                PairOz = new float[pairs],
+                PairDx = new float[pairs],
+                PairDz = new float[pairs],
+                PairWeight = new float[pairs],
+                PairDayShare = new float[pairs],
+                PairCount = pairs,
+                BaseStopX = new float[stops],
+                BaseStopZ = new float[stops],
+                BaseStopCount = stops,
+                TargetLine = 0,
+                WalkRadius = Assumptions.TransferWalkRadius,
+                BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
+                MaxTravelSeconds = Assumptions.MaxJourneySeconds,
+                ZoneReachMetres = Assumptions.ZoneStopReachMetres,
+                // No walks here, on purpose. The hops are 300 and 600 m so the whole
+                // fixture fits a 4 km band grid, and under the player's default horizon
+                // (WalkedJourneysAreAWalkNotATransitQuestion) the 300 m hops would be
+                // walks, leaving too little for the ceiling to bite on. This fixture is
+                // about the ceiling, so walking is switched off and every hop is a
+                // transit question.
+                WalkedHorizonSeconds = 0f,
+            };
+            var lineStops = new int[stops];
+            for (int k = 0; k < stops; k++)
+            {
+                problem.BaseStopX[k] = 100f + (k * spacing);
+                problem.BaseStopZ[k] = 100f;
+                lineStops[k] = k;
+            }
+
+            // Thirteen one-hop pairs, then seven two-hop pairs.
+            for (int i = 0; i < CeilingFixtureShortPairs; i++)
+            {
+                int from = i < stops - 1 ? i : i - (stops - 1);
+                int hops = i < stops - 1 ? 1 : 2;
+                problem.PairOx[i] = problem.BaseStopX[from];
+                problem.PairOz[i] = 100f;
+                problem.PairDx[i] = problem.BaseStopX[from + hops];
+                problem.PairDz[i] = 100f;
+                problem.PairWeight[i] = 3f;
+                problem.PairDayShare[i] = 1f;
+            }
+
+            int last = CeilingFixtureShortPairs;
+            problem.PairOx[last] = problem.BaseStopX[0];
+            problem.PairOz[last] = 100f;
+            problem.PairDx[last] = problem.BaseStopX[stops - 1];
+            problem.PairDz[last] = 100f;
+            problem.PairWeight[last] = 5f;
+            problem.PairDayShare[last] = 0.5f;
+            problem.BaseLines.Add(new TransitLine { m_Stops = lineStops, m_ExpectedWait = 60f, m_SpeedMetresPerSecond = 15f });
+            return problem;
+        }
+
+        // A line is credited only with the journeys the network CARRIES. A journey the
+        // line makes faster than walking but not fast enough for this city adds nothing
+        // to the line's riders and does not ride the target, so the line window, the
+        // rank and the band highlight agree with the headline.
+        private static void RiderCreditFollowsCarried()
+        {
+            RoutingProblem problem = CeilingBitesProblem();
+            int last = CeilingFixtureShortPairs;
+
+            RoutingResult routed = JourneyRouting.Evaluate(problem);
+
+            // The fixture must actually be the case it claims to be: the long ride beats
+            // walking, so the old rule would have credited it, and it is over the ceiling.
+            AssertTrue(routed.Transit[last] < routed.WalkOnly[last], $"the long ride beats walking: {routed.Transit[last].ToString("F0", CultureInfo.InvariantCulture)}s against {routed.WalkOnly[last].ToString("F0", CultureInfo.InvariantCulture)}s");
+            AssertTrue(routed.Report.CeilingSeconds < Assumptions.MaxJourneySeconds, "enough pairs are carried for the ceiling to come from the city's own median");
+            AssertTrue(routed.Transit[last] > routed.Report.CeilingSeconds, $"and it is over the ceiling: {routed.Transit[last].ToString("F0", CultureInfo.InvariantCulture)}s against {routed.Report.CeilingSeconds.ToString("F0", CultureInfo.InvariantCulture)}s");
+            AssertTrue(!routed.Carried[last], "so it is not carried");
+            AssertEqual(CeilingFixtureShortPairs, routed.Report.CarriedPairs, 0, "every short pair is");
+            for (int i = 0; i < CeilingFixtureShortPairs; i++)
+            {
+                AssertTrue(routed.Carried[i] && routed.RidesTarget[i], "a carried pair that rides the selected line rides the target");
+            }
+
+            AssertEqual(3f * CeilingFixtureShortPairs, (float)routed.BaseRiders[0], 1e-3f, "the line is credited with the carried journeys and nothing else");
+            AssertEqual(3f * CeilingFixtureShortPairs, (float)routed.BaseRidersByDay[0], 1e-3f, "all of them by day");
+            AssertEqual(0f, (float)routed.BaseRidersByNight[0], 1e-3f, "the uncarried pair's night half is not there either");
+            AssertTrue(!routed.RidesTarget[last], "the uncarried pair does not ride the target line, whatever its itinerary boarded");
+
+            // Taking the line out measures only what its carried riders lose.
+            var reduced = new RoutingProblem
+            {
+                PairCount = problem.PairCount,
+                PairOx = problem.PairOx,
+                PairOz = problem.PairOz,
+                PairDx = problem.PairDx,
+                PairDz = problem.PairDz,
+                PairWeight = problem.PairWeight,
+                PairDayShare = problem.PairDayShare,
+                Geometry = problem.Geometry,
+                BaseStopCount = problem.BaseStopCount,
+                BaseStopX = problem.BaseStopX,
+                BaseStopZ = problem.BaseStopZ,
+                WalkRadius = problem.WalkRadius,
+                BoardPenaltySeconds = problem.BoardPenaltySeconds,
+                MaxTravelSeconds = problem.MaxTravelSeconds,
+                ZoneReachMetres = problem.ZoneReachMetres,
+            };
+            LineContribution contribution = JourneyRouting.Measure(problem, routed, JourneyRouting.Evaluate(reduced));
+            AssertEqual(3f * CeilingFixtureShortPairs, (float)contribution.RiderWeight, 1e-3f, "the line window's riders are the carried ones");
+        }
+
+        // The served ceiling comes from the median JOURNEY, not the median zone pair:
+        // a pair a hundred people make sets the city's typical
+        // journey a hundred times as firmly as a pair one person makes. With every
+        // pair weighing one, the weighted median is the plain one.
+        private static void ServedCeilingMedianIsWeightedByJourneys()
+        {
+            // Twenty light pairs at 100..119 s and one heavy pair at 1000 s.
+            const int light = 20;
+            var transit = new float[light + 1];
+            var walk = new float[light + 1];
+            var weight = new float[light + 1];
+            for (int i = 0; i < light; i++)
+            {
+                transit[i] = 100f + i;
+                walk[i] = 4000f;
+                weight[i] = 1f;
+            }
+
+            transit[light] = 1000f;
+            walk[light] = 4000f;
+            weight[light] = 100f;
+
+            var result = new RoutingResult { Transit = transit, WalkOnly = walk };
+            var problem = new RoutingProblem { PairCount = light + 1, PairWeight = weight };
+            CarriedReport heavy = JourneyRouting.MarkCarried(problem, result, new float[light + 1], new float[light + 1]);
+            AssertEqual(1000f, heavy.MedianSeconds, 0f, "a hundred people making the slow journey make it the city's typical one");
+            AssertEqual(3000f, heavy.CeilingSeconds, 0f, "and the ceiling follows it");
+            AssertTrue(result.Carried[light], "so the heavy pair is carried");
+
+            // The same times with every pair weighing one: the slow journey is one in
+            // twenty-one and the median is the plain one.
+            for (int i = 0; i <= light; i++)
+            {
+                weight[i] = 1f;
+            }
+
+            CarriedReport plain = JourneyRouting.MarkCarried(problem, result, new float[light + 1], new float[light + 1]);
+            AssertEqual(110f, plain.MedianSeconds, 0f, "with unit weights the median is the k-th smallest at k = count / 2");
+            AssertTrue(!result.Carried[light], "and the slow journey is over the ceiling");
+
+            // The rule at the seam: the smallest time whose cumulative weight EXCEEDS half
+            // the total, so an exact half does not stop early and ties with the plain
+            // median are resolved the way SelectKth resolved them.
+            AssertEqual(200f, TransitGraph.ServedCeiling(new[] { 100f, 200f }, new[] { 1f, 1f }, 2, 1f, 3600f, 1, out _), 0f, "two equal weights: the upper one, as the plain median of two");
+            AssertEqual(100f, TransitGraph.ServedCeiling(new[] { 200f, 100f }, new[] { 2f, 3f }, 2, 1f, 3600f, 1, out _), 0f, "the heavier of two is the median");
+            AssertEqual(300f, TransitGraph.ServedCeiling(new[] { 300f, 100f, 200f }, new[] { 2f, 1f, 1f }, 3, 1f, 3600f, 1, out _), 0f, "exactly half is not past half");
+            AssertEqual(300f, TransitGraph.ServedCeiling(new[] { 100f, 200f, 300f }, new[] { 1f, 1f, 2f }, 3, 1f, 3600f, 1, out float median), 0f, "however the input is ordered");
+            AssertEqual(300f, median, 0f, "and the median reported is the one the ceiling came from");
+            AssertEqual(3600f, TransitGraph.ServedCeiling(new[] { 100f, 200f }, new[] { 0f, 0f }, 2, 3f, 3600f, 1, out _), 0f, "pairs nobody makes give no median, and the fixed hour");
+            AssertEqual(100f, TransitGraph.ServedCeiling(new[] { 50f, 100f }, new[] { 0f, 1f }, 2, 1f, 3600f, 1, out _), 0f, "a pair nobody makes does not pull the median");
+        }
+
+        // A journey within the walking horizon is a WALK: a third
+        // state beside carried and not carried, and the one that wins. It is not
+        // carried however fast the bus, it credits no line, it is no sample for the
+        // ceiling's median, and it is out of the headline share on both sides.
+        private static void WalkedJourneysAreAWalkNotATransitQuestion()
+        {
+            // The ceiling fixture: twenty-four pairs transit carries in 600..830 s, one
+            // outlier at 9000 s. Then thirty short pairs, each walkable in 300 s and
+            // ridable in 100 s. Left in, they would be thirty of the fifty-five samples
+            // and drag the median down to 100 s, a ceiling of 300 s, and every real
+            // transit journey in the city over it.
+            const int fast = 24;
+            const int walks = 30;
+            int count = fast + 1 + walks;
+            var transit = new float[count];
+            var walk = new float[count];
+            var weight = new float[count];
+            for (int i = 0; i < fast; i++)
+            {
+                transit[i] = 600f + (i * 10f);
+                walk[i] = 4000f;
+                weight[i] = 1f;
+            }
+
+            transit[fast] = 9000f;
+            walk[fast] = 12000f;
+            weight[fast] = 1f;
+            for (int i = fast + 1; i < count; i++)
+            {
+                transit[i] = 100f;
+                walk[i] = 300f;
+                weight[i] = 1f;
+            }
+
+            var result = new RoutingResult { Transit = transit, WalkOnly = walk };
+            var problem = new RoutingProblem
+            {
+                PairCount = count,
+                PairWeight = weight,
+                WalkedHorizonSeconds = Assumptions.CoverageWalkMinutesDefault * 60f,
+            };
+            CarriedReport report = JourneyRouting.MarkCarried(problem, result, new float[count], new float[count]);
+
+            for (int i = fast + 1; i < count; i++)
+            {
+                AssertTrue(result.Walked[i], "a 300 s walk is within the default horizon (five minutes, and the horizon itself counts)");
+                AssertTrue(!result.Carried[i], "and is not carried, although the bus would be three times as fast");
+            }
+
+            AssertTrue(!result.Walked[0] && !result.Walked[fast], "a 4000 s walk is not");
+            AssertEqual(walks, report.WalkedPairs, 0, "the walks are counted");
+            AssertEqual((float)walks, (float)report.WalkedWeight, 0f, "and weighed");
+            AssertEqual(720f, report.MedianSeconds, 0f, "the median is the same as without them: a walk is no sample for the city's typical transit journey");
+            AssertEqual(2160f, report.CeilingSeconds, 0f, "so the ceiling stands");
+            AssertEqual(fast, report.CarriedPairs, 0, "and every real transit journey is still carried");
+            AssertEqual(fast / (float)(fast + 1), report.Share, 1e-6f, "the share is carried over what transit could serve: the walks are out of the denominator");
+            AssertEqual(walks / (float)count, report.WalkedShare, 1e-6f, "the walked share is against the whole city, which is what it is left out of");
+
+            // The seam: exactly the horizon is a walk, a second over is not.
+            var edge = new RoutingResult { Transit = new[] { 100f, 100f }, WalkOnly = new[] { 600f, 601f } };
+            var edgeProblem = new RoutingProblem { PairCount = 2, PairWeight = new[] { 1f, 1f }, WalkedHorizonSeconds = 600f };
+            _ = JourneyRouting.MarkCarried(edgeProblem, edge, new float[2], new float[2]);
+            AssertTrue(edge.Walked[0] && !edge.Walked[1], "the horizon itself is still a walk; one second past it is a journey");
+
+            // A problem built without a horizon walks nothing, which is what every
+            // fixture in this file that does not name one relies on.
+            var none = new RoutingResult { Transit = new[] { 100f }, WalkOnly = new[] { 1f } };
+            _ = JourneyRouting.MarkCarried(new RoutingProblem { PairCount = 1, PairWeight = new[] { 1f } }, none, new float[1], new float[1]);
+            AssertTrue(!none.Walked[0], "no horizon, no walks");
+
+            // Through the routing itself: the trunk city with a fourth pair riding one
+            // 300 m hop. The bus beats the walk, so the line used to be
+            // credited with it and it rode the target; now it is a walk and does neither.
+            var city = new RoutingProblem
+            {
+                PairOx = new[] { 0f, 0f, 5000f, 0f },
+                PairOz = new[] { 0f, 0f, 5000f, 0f },
+                PairDx = new[] { 3000f, 3000f, 6000f, 300f },
+                PairDz = new[] { 0f, 0f, 5000f, 0f },
+                PairWeight = new[] { 30f, 10f, 7f, 12f },
+                PairDayShare = new[] { 1f, 0f, 1f, 1f },
+                PairCount = 4,
+                BaseStopX = new[] { 0f, 300f, 3000f },
+                BaseStopZ = new[] { 0f, 0f, 0f },
+                BaseStopCount = 3,
+                TargetLine = 0,
+                WalkRadius = Assumptions.TransferWalkRadius,
+                BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
+                MaxTravelSeconds = Assumptions.MaxJourneySeconds,
+                ZoneReachMetres = Assumptions.ZoneStopReachMetres,
+                WalkedHorizonSeconds = Assumptions.CoverageWalkMinutesDefault * 60f,
+            };
+            city.BaseLines.Add(new TransitLine { m_Stops = new[] { 0, 1, 2 }, m_ExpectedWait = 60f, m_SpeedMetresPerSecond = 15f });
+            RoutingResult routed = JourneyRouting.Evaluate(city);
+            AssertTrue(routed.Transit[3] < routed.WalkOnly[3], $"the fixture's hop is quicker by bus: {routed.Transit[3].ToString("F0", CultureInfo.InvariantCulture)}s against {routed.WalkOnly[3].ToString("F0", CultureInfo.InvariantCulture)}s");
+            AssertTrue(routed.Walked[3] && !routed.Carried[3] && !routed.RidesTarget[3], "and it is a walk: not carried, not riding the selected line");
+            AssertTrue(!routed.Walked[0] && routed.Carried[0] && routed.Carried[1], "the 3 km pairs are transit journeys and carried");
+            AssertEqual(40f, (float)routed.BaseRiders[0], 1e-3f, "the line is credited with the carried journeys and not with the walk");
+            AssertEqual(40f / 47f, routed.Report.Share, 1e-6f, "the share is over the three pairs transit could serve");
+            AssertEqual(12f / 59f, routed.Report.WalkedShare, 1e-6f, "and the walked share over all four");
         }
 
         // What a line is worth, measured by taking it away. The two numbers the

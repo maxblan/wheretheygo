@@ -175,18 +175,71 @@ namespace WhereTheyGo
 
         protected override void OnDestroy()
         {
+            ResetCityState();
+            m_TripObserver.Clear();
+            m_Infoview.Release();
+            base.OnDestroy();
+        }
+
+        // The world and its systems live for the whole session, which is why the game
+        // hands a system SetDefaults on a load: OnDestroy runs at exit, not between
+        // cities. Everything measured for the last city therefore has to go HERE, or
+        // the next city opens on the last one's tile snap (its pedestrian network,
+        // snapped), its bands and its lines until each signature happens to move -
+        // and with every map the same size the snap's does not for a whole minute.
+        // The observed window and the line readings are NOT touched: the save state
+        // has just restored them, and both already restart on a rewound clock.
+        protected override void OnGameLoadingComplete(Colossal.Serialization.Entities.Purpose purpose, GameMode mode)
+        {
+            base.OnGameLoadingComplete(purpose, mode);
+            ResetCityState();
+            DeferredLog.Info($"City state reset ({purpose}, {mode})");
+        }
+
+        private void ResetCityState()
+        {
             DiscardPendingCompute();
             m_TileSnap = null;
             m_WalkGraph = null;
-            m_TripObserver.Clear();
-            m_Infoview.Release();
+            m_RoadCacheDirty = true;
+            m_SnappedSignature = -1;
+            m_LastSnapAt = float.NegativeInfinity;
 
-            // Leaving a city must not leave its numbers on the panel. LineHistory
-            // already guards its own series against a save change; these strings had
-            // no such guard and were shown against the next city until its first
-            // refresh landed.
+            // A pass still out belongs to the last city; it finishes into a pass
+            // nobody adopts.
+            m_RoutingPending = false;
+            m_PendingRouting = null;
+            m_PendingPass = null;
+            m_Bands = null;
+            m_BandView = null;
+            m_BandViewOf = null;
+            m_CarriedReport = default;
+            m_LineContribution = default;
+            m_ContributionLineId = -1;
+            m_RequestedLineId = -1;
+
+            m_Journeys.Clear();
+            m_PairTable = null;
+            m_DemandRefreshed = false;
+            m_Coverage = null;
+            m_ServedWalkMs = null;
+            m_AccessWalkMs = null;
+            m_AccessByTile = null;
+            m_FieldSignature = -1;
+            m_FieldSnap = null;
+
+            m_ExistingLines.Clear();
+            m_TransitStops.Clear();
+            m_StopIndices.Clear();
+            m_ExistingLineRiders.Clear();
+            m_WarnedRiddenLoops.Clear();
+            m_LastLineRefreshFrame = -1;
+            m_TripObserver.ForgetCitizens();
+
+            // Leaving a city must not leave its numbers on the panel: LineHistory
+            // guards its own series against a save change, and these had no guard.
             s_Figures = default;
-            base.OnDestroy();
+            s_Hovered = null;
         }
 
         private float TimeOfDay => m_TimeSystem?.normalizedTime ?? 0f;
@@ -211,7 +264,6 @@ namespace WhereTheyGo
             m_Infoview.EnsureInfoviewLinked();
             m_Infoview.SweepPlaceableInfoviews();
             TrackInputChanges();
-            HandleInfoviewRequest();
             AdvanceHourIfPlaying();
             FinishComputeIfReady();
             FinishRoutingIfReady();
@@ -255,8 +307,7 @@ namespace WhereTheyGo
             // panel then showed line verdicts and "1 Messung" beside them, which is
             // exactly as broken as it sounds. Reading six lines is cheap.
             //
-            // The READING runs on the simulation clock (every ReadingIntervalFrames,
-            // A8.5).
+            // The READING runs on the simulation clock (every ReadingIntervalFrames).
             ObserveLines();
             if (now - m_LastLineSample >= Assumptions.DemandRefreshSeconds && !m_RoutingPending)
             {

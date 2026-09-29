@@ -17,9 +17,11 @@ namespace WhereTheyGo
         public float Bx;
         public float Bz;
 
-        // Journeys a day between the two ends, and how many of them the network
-        // already carries (JourneyRouting.MarkCarried). The share of the second in the
-        // first is the band's colour.
+        // Journeys a day between the two ends that transit could serve, and how many
+        // of them the network already carries (JourneyRouting.MarkCarried). The share
+        // of the second in the first is the band's colour. The journeys within the
+        // walking horizon are not here at all: they are walks,
+        // and folding them in painted a 300 m corridor warm for people on foot.
         public float Weight;
         public float CarriedWeight;
 
@@ -35,8 +37,9 @@ namespace WhereTheyGo
         private readonly float[] m_AtoB = new float[PurposeCount * HoursPerDay];
         private readonly float[] m_BtoA = new float[PurposeCount * HoursPerDay];
 
-        // How many zone pairs were merged into this band. Not shown; logged, because a
-        // band of one pair and a band of forty read the same on screen.
+        // How many zone pairs with journeys transit could serve were merged into this
+        // band. Not shown; logged, because a band of one pair and a band of forty read
+        // the same on screen.
         public int Pairs;
 
         public const int HoursPerDay = 24;
@@ -190,6 +193,14 @@ namespace WhereTheyGo
 
         public int MergedPairs;
 
+        // Zone pairs every journey of which is a walk (JourneyRouting.MarkWalked), and
+        // so were folded into no band, and the city's WHOLE walked weight in journeys a
+        // day, the walked part of every mixed zone pair included. The panel says the
+        // second beside the corridor count, so a map with no band for the short hops
+        // does not read as a map of a city that never makes them.
+        public int WalkedPairs;
+        public float WalkedWeight;
+
         public float HeaviestWeight;
 
         // The city's departures hour by hour, for the chosen purposes. Summed from the
@@ -288,10 +299,15 @@ namespace WhereTheyGo
             public double SumBz;
             public float Weight;
             public float Carried;
+            // The walked part of Weight. The rest, Weight - Walked, is what transit
+            // could serve and what the band is built from.
+            public float Walked;
             public float Target;
             // Departures by purpose and hour, as Band holds them.
             public float[]? AtoB;
             public float[]? BtoA;
+
+            public readonly float Servable => Weight - Walked;
         }
 
         // The journeys as the routing left them: `pairs` holds where each door-to-door
@@ -314,12 +330,15 @@ namespace WhereTheyGo
 
         // Every door pair summed into its zone pair, with the ends kept as the weighted
         // mean of the real doors rather than the zone centres: a band between two
-        // districts should start where the people are, not on a grid line.
+        // districts should start where the people are, not on a grid line. The doors
+        // of a WALKED pair are left out of that mean, since those people are not on
+        // the band; its weight is summed so the bucket knows how much of it is a walk.
         private static void SumPairs(
             List<Bucket> buckets, Dictionary<long, int> index,
             RoutingProblem pairs, RoutingResult routed, float2Like worldMin, int2Like zoneGrid)
         {
             bool[] carried = routed.Carried;
+            bool[] walked = routed.Walked;
             bool[] ridesTarget = routed.RidesTarget;
             for (int i = 0; i < pairs.PairCount; i++)
             {
@@ -333,13 +352,20 @@ namespace WhereTheyGo
                 int bucket = Ensure(buckets, index, keyA, keyB);
                 Bucket entry = buckets[bucket];
                 float weight = pairs.PairWeight[i];
+                entry.Weight += weight;
+                if (walked is not null && i < walked.Length && walked[i])
+                {
+                    entry.Walked += weight;
+                    buckets[bucket] = entry;
+                    continue;
+                }
+
                 float2Like a = flipped ? destination : origin;
                 float2Like b = flipped ? origin : destination;
                 entry.SumAx += (double)a.x * weight;
                 entry.SumAz += (double)a.y * weight;
                 entry.SumBx += (double)b.x * weight;
                 entry.SumBz += (double)b.y * weight;
-                entry.Weight += weight;
                 if (carried is not null && i < carried.Length && carried[i])
                 {
                     entry.Carried += weight;
@@ -388,10 +414,11 @@ namespace WhereTheyGo
         private static BandSet Agglomerate(List<Bucket> buckets, float mergeMetres, int maxBands)
         {
             // Heaviest first, so the corridors that matter claim their position before
-            // anything is folded into them. The key tie-break makes the order total.
+            // anything is folded into them. Heaviest in what transit could serve, since
+            // that is what the band will weigh. The key tie-break makes the order total.
             buckets.Sort(static (x, y) =>
             {
-                int byWeight = y.Weight.CompareTo(x.Weight);
+                int byWeight = y.Servable.CompareTo(x.Servable);
                 if (byWeight != 0)
                 {
                     return byWeight;
@@ -412,10 +439,22 @@ namespace WhereTheyGo
                     continue;
                 }
 
-                float ax = (float)(entry.SumAx / entry.Weight);
-                float az = (float)(entry.SumAz / entry.Weight);
-                float bx = (float)(entry.SumBx / entry.Weight);
-                float bz = (float)(entry.SumBz / entry.Weight);
+                // A zone pair every journey of which is a walk is not a band: drawing
+                // it painted the shortest hops in the city as the network's worst
+                // failures. It is counted, never hidden, and every bucket's walked part
+                // goes into the city's walked total.
+                set.WalkedWeight += entry.Walked;
+                float servable = entry.Servable;
+                if (servable <= 0f)
+                {
+                    set.WalkedPairs++;
+                    continue;
+                }
+
+                float ax = (float)(entry.SumAx / servable);
+                float az = (float)(entry.SumAz / servable);
+                float bx = (float)(entry.SumBx / servable);
+                float bz = (float)(entry.SumBz / servable);
 
                 int host = FindBand(bands, ax, az, bx, bz, mergeSq, out bool crossed);
                 if (host < 0)
@@ -423,7 +462,7 @@ namespace WhereTheyGo
                     if (bands.Count >= maxBands)
                     {
                         set.HiddenPairs++;
-                        set.HiddenWeight += entry.Weight;
+                        set.HiddenWeight += servable;
                         continue;
                     }
 
@@ -533,12 +572,14 @@ namespace WhereTheyGo
         private static void Absorb(Band band, in Bucket entry, float ax, float az, float bx, float bz, bool crossed)
         {
             // The band's ends follow the traffic: each absorbed bucket pulls them
-            // towards itself in proportion to what it brings.
-            float total = band.Weight + entry.Weight;
+            // towards itself in proportion to what it brings, which is the part of it
+            // transit could serve.
+            float servable = entry.Servable;
+            float total = band.Weight + servable;
             if (total > 0f)
             {
                 float hostShare = band.Weight / total;
-                float addedShare = entry.Weight / total;
+                float addedShare = servable / total;
                 float newAx = (band.Ax * hostShare) + ((crossed ? bx : ax) * addedShare);
                 float newAz = (band.Az * hostShare) + ((crossed ? bz : az) * addedShare);
                 float newBx = (band.Bx * hostShare) + ((crossed ? ax : bx) * addedShare);
@@ -549,10 +590,18 @@ namespace WhereTheyGo
                 band.Bz = newBz;
             }
 
-            band.Weight += entry.Weight;
+            band.Weight += servable;
             band.CarriedWeight += entry.Carried;
             band.TargetWeight += entry.Target;
             band.Pairs++;
+            // The hours come from the journeys, keyed by zone pair, and a door pair's
+            // walked flag cannot be carried onto a single journey there, so the
+            // bucket's hours are scaled to its servable share instead. An
+            // approximation per zone pair: it assumes the walked
+            // and the servable door pairs of one zone pair share its hour profile. What
+            // it buys is a band whose hours sum to its weight, so the hour strip, the
+            // widths and the colour all describe the same journeys.
+            float servableShare = entry.Weight > 0f ? servable / entry.Weight : 0f;
             float[]? atoB = crossed ? entry.BtoA : entry.AtoB;
             float[]? btoA = crossed ? entry.AtoB : entry.BtoA;
             for (int purpose = 0; purpose < Band.PurposeCount; purpose++)
@@ -563,8 +612,8 @@ namespace WhereTheyGo
                     band.Add(
                         purpose,
                         hour,
-                        atoB is null ? 0f : atoB[slot],
-                        btoA is null ? 0f : btoA[slot]);
+                        atoB is null ? 0f : atoB[slot] * servableShare,
+                        btoA is null ? 0f : btoA[slot] * servableShare);
                 }
             }
         }

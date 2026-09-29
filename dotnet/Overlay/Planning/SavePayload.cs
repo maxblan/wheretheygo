@@ -16,7 +16,9 @@ namespace WhereTheyGo
     // moved past its own, and keeps the ones it does know. That is the whole point of
     // the shape: changing how the line readings are written must not throw away three
     // game days of observed journeys, which is exactly what one payload-wide version
-    // number did, and those journeys cost real game time to gather again.
+    // number did, and those journeys cost real game time to gather again. A known
+    // section whose bytes do not parse is dropped the same way (Read), so a bad
+    // readings section costs the readings and nothing else.
     internal static class SavePayload
     {
         // The FRAMING version: how the sections are laid out inside the payload, not
@@ -24,7 +26,7 @@ namespace WhereTheyGo
         // moves only if this list-of-sections shape itself does. To change what a
         // section holds, bump that section's own version and leave this alone.
         //
-        // FROZEN AT 4 for the first public release (2026-09-20). Every player who has
+        // FROZEN AT 4 for the first public release. Every player who has
         // ever run this build has three game days of observed shopping and leisure
         // journeys and a game day of line readings behind this number, and only game
         // time can gather them again. The sectioned layout exists precisely so that
@@ -43,7 +45,10 @@ namespace WhereTheyGo
         // Format guards, not tuning: a corrupt length must be rejected before it is
         // used to size anything. Same job as MaxSavePayloadBytes in SaveState.
         private const int MaxSections = 64;
-        private const int MaxSavedLines = 4096;
+
+        // Also the writer's cap: ReadingBytes drops lines past it, least recently
+        // observed first, so a payload this build writes is one this build reads.
+        internal const int MaxSavedLines = 4096;
         private const int MaxSamplesPerLine = 4096;
 
         // Bytes one trip occupies in the section (uint, four floats, byte, float), so a
@@ -76,10 +81,17 @@ namespace WhereTheyGo
             return stream.ToArray();
         }
 
-        // Restores what this build understands and leaves the rest alone. A section
-        // that cannot be parsed takes only its own half of the state down with it: the
-        // window and the history are replaced one at a time, each only once its own
-        // bytes have been read whole.
+        // Restores what this build understands and leaves the rest alone.
+        //
+        // The FRAMING (the section count and each section's id, version and length)
+        // must be consumed exactly, so a framing error throws and the caller starts
+        // cold. A section's CONTENT is another matter: each restorer parses its own
+        // bytes whole before it replaces the state it owns, and a known section whose
+        // bytes will not parse is dropped and counted (CorruptSections) rather than
+        // thrown, so the sections beside it still restore. Deserialize clears both
+        // halves before calling this, so the half a dropped section would have filled
+        // is empty afterwards, not the previous city's; a caller that has not cleared
+        // keeps whatever that half held.
         public static SaveRestore Read(byte[] payload, ObservedTripWindow window, LineHistory history)
         {
             if (payload is null || window is null || history is null)
@@ -94,31 +106,61 @@ namespace WhereTheyGo
             int lines = 0;
             int readings = 0;
             int skipped = 0;
+            int corrupt = 0;
             for (int i = 0; i < sections; i++)
             {
                 int id = r.ReadInt32();
                 int version = r.ReadInt32();
                 byte[] bytes = SectionBytes(r, stream);
-
-                if (id == ObservedTripsSection && version == ObservedTripsVersion)
-                {
-                    trips = RestoreTrips(bytes, window);
-                }
-                else if (id == LineReadingsSection && version == LineReadingsVersion)
-                {
-                    readings = RestoreReadings(bytes, history, out lines);
-                }
-                else
+                if (!IsKnownSection(id, version))
                 {
                     skipped++;
                     DeferredLog.Info(
                         $"Save state section {(id).ToString(CultureInfo.InvariantCulture)} " +
                         $"version {(version).ToString(CultureInfo.InvariantCulture)} is not one this build reads; " +
                         $"{(bytes.Length).ToString(CultureInfo.InvariantCulture)} bytes skipped, the rest of the block kept.");
+                    continue;
+                }
+
+                // Only the restorers are guarded: the framing above must still throw.
+                try
+                {
+                    if (id == ObservedTripsSection)
+                    {
+                        trips = RestoreTrips(bytes, window);
+                    }
+                    else
+                    {
+                        readings = RestoreReadings(bytes, history, out lines);
+                    }
+                }
+                catch (InvalidDataException e)
+                {
+                    corrupt++;
+                    WarnCorruptSection(id, version, e.Message);
+                }
+                catch (EndOfStreamException e)
+                {
+                    corrupt++;
+                    WarnCorruptSection(id, version, e.Message);
                 }
             }
 
-            return new SaveRestore(trips, lines, readings, skipped);
+            return new SaveRestore(trips, lines, readings, skipped, corrupt);
+        }
+
+        private static bool IsKnownSection(int id, int version)
+        {
+            return (id == ObservedTripsSection && version == ObservedTripsVersion)
+                || (id == LineReadingsSection && version == LineReadingsVersion);
+        }
+
+        private static void WarnCorruptSection(int id, int version, string message)
+        {
+            DeferredLog.Warn(
+                $"Save state section {(id).ToString(CultureInfo.InvariantCulture)} " +
+                $"version {(version).ToString(CultureInfo.InvariantCulture)} could not be parsed: {message}; " +
+                "its bytes skipped, the rest of the block kept.");
         }
 
         private static void WriteSection(BinaryWriter w, int id, int version, byte[] bytes)
@@ -176,10 +218,10 @@ namespace WhereTheyGo
 
         private static byte[] ReadingBytes(LineHistory history)
         {
+            List<int> lineIds = LinesToSave(history);
             using var stream = new MemoryStream();
             using (var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
             {
-                var lineIds = new List<int>(history.LineIds);
                 w.Write(lineIds.Count);
                 for (int l = 0; l < lineIds.Count; l++)
                 {
@@ -200,6 +242,34 @@ namespace WhereTheyGo
             }
 
             return stream.ToArray();
+        }
+
+        // The lines the readings section carries: at most MaxSavedLines, which is what
+        // RestoreReadings refuses more than, so the writer never produces a section the
+        // reader throws away. Past the cap the LEAST RECENTLY OBSERVED lines go first
+        // (by each line's newest sample frame; equal frames break on the lower line id),
+        // since a line nobody has read for longest is the one whose window is closest
+        // to draining anyway. The section's layout is unchanged, only its line count
+        // is bounded, so LineReadingsVersion stays where it is.
+        private static List<int> LinesToSave(LineHistory history)
+        {
+            var lineIds = new List<int>(history.LineIds);
+            if (lineIds.Count <= MaxSavedLines)
+            {
+                return lineIds;
+            }
+
+            lineIds.Sort((a, b) =>
+            {
+                int byNewest = history.NewestFrameOf(b).CompareTo(history.NewestFrameOf(a));
+                return byNewest != 0 ? byNewest : a.CompareTo(b);
+            });
+            int dropped = lineIds.Count - MaxSavedLines;
+            lineIds.RemoveRange(MaxSavedLines, dropped);
+            DeferredLog.Info(
+                $"Save state keeps readings for {(MaxSavedLines).ToString(CultureInfo.InvariantCulture)} lines; " +
+                $"{(dropped).ToString(CultureInfo.InvariantCulture)} least recently observed lines dropped from the save.");
+            return lineIds;
         }
 
         private static int RestoreTrips(byte[] bytes, ObservedTripWindow window)
@@ -287,12 +357,13 @@ namespace WhereTheyGo
     // What a load actually restored, for the line the save state logs.
     internal readonly struct SaveRestore
     {
-        public SaveRestore(int trips, int lines, int readings, int skippedSections)
+        public SaveRestore(int trips, int lines, int readings, int skippedSections, int corruptSections)
         {
             Trips = trips;
             Lines = lines;
             Readings = readings;
             SkippedSections = skippedSections;
+            CorruptSections = corruptSections;
         }
 
         public int Trips { get; }
@@ -304,5 +375,9 @@ namespace WhereTheyGo
         // Sections this build did not understand and left alone. Not a failure: it is
         // how a payload written by a newer build still gives up what it can.
         public int SkippedSections { get; }
+
+        // Sections this build does understand whose bytes would not parse. Each cost
+        // only itself; the count is here so the log says a load was partial.
+        public int CorruptSections { get; }
     }
 }

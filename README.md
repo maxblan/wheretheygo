@@ -35,8 +35,11 @@ to school out of the save, shopping and leisure from watching the city run.
   means in journeys a day. They are classed rather than continuous because you can read a
   class off a single band, while a continuous ramp only means something next to the rest
   of the map.
-- **Colour** is how much of that corridor your network already carries. Warm means those
-  people are in their cars. Cool means they are already on your metro.
+- **Colour** is how much of that corridor your network already carries. Warm means your
+  network does not carry those people. Cool means they are already on your metro.
+  Journeys shorter than the walking horizon are left out of the bands and the figures,
+  because they are walks: no line with an access walk at each end could ever carry them,
+  and drawing them warm blamed the network for people on foot.
 - **Bundling.** Journeys are summed per 256 m zone pair, and zone pairs whose ends lie
   close together fold into one band, heaviest corridor first. A slider in the panel hides
   the thin ones and says how many it hid.
@@ -113,8 +116,9 @@ stops close enough to interchange. It then routes every journey door to door ove
 graph, weighing walk, wait and ride the same and charging a change its walk and its wait,
 because that is how the game's own pathfinder routes citizens. A journey counts as carried
 when transit is **faster than walking the whole way** and stays under a ceiling drawn from
-your city's own median carried journey. Mods that change pathfinding costs, such as
-Realistic PathFinding, are not modelled.
+your city's own median carried journey. A journey that can be walked within the walking
+horizon you set for "served" is a walk, not a transit question, and counts on neither
+side. Mods that change pathfinding costs, such as Realistic PathFinding, are not modelled.
 
 **A line's worth is measured by taking it away.** The two routed figures in a line's
 window come from routing the whole city a second time without that line. Nothing is

@@ -25,9 +25,17 @@ namespace WhereTheyGo
 
         public void SetDefaults(Context context)
         {
+            ClearSaveState();
+            DeferredLog.Info($"Save state reset ({context.purpose})");
+        }
+
+        // Both halves at once, always: the window and the history come from the same
+        // city, and one of them holding another city's data is worse than either
+        // starting empty.
+        private void ClearSaveState()
+        {
             m_TripObserver.Window.Clear();
             m_LineHistory.Clear();
-            DeferredLog.Info($"Save state reset ({context.purpose})");
         }
 
         public void Serialize<TWriter>(TWriter writer)
@@ -58,34 +66,41 @@ namespace WhereTheyGo
 
             using var bytes = new NativeArray<byte>(length, Allocator.Temp);
             reader.Read(bytes);
+
+            // The block is consumed; from here nothing can upset the game's reader.
+            // Whatever the window and the history held belongs to the previous city (the
+            // game does not call SetDefaults ahead of Deserialize when a block is
+            // present), and it goes BEFORE anything is restored: a payload that gives
+            // back only one half must not leave the other half showing that city.
+            ClearSaveState();
             if (version != SavePayload.SaveFormatVersion)
             {
                 DeferredLog.Info($"Save state of framing {version.ToString(CultureInfo.InvariantCulture)} skipped (this build reads {SavePayload.SaveFormatVersion.ToString(CultureInfo.InvariantCulture)}); starting cold");
-                // Cold means cold: whatever the window and the history held before
-                // this load goes, as it does when the payload is unreadable.
-                SetDefaults(default);
                 return;
             }
 
             try
             {
+                // A known section whose bytes do not parse is dropped inside Read and
+                // counted; only the framing itself still throws, and then cold is right.
                 SaveRestore restored = SavePayload.Read(bytes.ToArray(), m_TripObserver.Window, m_LineHistory);
                 DeferredLog.Info(
                     $"Save state restored: {(restored.Trips).ToString(CultureInfo.InvariantCulture)} observed journeys, " +
                     $"{(restored.Lines).ToString(CultureInfo.InvariantCulture)} lines with {(restored.Readings).ToString(CultureInfo.InvariantCulture)} readings " +
                     $"spanning {(LineHistory.GameHours(m_LineHistory.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours " +
                     $"of the {(LineHistory.GameHours(m_LineHistory.WindowFrames)).ToString("F0", CultureInfo.InvariantCulture)} h window, " +
-                    $"{(restored.SkippedSections).ToString(CultureInfo.InvariantCulture)} sections skipped");
+                    $"{(restored.SkippedSections).ToString(CultureInfo.InvariantCulture)} sections skipped, " +
+                    $"{(restored.CorruptSections).ToString(CultureInfo.InvariantCulture)} sections corrupt");
             }
             catch (EndOfStreamException e)
             {
-                DeferredLog.Warn($"Save state truncated; starting cold: {e.Message}");
-                SetDefaults(default);
+                DeferredLog.Warn($"Save state framing truncated; starting cold: {e.Message}");
+                ClearSaveState();
             }
             catch (InvalidDataException e)
             {
-                DeferredLog.Warn($"Save state malformed; starting cold: {e.Message}");
-                SetDefaults(default);
+                DeferredLog.Warn($"Save state framing malformed; starting cold: {e.Message}");
+                ClearSaveState();
             }
         }
     }

@@ -12,7 +12,7 @@ namespace WhereTheyGo
         Night = 2,
     }
 
-    // The game's clock as it matters for transit (verified 2026-09-05):
+    // The game's clock as it matters for transit (verified against the game):
     //  - a day is normalizedTime ∈ [0, 1), 0 = midnight; TransportLineSystem calls it
     //    night when normalizedTime < 0.25 or ≥ 11/12, i.e. 22:00–06:00, and a
     //    day-only line is inactive then (a night-only line the other way round);

@@ -11,7 +11,7 @@ using Transform = Game.Objects.Transform;
 
 namespace WhereTheyGo
 {
-    // Observed shopping and leisure journeys (register A0.1): the once-a-second scan
+    // Observed shopping and leisure journeys: the once-a-second scan
     // of citizens queued inside buildings and travelling, keyed per (citizen, purpose)
     // so one journey is recorded once, the window they are held in, and the hand-over
     // into the demand refresh's queue. The overlay system owns the queries and the
@@ -60,11 +60,18 @@ namespace WhereTheyGo
         public void Clear()
         {
             Window.Clear();
+            ForgetCitizens();
+        }
+
+        // Another city's citizens: the entity keys mean nothing here. The window
+        // stays, because on a load the save state has just restored it.
+        public void ForgetCitizens()
+        {
             m_CurrentJourney.Clear();
             m_LastBuilding.Clear();
         }
 
-        // Observed shopping/leisure demand (register A0.1): the window of journeys
+        // Observed shopping/leisure demand: the window of journeys
         // seen, the journeys under way (so one journey is recorded once), and the
         // building each citizen was last seen inside (a journey's origin).
         //
@@ -83,6 +90,11 @@ namespace WhereTheyGo
 
 
         private int m_ObservedWithoutOrigin;
+
+        // A journey whose destination building had no position to read: counted apart
+        // from the missing origins, because the log used to fold both into "seen
+        // before the citizen was ever inside a building", which is only true of one.
+        private int m_ObservedWithoutTarget;
 
         // Diagnostics for the scan itself, logged with every demand refresh: how many
         // citizens the travelling query matched, how many carried a watched purpose,
@@ -105,7 +117,7 @@ namespace WhereTheyGo
 
         private float m_ObservedScaleLastDemand;
 
-        // Purposes that count as shopping or leisure (register A0.1). Working,
+        // Purposes that count as shopping or leisure. Working,
         // studying and going home are covered by the save's own home-work/school pairs;
         // service trips (hospital, mail, garbage, crime) are not passenger demand.
         // The game's purposes the observation watches, as the four the mod shows.
@@ -352,15 +364,21 @@ namespace WhereTheyGo
 
         private void RecordObservedTrip(Entity origin, Entity target, byte purpose, uint frame)
         {
-            if (!TryResolveBuildingPosition(origin, out float3 from) || !TryResolveBuildingPosition(target, out float3 to))
+            if (!TryResolveBuildingPosition(origin, out float3 from))
             {
                 m_ObservedWithoutOrigin++;
                 return;
             }
 
+            if (!TryResolveBuildingPosition(target, out float3 to))
+            {
+                m_ObservedWithoutTarget++;
+                return;
+            }
+
             // First seen already at the destination (the purpose stays on the citizen
             // while shopping): no journey to record.
-            if (math.distancesq(new float2(from.x, from.z), new float2(to.x, to.z)) < 1f)
+            if (math.distancesq(new float2(from.x, from.z), new float2(to.x, to.z)) < Assumptions.MinJourneyDistanceSq)
             {
                 return;
             }
@@ -449,7 +467,7 @@ namespace WhereTheyGo
                     m_OutHour = outHour,
                     m_BackHour = ReturnHour(outHour, purpose),
                 };
-                if (float2Like.DistanceSq(trip.m_Origin, trip.m_Destination) < 1f)
+                if (float2Like.DistanceSq(trip.m_Origin, trip.m_Destination) < Assumptions.MinJourneyDistanceSq)
                 {
                     continue;
                 }
@@ -463,7 +481,7 @@ namespace WhereTheyGo
                 $"targets unreadable this scan: none={(m_ObservedTargetMissing).ToString(CultureInfo.InvariantCulture)}, vehicle without building target={(m_ObservedTargetVehicle).ToString(CultureInfo.InvariantCulture)}, other={(m_ObservedTargetOther).ToString(CultureInfo.InvariantCulture)}); " +
                 $"buildings remembered for {(m_LastBuilding.Count).ToString(CultureInfo.InvariantCulture)} citizens ({(m_ForgottenCitizens).ToString(CultureInfo.InvariantCulture)} gone citizens forgotten); purposes under way: {PurposeHistogram()}");
             m_ForgottenCitizens = 0;
-            if (Window.EvictedSinceLastReport > 0 || Window.DroppedAtCapSinceLastReport > 0 || m_ObservedWithoutOrigin > 0)
+            if (Window.EvictedSinceLastReport > 0 || Window.DroppedAtCapSinceLastReport > 0 || m_ObservedWithoutOrigin > 0 || m_ObservedWithoutTarget > 0)
             {
                 DeferredLog.Info(
                     $"Observed journeys: {(Window.Count).ToString(CultureInfo.InvariantCulture)} held " +
@@ -472,9 +490,11 @@ namespace WhereTheyGo
                     $"sightseeing {(Window.CountOf((byte)Purpose.Sightseeing) + Window.CountOf((byte)Purpose.VisitAttractions)).ToString(CultureInfo.InvariantCulture)}), " +
                     $"evicted={(Window.EvictedSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
                     $"droppedAtCap={(Window.DroppedAtCapSinceLastReport).ToString(CultureInfo.InvariantCulture)}, " +
-                    $"withoutKnownOrigin={(m_ObservedWithoutOrigin).ToString(CultureInfo.InvariantCulture)} (journeys seen before the citizen was ever seen inside a building)");
+                    $"withoutKnownOrigin={(m_ObservedWithoutOrigin).ToString(CultureInfo.InvariantCulture)} (journeys seen before the citizen was ever seen inside a building), " +
+                    $"withoutTargetPosition={(m_ObservedWithoutTarget).ToString(CultureInfo.InvariantCulture)} (destination building without a position)");
                 Window.ClearCounters();
                 m_ObservedWithoutOrigin = 0;
+                m_ObservedWithoutTarget = 0;
             }
         }
     }

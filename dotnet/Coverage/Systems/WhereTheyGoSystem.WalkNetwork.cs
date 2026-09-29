@@ -225,8 +225,10 @@ namespace WhereTheyGo
                 $"{(snap.TilesOnNetwork).ToString(CultureInfo.InvariantCulture)} tiles within {(Assumptions.AccessWalkMs / 1000).ToString(CultureInfo.InvariantCulture)} s of a node");
         }
 
-        // Enough of the graph to tell one pavement layout from another: the counts and
-        // the total length. Two graphs with the same three numbers snap the same way.
+        // Enough of the graph to tell one pavement layout from another: the counts,
+        // the total length, and where the nodes stand, as ORDER-FREE sums, so the
+        // same streets numbered in another order (which a live city does on every
+        // change tag) still read as the same graph, while a node that moved does not.
         private static long SignatureOf(WalkGraph graph, int2 grid)
         {
             double metres = 0.0;
@@ -235,11 +237,21 @@ namespace WhereTheyGo
                 metres += graph.EdgeMetres[e];
             }
 
+            double x = 0.0;
+            double z = 0.0;
+            for (int n = 0; n < graph.NodeCount; n++)
+            {
+                x += graph.NodeX[n];
+                z += graph.NodeZ[n];
+            }
+
             unchecked
             {
                 long signature = graph.NodeCount;
                 signature = (signature * 31) + graph.EdgeMetres.Length;
                 signature = (signature * 31) + (long)Math.Round(metres, MidpointRounding.ToEven);
+                signature = (signature * 31) + (long)Math.Round(x, MidpointRounding.ToEven);
+                signature = (signature * 31) + (long)Math.Round(z, MidpointRounding.ToEven);
                 signature = (signature * 31) + grid.x;
                 signature = (signature * 31) + grid.y;
                 return signature;

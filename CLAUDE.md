@@ -13,13 +13,13 @@ what one line does for those journeys. It suggests nothing and changes nothing.
 does not do. `README.md` describes the result for a player. `docs/game-facts.md` holds
 the verified facts about the game that the code depends on.
 
-**`docs/` and `.claude/` are local only.** They are in `.gitignore` and were untracked on
-2026-09-20, so they exist on this machine but are not in the GitHub repository and will
+**`docs/` and `.claude/` are local only.** They are in `.gitignore` and untracked, so they
+exist on this machine but are not in the GitHub repository and will
 not be in the public release. Keep using them; just do not add a reference to either from
 a tracked file, because it would be a dead link for everyone else. `CONTRIBUTING.md` is
 the public-facing version of the working rules.
 
-The mod was called `TransitArchitect` until 2026-09-14 and, before that,
+The mod was once called `TransitArchitect` and, before that,
 `StationSuitabilityOverlay`. Both names promised that something plans for the player,
 which is the opposite of the current cut. Nothing should carry either name or the old
 `Suitability` prefix.
@@ -36,8 +36,8 @@ make check-ui      # node --check on the .mjs, which nothing else validates
 make check-links   # locale/panel-key/binding parity across files, see below
 make build         # compile AND deploy (close the game first)
 make compile       # compile only, analyzers included, safe while the game runs
-make deploy        # wait for the game to close, build, confirm by file size
-make status        # built vs deployed byte sizes
+make deploy        # wait for the game to close, build, confirm by comparing content
+make status        # built vs deployed DLL, compared by content
 make errors        # the mod's own warnings and errors from both logs
 make errors-all    # every error in UI.log, including the game's and other mods'
 make logs          # tail the mod log
@@ -74,7 +74,7 @@ is not a second way to build the mod: it brings neither the Entities source gene
 the post-processor nor the deploy, so its output is unshippable, and a real build through
 it warns that it is (`WTG0002`). It also writes to `dotnet/bin/editor/` rather than to
 `dotnet/bin/$(CONFIG)/net48/`, because that second path is the DEPLOYABLE mod and is what
-`make status` and `make deploy` compare byte sizes against; an unshippable DLL must not be
+`make status` and `make deploy` compare content against; an unshippable DLL must not be
 able to stand in for it. `make compile` still reports zero warnings on Windows, where the
 fallback never runs.
 
@@ -84,11 +84,11 @@ running game holds a lock on the deployed DLL. Close the game before building. T
 that a change compiles while the game is running, use `make compile`: it runs only the
 `Compile` target, which the post-processor and the deploy (both hooked onto `AfterBuild`)
 never see. That holds for `-t:Compile` **on its own**. Adding `--no-incremental` does
-reach `AfterBuild`, so it deploys, and on 2026-09-20 that wiped the Mods folder while the
+reach `AfterBuild`, so it deploys, and that once wiped the Mods folder while the
 game was open. If you want a forced rebuild without deploying, delete
 `dotnet/obj/$(CONFIG)/net48/WhereTheyGo.csproj.CoreCompileInputs.cache` and run plain
 `make compile`. `ModPostProcessor` also returns a spurious exit code when it runs before the
-game has released its handles, so **verify a deploy by comparing file sizes, not by
+game has released its handles, so **verify a deploy by comparing the deployed DLL's content with the built one, not by
 trusting the exit code**. `make deploy` encodes the wait-and-compare, and `build`,
 `deploy` and `strict` all wait for the handles first, with
 `tools/wait-for-unlock.ps1` probing them four times a second. A failed wait **aborts**: building anyway once cost a working
@@ -112,7 +112,7 @@ the null-forgiving `!` operator an error, so "trust me" is not available.
 
 `TreatWarningsAsErrors` is a ratchet that has **reached the end of its travel**. It used
 to carry a `WarningsNotAsErrors` list of pre-existing warnings; that list was measured
-empty on 2026-09-20 and deleted, so every warning is now an error with no exception. Both
+empty and deleted, so every warning is now an error with no exception. Both
 projects report **zero warnings and zero errors**, which is the state to keep them in.
 
 The two cases the list used to cover are handled at their sites, where a reader can see
@@ -134,18 +134,16 @@ are **required, not noise**: `MA0076` forbids an implicit culture-sensitive `ToS
 an interpolated string, and `FormattableString.Invariant` cannot replace them.
 
 `MA0051` (method length) is **ratcheted, not disabled**: the limits sit at today's worst
-offender (**101 lines, 52 statements**) so no method may grow. Check by build rather than
-by counting, since MA0051 counts statements differently from a reader. **Lower the numbers
-as methods are split; never raise them.** It caught `DesireBands.Build` at 137 lines on
-the day it was written, which is what the ratchet is for.
+offender (**96 lines, 52 statements**, in `.editorconfig`) so no method may grow. Check by
+build rather than by counting, since MA0051 counts statements differently from a reader.
+**Lower the numbers as methods are split; never raise them.** It caught `DesireBands.Build`
+at 137 lines on the day it was written, which is what the ratchet is for.
 
-The two numbers are pinned by different things, so check which one you are pulling on
-before trying to lower either. **Lines** is held by the locale tables, which are data
-rather than control flow (`LocaleEN.ReadEntries` at 101, the five translations at 99); the
-longest real method is `WalkBridging.Bridge` at 96. **Statements** is held by
-`WalkBridging.Bridge` itself at exactly 52, so that one is already at its floor and cannot
-drop without splitting that method. Both figures were measured by setting the limit to 1
-and reading the build.
+Both numbers are pinned by the same method, `WalkBridging.Bridge`, at 96 lines and exactly
+52 statements, so neither can drop without splitting it. The locale tables used to hold the
+line figure at 101 (`LocaleEN.ReadEntries`); now they are static `Literals`
+fields rather than method bodies, which is what let the limit fall to a real method. Both
+figures were measured by setting the limit to 1 and reading the build.
 
 ### Nullability conventions
 
@@ -231,8 +229,8 @@ can be linked into the offline test project.
   game's logger is an unguarded stream writer.
 - **Anything touching Unity or ECS types is untestable here**, so keep algorithms out of
   the `Systems/` partials and the `Gathering/` readers.
-- **Every number the mod computes with lives in `Common/Planning/Assumptions.cs`** (user
-  rule, 2026-09-06). Before writing a literal anywhere else, look there.
+- **Every number the mod computes with lives in `Common/Planning/Assumptions.cs`**.
+  Before writing a literal anywhere else, look there.
 
 ### Data flow
 
@@ -278,7 +276,7 @@ moving it throws away every existing block, which is three game days of observed
 and a game day of line readings that only game time can gather again. Never make the parser
 depend on game state at load.
 
-**`SaveFormatVersion` is FROZEN at 4** for the first public release (2026-09-20), and a
+**`SaveFormatVersion` is FROZEN at 4** for the first public release, and a
 test pins it there, so moving it fails the build instead of quietly costing every player
 their days. A new kind of data is a new section id; a change to existing data is that
 section's own version. Neither touches the framing. Move it only if the list-of-sections

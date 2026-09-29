@@ -26,6 +26,13 @@ namespace WhereTheyGo
         public float BoardPenaltySeconds;
         public float MaxTravelSeconds;
         public float ZoneReachMetres;
+        // A pair whose walk the whole way is within this many seconds is WALKED
+        // (RoutingResult.Walked): a walk, not a transit question. The system sets it
+        // from the player's coverage horizon, the walk they accept to reach a stop: a
+        // journey shorter than that walk is a walk. At 0, which a problem built without
+        // a horizon has, nothing is walked, since every pair runs between two distinct
+        // doors and so takes some time on foot.
+        public float WalkedHorizonSeconds;
         // Derived from the pairs on first evaluation (JourneyRouting.GeometryOf) and
         // reused by every evaluation since; the pair arrays are not modified after a
         // problem is built.
@@ -54,7 +61,10 @@ namespace WhereTheyGo
     {
         // Journey weight riding each EXISTING line (index = position in BaseLines):
         // what the network as it stands carries, which is what the line verdicts read
-        // as a line's demand (register A8.2, decided 2026-09-06).
+        // as a line's demand. Only CARRIED pairs are credited, not every pair that
+        // merely beats walking: the line window, the rank, the "carries" share and the
+        // highlighted bands then count the same journeys the headline and the band
+        // colour do, and "carried" has one definition wherever it is read.
         public double[] BaseRiders = Array.Empty<double>();
         public double[] BaseRidersByDay = Array.Empty<double>();
         public double[] BaseRidersByNight = Array.Empty<double>();
@@ -66,14 +76,22 @@ namespace WhereTheyGo
         public float[] Transit = Array.Empty<float>();
         // Straight-line walking time per pair, the alternative every journey always has.
         public float[] WalkOnly = Array.Empty<float>();
+        // Whether each pair is a walk (JourneyRouting.MarkWalked): its walk the whole
+        // way is within RoutingProblem.WalkedHorizonSeconds. Decided before Carried and
+        // taking precedence over it: a walked pair is never carried, never credited to
+        // a line and never a sample for the served-ceiling median.
+        public bool[] Walked = Array.Empty<bool>();
         // Whether the network carries each pair (JourneyRouting.MarkCarried).
         public bool[] Carried = Array.Empty<bool>();
-        // Whether each pair's fastest itinerary rides RoutingProblem.TargetLine.
+        // What Walked and Carried add up to: the ceiling the second was judged by, and
+        // the shares of the city's travel each comes to.
+        public CarriedReport Report;
+        // Whether each pair is carried AND its itinerary rides RoutingProblem.TargetLine.
         public bool[] RidesTarget = Array.Empty<bool>();
     }
 
     // What "the network carries this journey" means, and how much of the city's travel
-    // it adds up to (author's decision 2026-09-14). Two conditions, both nameable in a
+    // it adds up to. Two conditions, both nameable in a
     // tooltip:
     //
     //   1. the transit itinerary is faster than walking the whole way, and
@@ -81,17 +99,30 @@ namespace WhereTheyGo
     //      journey, so a 20-minute city and a 60-minute one are judged by their own
     //      standard rather than by a number chosen here.
     //
-    // The median is taken over the journeys that pass condition 1, which is why this
-    // is two passes and not one.
+    // A journey within the walking horizon is a WALK and is left
+    // out of both sides: it is neither carried nor a failure of the network, because no
+    // itinerary with an access walk at each end and a wait could ever carry it. A 300 m
+    // corridor used to draw as a fat warm band, "68 % travel without transit", for
+    // people who were walking.
+    //
+    // The median is taken over the journeys that pass condition 1 and are not walks,
+    // which is why this is two passes and not one. It is the median JOURNEY, weighted
+    // by how many make each pair: a pair two hundred people make
+    // sets the city's typical journey two hundred times as firmly as a pair one person
+    // makes.
     internal readonly struct CarriedReport
     {
-        public CarriedReport(float ceilingSeconds, float medianSeconds, int carriedPairs, double carriedWeight, double totalWeight)
+        public CarriedReport(
+            float ceilingSeconds, float medianSeconds, int carriedPairs, double carriedWeight, double totalWeight,
+            int walkedPairs, double walkedWeight)
         {
             CeilingSeconds = ceilingSeconds;
             MedianSeconds = medianSeconds;
             CarriedPairs = carriedPairs;
             CarriedWeight = carriedWeight;
             TotalWeight = totalWeight;
+            WalkedPairs = walkedPairs;
+            WalkedWeight = walkedWeight;
         }
 
         public float CeilingSeconds { get; }
@@ -104,8 +135,25 @@ namespace WhereTheyGo
 
         public double TotalWeight { get; }
 
-        // The share of the city's travel the network carries: the headline figure.
-        public float Share => TotalWeight > 0.0 ? (float)(CarriedWeight / TotalWeight) : 0f;
+        public int WalkedPairs { get; }
+
+        public double WalkedWeight { get; }
+
+        // The share of the journeys transit COULD serve that the network carries: the
+        // headline figure. The walks are taken out of the denominator, since counting
+        // them as failures held the figure down for journeys no network can carry.
+        public float Share
+        {
+            get
+            {
+                double servable = TotalWeight - WalkedWeight;
+                return servable > 0.0 ? (float)(CarriedWeight / servable) : 0f;
+            }
+        }
+
+        // The share of ALL the city's travel that is a walk, against the whole because
+        // that is the whole it is being left out of.
+        public float WalkedShare => TotalWeight > 0.0 ? (float)(WalkedWeight / TotalWeight) : 0f;
     }
 
     // What one line does for the journeys that ride it, measured by taking it away.
@@ -120,7 +168,7 @@ namespace WhereTheyGo
             NoSlowerWeight = noSlowerWeight;
         }
 
-        // Journeys a day whose fastest route rides this line.
+        // Carried journeys a day that ride this line.
         public double RiderWeight { get; }
 
         // Passenger-seconds a day those journeys save by it, against the best they
@@ -165,7 +213,6 @@ namespace WhereTheyGo
                 WalkOnly = geometry.WalkOnly,
                 RidesTarget = problem.TargetLine >= 0 ? new bool[problem.PairCount] : Array.Empty<bool>(),
             };
-            bool hasShares = problem.PairDayShare.Length >= problem.PairCount;
             int lineCount = problem.BaseLines.Count;
             var legs = new PairLegs(problem.PairCount);
             int nodeCount = network.Graph.NodeCount;
@@ -206,27 +253,47 @@ namespace WhereTheyGo
             {
                 evaluation.After[i] = legs.After[i];
                 evaluation.Transit[i] = legs.Transit[i];
-                double weight = problem.PairWeight[i];
-                int[]? ridden = legs.Ridden[i];
-                if (ridden is not null)
-                {
-                    double dayShare = hasShares ? problem.PairDayShare[i] : 1.0;
-                    for (int r = 0; r < ridden.Length; r++)
-                    {
-                        int line = ridden[r];
-                        evaluation.BaseRiders[line] += weight;
-                        evaluation.BaseRidersByDay[line] += weight * dayShare;
-                        evaluation.BaseRidersByNight[line] += weight * (1.0 - dayShare);
-                        if (line == problem.TargetLine)
-                        {
-                            evaluation.RidesTarget[i] = true;
-                        }
-                    }
-                }
-
             }
 
+            // Walked and carried first, riders second: a line is credited only with the
+            // journeys the network carries, and whether a journey is carried is decided
+            // against the whole city's times, so it cannot be known inside the searches.
+            evaluation.Report = MarkCarried(problem, evaluation, new float[problem.PairCount], new float[problem.PairCount]);
+            CreditRiders(problem, evaluation, legs);
             return evaluation;
+        }
+
+        // Folds each carried pair's weight onto the lines its itinerary rides, split by
+        // the share of its rides in the day period, and notes which pairs ride the
+        // target line. A pair that beats walking but is not carried (over the ceiling)
+        // credits nothing: it used to, and a line could then be shown
+        // "carrying" journeys the headline and the band colour had refused as too slow
+        // for this city.
+        private static void CreditRiders(RoutingProblem problem, RoutingResult evaluation, PairLegs legs)
+        {
+            bool hasShares = problem.PairDayShare.Length >= problem.PairCount;
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                int[]? ridden = legs.Ridden[i];
+                if (ridden is null || !evaluation.Carried[i])
+                {
+                    continue;
+                }
+
+                double weight = problem.PairWeight[i];
+                double dayShare = hasShares ? problem.PairDayShare[i] : 1.0;
+                for (int r = 0; r < ridden.Length; r++)
+                {
+                    int line = ridden[r];
+                    evaluation.BaseRiders[line] += weight;
+                    evaluation.BaseRidersByDay[line] += weight * dayShare;
+                    evaluation.BaseRidersByNight[line] += weight * (1.0 - dayShare);
+                    if (line == problem.TargetLine)
+                    {
+                        evaluation.RidesTarget[i] = true;
+                    }
+                }
+            }
         }
 
         // One pool thread's scratch for the searches and the log lines it writes while
@@ -279,24 +346,29 @@ namespace WhereTheyGo
             return new LineContribution(riders, seconds, noSlower);
         }
 
-        // Fills `result.Carried` and reports what it adds up to. `scratch` is reordered
-        // in place by the median (SelectKth), so it is the caller's buffer and never
-        // the times themselves.
-        public static CarriedReport MarkCarried(RoutingProblem problem, RoutingResult result, float[] scratch)
+        // Fills `result.Walked` and `result.Carried` and reports what they add up to.
+        // Evaluate runs it before crediting riders; it is public so a synthetic result
+        // can be judged without routing. `scratchTimes` and `scratchWeights`, one slot
+        // per pair, are reordered in place by the median (TransitGraph.WeightedMedian),
+        // so they are the caller's buffers and never the times or the weights themselves.
+        public static CarriedReport MarkCarried(RoutingProblem problem, RoutingResult result, float[] scratchTimes, float[] scratchWeights)
         {
             int count = problem.PairCount;
+            double walkedWeight = MarkWalked(problem, result, out int walkedPairs);
             result.Carried = new bool[count];
             int faster = 0;
             for (int i = 0; i < count; i++)
             {
-                if (result.Transit[i] < result.WalkOnly[i])
+                if (!result.Walked[i] && result.Transit[i] < result.WalkOnly[i])
                 {
-                    scratch[faster++] = result.Transit[i];
+                    scratchTimes[faster] = result.Transit[i];
+                    scratchWeights[faster] = problem.PairWeight[i];
+                    faster++;
                 }
             }
 
             float ceiling = TransitGraph.ServedCeiling(
-                scratch, faster, Assumptions.ServedCeilingMultiple, Assumptions.MaxJourneySeconds,
+                scratchTimes, scratchWeights, faster, Assumptions.ServedCeilingMultiple, Assumptions.MaxJourneySeconds,
                 Assumptions.MinPairsForServedMedian, out float median);
 
             int carriedPairs = 0;
@@ -306,7 +378,7 @@ namespace WhereTheyGo
             {
                 double weight = problem.PairWeight[i];
                 totalWeight += weight;
-                if (result.Transit[i] < result.WalkOnly[i] && result.Transit[i] <= ceiling)
+                if (!result.Walked[i] && result.Transit[i] < result.WalkOnly[i] && result.Transit[i] <= ceiling)
                 {
                     result.Carried[i] = true;
                     carriedPairs++;
@@ -314,7 +386,31 @@ namespace WhereTheyGo
                 }
             }
 
-            return new CarriedReport(ceiling, median, carriedPairs, carriedWeight, totalWeight);
+            return new CarriedReport(ceiling, median, carriedPairs, carriedWeight, totalWeight, walkedPairs, walkedWeight);
+        }
+
+        // Fills `result.Walked`: a pair is a walk when walking it the whole way fits
+        // the horizon. Per DOOR pair, which is where the
+        // walk time lives; a band folds in zone pairs up to a kilometre apart, so it
+        // cannot be decided there. Returns the walked weight.
+        private static double MarkWalked(RoutingProblem problem, RoutingResult result, out int walkedPairs)
+        {
+            int count = problem.PairCount;
+            float horizon = problem.WalkedHorizonSeconds;
+            result.Walked = new bool[count];
+            walkedPairs = 0;
+            double walkedWeight = 0.0;
+            for (int i = 0; i < count; i++)
+            {
+                if (result.WalkOnly[i] <= horizon)
+                {
+                    result.Walked[i] = true;
+                    walkedPairs++;
+                    walkedWeight += problem.PairWeight[i];
+                }
+            }
+
+            return walkedWeight;
         }
 
         // The stops each door can walk to, with the walking time as the specification's
@@ -331,21 +427,36 @@ namespace WhereTheyGo
                 var stops = new List<int>();
                 var costs = new List<float>();
                 float reachSq = reach * reach;
+
+                // Bucketed on a grid of the reach, the way the walk edges between stops
+                // are: an all-pairs sweep here was every door against every stop, and
+                // it ran twice per pass with a line selected. The grid hands back the
+                // same stops in the same ascending order, so the lists are the ones the
+                // sweep built and the routing's bits do not move.
+                TransitGraph.StopGrid? grid = stopCount > 0 && reach > 0f
+                    ? TransitGraph.StopGrid.Build(stopX, stopZ, stopCount, reach)
+                    : null;
+                var near = new List<int>();
                 for (int zone = 0; zone < geometry.ZoneCount; zone++)
                 {
                     access.Start[zone] = stops.Count;
+                    if (grid is null)
+                    {
+                        continue;
+                    }
+
                     float zx = geometry.ZoneX[zone];
                     float zz = geometry.ZoneZ[zone];
-                    for (int stop = 0; stop < stopCount; stop++)
+                    near.Clear();
+                    grid.Value.CollectWithin(zx, zz, stopX, stopZ, reachSq, near);
+                    for (int n = 0; n < near.Count; n++)
                     {
+                        int stop = near[n];
                         float dx = stopX[stop] - zx;
                         float dz = stopZ[stop] - zz;
                         float distSq = (dx * dx) + (dz * dz);
-                        if (distSq <= reachSq)
-                        {
-                            stops.Add(stop);
-                            costs.Add(Math.Max(Assumptions.MinEdgeSeconds, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed));
-                        }
+                        stops.Add(stop);
+                        costs.Add(Math.Max(Assumptions.MinEdgeSeconds, (float)Math.Sqrt(distSq) / Assumptions.WalkSpeed));
                     }
                 }
 

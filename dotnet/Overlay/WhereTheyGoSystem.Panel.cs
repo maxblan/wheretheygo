@@ -1,16 +1,11 @@
 ﻿namespace WhereTheyGo
 {
-    // The panel bridge: the static state and requests the options page and the panel
-    // module read and raise. The settings object is built before the world exists, so
-    // the panel talks to the system through statics rather than an instance; the
-    // payloads themselves are the JSON PanelUISystem writes.
+    // The panel bridge: the static state the panel module reads and the requests it
+    // raises. PanelUISystem talks to this system through statics rather than an
+    // instance so the two cannot disagree about the hour, the filter or the selected
+    // line; the payloads themselves are the JSON PanelUISystem writes.
     public sealed partial class WhereTheyGoSystem
     {
-        // The Options page's heat-map switch. A static request rather than a direct
-        // call, because the settings object outlives the system and is edited from the
-        // main menu, where there is no city and no system to talk to.
-        private static int s_InfoviewRequest = -1;
-
         // The city-wide numbers, written by the passes that measure them and read by
         // the panel's bindings.
         private static PanelFigures s_Figures;
@@ -35,8 +30,10 @@
         // pass, which measures what that line is worth by taking it out.
         private static int s_SelectedLineId = -1;
 
-        // The id the last started pass was asked about, so selecting a line asks for
-        // a fresh pass exactly once.
+        // The id the last started pass was asked about, whichever path started it
+        // (StartRoutingPass records it), so selecting a line asks for a fresh pass
+        // exactly once, and a demand refresh that already routed the selection is not
+        // followed by a second pass for the same answer.
         private int m_RequestedLineId = -1;
 
         private float m_LastHourAdvance;
@@ -44,8 +41,6 @@
         // Every purpose switched on. Named once, on the type that sizes the arrays by
         // it, so a fifth purpose cannot be half-added.
         public const int AllPurposes = Band.AllPurposes;
-
-        public static void RequestInfoview(bool on) => s_InfoviewRequest = on ? 1 : 0;
 
         internal static PanelFigures Figures => s_Figures;
 
@@ -70,9 +65,10 @@
         // to be handed over by the coverage pass, and so it waited on a walk network
         // it does not depend on: after a load the panel read "0 % carried" for as long
         // as the streets took to appear, while the log had the real figure already.
-        internal static void SetCarriedFigure(float carriedShare)
+        internal static void SetCarriedFigure(float carriedShare, float walkedShare)
         {
             s_Figures.CarriedShare = carriedShare;
+            s_Figures.WalkedShare = walkedShare;
         }
 
         internal static bool PlayingHours => s_PlayingHours;
@@ -184,9 +180,11 @@
             s_SelectedHour = (s_SelectedHour + 1) % Band.HoursPerDay;
         }
 
-        // Opens or closes our infoview on behalf of the Options page. Activation goes
-        // through ToolSystem.infoview, which is what assigns the terrain overlay
-        // channel the heat map is drawn into.
+        // Opens or closes our infoview for the top-left toolbar button, which toggles
+        // it (PanelUISystem.ToggleInfoview) and reads IsInfoviewActive back. The
+        // button is the only way in: the Options switch that used to
+        // queue a request here is gone. Activation goes through ToolSystem.infoview,
+        // which is what assigns the terrain overlay channel the heat map is drawn into.
         public void SetInfoviewActive(bool active) => m_Infoview.SetActive(active);
 
         public bool IsInfoviewActive => m_Infoview.IsActive;
@@ -200,17 +198,5 @@
         // back in for the frames between our infoview closing and the game unmounting
         // its panel.
         public bool ForeignInfoviewActive => m_Infoview.ForeignActive;
-
-        private void HandleInfoviewRequest()
-        {
-            if (s_InfoviewRequest < 0)
-            {
-                return;
-            }
-
-            bool on = s_InfoviewRequest == 1;
-            s_InfoviewRequest = -1;
-            SetInfoviewActive(on);
-        }
     }
 }

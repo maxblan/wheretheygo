@@ -68,7 +68,7 @@ namespace WhereTheyGo
             // BOTH of these are ordered against a named game system, not merely put in
             // the right phase. Game.UpdateSystem keeps its own list sorted by
             // (phase, registration index) and IGNORES [UpdateBefore]/[UpdateAfter]
-            // entirely (verified 2026-09-06 in the game's UpdateSystem.Register/Refresh/SystemData.
+            // entirely (verified in the game's UpdateSystem.Register/Refresh/SystemData.
             // CompareTo). A mod registers after every game system, so UpdateAt alone puts
             // a system LAST in its phase, which is why the building colours never
             // appeared: ObjectColorSystem reset them to grey and BatchDataSystem had

@@ -208,7 +208,10 @@ const PURPOSES = [
     { bit: 8, key: "PurposeLeisure", english: "Leisure", colour: "#5fa86a" },
 ];
 
-function Check({ label, on, onChange }) {
+// A box that only SHOWS a state. It has no handler of its own: the row it sits in
+// owns the click, the same way the game's InfomodeItem hands its Checkbox nothing but
+// checked, focusKey and className.
+function Check({ on }) {
     if (V.Checkbox) {
         // FOCUS_DISABLED, exactly as vanilla's own InfomodeItem passes it to this
         // component. Without it each checkbox claims a focus key of its own, and the
@@ -217,7 +220,6 @@ function Check({ label, on, onChange }) {
         // UI.log on every render.
         return h(V.Checkbox, {
             checked: on,
-            onChange,
             focusKey: CsInput.FOCUS_DISABLED,
             className: "wtg-check",
         });
@@ -225,8 +227,7 @@ function Check({ label, on, onChange }) {
 
     return h("div", {
         className: "wtg-check-fallback" + (on ? " wtg-check-on" : ""),
-        onClick: () => onChange(!on),
-    }, on ? "✓" : "", label);
+    }, on ? "✓" : "");
 }
 
 function Slider({ value, start, end, onChange, className }) {
@@ -387,13 +388,21 @@ function Purposes({ mask, weights, day }) {
         trigger("setPurposes", next === 0 ? purpose.bit : next);
     };
 
+    // The row is the single owner of the click; the Check inside it gets no onChange.
+    // The vanilla Toggle (game-ui/common/input/toggle/toggle.tsx in the game's bundle)
+    // calls onChange(!checked) and CANCELS the click only when onChange is set. Without
+    // one it does nothing and the click bubbles up to this row, which is exactly what
+    // the game's own InfomodeItem relies on. With both handlers set, the box fired once
+    // on the vanilla path but twice, with the same value, on the fallback path. The
+    // price is the select-toggle sound, which only ever played when the box itself was
+    // hit rather than the rest of the row.
     const legend = h("div", { className: "wtg-purposes" },
         PURPOSES.map((purpose, index) => h("div", {
             key: purpose.key,
             className: "wtg-purpose" + ((mask & purpose.bit) !== 0 ? "" : " wtg-purpose-off"),
             onClick: () => toggle(purpose),
         },
-            h(Check, { label: "", on: (mask & purpose.bit) !== 0, onChange: () => toggle(purpose) }),
+            h(Check, { on: (mask & purpose.bit) !== 0 }),
             h("div", { className: "wtg-purpose-swatch", style: { backgroundColor: purpose.colour } }),
             h("div", { className: "wtg-purpose-label" }, t(purpose.key, purpose.english)),
             h("div", { className: "wtg-purpose-value" }, integer(weights[index] || 0)),
@@ -422,7 +431,7 @@ function Purposes({ mask, weights, day }) {
 // corridors when it is Assumptions.MaxBands, the cap the bundling stops at. The row now
 // says what the slider sets; the count of what survives it moved into the caption,
 // where it cannot be mistaken for the slider's own unit.
-function Bands({ hour, thresholdPercent, thresholdMax, shown, hiddenShare, breaks, widths, ramp }) {
+function Bands({ hour, thresholdPercent, thresholdMax, shown, hiddenShare, walkedJourneys, breaks, widths, ramp }) {
     const t = useTranslate();
     return h("div", { className: "wtg-bands" },
         h(Row, {
@@ -443,6 +452,13 @@ function Bands({ hour, thresholdPercent, thresholdMax, shown, hiddenShare, break
             hiddenShare > 0.005
                 ? " · " + t("HiddenShare", "{0} % of the journeys")
                     .replace("{0}", String(Math.round(hiddenShare * 100)))
+                : "",
+            // The journeys within the walking horizon have no band at all
+            // (DesireBands). Half a journey is where rounding to a
+            // whole number stops reading "0".
+            walkedJourneys >= 0.5
+                ? " · " + t("WalkedFolded", "{0} journeys a day walked, their corridors not drawn")
+                    .replace("{0}", String(Math.round(walkedJourneys)))
                 : ""),
         h(WidthLegend, { hour, breaks, widths, ramp }));
 }
@@ -496,15 +512,25 @@ function WidthLegend({ hour, breaks, widths, ramp }) {
 // ---------------------------------------------------------------------------
 // The infoview panel.
 
-function CarriedFigure({ share, ramp }) {
+function CarriedFigure({ share, walkedShare, ramp }) {
     const t = useTranslate();
     const title = h(Row, {
         uppercase: true,
         label: t("Carried", "Carried by transit"),
         value: percent(share),
     });
-    const caption = h(Caption, null,
-        t("CarriedCaption", "of all journeys; a journey counts when transit makes it faster than walking"));
+    // Two captions: what the figure counts, then what it leaves out. The walks are
+    // out of the figure on both sides (CarriedReport.Share), and a
+    // reader who cannot see that reads "62 % carried" against the whole city. Half a
+    // percent is where the rounded number stops reading "0 %".
+    const caption = h(React.Fragment, null,
+        h(Caption, null,
+            t("CarriedCaption", "of the journeys longer than a walk; one counts when transit beats walking the whole way and is not far slower than this city's typical transit journey")),
+        walkedShare > 0.005
+            ? h(Caption, null,
+                t("WalkedCaption", "{0} % of the city's journeys are shorter than the walking horizon: a walk, not a transit question, and left out of the figures above")
+                    .replace("{0}", String(Math.round(walkedShare * 100))))
+            : null);
 
     // The gradient IS the map's legend, and the pointer says where the city sits on it.
     // One object instead of a figure in one place and a colour key in another.
@@ -609,7 +635,7 @@ function InfoviewFigures() {
 
     const hourly = state.hourly || [];
     return h("div", { className: "wtg-panel" },
-        h(CarriedFigure, { share: figures.carriedShare, ramp: state.bandRamp }),
+        h(CarriedFigure, { share: figures.carriedShare, walkedShare: figures.walkedShare || 0, ramp: state.bandRamp }),
         h(CoverageFigure, {
             share: figures.coverageShare,
             walkMinutes: figures.coverageWalkMinutes,
@@ -633,6 +659,7 @@ function InfoviewFigures() {
             thresholdMax: state.thresholdMaxPercent,
             shown: state.bandsShown,
             hiddenShare: state.hiddenShare,
+            walkedJourneys: state.walkedJourneys || 0,
             breaks: state.classBreaks || [],
             widths: state.classWidths || [],
             ramp: state.bandRamp,
@@ -1026,12 +1053,24 @@ const INFOVIEW_ID = "WhereTheyGo";
 function ToolbarButton() {
     const t = useTranslate();
     const active = useBound("infoviewActive", false);
-    const button = h(CsUi.Button, {
-        id: "WhereTheyGoIcon",
-        variant: "floating",
-        className: "wtg-toolbar-button" + (active ? " wtg-toolbar-button-on" : ""),
-        onSelect: () => trigger("toggleInfoview"),
-    }, h("img", { style: { maskImage: "url(" + ICON + ")" } }));
+    const className = "wtg-toolbar-button" + (active ? " wtg-toolbar-button-on" : "");
+    const icon = h("img", { style: { maskImage: "url(" + ICON + ")" } });
+    // The game's Button, or a plain one. Registering the hook proves nothing about
+    // rendering: a renamed Button export threw inside the top-left row on the first
+    // frame, after the menu entry had already been hidden, which is the one way to end
+    // up with no door at all.
+    const button = CsUi.Button
+        ? h(CsUi.Button, {
+            id: "WhereTheyGoIcon",
+            variant: "floating",
+            className,
+            onSelect: () => trigger("toggleInfoview"),
+        }, icon)
+        : h("div", {
+            id: "WhereTheyGoIcon",
+            className,
+            onClick: () => trigger("toggleInfoview"),
+        }, icon);
 
     return CsUi.Tooltip
         ? h(CsUi.Tooltip, { tooltip: t("ToolbarTooltip", "Where They Go: the journeys your city makes, and who already rides") }, button)

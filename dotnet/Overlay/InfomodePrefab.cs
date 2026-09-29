@@ -13,9 +13,8 @@ namespace WhereTheyGo
         // infomode purely so the player can switch it off beside the other one.
         DesireBands = 0,
 
-        // Colours BUILDINGS by how far their door is from a served stop (author's
-        // request 2026-09-06). It lives in the object colour group, not the terrain
-        // group; see AccessInfomodePrefab.
+        // Colours BUILDINGS by how far their door is from a served stop. It lives in
+        // the object colour group, not the terrain group; see AccessInfomodePrefab.
         TransitAccess = 1,
     }
 
@@ -24,13 +23,6 @@ namespace WhereTheyGo
         public const int Count = 2;
 
         public static OverlayLayer[] All => new[] { OverlayLayer.DesireBands, OverlayLayer.TransitAccess };
-
-        // Layers that colour OBJECTS rather than the terrain. They take an index in
-        // the object colour group, so they never occupy one of the terrain channels.
-        public static bool IsObjectLayer(OverlayLayer layer)
-        {
-            return layer == OverlayLayer.TransitAccess;
-        }
 
         public static string NameOf(OverlayLayer layer)
         {

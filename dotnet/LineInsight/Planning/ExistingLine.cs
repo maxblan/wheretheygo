@@ -32,7 +32,7 @@ namespace WhereTheyGo
         // it is the planned interval and on an inactive one (a day-only line at night,
         // no active buildings) the whole path duration. It is what the game's own
         // pathfinder charges as a wait, which is why the transit router reads it; no
-        // verdict does (the game's TransportLineSystem, verified 2026-09-06).
+        // verdict does (verified in the game's TransportLineSystem).
         public float m_VehicleInterval;
         // The whole loop as the vehicles actually run it: the sum of the route
         // segments' RouteInfo.m_Duration, closing segment included, which is exactly
@@ -95,7 +95,7 @@ namespace WhereTheyGo
         public float m_WindowUsage;
         public float m_WindowPeakUsage;
         // The planning load: the PlanningLoadQuantile of the passengers aboard over the
-        // window's active readings (register A8.4), and the single busiest reading.
+        // window's active readings, and the single busiest reading.
         public int m_WindowPlanningLoad;
         public int m_WindowMaxAboard;
         public float m_WindowInterval;
@@ -104,9 +104,11 @@ namespace WhereTheyGo
         public float m_WindowGameHours;
 
         // What the demand routing attributes to this line on the network as it stands
-        // (RoutingResult.BaseRiders from the last route pass): journeys a day whose
-        // fastest door-to-door itinerary boards it, and their split by period. Negative
-        // until a pass has run, after which the verdicts rest on the readings alone and say so.
+        // (RoutingResult.BaseRiders from the last route pass): carried journeys a day
+        // that board it, and their split by period. Carried, not merely faster by it:
+        // the same test the headline and the band colour apply.
+        // Negative until a pass has run, after which the verdicts rest on the readings
+        // alone and say so.
         public float m_RidersPerDay = -1f;
         public float m_RidersByDay;
         public float m_RidersByNight;
@@ -124,7 +126,7 @@ namespace WhereTheyGo
 
         public float PeakUsage => HasWindow ? m_WindowPeakUsage : Usage;
 
-        // The riders the fleet is sized to carry (A8.3/A8.4): the window's planning
+        // The riders the fleet is sized to carry: the window's planning
         // load, or the count aboard right now while the window is too thin.
         public int PlanningLoad => HasWindow ? m_WindowPlanningLoad : m_Passengers;
 

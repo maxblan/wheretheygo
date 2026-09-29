@@ -9,28 +9,34 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace WhereTheyGo
 {
-    // One tab: after the 2026-09-14 recut there are two settings, and neither of
-    // them needs explaining.
+    // One tab, one setting. An earlier recut left two; then the "Show the
+    // infoview" switch went as well, because the top-left toolbar button is the
+    // only way in (README, "What it is") and a persisted true reopened the infoview
+    // on the first frame of every session whether or not the player wanted it.
+    //
+    // UNVERIFIED: whether the game's settings decoder ignores a stale
+    // ShowInfoview member in an existing WhereTheyGo.coc, or rejects the file. If it
+    // rejects it, AssetDatabase.LoadSettings falls back to the `new Setting(this)`
+    // Mod.OnLoad hands it, which is the game's own path for a file it cannot load, so
+    // the worst case is defaults. To confirm by loading once with an old file.
     [FileLocation(nameof(WhereTheyGo))]
-    [SettingsUIGroupOrder(kPlanningGroup, kStandardsGroup)]
-    [SettingsUIShowGroupName(kPlanningGroup, kStandardsGroup)]
+    [SettingsUIGroupOrder(kStandardsGroup)]
+    [SettingsUIShowGroupName(kStandardsGroup)]
     public sealed class Setting : ModSetting
     {
         // Tabs. The strings are UI ids, not persistence keys (settings files key on
         // the PROPERTY name), so they are free to change.
         public const string kSection = "General";
 
-        // Groups of the General tab.
-        public const string kPlanningGroup = "Planning";
+        // The one group of the General tab.
         public const string kStandardsGroup = "Standards";
 
         // The walking horizon "served" means: a door this far in walking time from a
-        // stop a line calls at counts as connected (register A1.8).
+        // stop a line calls at counts as connected.
         public const int kCoverageMinutesMin = 5;
         public const int kCoverageMinutesMax = 20;
 
         private int m_CoverageWalkMinutes;
-        private bool m_ShowInfoview = true;
 
         public Setting(IMod mod) : base(mod)
         {
@@ -45,23 +51,8 @@ namespace WhereTheyGo
             set => m_CoverageWalkMinutes = ClampInt(value, kCoverageMinutesMin, kCoverageMinutesMax);
         }
 
-        // The infoview itself. The game's infoview menu switches it too. This is the
-        // same switch in the place a player looks for settings, and it is persisted so
-        // a city opens the way it was left.
-        [SettingsUISection(kSection, kPlanningGroup)]
-        public bool ShowInfoview
-        {
-            get => m_ShowInfoview;
-            set
-            {
-                m_ShowInfoview = value;
-                WhereTheyGoSystem.RequestInfoview(value);
-            }
-        }
-
         public override void SetDefaults()
         {
-            m_ShowInfoview = true;
             m_CoverageWalkMinutes = Assumptions.CoverageWalkMinutesDefault;
         }
 
@@ -163,7 +154,15 @@ namespace WhereTheyGo
             { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} journeys at {1}" },
             { "WhereTheyGo.Panel[BandJourneysDay]", "{0} a day in all" },
             { "WhereTheyGo.Panel[Carried]", "Carried by transit" },
-            { "WhereTheyGo.Panel[CarriedCaption]", "of all journeys; a journey counts when transit makes it faster than walking" },
+            // Both halves of "carried" (JourneyRouting): faster than walking the whole
+            // way AND under the ceiling drawn from this city's own median carried
+            // journey. The multiple stays in Assumptions.ServedCeilingMultiple, not here.
+            // "Longer than a walk": the journeys within the walking
+            // horizon are out of the figure on both sides, and the caption below says
+            // how many they are.
+            { "WhereTheyGo.Panel[CarriedCaption]", "of the journeys longer than a walk; one counts when transit beats walking the whole way and is not far slower than this city's typical transit journey" },
+            { "WhereTheyGo.Panel[WalkedCaption]", "{0} % of the city's journeys are shorter than the walking horizon: a walk, not a transit question, and left out of the figures above" },
+            { "WhereTheyGo.Panel[WalkedFolded]", "{0} journeys a day walked, their corridors not drawn" },
             { "WhereTheyGo.Panel[Coverage]", "Within walking distance" },
 
 
@@ -194,12 +193,9 @@ namespace WhereTheyGo
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "General" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planning" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Service standards" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Walking horizon for \"served\" (min)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "A journey counts as served when both its ends are within this many minutes' walk of a served stop." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Show the infoview" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Opens the mod's infoview. The game's infoview menu holds the same switch." },
             };
 
             foreach (KeyValuePair<string, string> entry in Literals)

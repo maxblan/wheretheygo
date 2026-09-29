@@ -7,7 +7,7 @@ using Unity.Mathematics;
 
 namespace WhereTheyGo
 {
-    // The pedestrian network read out of the streets (register A1.6). The graph it
+    // The pedestrian network read out of the streets. The graph it
     // builds is WalkGraph (pure); the arithmetic on it is WalkAccess and Coverage.
     internal static class WalkNetwork
     {
@@ -18,7 +18,7 @@ namespace WhereTheyGo
             return new int2(dims.x, dims.y);
         }
 
-        // The pedestrian network (register A1.6): every net edge with a lane a
+        // The pedestrian network: every net edge with a lane a
         // pedestrian may use (streets with pavements and stand-alone paths alike,
         // read straight from SubLane.m_PathMethods), plus the nodes those edges end
         // on. Edge length is the game's own arc length (Curve.m_Length). Node and edge

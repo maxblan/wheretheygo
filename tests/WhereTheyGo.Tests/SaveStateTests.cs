@@ -60,6 +60,7 @@ namespace WhereTheyGo.Tests
             AssertEqual(2, restored.Lines, 0, "both lines come back");
             AssertEqual(8, restored.Readings, 0, "every reading comes back");
             AssertEqual(0, restored.SkippedSections, 0, "a payload this build wrote has nothing to skip");
+            AssertEqual(0, restored.CorruptSections, 0, "and nothing in it is corrupt");
 
             for (int i = 0; i < 5; i++)
             {
@@ -89,6 +90,7 @@ namespace WhereTheyGo.Tests
             var history = new LineHistory(Assumptions.FramesPerGameDay);
             SaveRestore restored = SavePayload.Read(payload, window, history);
             AssertEqual(0, restored.Trips + restored.Readings + restored.SkippedSections, 0, "nothing in, nothing out, nothing skipped");
+            AssertEqual(0, restored.CorruptSections, 0, "and nothing corrupt");
             AssertEqual(0, window.Count, 0, "the window stays empty");
         }
 
@@ -131,9 +133,9 @@ namespace WhereTheyGo.Tests
             AssertEqual(1, history.TrackedLines, 0, "an unreadable readings section does not wipe the history");
         }
 
-        // A length the reader cannot consume must throw rather than size an array from
-        // it: reading past this block corrupts the rest of the player's save.
-        private static void SavePayloadRefusesBytesItCannotConsume()
+        // A FRAMING length the reader cannot consume must throw rather than size an
+        // array from it: reading past this block corrupts the rest of the player's save.
+        private static void SavePayloadRefusesFramingItCannotConsume()
         {
             using var stream = new MemoryStream();
             using (var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
@@ -158,7 +160,15 @@ namespace WhereTheyGo.Tests
             AssertThrows<InvalidDataException>(
                 () => SavePayload.Read(counted.ToArray(), new ObservedTripWindow(0u), new LineHistory(0u)),
                 "a negative section count is refused");
+        }
 
+        // A known section whose CONTENT will not parse is a different matter from the
+        // framing: its length was honest, so the reader is still in step with the
+        // block, and the section is dropped and counted rather than thrown (it used
+        // to throw, and the caller then wiped every section
+        // that had already been restored).
+        private static void SavePayloadDropsOnlyTheSectionItCannotParse()
+        {
             using var truncated = new MemoryStream();
             using (var w = new BinaryWriter(truncated, System.Text.Encoding.UTF8, leaveOpen: true))
             {
@@ -171,9 +181,79 @@ namespace WhereTheyGo.Tests
                 w.Write(0);
             }
 
-            AssertThrows<EndOfStreamException>(
-                () => SavePayload.Read(truncated.ToArray(), new ObservedTripWindow(0u), new LineHistory(0u)),
-                "a section that ends inside a journey is refused");
+            var window = new ObservedTripWindow(0u);
+            SaveRestore restored = SavePayload.Read(truncated.ToArray(), window, new LineHistory(0u));
+            AssertEqual(1, restored.CorruptSections, 0, "a section that ends inside a journey is counted as corrupt, not thrown");
+            AssertEqual(0, restored.Trips, 0, "and restores no journey");
+            AssertEqual(0, window.Count, 0, "the window is empty");
+        }
+
+        // The case that decided it: three game days of observed journeys, valid and
+        // already restored, followed by a readings section claiming more lines than any
+        // save can hold. The journeys stay; the history is left as it was.
+        private static void SavePayloadKeepsTheJourneysBesideACorruptReadingsSection()
+        {
+            var trips = new List<ObservedTrip>
+            {
+                new ObservedTrip { m_Frame = 500u, m_OriginX = 1f, m_OriginZ = 2f, m_DestinationX = 3f, m_DestinationZ = 4f, m_Purpose = 3, m_TimeOfDay = 0.5f },
+                new ObservedTrip { m_Frame = 600u, m_OriginX = 5f, m_OriginZ = 6f, m_DestinationX = 7f, m_DestinationZ = 8f, m_Purpose = 7, m_TimeOfDay = 0.75f },
+            };
+
+            using var readings = new MemoryStream();
+            using (var w = new BinaryWriter(readings, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                // A line count past MaxSavedLines, which RestoreReadings refuses.
+                w.Write(5000);
+            }
+
+            using var stream = new MemoryStream();
+            using (var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(2);
+                WriteTestSection(w, id: 1, version: 1, ObservedTripBytes(trips));
+                WriteTestSection(w, id: 2, version: 1, readings.ToArray());
+            }
+
+            var window = new ObservedTripWindow(Assumptions.ObservationWindowFrames);
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
+            history.Record(4, new LineObservation { m_Frame = 10u, m_Passengers = 1, m_Capacity = 10, m_IntervalSeconds = 60f, m_Vehicles = 1 });
+
+            SaveRestore restored = SavePayload.Read(stream.ToArray(), window, history);
+
+            AssertEqual(2, restored.Trips, 0, "the journeys before the corrupt section are restored");
+            AssertEqual(0, restored.Readings, 0, "the corrupt section restores nothing");
+            AssertEqual(1, restored.CorruptSections, 0, "and is counted as corrupt");
+            AssertEqual(0, restored.SkippedSections, 0, "not as unknown");
+            AssertEqual(2, window.Count, 0, "the journeys are in the window");
+            AssertEqual(1, history.TrackedLines, 0, "the history this caller already held is left as it was");
+        }
+
+        // The writer never produces a section the reader refuses: a history tracking
+        // more lines than MaxSavedLines saves exactly that many, and the line dropped is
+        // the one observed least recently, not whichever the dictionary listed last.
+        private static void SavePayloadCapsTheLinesItSaves()
+        {
+            int cap = SavePayload.MaxSavedLines;
+            var history = new LineHistory(Assumptions.FramesPerGameDay);
+            // The highest id is recorded first, at the oldest frame, so the line that
+            // must go is not also the one an id-ordered cut would have chosen.
+            history.Record(cap, new LineObservation { m_Frame = 1000u, m_Passengers = 1, m_Capacity = 10, m_IntervalSeconds = 60f, m_Vehicles = 1 });
+            for (int line = 0; line < cap; line++)
+            {
+                history.Record(line, new LineObservation { m_Frame = 2000u + (uint)line, m_Passengers = 1, m_Capacity = 10, m_IntervalSeconds = 60f, m_Vehicles = 1 });
+            }
+
+            AssertEqual(cap + 1, history.TrackedLines, 0, "the history holds one line more than a save can carry");
+
+            byte[] payload = SavePayload.Write(new ObservedTripWindow(Assumptions.ObservationWindowFrames), history);
+            var loaded = new LineHistory(Assumptions.FramesPerGameDay);
+            SaveRestore restored = SavePayload.Read(payload, new ObservedTripWindow(Assumptions.ObservationWindowFrames), loaded);
+
+            AssertEqual(0, restored.CorruptSections, 0, "the reader takes what the writer capped");
+            AssertEqual(cap, restored.Lines, 0, "exactly the cap comes back");
+            AssertEqual(cap, loaded.TrackedLines, 0, "and is tracked");
+            AssertEqual(0, loaded.SamplesOf(cap).Count, 0, "the least recently observed line is the one dropped");
+            AssertEqual(1, loaded.SamplesOf(0).Count, 0, "the next oldest, one frame newer, is kept");
         }
 
         private static void WriteTestSection(BinaryWriter w, int id, int version, byte[] bytes)

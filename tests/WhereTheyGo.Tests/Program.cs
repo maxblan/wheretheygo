@@ -40,7 +40,10 @@ namespace WhereTheyGo.Tests
             Run("The save payload carries every observed journey and reading back", SavePayloadRoundTrips);
             Run("A city with nothing measured saves and loads without a word", SavePayloadHandlesAnEmptyCity);
             Run("A section this build cannot read costs only itself, not the journeys beside it", SavePayloadKeepsWhatItStillUnderstands);
-            Run("A save block that cannot be consumed exactly is refused, never guessed at", SavePayloadRefusesBytesItCannotConsume);
+            Run("A save block whose framing cannot be consumed exactly is refused, never guessed at", SavePayloadRefusesFramingItCannotConsume);
+            Run("A known section whose bytes will not parse is dropped and counted, not thrown", SavePayloadDropsOnlyTheSectionItCannotParse);
+            Run("A corrupt readings section costs the readings, not the journeys restored before it", SavePayloadKeepsTheJourneysBesideACorruptReadingsSection);
+            Run("The save never carries more lines than a load accepts, dropping the least recently observed", SavePayloadCapsTheLinesItSaves);
             Run("Coverage counts journeys served at both ends within the horizon", CoverageShare);
             Run("Coverage splits the walk to transit into four classes that partition the city", WalkClassesPartitionEveryJourney);
 
@@ -68,18 +71,22 @@ namespace WhereTheyGo.Tests
             Run("A thin network falls back to the fixed hour", ServedCeilingFallsBack);
 
             Run("A loop is driven one way, so riding it backwards is not a shortcut", RidingALoopBackwardsIsNotAShortcut);
+            Run("A loop's seam is a ride, not a second boarding", RidingRoundTheSeamIsOneBoarding);
             Run("The ridden loop is held to the game's clamp, and a loop the game cannot time falls back to free flow rather than to the interval's fiction", RiddenLoopIsHeldToTheGamesClamp);
 
-            // F4/F5, the alignment stage, pure since 2026-09-05 (float2Like). The pinned
+            // The alignment stage, pure through float2Like. The pinned
             // figures are the game-typed code's own outputs on the same synthetic city,
             // recorded before the conversion; a change here is a behaviour change.
             Run("float2Like reproduces Unity's vector formulas bit for bit", Float2LikeMatchesUnityFormulas);
             Run("TileGrid clamps to the grid and a cell centre inverts its cell", TileGridClampsAndInverts);
             Run("Zones: journeys come out in total order, self-zone and off-map trips drop", ZonesAggregate);
 
-            // F3 steps 3–4, the panel contract and the disagreement pass, pure since 2026-09-05.
+            // The panel contract and the disagreement pass.
             Run("Journeys route door to door over the existing lines, and each line gets its riders", JourneysRouteOverTheExistingNetwork);
             Run("Carried counts the journeys transit makes faster, under this city's own ceiling", CarriedIsFasterThanWalkingAndUnderTheCeiling);
+            Run("A line is credited only with the journeys the network carries", RiderCreditFollowsCarried);
+            Run("The served ceiling's median is weighted by the journeys, not the pairs", ServedCeilingMedianIsWeightedByJourneys);
+            Run("A journey within the walking horizon is a walk: not carried, no rider, no sample, out of the share on both sides", WalkedJourneysAreAWalkNotATransitQuestion);
             Run("Bands: neighbouring corridors bundle into one, in both directions", BandsBundleNeighbouringCorridors);
             Run("Bands: the bundling is deterministic, heaviest first, and says what the cap left out", BandsAreDeterministicAndBounded);
             Run("Bands: a journey inside one zone or off the map is not a band", BandsDropWhatIsNotAJourney);
@@ -87,6 +94,8 @@ namespace WhereTheyGo.Tests
             Run("Bands: the arc rises over its middle, the tangent turns the arrow, the casing darkens the fill", BandArcRisesAndAimsAlongItself);
             Run("Bands: the view draws exactly what the hour and the purposes describe", BandViewFiltersExactlyAndClassesWidths);
             Run("Bands: the carried part of an hour sits inside the hour it belongs to", CarriedHoursSitInsideTheHoursTheyBelongTo);
+            Run("Bands: the selected line's highlight follows what the network carries", BandHighlightFollowsCarried);
+            Run("Bands: walked journeys fold away, and a band weighs only what transit could serve", WalkedJourneysFoldAwayFromTheBands);
             Run("Bands: the width classes are ordered, their boundaries readable and never above the heaviest band", BandWidthClassesAreOrderedAndReadable);
             Run("Bands: pointing at one measures against the arc, not the chord", PointingMeasuresAgainstTheArcNotTheChord);
             Run("Bands: the colour runs warm to cool and falls in lightness all the way", BandColourRunsWarmToCoolAndMonotone);
@@ -95,7 +104,7 @@ namespace WhereTheyGo.Tests
             Run("A line is ranked against the others and against the city", LineStandingRanksAgainstTheOtherLines);
             Run("The load chart's axis follows the line's own busiest hour", LoadAxisFollowsTheLinesOwnBusiestHour);
 
-            // F1's grid pass and F2's candidate set, pure since 2026-09-05.
+            // The grid pass and the candidate set.
             Run("Walk network: the pieces the game's data leaves are bridged", WalkBridgingJoinsWhatTheDataCuts);
             Run("Walk network: every tile attaches to the nearest pavement within the access walk", TileSnapAttachesTilesToTheNearestPavement);
 
@@ -477,6 +486,36 @@ namespace WhereTheyGo.Tests
                 "the closing hop is routable in its own direction");
             AssertTrue(closing < 200f, $"and it costs the cheap hop plus a boarding, got {closing.ToString("F0", CultureInfo.InvariantCulture)}s");
             AssertTrue(forward > closing * 3f, "the two directions of a loop are not the same journey");
+        }
+
+        // A loop that closes is a CYCLE. The repeated first stop the collection hands
+        // over marks where it closes; it is not a stop of its own, so a rider whose
+        // journey runs past it stays aboard rather than alighting there and paying a
+        // second boarding to get back onto the same vehicle.
+        private static void RidingRoundTheSeamIsOneBoarding()
+        {
+            var xs = new[] { 0f, 1000f, 2000f, 3000f };
+            var zs = new[] { 0f, 0f, 0f, 0f };
+            var lines = new List<TransitLine>
+            {
+                new TransitLine
+                {
+                    m_Stops = new[] { 0, 1, 2, 3, 0 },
+                    m_RideSeconds = new[] { 0f, 100f, 100f, 100f, 100f },
+                    m_ExpectedWait = 60f,
+                    m_SpeedMetresPerSecond = 10f,
+                },
+            };
+
+            TransitNetwork net = TransitGraph.Build(xs, zs, 4, lines, 1f, 5f);
+            AssertEqual(4 + 4, net.Graph.NodeCount, 0, "four stops and four line-stop nodes: the closing repeat shares the first one");
+
+            var ws = new DijkstraWorkspace(net.Graph.NodeCount);
+            ws.Run(net.Graph, 3, 100000f);
+            AssertTrue(TransitGraph.Inspect(net, ws, 3, 1, -1, out int boardings, out _, out float time), "from the last stop to the second is a ride round the seam");
+            AssertEqual(1, boardings, 0, "and it is one boarding, not an alight at the seam and a second one");
+            // Two hops of 100 s plus one boarding: half of (60 + 5) on, half off.
+            AssertEqual(265f, time, 1e-3f, "the rider pays the two hops and one wait, not two waits");
         }
 
         private static void WalkLinksStops()
@@ -1015,7 +1054,7 @@ namespace WhereTheyGo.Tests
             AssertTrue(!honest.Clamped && honest.IntervalCapped && honest.FleetTarget == 1, "a capped line above its floor is left as it rides");
             AssertEqual(1000f, slow.m_LineDurationSeconds, 0f, "its ridden loop stands");
 
-            // CHANGED 2026-09-20. This used to charge 900 s, the interval times the
+            // This used to charge 900 s, the interval times the
             // fleet. At the cap the interval IS cap x target, so 900 was 10 x 90 and
             // said nothing about this line: one fabricated number replacing another.
             // The loop now falls back to free flow plus dwell, which the wrap cannot
@@ -1027,7 +1066,7 @@ namespace WhereTheyGo.Tests
             AssertTrue(caught.LoopIsFloor, "and says the figure is a floor, so the panel can too");
             AssertTrue(caught.Describe("L1").Contains("floor", StringComparison.Ordinal), "the warning says the floor is all the game admits, not that the line is slow");
 
-            // The case from the log that started this: Buslinie 1, a 6149 m bus loop
+            // The case from the log that started this: Bus Line 1, a 6149 m bus loop
             // whose average travel time had wrapped. The ridden sum arrives as 36009 s
             // and the interval is pinned at the cap, so interval x fleet is 2975 s -
             // 7.4 km/h for a bus, and flatly contradicted by the line's own 280 s of

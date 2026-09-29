@@ -252,7 +252,10 @@ namespace WhereTheyGo
             DrawTube(buffer, colour, tip + ((back - side) * arm), tip, stroke, 0f);
         }
 
-        private static float GroundHeight(ref TerrainHeightData heightData, float x, float z)
+        // Where a band's foot stands: the terrain plus the lift that keeps it out of the
+        // ground. Shared with the hit test, which measured against an arc sampled from
+        // the bare terrain and so sat that lift below the one on screen.
+        internal static float GroundHeight(ref TerrainHeightData heightData, float x, float z)
         {
             return TerrainUtils.SampleHeight(ref heightData, new float3(x, 0f, z)) + Assumptions.BandTerrainOffsetMetres;
         }

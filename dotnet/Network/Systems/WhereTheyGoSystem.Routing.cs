@@ -61,6 +61,14 @@ namespace WhereTheyGo
             return lineId >= 0 && lineId == m_ContributionLineId;
         }
 
+        // The pair table of the journeys as they stand, built once per demand refresh
+        // and shared by every pass started on it. A selection pass routes the SAME
+        // journeys, and rebuilding the table for it, a dictionary of every door pair
+        // plus the geometry cached on it, was main-thread work for an answer that had
+        // not moved. UpdateTravelDemand and ResetCityState drop it when the journeys
+        // change; the passes only ever read it.
+        private RoutingProblem? m_PairTable;
+
         // The journeys as door-to-door pairs: every trip at its own two positions, not
         // a zone centre; trips between the same two doors (one household's commuters to
         // one workplace) are one pair with their summed weight. Evaluate then searches
@@ -142,7 +150,7 @@ namespace WhereTheyGo
         // routed over.
         private RoutingProblem BuildRoutingProblem()
         {
-            RoutingProblem pairs = BuildPairTable();
+            RoutingProblem pairs = m_PairTable ??= BuildPairTable();
             var problem = new RoutingProblem
             {
                 PairCount = pairs.PairCount,
@@ -161,6 +169,7 @@ namespace WhereTheyGo
                 BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
                 MaxTravelSeconds = Assumptions.MaxJourneySeconds,
                 ZoneReachMetres = Assumptions.ZoneStopReachMetres,
+                WalkedHorizonSeconds = WalkedHorizonSeconds(),
             };
             for (int i = 0; i < m_TransitStops.Count; i++)
             {
@@ -169,6 +178,22 @@ namespace WhereTheyGo
             }
 
             return problem;
+        }
+
+        // One horizon, two uses: the walk the player
+        // accepts to reach a stop, "Walking horizon for served", is also the walk under
+        // which a whole journey is a walk rather than a transit question. It is read off
+        // the coverage measure rather than the settings, and a change of it reaches the
+        // routing at the same demand refresh that re-measures the coverage, at most
+        // thirty seconds on: MeasureCoverage is the only writer of m_CoverageHorizonMs,
+        // and a pass started earlier would route against the old horizon while the
+        // coverage figure beside it still showed the old one too. Before the first
+        // measure the default stands in, so the first pass is not one without walks.
+        private float WalkedHorizonSeconds()
+        {
+            return m_CoverageHorizonMs > 0
+                ? m_CoverageHorizonMs / 1000f
+                : Assumptions.CoverageWalkMinutesDefault * 60f;
         }
 
         // Hands the routing and the bundling to a worker task.
@@ -197,6 +222,11 @@ namespace WhereTheyGo
             };
             pass.TargetLine = IndexOfLine(pass.TargetLineId);
             pass.Problem.TargetLine = pass.TargetLine;
+            // This pass answers the selection as it stands, whichever path started it.
+            // Recorded here, not only where a click starts a pass: a demand refresh that
+            // started with a fresh selection used to be followed by a second pass for
+            // the same answer, because the selection gate had never seen it.
+            m_RequestedLineId = pass.TargetLineId;
             pass.Journeys.AddRange(m_Journeys);
             m_PendingPass = pass;
             m_RoutingPending = true;
@@ -238,15 +268,16 @@ namespace WhereTheyGo
             return -1;
         }
 
-        // The worker's half: route every journey over the network as it stands, decide
-        // what the network carries, bundle the result into bands, and, when the player
-        // has a line selected, route the whole city a second time without that line,
-        // which is the only honest way to say what it is worth.
+        // The worker's half: route every journey over the network as it stands (which
+        // decides what the network carries and credits each line with the carried
+        // journeys riding it), bundle the result into bands, and, when the player has
+        // a line selected, route the whole city a second time without that line, which
+        // is the only honest way to say what it is worth.
         private static void RunRoutingPass(RoutingPass pass)
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
             RoutingResult routed = JourneyRouting.Evaluate(pass.Problem);
-            pass.Carried = JourneyRouting.MarkCarried(pass.Problem, routed, new float[pass.Problem.PairCount]);
+            pass.Carried = routed.Report;
             pass.Result = routed;
             pass.RouteMs = clock.ElapsedMilliseconds;
 
@@ -327,7 +358,7 @@ namespace WhereTheyGo
             m_ContributionLineId = pass.TargetLine >= 0 ? pass.TargetLineId : -1;
             m_LineContribution = pass.Contribution;
             m_CarriedReport = pass.Carried;
-            SetCarriedFigure(m_CarriedReport.Share);
+            SetCarriedFigure(m_CarriedReport.Share, m_CarriedReport.WalkedShare);
             m_Bands = pass.Bands;
             m_ExistingLineRiders.Clear();
             for (int i = 0; i < pass.Result.BaseRiders.Length && i < m_ExistingLines.Count; i++)
@@ -355,13 +386,18 @@ namespace WhereTheyGo
                 $"carried {(pass.Carried.CarriedPairs).ToString(CultureInfo.InvariantCulture)} pairs = " +
                 $"{(pass.Carried.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight " +
                 $"(faster than walking and under {(pass.Carried.CeilingSeconds).ToString("F0", CultureInfo.InvariantCulture)}s, " +
-                $"{(pass.Carried.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median of {pass.Carried.MedianSeconds.ToString("F0", CultureInfo.InvariantCulture)}s")})");
+                $"{(pass.Carried.CeilingSeconds >= Assumptions.MaxJourneySeconds ? "the fixed hour: too few carried journeys for a median" : $"{Assumptions.ServedCeilingMultiple.ToString("F0", CultureInfo.InvariantCulture)}x this city's median of {pass.Carried.MedianSeconds.ToString("F0", CultureInfo.InvariantCulture)}s")}); " +
+                $"walked {(pass.Carried.WalkedPairs).ToString(CultureInfo.InvariantCulture)} pairs = " +
+                $"{(pass.Carried.WalkedShare * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight " +
+                $"(within the {(problem.WalkedHorizonSeconds / 60f).ToString("F0", CultureInfo.InvariantCulture)} min horizon, left out of the carried share)");
             DeferredLog.Info(
                 $"Desire bands: {(bands.Bands.Length).ToString(CultureInfo.InvariantCulture)} from " +
                 $"{(problem.PairCount).ToString(CultureInfo.InvariantCulture)} door pairs " +
                 $"({(bands.MergedPairs).ToString(CultureInfo.InvariantCulture)} zone pairs folded into a neighbour at {(Assumptions.BandMergeMetres).ToString("F0", CultureInfo.InvariantCulture)} m), " +
                 $"heaviest {(bands.HeaviestWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day, " +
-                $"{(pass.BandMs).ToString(CultureInfo.InvariantCulture)} ms" +
+                $"{(pass.BandMs).ToString(CultureInfo.InvariantCulture)} ms; " +
+                $"{(bands.WalkedPairs).ToString(CultureInfo.InvariantCulture)} zone pairs entirely within walking distance folded away, " +
+                $"together {(bands.WalkedWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day walked in all" +
                 (bands.HiddenPairs > 0
                     ? $"; NOT SHOWN: {(bands.HiddenPairs).ToString(CultureInfo.InvariantCulture)} zone pairs past the cap of {(Assumptions.MaxBands).ToString(CultureInfo.InvariantCulture)} bands, together {(bands.HiddenWeight).ToString("F0", CultureInfo.InvariantCulture)} journeys/day"
                     : string.Empty));

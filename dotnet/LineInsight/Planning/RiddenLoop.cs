@@ -81,11 +81,11 @@ namespace WhereTheyGo
     // (RiddenLoopSlackSecondsPerVehicle); anything further off is a wrapped average and
     // is scaled down to the game's figure.
     //
-    // AT the cap that reconstruction is worthless, and this is the part that was wrong
-    // until 2026-09-20. When lineDuration has wrapped, the min picks the cap, so
+    // AT the cap that reconstruction is worthless, and this is the part that used to
+    // be wrong. When lineDuration has wrapped, the min picks the cap, so
     // m_VehicleInterval IS cap x target and carries nothing about this line. Charging
     // interval x fleetTarget then replaces one fabricated number with another: on
-    // Buslinie 1 it read 2975 s for a 6149 m bus loop, which is 7.4 km/h, while the
+    // Bus Line 1 it read 2975 s for a 6149 m bus loop, which is 7.4 km/h, while the
     // line's own free-flow time was 280 s. Those ride times are the transit graph's
     // edge costs, so the router believed riding that bus took ten times as long as it
     // does, and the round trip in its window contradicted the free-flow figure printed

@@ -16,6 +16,12 @@
          reaches them by reflection; that reason does not exist in this console
          harness, which links the same files. -->
     <NoWarn>CS0649;CA1515</NoWarn>
+    <!-- No apphost .exe: `dotnet run` then starts the DLL through the signed dotnet
+         host. Windows Smart App Control blocks an unsigned, freshly built executable
+         ("An Application Control policy has blocked this file"), and it has no
+         allow-list; a managed DLL loaded by the runtime is not subject to it.
+         Nothing else in the harness needs the .exe. -->
+    <UseAppHost>false</UseAppHost>
   </PropertyGroup>
 
   <ItemGroup>

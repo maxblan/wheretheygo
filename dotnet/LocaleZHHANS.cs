@@ -90,7 +90,9 @@ namespace WhereTheyGo
             { "WhereTheyGo.Panel[BandJourneysAtHour]", "{1} 有 {0} 次出行" },
             { "WhereTheyGo.Panel[BandJourneysDay]", "全天共 {0} 次" },
             { "WhereTheyGo.Panel[Carried]", "由公共交通承运" },
-            { "WhereTheyGo.Panel[CarriedCaption]", "占全部出行；当公共交通比步行更快时，这次出行才计入" },
+            { "WhereTheyGo.Panel[CarriedCaption]", "占比步行更远的出行；当公共交通在全程上比步行更快、且不比这座城市典型的公共交通出行慢太多时，这次出行才计入" },
+            { "WhereTheyGo.Panel[WalkedCaption]", "本市 {0}% 的出行短于步行上限：那是步行，不是公共交通的问题，已从上方数字中剔除" },
+            { "WhereTheyGo.Panel[WalkedFolded]", "每天 {0} 次出行为步行，其走廊不予绘制" },
             { "WhereTheyGo.Panel[Coverage]", "在步行可达范围内" },
 
 
@@ -119,12 +121,9 @@ namespace WhereTheyGo
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "常规" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "规划" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "服务标准" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "“已服务”的步行上限（分钟）" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "当一次出行的两端都在距离已服务站点这么多分钟步行范围内时，这次出行才算已服务。" },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "显示信息视图" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "打开本模组的信息视图。游戏的信息视图菜单里有同一个开关。" },
             };
 
             foreach (KeyValuePair<string, string> entry in Literals)

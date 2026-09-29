@@ -90,7 +90,9 @@ namespace WhereTheyGo
             { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} поездок в {1}" },
             { "WhereTheyGo.Panel[BandJourneysDay]", "всего {0} в день" },
             { "WhereTheyGo.Panel[Carried]", "Перевозит общественный транспорт" },
-            { "WhereTheyGo.Panel[CarriedCaption]", "от всех поездок; поездка считается, когда транспорт делает её быстрее ходьбы" },
+            { "WhereTheyGo.Panel[CarriedCaption]", "от поездок длиннее пешей прогулки; поездка считается, когда транспорт быстрее ходьбы на всём пути и не намного медленнее типичной поездки на транспорте в этом городе" },
+            { "WhereTheyGo.Panel[WalkedCaption]", "{0} % поездок города короче порога пешей доступности: это ходьба, а не вопрос к транспорту, и в цифры выше они не входят" },
+            { "WhereTheyGo.Panel[WalkedFolded]", "{0} поездок в день пешком, их коридоры не нарисованы" },
             { "WhereTheyGo.Panel[Coverage]", "В пешей доступности" },
 
 
@@ -119,12 +121,9 @@ namespace WhereTheyGo
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Общее" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Планирование" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Стандарты обслуживания" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Порог пешей доступности для «обслужено» (мин)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "Поездка считается обслуженной, когда оба её конца лежат в пределах такого числа минут ходьбы от обслуживаемой остановки." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Показать индикатор" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Открывает индикатор мода. В меню индикаторов игры есть тот же переключатель." },
             };
 
             foreach (KeyValuePair<string, string> entry in Literals)

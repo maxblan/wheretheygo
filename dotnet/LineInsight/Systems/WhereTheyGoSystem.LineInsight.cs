@@ -28,10 +28,6 @@ namespace WhereTheyGo
 
         private readonly HashSet<int> m_LiveLineIds = new HashSet<int>();
 
-        // Line id to its entity, so a line the player clicks can be found again. The
-        // id is index|version, which survives the index being reused.
-        private readonly Dictionary<int, Entity> m_LineEntities = new Dictionary<int, Entity>();
-
         // What the last routing attributed to each existing line, by line id: riders a
         // day and their split by period (RoutingResult.BaseRiders).
         private readonly Dictionary<int, (float riders, float day, float night)> m_ExistingLineRiders =
@@ -47,7 +43,7 @@ namespace WhereTheyGo
 
         private float m_LastLineSample;
 
-        // One reading of every line into the window when one is due (register A8.5:
+        // One reading of every line into the window when one is due (once
         // every ReadingIntervalFrames of SIMULATION time, so the sample is the same at
         // every speed and a paused game adds nothing). Reads counts only, never the
         // collection the route worker holds, so it runs whether or not a pass is out.
@@ -85,7 +81,7 @@ namespace WhereTheyGo
             var simulation = World.GetExistingSystemManaged<SimulationSystem>();
             uint frame = simulation?.frameIndex ?? 0u;
             Lines.Collect(EntityManager, m_LineQuery, m_PrefabSystem, m_NameSystem,
-                m_ExistingLines, m_TransitStops, m_StopIndices, m_LineEntities, m_WarnedRiddenLoops);
+                m_ExistingLines, m_TransitStops, m_StopIndices, m_WarnedRiddenLoops);
             for (int i = 0; i < m_ExistingLines.Count; i++)
             {
                 ExistingLine line = m_ExistingLines[i];

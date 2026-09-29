@@ -70,8 +70,10 @@ namespace WhereTheyGo
             {
                 DrawnBand drawn = view.Drawn[i];
                 Band band = drawn.Band;
-                float footA = TerrainUtils.SampleHeight(ref heightData, new float3(band.Ax, 0f, band.Az));
-                float footB = TerrainUtils.SampleHeight(ref heightData, new float3(band.Bx, 0f, band.Bz));
+                // The renderer's own feet, lift included, so the arc walked here is the
+                // arc drawn there.
+                float footA = BandRenderer.GroundHeight(ref heightData, band.Ax, band.Az);
+                float footB = BandRenderer.GroundHeight(ref heightData, band.Bx, band.Bz);
                 float distanceSq = DistanceSqOnScreen(band, footA, footB, viewProjection, pixelWidth, pixelHeight, px, py);
                 if (distanceSq >= bestDistance)
                 {

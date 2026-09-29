@@ -9,9 +9,15 @@
     // middle silently moved every later one.
     internal struct PanelFigures
     {
-        // How much of the city's travel the network carries, 0..1
-        // (JourneyRouting.MarkCarried).
+        // How much of the travel transit could serve the network carries, 0..1
+        // (JourneyRouting.MarkCarried, CarriedReport.Share).
         public float CarriedShare;
+
+        // How much of ALL the city's travel is a walk, 0..1: journeys within the
+        // walking horizon, left out of CarriedShare on both sides
+        // (CarriedReport.WalkedShare). Shown under the headline so
+        // "carried" is read against the journeys it was measured over.
+        public float WalkedShare;
 
         // How much of it has BOTH ends within walking distance of a served stop, 0..1,
         // and what "walking distance" is set to.

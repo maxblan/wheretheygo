@@ -2,12 +2,11 @@
 
 namespace WhereTheyGo
 {
-    // How well the served network reaches the people who want to travel (register
-    // A1.8/A1.9, decided 2026-09-05): the share of journeys whose BOTH ends lie within
-    // a walking horizon of a served stop, and the inequality of walking times to
-    // service. The share is the sufficientarian floor the line selection has to
-    // reach before it may optimise efficiency; the Gini is a diagnostic, scale-free,
-    // so not a target.
+    // How well the served network reaches the people who want to travel: the share of
+    // journeys whose BOTH ends lie within a walking horizon of a served stop, and the
+    // inequality of walking times to service. The share is the sufficientarian floor
+    // the line selection has to reach before it may optimise efficiency; the Gini is a
+    // diagnostic, scale-free, so not a target.
     internal sealed class CoverageReport
     {
         public int Trips;

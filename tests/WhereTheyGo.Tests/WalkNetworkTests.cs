@@ -52,6 +52,7 @@ namespace WhereTheyGo.Tests
             TileSnap snap = WalkAccess.SnapTiles(graph, 4, 2, 0f, 0f, 32f, Assumptions.AccessWalkMs);
 
             AssertTrue(snap.Index is not null, "the snap carries the index it searched with");
+            AssertTrue(ReferenceEquals(snap.Graph, graph), "and the graph its indices belong to");
             AssertTrue(snap.TileNode.Length == 8 && snap.TileWalkMs.Length == 8, "one entry per tile");
             // Tile 0's centre is (16, 16); node 0 sits at (0, 0) and node 1 is not
             // siteable, so every tile on the first row takes node 0 or node 2.

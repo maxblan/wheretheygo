@@ -90,7 +90,9 @@ namespace WhereTheyGo
             { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} viagens às {1}" },
             { "WhereTheyGo.Panel[BandJourneysDay]", "{0} por dia no total" },
             { "WhereTheyGo.Panel[Carried]", "Transportadas pelo transporte público" },
-            { "WhereTheyGo.Panel[CarriedCaption]", "de todas as viagens; uma viagem conta quando o transporte público a torna mais rápida do que caminhar" },
+            { "WhereTheyGo.Panel[CarriedCaption]", "das viagens mais longas do que uma caminhada; uma viagem conta quando o transporte público vence a caminhada no trajeto inteiro e não é muito mais lento do que uma viagem típica de transporte público nesta cidade" },
+            { "WhereTheyGo.Panel[WalkedCaption]", "{0} % das viagens da cidade são mais curtas do que o horizonte de caminhada: uma caminhada, não uma questão de transporte público, e deixadas fora dos números acima" },
+            { "WhereTheyGo.Panel[WalkedFolded]", "{0} viagens por dia a pé, seus corredores não desenhados" },
             { "WhereTheyGo.Panel[Coverage]", "A uma caminhada de distância" },
 
 
@@ -119,12 +121,9 @@ namespace WhereTheyGo
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Geral" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planejamento" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Padrões de serviço" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Horizonte de caminhada para \"atendido\" (min)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "Uma viagem conta como atendida quando as duas pontas estão a esse tanto de minutos de caminhada de uma parada atendida." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Mostrar o informativo" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Abre o informativo do mod. O menu de informativos do jogo tem o mesmo botão." },
             };
 
             foreach (KeyValuePair<string, string> entry in Literals)

@@ -90,7 +90,9 @@ namespace WhereTheyGo
             { "WhereTheyGo.Panel[BandJourneysAtHour]", "{0} déplacements à {1}" },
             { "WhereTheyGo.Panel[BandJourneysDay]", "{0} par jour en tout" },
             { "WhereTheyGo.Panel[Carried]", "Transportés par le transport public" },
-            { "WhereTheyGo.Panel[CarriedCaption]", "de tous les déplacements ; un déplacement compte lorsque le transport public le rend plus rapide que la marche" },
+            { "WhereTheyGo.Panel[CarriedCaption]", "des déplacements plus longs qu'une marche ; un déplacement compte lorsque le transport public bat la marche sur tout le trajet et n'est pas beaucoup plus lent qu'un déplacement typique en transport public dans cette ville" },
+            { "WhereTheyGo.Panel[WalkedCaption]", "{0} % des déplacements de la ville sont plus courts que l'horizon de marche : une marche, pas une question de transport public, laissés hors des chiffres ci-dessus" },
+            { "WhereTheyGo.Panel[WalkedFolded]", "{0} déplacements par jour à pied, leurs corridors non dessinés" },
             { "WhereTheyGo.Panel[Coverage]", "À distance de marche" },
 
 
@@ -119,12 +121,9 @@ namespace WhereTheyGo
             {
                 { m_Setting.GetSettingsLocaleID(), "Where They Go" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Général" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kPlanningGroup), "Planification" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kStandardsGroup), "Standards de service" },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.CoverageWalkMinutes)), "Horizon de marche pour « desservi » (min)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.CoverageWalkMinutes)), "Un déplacement compte comme desservi lorsque ses deux extrémités se trouvent à moins de ce nombre de minutes de marche d'un arrêt desservi." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ShowInfoview)), "Afficher l'affichage des infos" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ShowInfoview)), "Ouvre l'affichage des infos du mod. Le menu des affichages des infos du jeu contient le même interrupteur." },
             };
 
             foreach (KeyValuePair<string, string> entry in Literals)

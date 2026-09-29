@@ -49,9 +49,9 @@ namespace WhereTheyGo
             m_VanillaPlaceableInfoviews = null;
         }
 
-        // Opens or closes our infoview on behalf of the Options page. Activation goes
-        // through ToolSystem.infoview, which is what assigns each infomode its index in
-        // its colour group.
+        // Opens or closes our infoview for the top-left toolbar button, the only way
+        // in. Activation goes through ToolSystem.infoview, which is what
+        // assigns each infomode its index in its colour group.
         public void SetActive(bool active)
         {
             if (m_InfoviewPrefab is null)

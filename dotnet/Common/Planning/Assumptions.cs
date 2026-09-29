@@ -2,13 +2,12 @@
 
 namespace WhereTheyGo
 {
-    // Every number the mod computes or draws with, in one place (user decision
-    // 2026-09-06): a value that lives in one file cannot drift between two. Each entry
-    // says which register row (A1.x ...) it implements or which game type it mirrors;
-    // the comments were moved here with the values. Per-mode tables live at the end.
-    // Two kinds of number stay elsewhere on purpose: the bounds of the settings page
-    // (a UI contract, beside the property they bound) and the save-format version and
-    // its size caps (a wire contract, beside the serializer).
+    // Every number the mod computes or draws with, in one place: a value that lives in
+    // one file cannot drift between two. Each entry says what it models or which game
+    // type it mirrors; the comments were moved here with the values. Per-mode tables
+    // live at the end. Two kinds of number stay elsewhere on purpose: the bounds of the
+    // settings page (a UI contract, beside the property they bound) and the save-format
+    // version and its size caps (a wire contract, beside the serializer).
     internal static class Assumptions
     {
         // ---- The game clock
@@ -54,8 +53,8 @@ namespace WhereTheyGo
 
         // Where one class of walk-to-transit ends and the next begins, as multiples of
         // the player's own coverage horizon, so the four classes the panel draws move
-        // with the setting instead of contradicting it. At the default ten minutes
-        // they read under 5 / 5-10 / 10-20 / no stop reached. The last class holds
+        // with the setting instead of contradicting it. At the default five minutes
+        // they read under 2.5 / 2.5-5 / 5-10 / no stop reached. The last class holds
         // everything the access field never reached, which it searches to
         // AccessFieldHorizonMultiple times the horizon.
         public const float WalkClassNearShare = 0.5f;
@@ -63,16 +62,15 @@ namespace WhereTheyGo
         public const float WalkClassFarShare = 2f;
 
         // ---- Walking
-        // Walking-time horizons of the access model (register A1.1/A1.2, decided
-        // 2026-09-05). Access: the straight-line walk from a door to the pavement
-        // network beyond which a point is treated as off-network. Transfer: how long a
-        // rider walks to change vehicle (A1.11).
+        // Walking-time horizons of the access model. Access: the straight-line walk
+        // from a door to the pavement network beyond which a point is treated as
+        // off-network. Transfer: how long a rider walks to change vehicle.
         public const int AccessWalkMs = 120_000;
 
         public const int TransferWalkMs = 180_000;
 
         // How long a rider will walk to change vehicle: three minutes at the planning
-        // walking speed (register A1.11; the literature gives transfer TIME weights,
+        // walking speed (the literature gives transfer TIME weights,
         // no distance threshold - TCQSM Exhibit 4-5). Metres follow from the speed.
         public const float TransferWalkSeconds = TransferWalkMs / 1000f;
 
@@ -86,7 +84,7 @@ namespace WhereTheyGo
         // Walking is slow enough that a long connection is worse than a detour by
         // vehicle, which is what keeps interchanges local.
         // 1.2 m/s is the planning value (TCQSM 3rd ed. ch. 5; FHWA-RD-98-107), not the
-        // brisk 1.4 the routing used before - register decision, 2026-09-04.
+        // brisk 1.4 the routing used before.
         public const float WalkSpeed = 1.2f;
 
         // Flat cost of boarding, on top of the wait. Matches TransportPathfind's
@@ -97,8 +95,19 @@ namespace WhereTheyGo
         public const float DefaultBoardPenaltySeconds = 5f;
 
         // ---- Journeys
-        // How many game days of shopping and leisure journeys the observation keeps
-        // (author's decision 2026-09-14). Three rather than one: the hour-by-hour
+        // The city's working hours when EconomyParameterData is not there to read, as
+        // day fractions: the game's own 06:00 and 17:00.
+        public const float WorkDayStartDefault = 0.25f;
+
+        public const float WorkDayEndDefault = 0.7083f;
+
+        // Two doors closer than this, in squared metres, are the same door: working
+        // from the building one lives in, or being first seen already at the shop, is
+        // not a journey.
+        public const float MinJourneyDistanceSq = 1f;
+
+        // How many game days of shopping and leisure journeys the observation keeps.
+        // Three rather than one: the hour-by-hour
         // picture a single day gives jumps about, because an hour of one day is a few
         // hundred observations. Averaging three days steadies it at three times the
         // memory - averaging, so each observed journey weighs one over the days held
@@ -113,7 +122,7 @@ namespace WhereTheyGo
 
         // ---- Desire bands (the map's main layer)
         // Two zone pairs are the same corridor when BOTH their ends lie this close
-        // together. Raised from 250 m on 2026-09-14: at the zone grid's own 256 m
+        // together. Raised from 250 m: at the zone grid's own 256 m
         // pitch almost nothing merged beyond what the grid had already merged, and
         // the map drew hundreds of near-duplicate corridors on top of each other.
         public const float BandMergeMetres = 450f;
@@ -247,7 +256,7 @@ namespace WhereTheyGo
 
         // The building ramp: walking time from a door to the nearest served stop, pale
         // straw at a stop through orange to deep red-brown at or beyond the horizon.
-        // ColorBrewer YlOrRd (author's request 2026-09-06), monotone in lightness for
+        // ColorBrewer YlOrRd, monotone in lightness for
         // the same reason as the band ramp.
         public static readonly float[] WalkColourNear = { 1f, 0.97f, 0.75f };
 
@@ -299,8 +308,10 @@ namespace WhereTheyGo
         // carried in any useful sense, so it keeps its whole weight.
         public const float ServedCeilingMultiple = 3f;
 
-        // Below this many carried journeys the median is noise, and the fixed hour is
-        // the more honest reference.
+        // Below this many carried PAIRS the median is noise, and the fixed hour is the
+        // more honest reference. A count of pairs, not of journey weight, even though
+        // the median itself is weighted: it is statistical support, and
+        // one heavy pair is still one observation.
         public const int MinPairsForServedMedian = 20;
 
         // ---- The transit graph (TransitGraph, JourneyRouting)
@@ -316,11 +327,11 @@ namespace WhereTheyGo
 
         // ---- Line readings
         // The planning load of a line is this quantile (nearest rank) of the passengers
-        // aboard over the window's active readings (A8.4, user decision 2026-09-06): the
+        // aboard over the window's active readings: the
         // single busiest reading is kept beside it for the display but sizes nothing.
         public const float PlanningLoadQuantile = 0.9f;
 
-        // Readings are taken in GAME time, this many per game day (A8.5, 2026-09-06),
+        // Readings are taken in GAME time, this many per game day,
         // so the sample is the same at every simulation speed. 96 = one every 15 game
         // minutes; the frame gate below is the day divided by it.
         public const int ReadingsPerGameDay = 96;
@@ -372,7 +383,7 @@ namespace WhereTheyGo
 
         // ---- Cadences (real seconds; the readings above run on the game clock)
         // How often the live city is scanned for shopping and leisure journeys under
-        // way (register A0.1). A citizen stays inside a building for game-hours and a
+        // way. A citizen stays inside a building for game-hours and a
         // journey lasts game-minutes, so one scan a second - a few game minutes at
         // normal speed - sees every stay and most departures.
         public const float TripObservationSeconds = 1f;
@@ -396,7 +407,16 @@ namespace WhereTheyGo
         public const float DemandRefreshSeconds = 30f;
 
         // ---- Options defaults
-        public const int CoverageWalkMinutesDefault = 10;
+        // The walking horizon the player starts with: how far a door may be from a
+        // served stop to count as connected, and how long a whole journey may take on
+        // foot before it is a walk rather than a transit question. Lowered from ten to
+        // five minutes after reading a live city: at ten, 57.5 % of the journeys left
+        // the map as walks and the network read as carrying 95.9 % of what remained, a
+        // threshold describing the city rather than the network. The time is a straight
+        // line at WalkSpeed, so five minutes is 360 m as the crow flies, nearer seven
+        // on real pavements. This is also the slider's floor
+        // (Setting.kCoverageMinutesMin).
+        public const int CoverageWalkMinutesDefault = 5;
 
         // ---- Per-mode tables (a switch per property: adding a mode is one visible edit
         // per property and the compiler cannot fill in a default for a forgotten one).

@@ -20,7 +20,7 @@ namespace WhereTheyGo
 
         // A reading with vehicles out. An inactive line (a day-only line at night, no
         // active buildings) reads capacity 0 and says nothing about demand, so it is
-        // left out of every mean (register A8.4, decided 2026-09-06).
+        // left out of every mean.
         public readonly bool Active => m_Capacity > 0;
     }
 
@@ -67,7 +67,7 @@ namespace WhereTheyGo
     // advancing when the game is paused and advance faster when the player fast
     // forwards, so a window of 24 game hours stays 24 game hours either way. A wall
     // clock would drain the window while the player sat in the pause menu. Readings
-    // are taken every ReadingIntervalFrames for the same reason (A8.5).
+    // are taken every ReadingIntervalFrames for the same reason.
     internal sealed class LineHistory
     {
         private readonly Dictionary<int, List<LineObservation>> m_ByLine =
@@ -132,6 +132,16 @@ namespace WhereTheyGo
             return m_ByLine.TryGetValue(lineId, out List<LineObservation>? samples) ? samples : Array.Empty<LineObservation>();
         }
 
+        // The frame of one line's newest sample, 0 for a line with none: how recently
+        // it was observed. A line's samples are in frame order (Record only ever
+        // appends, Evict only ever trims the front), so the newest is the last.
+        public uint NewestFrameOf(int lineId)
+        {
+            return m_ByLine.TryGetValue(lineId, out List<LineObservation>? samples) && samples.Count > 0
+                ? samples[samples.Count - 1].m_Frame
+                : 0u;
+        }
+
         // What one line carried in each hour of the day, over every reading in the
         // window: the mean riders aboard and the mean seats offered. Hours the window
         // never saw come back with no samples, which the panel draws as a gap rather
@@ -185,7 +195,7 @@ namespace WhereTheyGo
         }
 
         // Whether a reading taken at `frame` is due: the first ever, or one reading
-        // interval since the newest (A8.5, 96 a game day). A rewound clock is due too,
+        // interval since the newest (96 a game day). A rewound clock is due too,
         // and Record then restarts the window.
         public bool ReadingDue(uint frame)
         {
@@ -361,7 +371,7 @@ namespace WhereTheyGo
             return true;
         }
 
-        // Nearest-rank quantile (A8.4): the value at position ⌈q·n⌉ of the sorted
+        // Nearest-rank quantile: the value at position ⌈q·n⌉ of the sorted
         // values, no interpolation, so the result is always a count someone recorded.
         public static int Quantile(List<int> values, float q)
         {

@@ -84,8 +84,8 @@ dotnet_diagnostic.MA0181.severity = none
 # Lower these numbers as methods are split; never raise them.
 #
 # Both figures are what the build says, not what anyone counted. They came down from
-# 138/60 when the suggestion pipeline was removed (2026-09-14), to 112 and then 101 as
-# the locale dictionaries were tidied, and to 96 on 2026-09-20 when the locale tables
+# 138/60 when the suggestion pipeline was removed, to 112 and then 101 as the locale
+# dictionaries were tidied, and to 96 when the locale tables
 # stopped being method bodies at all.
 #
 # That last step is why the number finally means something. The tables are DATA, and

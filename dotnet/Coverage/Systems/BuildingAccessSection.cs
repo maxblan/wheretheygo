@@ -8,8 +8,7 @@ using Transform = Game.Objects.Transform;
 namespace WhereTheyGo
 {
     // A section in the game's own selected-building window: the walk from this
-    // building to the nearest stop the city's lines actually serve (author's request
-    // 2026-09-06).
+    // building to the nearest stop the city's lines actually serve.
     //
     // It is the SAME number that colours the building in the transit-access infoview,
     // read back out of the same tile field, so the map and the panel cannot disagree.

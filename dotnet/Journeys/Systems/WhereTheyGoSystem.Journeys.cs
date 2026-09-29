@@ -41,8 +41,8 @@ namespace WhereTheyGo
 
         private void ReadWorkDay(out float start, out float end)
         {
-            start = 0.25f;
-            end = 0.7083f;
+            start = Assumptions.WorkDayStartDefault;
+            end = Assumptions.WorkDayEndDefault;
             if (!m_EconomyQuery.IsEmptyIgnoreFilter)
             {
                 EconomyParameterData economy = m_EconomyQuery.GetSingleton<EconomyParameterData>();
@@ -108,7 +108,7 @@ namespace WhereTheyGo
                     WorkDayEnd = workDayEnd,
                     // School trips are real transit demand but shorter and less
                     // peaked than commutes.
-                    // Register A0.3: every purpose weighs the same.
+                    // Every purpose weighs the same.
                     SchoolTripWeight = 1f,
                     Trips = trips.AsParallelWriter(),
                 };
@@ -116,6 +116,8 @@ namespace WhereTheyGo
                 job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
                 m_TripObserver.Drain(trips);
                 totalWeight = TravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_Journeys, out tripCount);
+                // New journeys, new pair table: the passes build it on first use.
+                m_PairTable = null;
             }
             finally
             {

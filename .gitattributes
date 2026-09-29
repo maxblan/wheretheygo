@@ -1,5 +1,5 @@
 # Every text file is committed with LF and checked out with LF on every platform,
-# whatever core.autocrlf says on the machine. On 2026-09-28 a tool flipped 83 tracked
+# whatever core.autocrlf says on the machine. A tool once flipped 83 tracked
 # files to CRLF in one sitting, which would have buried a Makefile change under
 # seventeen thousand whitespace lines and left the python shebang ending in "\r".
 # .editorconfig says the same thing to editors; this says it to git.

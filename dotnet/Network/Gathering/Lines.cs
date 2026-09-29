@@ -69,13 +69,11 @@ namespace WhereTheyGo
             List<ExistingLine> lines,
             List<float2Like> stopPositions,
             Dictionary<Entity, int> stopIndices,
-            Dictionary<int, Entity> lineEntities,
             HashSet<int> warnedRiddenLoops)
         {
             lines.Clear();
             stopPositions.Clear();
             stopIndices.Clear();
-            lineEntities.Clear();
             var ignored = new List<string>();
 
             ForEachLine(entityManager, lineQuery, (lineEntity, transportLine, lineData, waypoints) =>
@@ -88,13 +86,12 @@ namespace WhereTheyGo
                     m_Schedule = ScheduleOf(entityManager, lineEntity),
                 };
 
-                // Outside connections are outside the mod's model (user decision
-                // 2026-09-04, reaffirmed 2026-09-06), so a line that cannot carry a
-                // single journey BETWEEN TWO PLACES IN THE CITY carries only travellers
-                // the demand model never sees: it is neither judged nor routed over.
-                // Counted rather than "calls at one at all", so a regional train that
-                // also serves three city stations keeps them. Valmare's three train
-                // lines had no city stop at all.
+                // Outside connections are outside the mod's model, so a line that
+                // cannot carry a single journey BETWEEN TWO PLACES IN THE CITY carries
+                // only travellers the demand model never sees: it is neither judged nor
+                // routed over. Counted rather than "calls at one at all", so a regional
+                // train that also serves three city stations keeps them. Valmare's
+                // three train lines had no city stop at all.
                 //
                 // Decided BEFORE the waypoints are read: ReadWaypoints registers every
                 // stop it meets in the shared stop table, and a stop registered there is
@@ -135,7 +132,6 @@ namespace WhereTheyGo
                 line.m_NotEnoughVehicles = (flags & TransportLineFlags.NotEnoughVehicles) != 0;
 
                 lines.Add(line);
-                lineEntities[line.m_Id] = lineEntity;
             });
 
             if (ignored.Count > 0)
@@ -234,7 +230,7 @@ namespace WhereTheyGo
         }
 
         // One reading of every line, meaning the counts the rolling window keeps
-        // (register A8.5), without rebuilding the collection the route worker may be
+        // without rebuilding the collection the route worker may be
         // reading.
         public static void Observe(EntityManager entityManager, EntityQuery lineQuery, uint frame, float timeOfDay, LineHistory history, HashSet<int> liveLineIds)
         {
@@ -437,7 +433,7 @@ namespace WhereTheyGo
         // NameSystem.GetRenderedLabelName is NOT usable here: for an unnamed line the
         // game returns Name.FormattedName("Assets.ROUTE_NAME[Bus Line]", "NUMBER", n)
         // and the UI layer substitutes the argument, so the C# label helper hands back
-        // the raw pattern ("Buslinie {NUMBER}") with no number in it, so every bus line
+        // the raw pattern ("Bus Line {NUMBER}") with no number in it, so every bus line
         // would read the same. So this follows NameSystem.GetRouteName and does the
         // substitution the UI would have done.
         [SuppressMessage("Design", "CA1031:Do not catch general exception types",
@@ -552,7 +548,11 @@ namespace WhereTheyGo
                 if (closes)
                 {
                     stops[count - 1] = line.m_StopIndices[0];
-                    rides[count - 1] = line.m_ClosingRideSeconds;
+                    // Plus whatever accumulated before the first stop was reached
+                    // (m_RideSeconds[0], zero unless a shaping waypoint precedes it):
+                    // the router ignores index 0, and the ride from the last stop to
+                    // the first is the closing segment AND those hops.
+                    rides[count - 1] = line.m_ClosingRideSeconds + line.m_RideSeconds[0];
                 }
 
                 result.Add(new TransitLine

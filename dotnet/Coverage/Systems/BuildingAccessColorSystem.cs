@@ -15,7 +15,7 @@ using Transform = Game.Objects.Transform;
 namespace WhereTheyGo
 {
     // Colours every building by how far its door is from a served stop, while the
-    // transit-access infomode is on (author's request 2026-09-06).
+    // transit-access infomode is on.
     //
     // Why a system of its own, between two of the game's. A building's colour lives in
     // Game.Objects.Color {m_Index, m_Value}: the index selects one of the infomode
@@ -84,6 +84,9 @@ namespace WhereTheyGo
 
         protected override void OnDestroy()
         {
+            // The same wait TryTakeField makes: the last colour job only HOLDS the
+            // array through Dependency, and freeing it under a running job is the race.
+            Dependency.Complete();
             if (m_Field.IsCreated)
             {
                 m_Field.Dispose();
@@ -172,6 +175,12 @@ namespace WhereTheyGo
             {
                 return true;
             }
+
+            // The previous frame's job reads m_Field, and Dependency only HOLDS it: it
+            // is not finished for being handed on. It has to be, before the array is
+            // freed or copied over under it. Once per demand refresh, so it costs
+            // nothing worth measuring.
+            Dependency.Complete();
 
             if (m_Field.IsCreated && m_Field.Length != source.Length)
             {

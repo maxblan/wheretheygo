@@ -27,7 +27,7 @@ namespace WhereTheyGo.Tests
             };
         }
 
-        private static BandSet BundleOf(List<Journey> journeys, bool[]? carried, float mergeMetres, int maxBands)
+        private static BandSet BundleOf(List<Journey> journeys, bool[]? carried, float mergeMetres, int maxBands, bool[]? walked = null)
         {
             int n = journeys.Count;
             var ox = new float[n];
@@ -53,8 +53,73 @@ namespace WhereTheyGo.Tests
                 PairDz = dz,
                 PairWeight = weight,
             };
-            var routed = new RoutingResult { Carried = carried ?? new bool[n] };
+            var routed = new RoutingResult { Carried = carried ?? new bool[n], Walked = walked ?? new bool[n] };
             return DesireBands.Build(journeys, pairs, routed, BandWorldMin, BandGrid, mergeMetres, maxBands);
+        }
+
+        // A walked door pair (JourneyRouting.MarkWalked) is on no
+        // band: a zone pair that is all walks is folded away and counted, a mixed one
+        // gives its band only the part transit could serve, and the city's walked total
+        // reaches the panel through the view.
+        private static void WalkedJourneysFoldAwayFromTheBands()
+        {
+            var journeys = new List<Journey>
+            {
+                // One corridor, three door pairs in the same zone pair: one carried, one
+                // a walk, one neither. All leave at eight and come back at five.
+                Commute(100f, 100f, 3000f, 100f, 40f, 8, 17),
+                Commute(150f, 100f, 3050f, 100f, 40f, 8, 17),
+                Commute(120f, 100f, 3020f, 100f, 20f, 8, 17),
+                // A second corridor every journey of which is a walk.
+                Commute(100f, 3000f, 3000f, 3000f, 10f, 9, 18),
+            };
+            bool[] carried = { true, false, false, false };
+            bool[] walked = { false, true, false, true };
+
+            BandSet set = BundleOf(journeys, carried, Assumptions.BandMergeMetres, Assumptions.MaxBands, walked);
+
+            AssertTrue(set.Bands.Length == 1, $"the all-walk corridor is not a band, got {set.Bands.Length.ToString(CultureInfo.InvariantCulture)}");
+            AssertEqual(1, set.WalkedPairs, 0, "and is counted as folded away");
+            AssertEqual(50f, set.WalkedWeight, 1e-3f, "the walked total is the whole city's: the second corridor and the walked door pair of the first");
+            AssertEqual(0, set.HiddenPairs, 0, "it is not what the cap hides");
+
+            Band band = set.Bands[0];
+            AssertEqual(60f, band.Weight, 1e-3f, "the band weighs what transit could serve: the carried pair and the uncarried one, not the walk");
+            AssertEqual(40f, band.CarriedWeight, 1e-3f, "the carried part is the carried pair");
+            AssertTrue(Math.Abs(band.CarriedShare - (40f / 60f)) < 1e-6f, "so the colour is carried over servable, not over everything");
+            AssertEqual(1, band.Pairs, 0, "one servable zone pair");
+            AssertEqual(60f, set.HeaviestWeight, 1e-3f, "and the scale follows the servable weight");
+
+            // The hours are the zone pair's, scaled to its servable share, so the band's
+            // day is its weight and the strip cannot draw the walk it does not hold.
+            AssertEqual(60f, band.DayWeight(Band.AllPurposes), 1e-3f, "the band's day is its servable weight");
+            AssertEqual(60f, band.WeightAtHour(8, Band.AllPurposes), 1e-3f, "the morning departures are scaled the same way");
+            AssertEqual(60f, band.AtoB((int)JourneyPurpose.Work, 8), 1e-3f, "leaving A at eight");
+            AssertEqual(60f, band.BtoA((int)JourneyPurpose.Work, 17), 1e-3f, "and B at five");
+            AssertEqual(0f, set.HourlyProfile(Band.AllPurposes)[9], 1e-3f, "the all-walk corridor's nine o'clock is on no band");
+
+            // The ends are the mean of the doors ON the band: the walked pair's doors
+            // pull them nowhere.
+            AssertEqual(((100f * 40f) + (120f * 20f)) / 60f, band.Ax, 1e-2f, "the A end is the weighted mean of the servable doors");
+
+            BandView view = BandView.Of(set, hour: -1, Band.AllPurposes, thresholdShare: 0f);
+            AssertEqual(50f, view.WalkedWeight, 1e-3f, "the view passes the walked total through");
+            AssertEqual(60f, view.DayWeight, 1e-3f, "and its day weight is the servable journeys only");
+            AssertEqual(50f, BandView.Of(set, hour: 3, Band.AllPurposes, thresholdShare: 0f).WalkedWeight, 1e-3f, "an hour nobody travels in still knows the walks");
+            AssertEqual(0f, BandView.Of(null, hour: -1, Band.AllPurposes, thresholdShare: 0f).WalkedWeight, 0f, "no bands at all is no walks");
+
+            // A city every journey of which is a walk has no bands and still says so.
+            BandSet allWalks = BundleOf(
+                new List<Journey> { Commute(100f, 3000f, 3000f, 3000f, 10f, 9, 18) },
+                null, Assumptions.BandMergeMetres, Assumptions.MaxBands, new[] { true });
+            AssertTrue(allWalks.Bands.Length == 0 && allWalks.WalkedPairs == 1, "one walked zone pair and no band");
+            AssertEqual(10f, BandView.Of(allWalks, hour: -1, Band.AllPurposes, thresholdShare: 0f).WalkedWeight, 1e-3f, "the empty view carries the walked total");
+
+            // Nothing walked leaves every number where it was.
+            BandSet plain = BundleOf(journeys, carried, Assumptions.BandMergeMetres, Assumptions.MaxBands);
+            AssertTrue(plain.Bands.Length == 2 && plain.WalkedPairs == 0, "without the flags both corridors are bands");
+            AssertEqual(0f, plain.WalkedWeight, 0f, "and nothing is walked");
+            AssertEqual(100f, plain.Bands[0].Weight, 1e-3f, "the corridor weighs every journey on it");
         }
 
         private static void BandsBundleNeighbouringCorridors()
@@ -551,6 +616,54 @@ namespace WhereTheyGo.Tests
             BandGeometry.Colour(2f, out _, out _, out float bHigh);
             AssertTrue(rLow == r0 && bHigh == b1, "a share outside 0..1 clamps rather than running off the ramp");
 
+        }
+
+        // The selected line's highlight follows what the network CARRIES: a band whose
+        // only journeys the line makes faster than walking, but not fast enough for
+        // this city, is not lit up as riding it. The routing itself decides which pairs
+        // ride the target, so this goes through it rather than through a hand-set
+        // RidesTarget.
+        private static void BandHighlightFollowsCarried()
+        {
+            RoutingProblem problem = CeilingBitesProblem();
+            int last = CeilingFixtureShortPairs;
+            var journeys = new List<Journey>();
+            for (int i = 0; i < problem.PairCount; i++)
+            {
+                journeys.Add(Commute(problem.PairOx[i], problem.PairOz[i], problem.PairDx[i], problem.PairDz[i], problem.PairWeight[i], 8, 17));
+            }
+
+            RoutingResult routed = JourneyRouting.Evaluate(problem);
+            AssertTrue(routed.Transit[last] < routed.WalkOnly[last] && !routed.Carried[last], "the fixture's long ride beats walking and is over the ceiling");
+
+            // No bundling, so every zone pair is its own band and the long one can be
+            // found by its ends.
+            BandSet set = DesireBands.Build(journeys, problem, routed, BandWorldMin, BandGrid, 0f, Assumptions.MaxBands);
+            AssertTrue(set.Bands.Length == problem.PairCount, $"one band per pair, got {set.Bands.Length.ToString(CultureInfo.InvariantCulture)}");
+            int longBand = -1;
+            int shortBands = 0;
+            for (int b = 0; b < set.Bands.Length; b++)
+            {
+                Band band = set.Bands[b];
+                if (band.Ax == problem.PairOx[last] && band.Bx == problem.PairDx[last])
+                {
+                    longBand = b;
+                    continue;
+                }
+
+                shortBands++;
+                AssertTrue(band.CarriesTarget, "a band the line carries is highlighted");
+                AssertEqual(band.Weight, band.TargetWeight, 1e-3f, "with all of its weight");
+                AssertEqual(band.Weight, band.CarriedWeight, 1e-3f, "and it is carried in full");
+            }
+
+            AssertTrue(longBand >= 0, "the long pair is a band of its own");
+            AssertEqual(CeilingFixtureShortPairs, shortBands, 0, "and the rest are the short ones");
+            Band uncarried = set.Bands[longBand];
+            AssertEqual(5f, uncarried.Weight, 1e-3f, "the long band is the long pair");
+            AssertEqual(0f, uncarried.CarriedWeight, 0f, "none of it is carried");
+            AssertEqual(0f, uncarried.TargetWeight, 0f, "so none of it rides the selected line");
+            AssertTrue(!uncarried.CarriesTarget, "and the highlight stays off, as the colour says");
         }
 
         // The hour strip draws the carried part of each hour inside the whole of it.

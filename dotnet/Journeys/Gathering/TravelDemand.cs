@@ -60,8 +60,8 @@ namespace WhereTheyGo
 
             for (int i = 0; i < citizens.Length; i++)
             {
-                // Everyone who travels inside the map counts, tourists included
-                // (assumptions register A0.2). The only exclusion is structural: a
+                // Everyone who travels inside the map counts, tourists included.
+                // The only exclusion is structural: a
                 // citizen without a rented property has no fixed origin to plan from.
                 // The homeless and outside commuters both land here.
                 Entity household = members[i].m_Household;
@@ -114,7 +114,7 @@ namespace WhereTheyGo
                 var to = new float2(destination.x, destination.z);
 
                 // Working from the building you live in is not a journey.
-                if (math.distancesq(from, to) < 1f)
+                if (math.distancesq(from, to) < Assumptions.MinJourneyDistanceSq)
                 {
                     continue;
                 }

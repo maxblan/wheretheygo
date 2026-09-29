@@ -29,7 +29,7 @@ rather than racing. To check that something compiles while the game is open, use
 `make compile`, which runs the compiler without the deploy.
 
 `ModPostProcessor` also returns a misleading exit code when it runs just after
-the game closes, so confirm a deploy by comparing file sizes (`make status`), not
+the game closes, so confirm a deploy by comparing the deployed DLL with the built one (`make status`, by content), not
 by trusting the build's exit code.
 
 ## The gates
@@ -123,7 +123,8 @@ means behaviour changed, and the interesting question is why.
 
 `Overlay/Planning/SavePayload.cs` owns the layout. The payload is a list of
 sections, each behind its own id, version and byte length, and a reader skips a
-section it does not know while keeping the ones it does.
+section it does not know while keeping the ones it does. A known section whose
+bytes will not parse is dropped and counted the same way, so it costs only itself.
 
 Bump the **section's** version when its bytes change. `SaveFormatVersion` is the
 framing, and moving it throws away every existing block, which costs every player

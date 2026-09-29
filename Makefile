@@ -35,6 +35,8 @@ ifeq ($(OS),Windows_NT)
 
 PLATFORM := windows
 PYTHON   ?= python
+DOTNET   := dotnet
+NODE     := node
 
 # GNU Make on Windows takes sh.exe when one is on PATH (Git for Windows, MSYS2) and
 # cmd.exe otherwise. Pin it, so a recipe behaves the same on every machine; every
@@ -70,6 +72,13 @@ ifeq ($(IS_WSL),1)
 
 PLATFORM := wsl
 
+# The offline half (tests, format, the .mjs check) runs on whichever dotnet and node
+# this shell has. A WSL that carries no Linux install of either still reaches the
+# Windows ones through interop, and a relative path under /mnt/c is the same file to
+# both, so the fallback is the .exe. Without it `make test` died on a bare `dotnet`.
+DOTNET := $(shell command -v dotnet >/dev/null 2>&1 && echo dotnet || echo dotnet.exe)
+NODE   := $(shell command -v node >/dev/null 2>&1 && echo node || echo node.exe)
+
 CSII_USERDATAPATH ?= $(shell powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('CSII_USERDATAPATH','User')" 2>/dev/null | tr -d '\r')
 USERDATA := $(shell wslpath -u '$(CSII_USERDATAPATH)' 2>/dev/null)
 MODS_DIR := $(USERDATA)/Mods/WhereTheyGo
@@ -95,6 +104,8 @@ MAIN_FORMAT_CHECK = $(DOTNET_WIN) "dotnet format $(PROJECT) --verify-no-changes"
 else
 
 PLATFORM := linux
+DOTNET   := dotnet
+NODE     := node
 
 # Only the log and status targets can use this here, and it has to be given:
 #
@@ -179,10 +190,10 @@ debug:
 	@$(MAKE) --no-print-directory build CONFIG=Debug
 
 test:
-	dotnet run --project "$(TESTS)"
+	$(DOTNET) run --project "$(TESTS)"
 
 check-ui:
-	node --check "$(UI_MODULE)"
+	$(NODE) --check "$(UI_MODULE)"
 
 # Locale key parity across the six locale files, every panel key the .mjs asks
 # for, and the binding/trigger names in both directions. All three are matched by
@@ -199,16 +210,16 @@ verify:
 strict:
 	$(MAIN_RESTORE)
 	$(MAIN_STRICT_BUILD)
-	dotnet build "$(TESTS)" --warnaserror
-	dotnet run --project "$(TESTS)" --no-build
+	$(DOTNET) build "$(TESTS)" --warnaserror
+	$(DOTNET) run --project "$(TESTS)" --no-build
 
 format:
 	$(MAIN_FORMAT)
-	dotnet format "$(TESTS)"
+	$(DOTNET) format "$(TESTS)"
 
 format-check:
 	$(MAIN_FORMAT_CHECK)
-	dotnet format "$(TESTS)" --verify-no-changes
+	$(DOTNET) format "$(TESTS)" --verify-no-changes
 
 
 # ---------------------------------------------------------------------------
@@ -298,10 +309,16 @@ endif
 # under a second.
 # ---------------------------------------------------------------------------
 
+# The deploy is confirmed by comparing the deployed DLL's CONTENT with the built
+# one, not its size. Mod.targets post-processes the built DLL in place and then
+# copies it, so the two are byte-identical after a deploy that landed. A size compare
+# once said "Deployed" while the Mods folder still held the previous
+# DLL: the post-processor had been blocked, the copy never ran, and the new build was
+# the same number of bytes as the old one.
 ifeq ($(PLATFORM),windows)
 
 deploy:
-	@powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$$deployed = '$(DEPLOYED)'; $$output = '$(OUTPUT)'; for ($$attempt = 1; $$attempt -le 3; $$attempt++) { & dotnet build '$(PROJECT)' -c '$(CONFIG)'; if ((Test-Path -LiteralPath $$deployed) -and (Test-Path -LiteralPath $$output)) { $$deployedSize = (Get-Item -LiteralPath $$deployed).Length; $$outputSize = (Get-Item -LiteralPath $$output).Length; if ($$deployedSize -eq $$outputSize) { Write-Host ('Deployed {0} bytes on attempt {1}.' -f $$deployedSize, $$attempt); exit 0 } }; Write-Host ('Attempt {0} did not land; retrying...' -f $$attempt); & '$(UNLOCK_SCRIPT)' -Path '$(MODS_DIR)'; Start-Sleep -Seconds 2 }; [Console]::Error.WriteLine('Deploy failed: $(DEPLOYED) does not match $(OUTPUT).'); exit 1"
+	@powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$$deployed = '$(DEPLOYED)'; $$output = '$(OUTPUT)'; for ($$attempt = 1; $$attempt -le 3; $$attempt++) { & dotnet build '$(PROJECT)' -c '$(CONFIG)'; if ((Test-Path -LiteralPath $$deployed) -and (Test-Path -LiteralPath $$output)) { $$deployedHash = (Get-FileHash -LiteralPath $$deployed -Algorithm SHA256).Hash; $$outputHash = (Get-FileHash -LiteralPath $$output -Algorithm SHA256).Hash; if ($$deployedHash -eq $$outputHash) { Write-Host ('Deployed {0} bytes on attempt {1}, content identical to the build.' -f (Get-Item -LiteralPath $$deployed).Length, $$attempt); exit 0 } }; Write-Host ('Attempt {0} did not land; retrying...' -f $$attempt); & '$(UNLOCK_SCRIPT)' -Path '$(MODS_DIR)'; Start-Sleep -Seconds 2 }; [Console]::Error.WriteLine('Deploy failed: $(DEPLOYED) does not match the content of $(OUTPUT).'); exit 1"
 
 else ifeq ($(PLATFORM),wsl)
 
@@ -309,15 +326,15 @@ deploy:
 	@for attempt in 1 2 3; do \
 		$(MAIN_BUILD) || true; \
 		if [[ -f "$(DEPLOYED)" && -f "$(OUTPUT)" ]] \
-			&& [[ "$$(stat -c%s "$(DEPLOYED)")" == "$$(stat -c%s "$(OUTPUT)")" ]]; then \
-			echo "Deployed $$(stat -c%s "$(DEPLOYED)") bytes on attempt $$attempt."; \
+			&& cmp -s "$(DEPLOYED)" "$(OUTPUT)"; then \
+			echo "Deployed $$(stat -c%s "$(DEPLOYED)") bytes on attempt $$attempt, content identical to the build."; \
 			exit 0; \
 		fi; \
 		echo "Attempt $$attempt did not land; retrying..."; \
 		$(UNLOCK_PROBE) || true; \
 		sleep 2; \
 	done; \
-	echo "Deploy failed: $(DEPLOYED) does not match $(OUTPUT)." >&2; \
+	echo "Deploy failed: $(DEPLOYED) does not match the content of $(OUTPUT)." >&2; \
 	exit 1
 
 else
@@ -343,7 +360,7 @@ endif
 ifeq ($(PLATFORM),windows)
 
 status:
-	@powershell.exe -NoProfile -Command "$$output = '$(OUTPUT)'; $$deployed = '$(DEPLOYED)'; if (-not (Test-Path -LiteralPath $$output)) { Write-Host 'Not built: $(OUTPUT)'; exit 1 }; $$builtSize = (Get-Item -LiteralPath $$output).Length; Write-Host ('built    {0} bytes  {1}' -f $$builtSize, $$output); if (Test-Path -LiteralPath $$deployed) { $$deployedSize = (Get-Item -LiteralPath $$deployed).Length; Write-Host ('deployed {0} bytes  {1}' -f $$deployedSize, $$deployed); if ($$builtSize -eq $$deployedSize) { Write-Host '-> up to date' } else { Write-Host '-> STALE, run make deploy' } } else { Write-Host 'deployed (absent)' }"
+	@powershell.exe -NoProfile -Command "$$output = '$(OUTPUT)'; $$deployed = '$(DEPLOYED)'; if (-not (Test-Path -LiteralPath $$output)) { Write-Host 'Not built: $(OUTPUT)'; exit 1 }; $$builtSize = (Get-Item -LiteralPath $$output).Length; Write-Host ('built    {0} bytes  {1}' -f $$builtSize, $$output); if (Test-Path -LiteralPath $$deployed) { $$deployedSize = (Get-Item -LiteralPath $$deployed).Length; Write-Host ('deployed {0} bytes  {1}' -f $$deployedSize, $$deployed); if ((Get-FileHash -LiteralPath $$output -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $$deployed -Algorithm SHA256).Hash) { Write-Host '-> up to date (same content)' } else { Write-Host '-> STALE (content differs), run make deploy' } } else { Write-Host 'deployed (absent)' }"
 
 logs:
 	@powershell.exe -NoProfile -Command "Get-Content -LiteralPath '$(MOD_LOG)' -Wait"
@@ -364,9 +381,9 @@ status:
 	@echo "built    $$(stat -c%s "$(OUTPUT)") bytes  $(OUTPUT)"
 	@if [[ -f "$(DEPLOYED)" ]]; then \
 		echo "deployed $$(stat -c%s "$(DEPLOYED)") bytes  $(DEPLOYED)"; \
-		if [[ "$$(stat -c%s "$(DEPLOYED)")" == "$$(stat -c%s "$(OUTPUT)")" ]]; \
-			then echo "-> up to date"; \
-			else echo "-> STALE, run 'make deploy'"; fi; \
+		if cmp -s "$(DEPLOYED)" "$(OUTPUT)"; \
+			then echo "-> up to date (same content)"; \
+			else echo "-> STALE (content differs), run 'make deploy'"; fi; \
 	else \
 		echo "deployed (absent)"; \
 	fi

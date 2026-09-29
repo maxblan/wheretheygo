@@ -53,6 +53,8 @@ namespace WhereTheyGo
             writer.TypeBegin("WhereTheyGo.Figures");
             writer.PropertyName("carriedShare");
             writer.Write(figures.CarriedShare);
+            writer.PropertyName("walkedShare");
+            writer.Write(figures.WalkedShare);
             writer.PropertyName("coverageShare");
             writer.Write(figures.CoverageShare);
             writer.PropertyName("coverageWalkMinutes");
@@ -110,6 +112,12 @@ namespace WhereTheyGo
             WriteFloats(writer, view.PurposeWeights, Band.PurposeCount);
             writer.PropertyName("journeysPerDay");
             writer.Write(view.DayWeight);
+
+            // And the journeys no band holds because they are walks: said beside the
+            // corridor count, so a map without the short hops does not read as a map of
+            // a city that never makes them.
+            writer.PropertyName("walkedJourneys");
+            writer.Write(view.WalkedWeight);
 
             // How much of the map the threshold is currently hiding. Said out loud:
             // a map that quietly dropped a third of the city's travel reads as a map of

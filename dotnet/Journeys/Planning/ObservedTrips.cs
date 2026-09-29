@@ -17,13 +17,13 @@ namespace WhereTheyGo
         public float m_TimeOfDay;
     }
 
-    // A rolling window of observed shopping and leisure journeys (register A0.1).
+    // A rolling window of observed shopping and leisure journeys.
     //
     // The save stores no shopping or leisure destination on a citizen, only the
     // journey currently under way, so this demand has to be WATCHED over time, the
     // way the ridership sampler watches stops. Home-to-work and home-to-school
     // journeys are read whole from the save as one journey per citizen per day; to
-    // sit beside them on equal footing (A0.1: every purpose weighs the same), the
+    // sit beside them on equal footing (every purpose weighs the same), the
     // observed journeys are kept for Assumptions.ObservationWindowDays game days and
     // scaled to a per-day rate - down when the window holds several days, up when it
     // is not yet a day long.
@@ -117,7 +117,7 @@ namespace WhereTheyGo
         // capped at Assumptions.ObservedTripMaxDayScale so a few minutes of readings are
         // not multiplied into a full day. With fewer than two trips there is no span, so 1.
         //
-        // No floor at 1: the window was widened to three days on 2026-09-14 and a floor
+        // No floor at 1: once the window was widened to three days, a floor
         // then made every shopping and leisure journey count three times against the
         // commutes read from the save.
         public float ScaleFor(uint dayFrames)

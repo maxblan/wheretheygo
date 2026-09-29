@@ -42,7 +42,7 @@ namespace WhereTheyGo
         private BandView(
             DrawnBand[] drawn, float heaviest, float[] breaks,
             int hiddenCount, float hiddenWeight, float shownWeight,
-            float[] hourlyProfile, float[] carriedProfile, float[] purposeWeights)
+            float[] hourlyProfile, float[] carriedProfile, float[] purposeWeights, float walkedWeight)
         {
             Drawn = drawn;
             Heaviest = heaviest;
@@ -53,6 +53,7 @@ namespace WhereTheyGo
             HourlyProfile = hourlyProfile;
             CarriedHourlyProfile = carriedProfile;
             PurposeWeights = purposeWeights;
+            WalkedWeight = walkedWeight;
         }
 
         // Heaviest first, which is the order the bundling leaves them in.
@@ -97,9 +98,14 @@ namespace WhereTheyGo
 
         public int TotalCount => Drawn.Length + HiddenCount;
 
-        // The city's journeys a day, whatever the filters say - the sum of the four
-        // purpose weights, so the panel's total and its four rows are the same
-        // arithmetic and cannot drift apart.
+        // The city's walked journeys a day (BandSet.WalkedWeight): the ones within the
+        // walking horizon, which no band holds and no filter touches. Passed through
+        // so the panel can say beside the corridor count what the map is not drawing.
+        public float WalkedWeight { get; }
+
+        // The city's journeys a day that transit could serve, whatever the filters say
+        // - the sum of the four purpose weights, so the panel's total and its four
+        // rows are the same arithmetic and cannot drift apart. The walks are not in it.
         public float DayWeight
         {
             get
@@ -116,11 +122,14 @@ namespace WhereTheyGo
 
         public static BandView Of(BandSet? set, int hour, int purposeMask, float thresholdShare)
         {
+            // A city whose every journey is a walk has no bands and still has a walked
+            // total worth saying, so it is carried through the empty view too.
+            float walkedWeight = set?.WalkedWeight ?? 0f;
             if (set is null || set.Bands.Length == 0)
             {
                 return new BandView(
                     Array.Empty<DrawnBand>(), 0f, EmptyBreaks(), 0, 0f, 0f,
-                    new float[Band.HoursPerDay], new float[Band.HoursPerDay], new float[Band.PurposeCount]);
+                    new float[Band.HoursPerDay], new float[Band.HoursPerDay], new float[Band.PurposeCount], walkedWeight);
             }
 
             float[] profile = set.HourlyProfile(purposeMask);
@@ -131,7 +140,7 @@ namespace WhereTheyGo
             {
                 return new BandView(
                     Array.Empty<DrawnBand>(), 0f, EmptyBreaks(), set.Bands.Length, 0f, 0f,
-                    profile, carriedProfile, purposeWeights);
+                    profile, carriedProfile, purposeWeights, walkedWeight);
             }
 
             // One pass over the bands, not two: the hour's weight is the same answer
@@ -166,7 +175,7 @@ namespace WhereTheyGo
 
             return new BandView(
                 drawn, heaviest, breaks, hiddenCount, hiddenWeight, shownWeight,
-                profile, carriedProfile, purposeWeights);
+                profile, carriedProfile, purposeWeights, walkedWeight);
         }
 
         // Which class a weight falls in: the first break it does not reach.
@@ -206,10 +215,15 @@ namespace WhereTheyGo
             if (heaviest <= low)
             {
                 // Every band the same weight: one class, and the boundaries sit above
-                // it so nothing is promoted out of the bottom.
+                // it so nothing is promoted out of the bottom. All three on the SAME
+                // readable number: three different ones (100, 150 and 200 over a band
+                // of 50) gave the legend a boundary it cannot print and three empty
+                // classes it did print. Equal boundaries are an empty class the legend
+                // skips, exactly as in the collapsed case below.
+                float above = Nice(heaviest * 2f);
                 for (int i = 0; i < breaks.Length; i++)
                 {
-                    breaks[i] = Nice(heaviest) * (i + 2);
+                    breaks[i] = above;
                 }
 
                 return breaks;

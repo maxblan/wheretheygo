@@ -15,7 +15,7 @@ namespace WhereTheyGo
         public float[] NodeX = Array.Empty<float>();
         public float[] NodeZ = Array.Empty<float>();
         // Whether a stop could stand at the node: false where every pavement meeting
-        // it is in a tunnel or on a bridge (register A1.15). Such a node still carries
+        // it is in a tunnel or on a bridge. Such a node still carries
         // walking, since a home or a journey may snap to it, but no tile and no site
         // candidate does.
         public bool[] Siteable = Array.Empty<bool>();
@@ -394,6 +394,13 @@ namespace WhereTheyGo
     // them. -1 means no pavement within the access walk.
     internal sealed class TileSnap
     {
+        // The graph the tiles were snapped to. Every node index in this snap, and
+        // every index Index hands out, belongs to THIS graph's numbering: the streets
+        // are re-collected whenever the game tags them as changed, and a
+        // re-collection with the same counts can number its nodes differently, so a
+        // walk measured on a newer graph from these indices is a walk between the
+        // wrong nodes.
+        public WalkGraph? Graph;
         public WalkNodeIndex? Index;
         public int[] TileNode = Array.Empty<int>();
         public int[] TileWalkMs = Array.Empty<int>();
@@ -441,6 +448,7 @@ namespace WhereTheyGo
         {
             var snap = new TileSnap
             {
+                Graph = graph,
                 TileNode = new int[width * height],
                 TileWalkMs = new int[width * height],
             };
@@ -456,7 +464,7 @@ namespace WhereTheyGo
             }
 
             double accessMetres = accessMs / 1000.0 * Assumptions.WalkSpeed;
-            snap.Index = new WalkNodeIndex(graph, Math.Max(32.0, accessMetres));
+            snap.Index = new WalkNodeIndex(graph, Math.Max(Assumptions.TileSize, accessMetres));
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
