@@ -55,7 +55,7 @@ The demand is real rather than modelled. There is no gravity model and no calibr
 	<!--Link to the forum post where the mod can be discussed-->
 	<ForumLink Value="https://forum.paradoxplaza.com/forum/threads/code-mod-where-they-go-see-the-journeys-your-citizens-actually-make.1943056/" />
 	<!--Version of the mod-->
-	<ModVersion Value="1.0" />
+	<ModVersion Value="1.0.1" />
 	<!--Recommended version of the base game to use the mod-->
 	<GameVersion Value="1.6.*" />
 	<!--Dependency for the mod, can be set multiple times-->
@@ -63,7 +63,7 @@ The demand is real rather than modelled. There is no gravity model and no calibr
 	<!--Required DLC, can be set multiple times. Supported values are "Landmark Buildings", "San Fransisco Set", "Beach Properties", "Urban Promenades", "Modern Architecture"-->
 	<RequiredDLC Value="" />
 	<!--Change log for new version. Single line or multi line. Supports minimal markdown subset-->
-	<ChangeLog Value="Initial release." />
+	<ChangeLog Value="Fixes a short freeze every thirty seconds in larger cities: the journeys are now ordered, snapped, measured and paired on a background thread, and each door is snapped to the pedestrian network once instead of on every refresh." />
 	<!--<ChangeLog>
 	</ChangeLog>-->
 	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->

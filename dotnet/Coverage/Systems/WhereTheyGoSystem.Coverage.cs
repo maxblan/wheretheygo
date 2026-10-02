@@ -1,37 +1,36 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
+﻿using System.Globalization;
 using Unity.Mathematics;
 
 namespace WhereTheyGo
 {
-    // The equity measure on the game side: every journey of the
-    // last demand refresh with its ends snapped to the pedestrian network, the walk
-    // from each node to the nearest served stop, and the coverage share the panel
-    // and the set objective read. The arithmetic is Coverage.
+    // The equity measure on the game side: what the panel, the building colours and
+    // the selected-building row read, published once per demand refresh. The field
+    // and the share are measured on the worker (DemandStage, ServedWalkField,
+    // JourneyEnds, Coverage) and adopted here together, so the horizon, the colours
+    // and the headline share always describe the same measurement.
     public sealed partial class WhereTheyGoSystem
     {
-        private int[] m_JourneyOriginNode = Array.Empty<int>();
-
-        private int[] m_JourneyOriginAccess = Array.Empty<int>();
-
-        private int[] m_JourneyDestinationNode = Array.Empty<int>();
-
-        private int[] m_JourneyDestinationAccess = Array.Empty<int>();
-
-        private float[] m_JourneyWeight = Array.Empty<float>();
-
+        // The walk from each node of the snap's pedestrian network to the nearest
+        // served stop: the field in place, handed to the next stage to read when it
+        // does not need rebuilding.
         private int[]? m_ServedWalkMs;
 
-        // The access field before it is quantised to bytes, and how far each tile's
-        // value was carried to reach it. Fields rather than locals so the spread pass has
-        // somewhere to work without allocating on every refresh.
+        // The journey ends already snapped to the current tile snap's network, kept
+        // across demand refreshes: the doors of a city barely change between two of
+        // them. The demand stage owns it while one is out.
+        private SnapMemo? m_SnapMemo;
+
+        // Buffers the demand stage reuses from one refresh to the next, handed back
+        // with it on adoption.
+        private JourneyEnds? m_JourneyEnds;
+
+        private IntDijkstra? m_CoverageDijkstra;
+
+        // Each tile's walk to the nearest served stop, before it is quantised to bytes:
+        // what the selected-building row reads.
         private int[]? m_AccessWalkMs;
 
-        private int[] m_AccessSpreadMs = System.Array.Empty<int>();
-
-        private CoverageReport? m_Coverage;
-
+        // The horizon the field and the share in place were measured against.
         private int m_CoverageHorizonMs;
 
         // What the served-walk field was built for: the stops, the pedestrian network
@@ -41,16 +40,6 @@ namespace WhereTheyGo
         // And the snap it was built on: a new snap is a new graph and a new numbering,
         // whatever the counts say.
         private TileSnap? m_FieldSnap;
-
-        // Where the coverage pass spent its milliseconds, for the log: it runs on the
-        // main thread every demand refresh and is the largest thing left there.
-        private long m_SnapMs;
-
-        private long m_FieldMs;
-
-        private bool m_FieldRebuilt;
-
-        private IntDijkstra? m_CoverageDijkstra;
 
         // How far each 32 m tile is from a served stop, as 0 (at a stop) to 255 (at or
         // beyond the walking horizon), and the grid it is laid out on. Rebuilt with the
@@ -122,48 +111,31 @@ namespace WhereTheyGo
         // player has it switched off.
         internal int TransitAccessInfomodeIndex => m_Infoview.ObjectLayerIndex(OverlayLayer.TransitAccess);
 
-        // Snaps every journey end to the pedestrian network once per demand refresh,
-        // measures how many journeys the served stops reach at both ends within the
-        // walking horizon, and publishes the figure the panel and the ranking use.
-        private void MeasureCoverage(Setting settings)
+        // The coverage measure's main-thread half, once per demand refresh: the
+        // horizon the player set, the memo for the current snap, and whether the
+        // served-walk field has to be rebuilt. Everything is measured on the worker.
+        private void PrepareCoverage(Setting settings, DemandStage demand)
         {
+            demand.HorizonMs = settings.CoverageWalkMinutes * 60_000;
             TileSnap? snap = m_TileSnap;
             // The snap's OWN graph, not m_WalkGraph: the streets are re-collected on
             // every change tag, and a re-collection that keeps the counts keeps the
             // snap while numbering its nodes afresh. A snapped index only means
             // anything on the graph it was snapped to (TileSnap.Graph).
             WalkGraph? graph = snap?.Graph;
-            if (snap?.Index is null || graph is null)
+            WalkNodeIndex? index = snap?.Index;
+            if (snap is null || index is null || graph is null)
             {
-                m_Coverage = null;
                 return;
             }
 
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            m_CoverageHorizonMs = settings.CoverageWalkMinutes * 60_000;
-            int count = m_Journeys.Count;
-            if (m_JourneyWeight.Length < count)
-            {
-                m_JourneyOriginNode = new int[count];
-                m_JourneyOriginAccess = new int[count];
-                m_JourneyDestinationNode = new int[count];
-                m_JourneyDestinationAccess = new int[count];
-                m_JourneyWeight = new float[count];
-            }
-
-            for (int i = 0; i < count; i++)
-            {
-                Journey trip = m_Journeys[i];
-                m_JourneyOriginNode[i] = WalkAccess.SnapPoint(snap.Index, trip.m_Origin.x, trip.m_Origin.y, Assumptions.AccessWalkMs, out m_JourneyOriginAccess[i]);
-                m_JourneyDestinationNode[i] = WalkAccess.SnapPoint(snap.Index, trip.m_Destination.x, trip.m_Destination.y, Assumptions.AccessWalkMs, out m_JourneyDestinationAccess[i]);
-                m_JourneyWeight[i] = trip.m_Weight;
-            }
-
-            m_SnapMs = clock.ElapsedMilliseconds;
-            if (m_CoverageDijkstra is null || m_CoverageDijkstra.Dist.Length != graph.NodeCount)
-            {
-                m_CoverageDijkstra = new IntDijkstra(graph.NodeCount);
-            }
+            m_SnapMemo = SnapMemo.For(m_SnapMemo, index, Assumptions.AccessWalkMs, Assumptions.SnapMemoCapacity);
+            demand.Snap = snap;
+            demand.Memo = m_SnapMemo;
+            demand.Stops = m_TransitStops.ToArray();
+            demand.Served = m_ServedWalkMs;
+            demand.Dijkstra = m_CoverageDijkstra;
+            demand.Ends = m_JourneyEnds;
 
             // The walk to the nearest served stop, and the field the buildings are
             // coloured from, depend on the STOPS and the pedestrian network, not on
@@ -171,246 +143,68 @@ namespace WhereTheyGo
             // served stop plus a pass over every tile of the map, thirty seconds apart,
             // for an answer that had not moved: in the log the field's version counted
             // up while its own figure stayed at 87.1 % to the decimal.
-            long fieldSignature = CoverageSignature(graph);
-            m_FieldRebuilt = m_ServedWalkMs is null || fieldSignature != m_FieldSignature || !ReferenceEquals(snap, m_FieldSnap);
-            if (m_FieldRebuilt)
-            {
-                m_FieldSignature = fieldSignature;
-                m_FieldSnap = snap;
-                SnapStops(m_TransitStops, snap.Index, Assumptions.AccessWalkMs, out int[] stopNodes, out int[] stopAccess);
-                // Searched well past the coverage horizon on purpose. Every "is this
-                // served" test compares against the horizon itself (Coverage.EndServed),
-                // so the coverage figure is unchanged; what the extra range buys is a
-                // real number for the buildings beyond it. A house 12 minutes from the
-                // nearest stop and a house 40 minutes away are different problems, and
-                // "over 10 min" for both reads as a broken measurement rather than a
-                // long walk.
-                m_ServedWalkMs = Coverage.ServedWalkMs(
-                    graph, m_CoverageDijkstra, stopNodes, stopAccess, stopNodes.Length,
-                    m_CoverageHorizonMs * Assumptions.AccessFieldHorizonMultiple);
-                BuildAccessField(snap);
-            }
-
-            m_FieldMs = clock.ElapsedMilliseconds - m_SnapMs;
-
-            // The SHARE does follow the journeys, so it is measured every refresh: one
-            // lookup per journey end into the field above.
-            RefreshCoverage(settings, "measured");
+            demand.FieldSignature = ServedWalkField.Signature(demand.Stops, graph, demand.HorizonMs);
+            demand.RebuildField = m_ServedWalkMs is null || demand.FieldSignature != m_FieldSignature || !ReferenceEquals(snap, m_FieldSnap);
+            // The grid the snap was laid out on and the world corner it starts at, as
+            // they stand now: a new snap may land while the stage is out.
+            demand.FieldGrid = new int2Like(m_IntensityGrid.x, m_IntensityGrid.y);
+            demand.FieldWorldMin = new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y);
         }
 
-        // Enough of the inputs to tell one field from another: how many stops there
-        // are and where, the graph the walk runs over, and the horizon the player set.
-        private long CoverageSignature(WalkGraph graph)
+        // The worker's measurement, published: the horizon, the field when it was
+        // rebuilt, and the share. Its buffers come back for the next refresh.
+        private void AdoptCoverage(DemandStage demand)
         {
-            unchecked
+            m_JourneyEnds = demand.Ends;
+            m_CoverageDijkstra = demand.Dijkstra;
+            m_CoverageHorizonMs = demand.HorizonMs;
+            if (demand.FieldRebuilt && demand.Snap is not null)
             {
-                long signature = m_TransitStops.Count;
-                for (int i = 0; i < m_TransitStops.Count; i++)
-                {
-                    signature = (signature * 31) + (long)Math.Round(m_TransitStops[i].x, MidpointRounding.ToEven);
-                    signature = (signature * 31) + (long)Math.Round(m_TransitStops[i].y, MidpointRounding.ToEven);
-                }
-
-                signature = (signature * 31) + graph.NodeCount;
-                signature = (signature * 31) + graph.EdgeMetres.Length;
-                signature = (signature * 31) + m_CoverageHorizonMs;
-                return signature;
+                m_FieldSignature = demand.FieldSignature;
+                m_FieldSnap = demand.Snap;
+                m_ServedWalkMs = demand.Served;
+                PublishAccessField(demand.Field, demand);
             }
-        }
 
-        // The served-walk field rasterised onto the tile grid: how long a
-        // walk from each tile to the nearest stop the city's lines actually serve, as 0
-        // (at a stop) to 255 (at or beyond the walking horizon). This is what colours the
-        // buildings and what the selected-building row reports.
-        //
-        // Two steps, and the second one is the point. TileSnap.TileNode only
-        // holds a node for a tile within the ACCESS budget of the pedestrian network,
-        // 8110 of 200704 tiles on Valmare, because that budget answers a different
-        // question: how far a STOP may stand from a road. Reading it as "this tile has no
-        // transit" put a house at one minute and the house next door at over ten, all
-        // over the city, and painted a tram terminus as unserved. So tiles without a node
-        // of their own take the walk of a nearby tile that has one, plus the walk between
-        // them.
-        private void BuildAccessField(TileSnap access)
-        {
-            int[]? served = m_ServedWalkMs;
-            if (served is null || m_CoverageHorizonMs <= 0 || access.TileNode.Length == 0)
+            CoverageReport? coverage = demand.Report;
+            if (coverage is null)
             {
-                m_AccessByTile = null;
                 return;
             }
 
-            int count = access.TileNode.Length;
-            // The grid the snap was laid out on, which is the population map's, and the
-            // one m_ScoreWorldMin below belongs to. Not the terrain's playable grid: the
-            // two agree on every map seen so far, but a map where they did not would
-            // have failed the length check below and silently left every building grey.
-            int2 grid = m_IntensityGrid;
-            if (grid.x <= 0 || grid.y <= 0 || grid.x * grid.y != count)
-            {
-                m_AccessByTile = null;
-                return;
-            }
+            int walkMinutes = demand.HorizonMs / 60_000;
+            SetCoverageFigures(coverage.Share, walkMinutes, coverage.WalkClassShare);
+            DeferredLog.Info(
+                $"Coverage (measured): {(coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
+                $"{walkMinutes.ToString(CultureInfo.InvariantCulture)} min, " +
+                $"{(coverage.TripsCovered).ToString(CultureInfo.InvariantCulture)}/{(coverage.Trips).ToString(CultureInfo.InvariantCulture)} journeys, " +
+                $"{(coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
+                $"Gini of access walk {coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +
+                $"walk classes {WalkClassText(coverage.WalkClassShare)}, " +
+                $"served stops {(demand.Stops.Length).ToString(CultureInfo.InvariantCulture)}; " +
+                $"on the worker {(demand.FieldMs).ToString(CultureInfo.InvariantCulture)} ms {(demand.FieldRebuilt ? "rebuilding the served-walk field" : "(field unchanged, not rebuilt)")}");
+        }
 
-            if (m_AccessWalkMs is null || m_AccessWalkMs.Length != count)
-            {
-                m_AccessWalkMs = new int[count];
-                m_AccessSpreadMs = new int[count];
-            }
-
-            if (m_AccessByTile is null || m_AccessByTile.Length != count)
-            {
-                m_AccessByTile = new byte[count];
-            }
-
-            int[] walkMs = m_AccessWalkMs;
-            for (int i = 0; i < count; i++)
-            {
-                int node = access.TileNode[i];
-                long walk = node >= 0 && node < served.Length && served[node] != Coverage.NotServed
-                    ? (long)served[node] + access.TileWalkMs[i]
-                    : int.MaxValue;
-                walkMs[i] = walk >= int.MaxValue ? int.MaxValue : (int)walk;
-            }
-
-            SpreadAccessField(walkMs, m_AccessSpreadMs, grid);
-
-            // The COLOUR ramp still runs over the horizon and no further: past it every
-            // walk is equally bad to look at, and stretching the ramp to the longest
-            // walk on the map would wash out the difference between two and eight
-            // minutes, which is the difference that matters.
-            byte[] field = m_AccessByTile;
-            int reached = 0;
-            for (int i = 0; i < count; i++)
-            {
-                if (walkMs[i] == int.MaxValue || walkMs[i] >= m_CoverageHorizonMs)
-                {
-                    field[i] = 255;
-                    continue;
-                }
-
-                reached++;
-                field[i] = (byte)((long)walkMs[i] * 255L / m_CoverageHorizonMs);
-            }
-
-            m_AccessFieldGrid = grid;
-            m_AccessFieldWorldMin = m_ScoreWorldMin;
+        // A rebuilt field replaces the one on the map in one step: the arrays are new,
+        // so BuildingAccessColorSystem and the selected-building row never read half of
+        // one and half of the other. Null clears it, and the buildings go grey.
+        private void PublishAccessField(ServedWalkField? field, DemandStage demand)
+        {
             m_AccessFieldVersion++;
-            DeferredLog.Info(
-                $"Transit access field: {(reached).ToString(CultureInfo.InvariantCulture)} of {(count).ToString(CultureInfo.InvariantCulture)} tiles within " +
-                $"{(m_CoverageHorizonMs / 60_000).ToString(CultureInfo.InvariantCulture)} min of a served stop (grid {(m_AccessFieldGrid.x).ToString(CultureInfo.InvariantCulture)}x{(m_AccessFieldGrid.y).ToString(CultureInfo.InvariantCulture)}, version {(m_AccessFieldVersion).ToString(CultureInfo.InvariantCulture)})");
-        }
-
-        // Fills in tiles that have no pedestrian node of their own from tiles that do,
-        // charging the walk between tile centres. Two sweeps of a chamfer distance
-        // transform, forward over increasing indices and backward over decreasing, which
-        // is exact for this cost pattern and costs two passes over the grid.
-        //
-        // Bounded to Assumptions.AccessFieldSpreadTiles deliberately. Unbounded, it would
-        // walk straight over a river to a stop on the far bank and report a walk nobody
-        // can make; bounded, it bridges a house to its own street and no further.
-        private static void SpreadAccessField(int[] walkMs, int[] spreadMs, int2 grid)
-        {
-            int straight = (int)(Assumptions.TileSize / Assumptions.WalkSpeed * 1000f);
-            // A diagonal step is sqrt(2) tiles, charged as such rather than as one:
-            // rounding it down is what turns a distance transform into a square.
-            int diagonal = (int)(Assumptions.TileSize * 1.41421356f / Assumptions.WalkSpeed * 1000f);
-            int budget = Assumptions.AccessFieldSpreadTiles * straight;
-
-            for (int i = 0; i < walkMs.Length; i++)
+            if (field is null)
             {
-                spreadMs[i] = walkMs[i] == int.MaxValue ? int.MaxValue : 0;
-            }
-
-            for (int pass = 0; pass < 2; pass++)
-            {
-                bool forward = pass == 0;
-                for (int step = 0; step < grid.y; step++)
-                {
-                    int z = forward ? step : grid.y - 1 - step;
-                    for (int inner = 0; inner < grid.x; inner++)
-                    {
-                        int x = forward ? inner : grid.x - 1 - inner;
-                        int index = (z * grid.x) + x;
-                        for (int dz = -1; dz <= 1; dz++)
-                        {
-                            for (int dx = -1; dx <= 1; dx++)
-                            {
-                                if (dx == 0 && dz == 0)
-                                {
-                                    continue;
-                                }
-
-                                int nx = x + dx;
-                                int nz = z + dz;
-                                if (nx < 0 || nz < 0 || nx >= grid.x || nz >= grid.y)
-                                {
-                                    continue;
-                                }
-
-                                int from = (nz * grid.x) + nx;
-                                if (spreadMs[from] == int.MaxValue)
-                                {
-                                    continue;
-                                }
-
-                                int cost = dx != 0 && dz != 0 ? diagonal : straight;
-                                // The budget is on the SPREAD, not on the walk: a tile
-                                // may inherit a long walk from its street, but only over
-                                // a few tiles of open ground. Without this the field
-                                // would carry a walk straight over a river to a stop on
-                                // the far bank and report a walk nobody can make.
-                                long carried = (long)spreadMs[from] + cost;
-                                if (carried > budget)
-                                {
-                                    continue;
-                                }
-
-                                long candidate = (long)walkMs[from] + cost;
-                                if (candidate < walkMs[index])
-                                {
-                                    walkMs[index] = (int)candidate;
-                                    spreadMs[index] = (int)carried;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        private static void SnapStops(List<float2Like> stops, WalkNodeIndex index, int accessMs, out int[] nodes, out int[] access)
-        {
-            nodes = new int[stops.Count];
-            access = new int[stops.Count];
-            for (int i = 0; i < stops.Count; i++)
-            {
-                nodes[i] = WalkAccess.SnapPoint(index, stops[i].x, stops[i].y, accessMs, out access[i]);
-            }
-        }
-
-        private void RefreshCoverage(Setting settings, string why)
-        {
-            if (m_ServedWalkMs is null)
-            {
+                m_AccessByTile = null;
+                m_AccessWalkMs = null;
                 return;
             }
 
-            m_Coverage = Coverage.Measure(
-                m_ServedWalkMs, m_CoverageHorizonMs,
-                m_JourneyOriginNode, m_JourneyOriginAccess, m_JourneyDestinationNode, m_JourneyDestinationAccess,
-                m_JourneyWeight, m_Journeys.Count);
-            SetCoverageFigures(m_Coverage.Share, settings.CoverageWalkMinutes, m_Coverage.WalkClassShare);
+            m_AccessWalkMs = field.WalkMs;
+            m_AccessByTile = field.ByTile;
+            m_AccessFieldGrid = new int2(field.Grid.x, field.Grid.y);
+            m_AccessFieldWorldMin = new float2(demand.FieldWorldMin.x, demand.FieldWorldMin.y);
             DeferredLog.Info(
-                $"Coverage ({why}): {(m_Coverage.Share * 100f).ToString("F1", CultureInfo.InvariantCulture)} % of journey weight served at both ends within " +
-                $"{settings.CoverageWalkMinutes.ToString(CultureInfo.InvariantCulture)} min, " +
-                $"{(m_Coverage.TripsCovered).ToString(CultureInfo.InvariantCulture)}/{(m_Coverage.Trips).ToString(CultureInfo.InvariantCulture)} journeys, " +
-                $"{(m_Coverage.TripsOffNetwork).ToString(CultureInfo.InvariantCulture)} with an end off the pedestrian network, " +
-                $"Gini of access walk {m_Coverage.GiniWalk.ToString("F3", CultureInfo.InvariantCulture)}, " +
-                $"walk classes {WalkClassText(m_Coverage.WalkClassShare)}, " +
-                $"served stops {(m_TransitStops.Count).ToString(CultureInfo.InvariantCulture)}; " +
-                $"main thread {(m_SnapMs).ToString(CultureInfo.InvariantCulture)} ms snapping {(m_Journeys.Count).ToString(CultureInfo.InvariantCulture)} journey ends, " +
-                $"{(m_FieldMs).ToString(CultureInfo.InvariantCulture)} ms {(m_FieldRebuilt ? "rebuilding the served-walk field" : "(field unchanged, not rebuilt)")}");
+                $"Transit access field: {(field.Reached).ToString(CultureInfo.InvariantCulture)} of {(field.ByTile.Length).ToString(CultureInfo.InvariantCulture)} tiles within " +
+                $"{(demand.HorizonMs / 60_000).ToString(CultureInfo.InvariantCulture)} min of a served stop (grid {(field.Grid.x).ToString(CultureInfo.InvariantCulture)}x{(field.Grid.y).ToString(CultureInfo.InvariantCulture)}, version {(m_AccessFieldVersion).ToString(CultureInfo.InvariantCulture)})");
         }
 
         // The shape behind the Gini, and the bar the panel draws: the walk to a served

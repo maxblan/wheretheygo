@@ -23,9 +23,18 @@ namespace WhereTheyGo
         private ComponentLookup<Game.Citizens.Student> m_StudentLookup;
 
         // Every journey of the last demand refresh, in the total order
-        // DemandZones.Aggregate leaves them in: what the coverage measure snaps and the
-        // routing pass copies.
-        private readonly List<Journey> m_Journeys = new List<Journey>();
+        // DemandZones.Aggregate leaves them in: what a selection pass routes and the
+        // pair table was built from. Adopted from the worker with the stage that
+        // ordered it, and never written in place.
+        private List<Journey> m_Journeys = new List<Journey>();
+
+        // The buffers a demand stage fills, kept between refreshes so a city of a
+        // hundred thousand does not hand the collector several megabytes every thirty
+        // seconds: the drained trips, which the stage empties, and the journey list
+        // m_Journeys held before the last adoption, which nothing reads any more.
+        private List<Journey>? m_TripBuffer;
+
+        private List<Journey>? m_SpareJourneys;
 
         private int2 m_ZoneGrid;
 
@@ -73,18 +82,21 @@ namespace WhereTheyGo
                 $"({(dayShare * 100f).ToString("F0", CultureInfo.InvariantCulture)} % by day)";
         }
 
-        // The whole demand pipeline: read the journeys, re-read the lines, measure the
-        // coverage and hand the routing to the worker. On its own slow cadence because
-        // it walks every citizen.
-        private void UpdateTravelDemand(Setting settings, int2 gridSize, float2 worldMin, float2 mapSize)
+        // The demand pipeline's main-thread half: read the journeys, re-read the lines,
+        // bring the served-walk field up to date and hand everything else to the
+        // worker (DemandStage). On its own slow cadence because it walks every citizen.
+        private void UpdateTravelDemand(Setting settings, float2 mapSize)
         {
-            // What the refresh costs the frame, phase by phase: the one part of the
-            // route pipeline still on the main thread, so its budget is logged.
+            // What the refresh costs the frame, phase by phase, so its budget is logged.
             var clock = System.Diagnostics.Stopwatch.StartNew();
             m_ZoneGrid = WalkNetwork.GridDims(mapSize, Assumptions.ZoneSize);
 
-            int tripCount;
-            float totalWeight;
+            var demand = new DemandStage
+            {
+                Trips = m_TripBuffer ??= new List<Journey>(),
+                Journeys = m_SpareJourneys ?? new List<Journey>(),
+            };
+            m_SpareJourneys = null;
             var trips = new NativeQueue<Journey>(Allocator.TempJob);
             try
             {
@@ -115,34 +127,63 @@ namespace WhereTheyGo
 
                 job.ScheduleParallel(m_CitizenQuery, Dependency).Complete();
                 m_TripObserver.Drain(trips);
-                totalWeight = TravelDemand.Aggregate(trips, worldMin, m_ZoneGrid, m_Journeys, out tripCount);
-                // New journeys, new pair table: the passes build it on first use.
-                m_PairTable = null;
+                TravelDemand.Drain(trips, demand.Trips);
             }
             finally
             {
                 trips.Dispose();
             }
 
+            int gathered = demand.Trips.Count;
             long extractMs = clock.ElapsedMilliseconds;
             RefreshLineHealth();
-            MeasureCoverage(settings);
+            PrepareCoverage(settings, demand);
             long modelMs = clock.ElapsedMilliseconds - extractMs;
 
-            bool passStarted = StartRoutingPass();
+            // The gate in MaybeUpdateTravelDemand keeps a pass from being out here, so
+            // this cannot fail today; if it ever does, the refresh is not counted as
+            // done and the next frame tries again, rather than losing its journeys for
+            // half a minute.
+            if (!StartRoutingPass(demand))
+            {
+                m_SpareJourneys = demand.Journeys;
+                demand.Trips.Clear();
+                DeferredLog.Warn("Travel demand: a routing pass was already out, so this refresh was not handed over; retrying");
+                return;
+            }
+
             long routingMs = clock.ElapsedMilliseconds - extractMs - modelMs;
             m_LastDemandRefresh = UnityEngine.Time.realtimeSinceStartup;
             m_DemandRefreshed = true;
 
             DeferredLog.Info(
-                $"Travel demand: trips={(tripCount).ToString(CultureInfo.InvariantCulture)} (observed shopping/leisure {(m_TripObserver.LastDemandCount).ToString(CultureInfo.InvariantCulture)} ×{(m_TripObserver.LastScale).ToString("F2", CultureInfo.InvariantCulture)} over {(LineHistory.GameHours(m_TripObserver.Window.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours), " +
-                $"weight={(totalWeight).ToString("F0", CultureInfo.InvariantCulture)}, lines={(m_ExistingLines.Count).ToString(CultureInfo.InvariantCulture)}, stops={(m_TransitStops.Count).ToString(CultureInfo.InvariantCulture)}; " +
-                $"main thread {(clock.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms (extract {(extractMs).ToString(CultureInfo.InvariantCulture)}, model {(modelMs).ToString(CultureInfo.InvariantCulture)}, " +
+                $"Travel demand: {(gathered).ToString(CultureInfo.InvariantCulture)} trips gathered (observed shopping/leisure {(m_TripObserver.LastDemandCount).ToString(CultureInfo.InvariantCulture)} ×{(m_TripObserver.LastScale).ToString("F2", CultureInfo.InvariantCulture)} over {(LineHistory.GameHours(m_TripObserver.Window.SpanFrames)).ToString("F1", CultureInfo.InvariantCulture)} game hours), " +
+                $"lines={(m_ExistingLines.Count).ToString(CultureInfo.InvariantCulture)}, stops={(m_TransitStops.Count).ToString(CultureInfo.InvariantCulture)}; " +
+                $"main thread {(clock.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms (extract {(extractMs).ToString(CultureInfo.InvariantCulture)}, lines and coverage inputs {(modelMs).ToString(CultureInfo.InvariantCulture)}, " +
                 $"handover {(routingMs).ToString(CultureInfo.InvariantCulture)}); " +
-                $"routing pass {(passStarted ? "started on the worker" : "not started (one is already out)")}; " +
+                "ordering, snapping, coverage and routing started on the worker; " +
                 $"trip observation since the last refresh: {(m_TripObserver.ScanCount).ToString(CultureInfo.InvariantCulture)} scans, " +
                 $"mean {(m_TripObserver.ScanCount > 0 ? m_TripObserver.ScanMsSum / (double)m_TripObserver.ScanCount : 0.0).ToString("F1", CultureInfo.InvariantCulture)} ms, max {(m_TripObserver.ScanMsMax).ToString(CultureInfo.InvariantCulture)} ms");
             m_TripObserver.ResetScanStats();
+        }
+
+        // The worker's demand stage, adopted: the ordered journeys and the pair table
+        // built from them become the city's, the coverage measured on them is
+        // published, and the buffers come back for the next refresh. The journey list
+        // being replaced becomes the spare: a selection pass reads m_Journeys only
+        // while it is out, and none can be while a demand stage is.
+        private void AdoptDemand(DemandStage demand)
+        {
+            m_SpareJourneys = m_Journeys;
+            m_Journeys = demand.Journeys;
+            m_PairTable = demand.Pairs;
+            DeferredLog.Info(
+                $"Journeys on the worker: trips={(demand.TripCount).ToString(CultureInfo.InvariantCulture)}, weight={(demand.TotalWeight).ToString("F0", CultureInfo.InvariantCulture)}; " +
+                $"ordered in {(demand.SortMs).ToString(CultureInfo.InvariantCulture)} ms, " +
+                $"ends snapped in {(demand.SnapMs).ToString(CultureInfo.InvariantCulture)} ms ({(demand.Memo?.Searches ?? 0).ToString(CultureInfo.InvariantCulture)} doors searched, {(demand.Memo?.Count ?? 0).ToString(CultureInfo.InvariantCulture)} remembered), " +
+                $"coverage measured in {(demand.MeasureMs).ToString(CultureInfo.InvariantCulture)} ms, " +
+                $"{(demand.Pairs.PairCount).ToString(CultureInfo.InvariantCulture)} door pairs in {(demand.PairMs).ToString(CultureInfo.InvariantCulture)} ms");
+            AdoptCoverage(demand);
         }
     }
 }

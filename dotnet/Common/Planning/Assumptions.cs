@@ -67,6 +67,12 @@ namespace WhereTheyGo
         // off-network. Transfer: how long a rider walks to change vehicle.
         public const int AccessWalkMs = 120_000;
 
+        // How many doors one pedestrian network's snap memo holds before it starts
+        // over (SnapMemo). Far above the doors of any city, so in practice it never
+        // fills; it exists so a session that keeps meeting new positions cannot grow
+        // the memo without end.
+        public const int SnapMemoCapacity = 1_000_000;
+
         public const int TransferWalkMs = 180_000;
 
         // How long a rider will walk to change vehicle: three minutes at the planning
