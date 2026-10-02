@@ -34,6 +34,11 @@ namespace WhereTheyGo.Tests
             Run("Integer Dijkstra is exact, bounded and reusable", IntDijkstraExactBoundedReusable);
             Run("Nearest node breaks ties by index and respects the access walk", NearestNodeTiesAndReach);
             Run("Tiles and sites skip tunnel and bridge nodes that homes still walk from", NearestSiteSkipsOffGroundNodes);
+            Run("Remembered journey ends answer exactly as the search does, and a door is searched once", SnapMemoAnswersAsTheSearchDoes);
+            Run("Trips between the same two doors are one pair, in first-seen order", DoorPairsMergeTheSameTwoDoors);
+            Run("The snap memo belongs to one index and starts over at its capacity", SnapMemoBelongsToOneIndexAndIsBounded);
+            Run("The served-walk field ramps over the horizon and refuses a grid it does not fit", ServedWalkFieldRampsOverTheHorizon);
+            Run("The demand stage measures and pairs the same ordered journeys, whatever order they arrived in", DemandStageMeasuresAndPairsTheSameJourneys);
             Run("Observed trips are scaled to a day's rate, down over several days and up over part of one", ObservedTripWindowHoldsADay);
             Run("Observed trips restart on a rewound clock and stop at the cap", ObservedTripWindowRestartsAndCaps);
             Run("The save framing version is frozen, so no bump quietly costs a player their days", SaveFramingVersionIsFrozen);

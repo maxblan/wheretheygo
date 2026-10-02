@@ -51,6 +51,14 @@ namespace WhereTheyGo
             out int tripCount)
         {
             journeys.Clear();
+            // Grown once to the trips' count rather than doubling its way there: the
+            // list is kept from one refresh to the next, so this is a no-op once a city
+            // has settled.
+            if (journeys.Capacity < trips.Count)
+            {
+                journeys.Capacity = trips.Count;
+            }
+
             tripCount = 0;
             float totalWeight = 0f;
             for (int t = 0; t < trips.Count; t++)

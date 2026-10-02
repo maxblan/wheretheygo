@@ -162,24 +162,18 @@ namespace WhereTheyGo
 
     internal static class TravelDemand
     {
-        // Drains the job's queue in the order it hands the trips back and keeps the
-        // journeys among them (DemandZones.Aggregate). The order is thread-dependent,
-        // which is why the aggregation sorts them totally before anything reads them.
-        public static float Aggregate(
-            NativeQueue<Journey> trips,
-            float2 worldMin,
-            int2 zoneGrid,
-            List<Journey> journeys,
-            out int tripCount)
+        // Drains the job's queue into `drained`, emptied first, in the order the queue
+        // hands the trips back. That order is thread-dependent, which is why
+        // DemandZones.Aggregate sorts the journeys totally (on the worker, DemandStage)
+        // before anything reads them.
+        public static void Drain(NativeQueue<Journey> trips, List<Journey> drained)
         {
-            var drained = new List<Journey>(trips.Count);
+            drained.Clear();
+            drained.Capacity = System.Math.Max(drained.Capacity, trips.Count);
             while (trips.TryDequeue(out Journey trip))
             {
                 drained.Add(trip);
             }
-
-            return DemandZones.Aggregate(
-                drained, new float2Like(worldMin.x, worldMin.y), new int2Like(zoneGrid.x, zoneGrid.y), journeys, out tripCount);
         }
     }
 }

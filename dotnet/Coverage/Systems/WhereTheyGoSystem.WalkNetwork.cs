@@ -169,6 +169,9 @@ namespace WhereTheyGo
                 return;
             }
 
+            // Main-thread time, logged: this walks every edge in the world, and in a
+            // live city the change tags leave it dirty, so it runs about once a minute.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             WalkNetwork.CollectWalkNetwork(
                 EntityManager, m_NodeQuery, m_AllEdgeQuery,
                 out float[] nodeX, out float[] nodeZ, out int[] edgeA, out int[] edgeB, out float[] edgeMetres,
@@ -185,7 +188,8 @@ namespace WhereTheyGo
             Mod.Log.Info(
                 $"Pedestrian network: {(nodeX.Length).ToString(CultureInfo.InvariantCulture)} nodes, " +
                 $"{(edgeA.Length).ToString(CultureInfo.InvariantCulture)} edges with a pavement, " +
-                $"{(offGround).ToString(CultureInfo.InvariantCulture)} nodes in tunnels or on bridges (walkable, not sites)");
+                $"{(offGround).ToString(CultureInfo.InvariantCulture)} nodes in tunnels or on bridges (walkable, not sites); " +
+                $"main thread {(clock.ElapsedMilliseconds).ToString(CultureInfo.InvariantCulture)} ms");
             m_RoadCacheDirty = false;
         }
 

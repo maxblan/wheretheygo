@@ -15,8 +15,11 @@ namespace WhereTheyGo
 
         private BandSet? m_Bands;
 
-        // One routing pass, handed to a worker task. Everything it touches is a copy
-        // or a plain array; nothing on the worker reads ECS state.
+        // One routing pass, handed to a worker task. Nothing on the worker reads ECS
+        // state: the problem is plain arrays copied for it, the journeys a list nobody
+        // writes while the pass is out, and on a demand refresh the stage, which the
+        // main thread hands over whole (DemandStage) and does not touch again until it
+        // is adopted.
         private sealed class RoutingPass
         {
             public RoutingProblem Problem = new RoutingProblem();
@@ -30,11 +33,15 @@ namespace WhereTheyGo
             public int TargetLineId = -1;
             public LineContribution Contribution;
             public int2Like ZoneGrid;
-            public List<Journey> Journeys = new List<Journey>();
+            public IReadOnlyList<Journey> Journeys = new List<Journey>();
             public readonly List<DeferredLogLine> Log = new List<DeferredLogLine>();
             public long RouteMs;
             public long BandMs;
             public long ContributionMs;
+            // Set on a demand refresh: the journeys still to be ordered, snapped,
+            // measured and paired before the routing. Null on a selection pass, which
+            // routes the journeys as they stand.
+            public DemandStage? Demand;
         }
 
         private System.Threading.Tasks.Task? m_PendingRouting;
@@ -62,66 +69,12 @@ namespace WhereTheyGo
         }
 
         // The pair table of the journeys as they stand, built once per demand refresh
-        // and shared by every pass started on it. A selection pass routes the SAME
-        // journeys, and rebuilding the table for it, a dictionary of every door pair
-        // plus the geometry cached on it, was main-thread work for an answer that had
-        // not moved. UpdateTravelDemand and ResetCityState drop it when the journeys
-        // change; the passes only ever read it.
+        // on the worker and shared by every pass started on it. A selection pass routes
+        // the SAME journeys, and rebuilding the table for it, a dictionary of every door
+        // pair plus the geometry cached on it, was main-thread work for an answer that
+        // had not moved. Adopted with the journeys it was built from, dropped by
+        // ResetCityState; the passes only ever read it.
         private RoutingProblem? m_PairTable;
-
-        // The journeys as door-to-door pairs: every trip at its own two positions, not
-        // a zone centre; trips between the same two doors (one household's commuters to
-        // one workplace) are one pair with their summed weight. Evaluate then searches
-        // once per distinct origin door, and the geometry cache on the table is shared
-        // by every problem built from it.
-        private RoutingProblem BuildPairTable()
-        {
-            var pairIndex = new Dictionary<(float, float, float, float), int>();
-            var ox = new List<float>();
-            var oz = new List<float>();
-            var dx = new List<float>();
-            var dz = new List<float>();
-            var weight = new List<float>();
-            var dayWeight = new List<float>();
-            for (int i = 0; i < m_Journeys.Count; i++)
-            {
-                Journey trip = m_Journeys[i];
-                var key = (trip.m_Origin.x, trip.m_Origin.y, trip.m_Destination.x, trip.m_Destination.y);
-                if (pairIndex.TryGetValue(key, out int existing))
-                {
-                    weight[existing] += trip.m_Weight;
-                    dayWeight[existing] += trip.m_Weight * trip.DayShare;
-                    continue;
-                }
-
-                pairIndex.Add(key, ox.Count);
-                ox.Add(trip.m_Origin.x);
-                oz.Add(trip.m_Origin.y);
-                dx.Add(trip.m_Destination.x);
-                dz.Add(trip.m_Destination.y);
-                weight.Add(trip.m_Weight);
-                dayWeight.Add(trip.m_Weight * trip.DayShare);
-            }
-
-            var dayShare = new float[ox.Count];
-            for (int i = 0; i < dayShare.Length; i++)
-            {
-                dayShare[i] = weight[i] > 0f ? dayWeight[i] / weight[i] : 1f;
-            }
-
-            var table = new RoutingProblem
-            {
-                PairCount = ox.Count,
-                PairOx = ox.ToArray(),
-                PairOz = oz.ToArray(),
-                PairDx = dx.ToArray(),
-                PairDz = dz.ToArray(),
-                PairWeight = weight.ToArray(),
-                PairDayShare = dayShare,
-            };
-            table.Geometry = JourneyRouting.GeometryOf(table);
-            return table;
-        }
 
         // The hour strip's two profiles against the headline figure. They are measured
         // differently on purpose - the figure weighs door pairs, the strip weighs the
@@ -146,21 +99,14 @@ namespace WhereTheyGo
                 $"(the panel's headline figure reads {(carriedShare * 100f).ToString("F1", CultureInfo.InvariantCulture)} %, weighed over door pairs rather than bands)");
         }
 
-        // The pairs plus the existing served stops and lines as the network they are
-        // routed over.
-        private RoutingProblem BuildRoutingProblem()
+        // The existing served stops and lines as the network the pairs are routed
+        // over. The pairs themselves are attached separately: a demand pass builds
+        // them on the worker, a selection pass reuses the table of the journeys as
+        // they stand.
+        private RoutingProblem BuildRoutingProblem(int horizonMs)
         {
-            RoutingProblem pairs = m_PairTable ??= BuildPairTable();
             var problem = new RoutingProblem
             {
-                PairCount = pairs.PairCount,
-                PairOx = pairs.PairOx,
-                PairOz = pairs.PairOz,
-                PairDx = pairs.PairDx,
-                PairDz = pairs.PairDz,
-                PairWeight = pairs.PairWeight,
-                PairDayShare = pairs.PairDayShare,
-                Geometry = pairs.Geometry,
                 BaseStopCount = m_TransitStops.Count,
                 BaseStopX = new float[m_TransitStops.Count],
                 BaseStopZ = new float[m_TransitStops.Count],
@@ -169,7 +115,7 @@ namespace WhereTheyGo
                 BoardPenaltySeconds = Assumptions.DefaultBoardPenaltySeconds,
                 MaxTravelSeconds = Assumptions.MaxJourneySeconds,
                 ZoneReachMetres = Assumptions.ZoneStopReachMetres,
-                WalkedHorizonSeconds = WalkedHorizonSeconds(),
+                WalkedHorizonSeconds = WalkedHorizonSeconds(horizonMs),
             };
             for (int i = 0; i < m_TransitStops.Count; i++)
             {
@@ -185,14 +131,14 @@ namespace WhereTheyGo
         // which a whole journey is a walk rather than a transit question. It is read off
         // the coverage measure rather than the settings, and a change of it reaches the
         // routing at the same demand refresh that re-measures the coverage, at most
-        // thirty seconds on: MeasureCoverage is the only writer of m_CoverageHorizonMs,
-        // and a pass started earlier would route against the old horizon while the
-        // coverage figure beside it still showed the old one too. Before the first
+        // thirty seconds on: a demand pass routes against the horizon its own stage
+        // measures with (DemandStage.HorizonMs), a selection pass against the one in
+        // place (m_CoverageHorizonMs, which only AdoptCoverage writes). Before the first
         // measure the default stands in, so the first pass is not one without walks.
-        private float WalkedHorizonSeconds()
+        private static float WalkedHorizonSeconds(int horizonMs)
         {
-            return m_CoverageHorizonMs > 0
-                ? m_CoverageHorizonMs / 1000f
+            return horizonMs > 0
+                ? horizonMs / 1000f
                 : Assumptions.CoverageWalkMinutesDefault * 60f;
         }
 
@@ -204,9 +150,12 @@ namespace WhereTheyGo
         // seconds of frozen game every time the demand refreshes.
         //
         // Everything the worker reads is gathered HERE, on the main thread, as copies:
-        // the problem's plain arrays and a snapshot of the journeys. While a pass is
-        // out, OnUpdate leaves those inputs alone (m_RoutingPending).
-        private bool StartRoutingPass()
+        // the problem's plain arrays and a snapshot of the journeys, or on a demand
+        // refresh the stage it hands over whole (the drained trips, the memo, the
+        // served-walk field), which the main thread does not touch again until the
+        // pass is adopted. While a pass is out, OnUpdate leaves those inputs alone
+        // (m_RoutingPending).
+        private bool StartRoutingPass(DemandStage? demand = null)
         {
             if (m_RoutingPending)
             {
@@ -215,10 +164,11 @@ namespace WhereTheyGo
 
             var pass = new RoutingPass
             {
-                Problem = BuildRoutingProblem(),
+                Problem = BuildRoutingProblem(demand?.HorizonMs ?? m_CoverageHorizonMs),
                 WorldMin = new float2Like(m_ScoreWorldMin.x, m_ScoreWorldMin.y),
                 ZoneGrid = new int2Like(m_ZoneGrid.x, m_ZoneGrid.y),
                 TargetLineId = SelectedLineId,
+                Demand = demand,
             };
             pass.TargetLine = IndexOfLine(pass.TargetLineId);
             pass.Problem.TargetLine = pass.TargetLine;
@@ -227,7 +177,18 @@ namespace WhereTheyGo
             // started with a fresh selection used to be followed by a second pass for
             // the same answer, because the selection gate had never seen it.
             m_RequestedLineId = pass.TargetLineId;
-            pass.Journeys.AddRange(m_Journeys);
+            if (demand is null)
+            {
+                // Shared, not copied: m_Journeys is only ever replaced, by adopting a
+                // demand stage, and none can be out while this pass is.
+                DoorPairs.Attach(pass.Problem, m_PairTable ??= DoorPairs.Build(m_Journeys));
+                pass.Journeys = m_Journeys;
+            }
+            else
+            {
+                pass.Journeys = demand.Journeys;
+            }
+
             m_PendingPass = pass;
             m_RoutingPending = true;
             m_PendingRouting = System.Threading.Tasks.Task.Run(
@@ -275,6 +236,12 @@ namespace WhereTheyGo
         // is the only honest way to say what it is worth.
         private static void RunRoutingPass(RoutingPass pass)
         {
+            if (pass.Demand is not null)
+            {
+                pass.Demand.Run(pass.WorldMin, pass.ZoneGrid);
+                DoorPairs.Attach(pass.Problem, pass.Demand.Pairs);
+            }
+
             var clock = System.Diagnostics.Stopwatch.StartNew();
             RoutingResult routed = JourneyRouting.Evaluate(pass.Problem);
             pass.Carried = routed.Report;
@@ -305,14 +272,6 @@ namespace WhereTheyGo
             RoutingProblem full = pass.Problem;
             var reduced = new RoutingProblem
             {
-                PairCount = full.PairCount,
-                PairOx = full.PairOx,
-                PairOz = full.PairOz,
-                PairDx = full.PairDx,
-                PairDz = full.PairDz,
-                PairWeight = full.PairWeight,
-                PairDayShare = full.PairDayShare,
-                Geometry = full.Geometry,
                 BaseStopCount = full.BaseStopCount,
                 BaseStopX = full.BaseStopX,
                 BaseStopZ = full.BaseStopZ,
@@ -321,6 +280,7 @@ namespace WhereTheyGo
                 MaxTravelSeconds = full.MaxTravelSeconds,
                 ZoneReachMetres = full.ZoneReachMetres,
             };
+            DoorPairs.Attach(reduced, full);
             for (int i = 0; i < full.BaseLines.Count; i++)
             {
                 if (i != pass.TargetLine)
@@ -333,11 +293,29 @@ namespace WhereTheyGo
             return JourneyRouting.Measure(full, routed, without);
         }
 
+        // Adopts a demand stage the moment the worker has finished it, without waiting
+        // for the routing behind it: the journeys, the pair table, the field and the
+        // share are complete by then, and holding them back would tie the coverage
+        // figure, and the building colours, to however long the routing takes, or to
+        // whether it fails at all.
+        private void FinishDemandIfReady()
+        {
+            DemandStage? demand = m_PendingPass?.Demand;
+            if (!m_RoutingPending || demand is null || demand.Adopted || !demand.Done)
+            {
+                return;
+            }
+
+            demand.Adopted = true;
+            AdoptDemand(demand);
+        }
+
         // Adopts a finished pass: its log lines first, in order, then the fields the
         // panel, the renderer and the line readings all read. A faulted pass is logged
-        // in full and the previous bands stay on the map.
+        // in full, naming the stage that threw, and the previous bands stay on the map.
         private void FinishRoutingIfReady()
         {
+            FinishDemandIfReady();
             System.Threading.Tasks.Task? pending = m_PendingRouting;
             RoutingPass? pass = m_PendingPass;
             if (!m_RoutingPending || pending is null || pass is null || !pending.IsCompleted)
@@ -351,7 +329,11 @@ namespace WhereTheyGo
             DeferredLog.Flush(pass.Log);
             if (pending.IsFaulted || pending.IsCanceled || pass.Result is null || pass.Bands is null)
             {
-                DeferredLog.Error($"Routing pass failed: {pending.Exception}");
+                // A stage that never finished is the demand stage's fault, and its
+                // journeys and coverage stay as they were; one that did was adopted
+                // above, and only the routing behind it is lost.
+                string failed = pass.Demand is { Done: false } ? "Demand stage (ordering, snapping, coverage)" : "Routing pass";
+                DeferredLog.Error($"{failed} failed: {pending.Exception}");
                 return;
             }
 
@@ -367,11 +349,10 @@ namespace WhereTheyGo
                     ((float)pass.Result.BaseRiders[i], (float)pass.Result.BaseRidersByDay[i], (float)pass.Result.BaseRidersByNight[i]);
             }
 
-            // The coverage figure is NOT refreshed here. It rests on the served-walk
-            // field and the snapped journey ends, neither of which a routing pass
-            // touches, and the measure ran on the same inputs before the pass started:
-            // re-running it here sorted every journey again for the Gini and logged a
-            // second "Coverage" line that could only ever repeat the first.
+            // The coverage figure is NOT refreshed here: the demand stage measured it
+            // and FinishDemandIfReady published it, on the same journeys this pass
+            // routed. Measuring it again sorted every journey again for the Gini and
+            // logged a second "Coverage" line that could only ever repeat the first.
             LogRoutingPass(pass, pass.Result, pass.Bands);
         }
 

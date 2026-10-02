@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using Game;
 using Game.Common;
 using Game.Net;
@@ -218,10 +219,16 @@ namespace WhereTheyGo
             m_ContributionLineId = -1;
             m_RequestedLineId = -1;
 
-            m_Journeys.Clear();
+            // New lists and buffers rather than cleared ones: a pass left behind by the
+            // last city may still be running into the old ones.
+            m_Journeys = new List<Journey>();
+            m_TripBuffer = null;
+            m_SpareJourneys = null;
             m_PairTable = null;
+            m_SnapMemo = null;
+            m_JourneyEnds = null;
+            m_CoverageDijkstra = null;
             m_DemandRefreshed = false;
-            m_Coverage = null;
             m_ServedWalkMs = null;
             m_AccessWalkMs = null;
             m_AccessByTile = null;
@@ -352,7 +359,7 @@ namespace WhereTheyGo
             }
 
             float2 mapSize = new float2(m_IntensityGrid.x, m_IntensityGrid.y) * Assumptions.TileSize;
-            UpdateTravelDemand(settings, m_IntensityGrid, m_ScoreWorldMin, mapSize);
+            UpdateTravelDemand(settings, mapSize);
         }
 
         // Change tags live for a single frame, so the caches must be invalidated
